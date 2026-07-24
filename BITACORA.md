@@ -65,10 +65,19 @@ Este archivo registra el tiempo invertido por dia en el proyecto.
 | 13-07-2026 | 00:00 | sin sesiones registradas |
 | 14-07-2026 | 00:00 | sin sesiones registradas |
 | 15-07-2026 | 00:00 | sin sesiones registradas (2 sesiones abiertas solo con session_start, sin actividad) |
-| 16-07-2026 | en curso | session store (inicio 10:39 hora local, UTC+2) |
+| 16-07-2026 | 00:00 | sin actividad real (sesión VS Code abierta a las 10:39, sin turnos registrados) |
+| 17-07-2026 | 00:00 | sin sesiones registradas |
+| 18-07-2026 | 00:00 | sin sesiones registradas |
+| 19-07-2026 | 00:00 | sin sesiones registradas |
+| 20-07-2026 | 01:00 | estimación (1 commit: primeros ajustes TSS/CTL/ATL, sin transcript de sesión) |
+| 21-07-2026 | 00:00 | sin sesiones registradas |
+| 22-07-2026 | 00:00 | sin sesiones registradas |
+| 23-07-2026 | 02:00 | session store, turnos 14:55–16:54 hora local (UTC+2) |
+| 24-07-2026 | 15:27 | session store, turnos 10:13–01:40+1 hora local (UTC+2); overhaul TSS, zonas FC reales, sleep/body-battery, HRV |
+| 25-07-2026 | en curso | session store (inicio ~01:40 hora local, UTC+2) |
 
 ## Total acumulado
-- 25:24
+- 43:51 (+ sesión 25-07 en curso)
 
 ## Plantilla para nuevas entradas
 
