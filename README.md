@@ -15,9 +15,12 @@ Antes de responder cualquier cosa, el agente consulta tus datos reales de Garmin
 Cuando analizas una actividad, el sistema calcula en Python antes de llamar al LLM:
 - Duraciones de segundos a HH:MM:SS
 - Ritmo en min/km desde distancia y duración
-- Distribución de tiempo en zonas de FC (Z1–Z5) mediante distribución gaussiana centrada en la FC media
+- Distribución de tiempo en zonas de FC (Z1–Z5) usando **datos reales de Garmin Connect** (`get_activity_hr_in_timezones`), con cascada de 3 estrategias de fetch. Cada zona muestra nombre en español, rango de FC en bpm y porcentaje sobre la duración total de la actividad (no sobre la suma de tiempos por zona)
 - Hidratación recomendada según duración y tipo de actividad
 - Carga de entrenamiento (TSS) y efecto aeróbico/anaeróbico
+- Body battery del día (extracción compacta antes del truncado para evitar pérdida de datos)
+- Sueño de la noche previa (fecha exacta con fallback automático, fases y puntuación)
+- HRV nocturno como indicador del estado del sistema nervioso autónomo
 
 El LLM recibe un bloque `=== RESUMEN DE ACTIVIDAD ===` ya calculado y se dedica exclusivamente a interpretar y hacer coaching. Nunca hace aritmética.
 
@@ -83,7 +86,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
 └─────────────────────┘         └─────────────────────────────────┘
 ```
 
-**Capa de datos (sistema):** conecta con Garmin Connect, pre-procesa y calcula todas las métricas antes de entregárselas al LLM (ritmo en min/km, zonas FC por distribución gaussiana, hidratación estimada, TSS/ATL/CTL/TSB).
+**Capa de datos (sistema):** conecta con Garmin Connect, pre-procesa y calcula todas las métricas antes de entregárselas al LLM (ritmo en min/km, zonas FC reales de Garmin con nombre y rango en bpm, body battery, sueño con fases, HRV, hidratación estimada, TSS/ATL/CTL/TSB).
 
 **Capa de coaching (LLM):** recibe datos ya calculados y aporta interpretación, contextualización con el perfil del atleta y recomendaciones accionables. Nunca hace aritmética.
 
@@ -210,9 +213,10 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
 
 * **📊 Análisis profundo de actividades por fecha:**
   - Pregunta directamente: *"Analiza mi competición del 2 de julio"* y el agente localiza la actividad automáticamente.
-  - Pre-fetch enriquecido: antes de llamar al LLM, el sistema carga actividad + body battery + sueño previo + HRV + carga de entrenamiento.
-  - Todos los cálculos (zonas de FC Z1–Z5 con % y minutos, ritmo en min/km, hidratación estimada, efecto de entrenamiento) se realizan **en Python**, no en el LLM.
-  - El LLM recibe un bloque estructurado pre-computado y se dedica exclusivamente a interpretar y hacer coaching.
+  - Pre-fetch enriquecido: antes de llamar al LLM, el sistema carga actividad + zonas FC reales (cascada `get_activity_hr_in_timezones`) + body battery (extracción compacta) + sueño (fecha exacta con fallback) + HRV + carga de entrenamiento.
+  - Todos los cálculos se realizan **en Python**: zonas FC Z1–Z5 con nombre en español, rango de FC en bpm y % sobre la duración total; ritmo en min/km; hidratación estimada; efecto de entrenamiento; sueño con fases; HRV. El LLM solo interpreta.
+  - El análisis post-actividad incluye 6 secciones: resumen ejecutivo, distribución por zonas de FC, efecto de entrenamiento y carga, hidratación, estado pre-carrera (body battery + sueño + HRV) y recuperación y próximas sesiones.
+  - La sección de recuperación considera TSS/ATL/CTL/TSB + sueño + body battery + HRV. El plan de entrenamiento activo (si existe) se inyecta como contexto — no como restricción: si los indicadores fisiológicos piden descanso, Kairos lo recomienda aunque el plan tenga sesión.
 
 * **💾 Memoria persistente entre sesiones:**
   - Al salir, el agente genera automáticamente un resumen compacto de la sesión con el propio LLM.
@@ -514,6 +518,8 @@ main.py → asyncio.run(run_agent())
 
 ### Cálculo del modelo TSS/ATL/CTL/TSB
 
+> **Overhaul completo (2026-07-23):** La serie se calcula de forma incremental (solo procesa días nuevos desde el último registro en DB). Migración automática de fórmulas legacy (v0→v3). Los 9 últimos días se re-enriquecen con detalle de actividad (`trainingStressScore` y potencia) en cada arranque para corregir estimaciones.
+
 ```
 _compute_load_fatigue_metrics(activities, trend_payload, profile, days_window)
   │
@@ -557,8 +563,10 @@ TrainerAgent.chat(user_message)
   │
   ├─ Ruta 4 — Análisis de actividad por fecha (pre-fetch)
   │    └─ _extract_iso_date_from_text(msg) → _find_activity_id_by_date()
-  │         └─ Pre-carga: actividad + body battery + sueño + HRV + carga
-  │         └─ _build_activity_analysis_block() → bloque pre-computado para el LLM
+│         ├─ Pre-carga: actividad + body battery (compact) + sueño (user_date + fallback) + HRV + carga
+│         ├─ Zonas FC: cascada get_activity_hr_in_timezones → zones en activity JSON → estimación gaussiana
+│         └─ _build_activity_analysis_block() → 6 secciones pre-computadas para el LLM
+│              resumen · zonas FC reales · efecto · hidratación · estado pre-carrera (BB+sueño+HRV) · recuperación
   │
   └─ Ruta 5 — LLM con tool-calling (resto de intenciones)
        └─ Bucle hasta 15 iteraciones:
