@@ -376,6 +376,35 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
         # Procesado específico para récords personales
         if tool_name in {"get_personal_records", "get_personal_record"} and isinstance(data, list):
             return _compact_personal_records(data)
+        # Procesado específico para datos de sueño: extrae solo métricas clave antes del truncado
+        if tool_name in {"get_sleep_data", "get_sleep_summary"} and isinstance(data, (dict, list)):
+            _sd = data[0] if isinstance(data, list) and data else data
+            if isinstance(_sd, dict):
+                _dto = _sd.get("dailySleepDTO") or _sd
+                _score_nested = ((_dto.get("sleepScores") or {}).get("overall") or {})
+                _sleep_out = {}
+                for _k, _aliases in (
+                    ("sleepTimeSeconds",  ["sleepTimeSeconds", "sleep_time_seconds", "ageTimeSeconds"]),
+                    ("deepSleepSeconds",  ["deepSleepSeconds", "deep_sleep_seconds"]),
+                    ("lightSleepSeconds", ["lightSleepSeconds", "light_sleep_seconds"]),
+                    ("remSleepSeconds",   ["remSleepSeconds", "rem_sleep_seconds"]),
+                    ("wakeSeconds",       ["awakeSleepSeconds", "wakeSeconds", "wake_seconds"]),
+                ):
+                    for _a in _aliases:
+                        _v = _dto.get(_a)
+                        if _v is not None:
+                            _sleep_out[_k] = _v
+                            break
+                # Score: puede estar plano o anidado
+                _score = (_dto.get("sleepScore") or _dto.get("sleepScoreValue")
+                          or _score_nested.get("value")
+                          or _sd.get("sleepScore"))
+                if _score is not None:
+                    _sleep_out["sleepScore"] = _score
+                _quality = _dto.get("sleepQualityTypePK") or _dto.get("sleepQuality")
+                if _quality is not None:
+                    _sleep_out["sleepQuality"] = _quality
+                return json.dumps(_sleep_out, ensure_ascii=False, separators=(",", ":"))
         # Añadir campos normalizados útiles para análisis de actividades
         if tool_name == "get_activity" and isinstance(data, dict):
             # Duración (segundos -> HH:MM:SS)
@@ -3553,10 +3582,13 @@ def _build_activity_analysis_block(
             deep_secs   = dto.get("deepSleepSeconds", 0)
             light_secs  = dto.get("lightSleepSeconds", 0)
             rem_secs    = dto.get("remSleepSeconds", 0)
-            wake_secs   = dto.get("wakeSeconds", 0)
-            score       = dto.get("sleepScore")
+            wake_secs   = dto.get("wakeSeconds", 0) or dto.get("awakeSleepSeconds", 0)
+            # Score: puede estar plano o anidado en sleepScores.overall.value
+            _score_nested = ((dto.get("sleepScores") or {}).get("overall") or {})
+            score = (dto.get("sleepScore") or dto.get("sleepScoreValue")
+                     or _score_nested.get("value"))
             quality_map = {1: "Pobre", 2: "Regular", 3: "Buena", 4: "Excelente"}
-            quality_num = dto.get("sleepQuality")
+            quality_num = dto.get("sleepQuality") or dto.get("sleepQualityTypePK")
             quality_str = quality_map.get(int(quality_num), str(quality_num)) if quality_num else None
             def fmt_mins(s):
                 h, m = int(s) // 3600, (int(s) % 3600) // 60
