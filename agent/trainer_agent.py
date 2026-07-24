@@ -3555,8 +3555,7 @@ def _build_activity_analysis_block(
                     _hr_range = f">{_z_lo} bpm"
                 else:
                     _hr_range = ""
-                _bar = _hr_zone_bar(_z_pct)
-                lines.append(f"  Z{_z_num} {_z_name:<14} {_hr_range:<14} {_bar} {_z_pct:5.1f}%  (~{_z_mins:.0f} min)")
+                lines.append(f"  Z{_z_num} · {_z_name:<14} · {_hr_range:<14} {_z_pct:5.1f}%  (~{_z_mins:.0f} min)")
             _zones_shown = True
 
     if not _zones_shown and avg_hr_f and max_hr_f and dur_s:
@@ -5382,9 +5381,8 @@ class TrainerAgent:
                                 _rng = f">{_lo_d} bpm"
                             else:
                                 _rng = ""
-                            _bar = _hr_zone_bar(_pct)
                             _zdlines.append(
-                                f"Z{_zn} · {_zname:<14} · {_rng:<14} {_bar} {_pct:5.1f}% (~{_mins} min)"
+                                f"Z{_zn} · {_zname:<14} · {_rng:<14} {_pct:5.1f}% (~{_mins} min)"
                             )
                         _zones_direct_text = "\n".join(_zdlines)
 
@@ -5395,34 +5393,58 @@ class TrainerAgent:
                     if _zones_direct_text else ""
                 )
 
+                # Contexto del plan de entrenamiento para la sección de recuperación
+                _plan_obj = _get_active_training_plan(self.user_profile)
+                if _plan_obj:
+                    _plan_title = _plan_obj.get("title") or _plan_obj.get("name") or "Plan activo"
+                    _plan_ctx = (
+                        f"\nPLAN DE ENTRENAMIENTO ACTIVO: {_plan_title}\n"
+                        "Tienes en cuenta este plan al dar el consejo de recuperación: "
+                        "no puedes recomendar 72h de descanso total si el plan tiene sesion al dia siguiente. "
+                        "Adapta la recuperacion a lo que el plan marca (sesiones suaves, descanso activo, etc.).\n"
+                    )
+                else:
+                    _plan_ctx = (
+                        "\nSIN PLAN DE ENTRENAMIENTO ACTIVO.\n"
+                        "El atleta no tiene plan asignado. En la seccion de recuperacion, "
+                        "además de los consejos post-sesion, sugiere brevemente que crear un plan "
+                        "estructurado le ayudaría a dosificar mejor la carga y la recuperacion.\n"
+                    )
+
                 messages.insert(len(messages) - 1, {
                     "role": "system",
                     "content": (
                         f"DATOS DEL ENTRENAMIENTO DEL {user_date}:\n\n"
                         f"{analysis_block}\n\n"
                         f"{_zones_override}"
+                        f"{_plan_ctx}\n"
                         "Eres Kairos, coach deportivo experto. Escribe un analisis detallado y conversacional "
-                        "hablando directamente al atleta. Usa estos datos como base y añade contexto e interpretacion.\n\n"
+                        "hablando directamente al atleta.\n\n"
                         "ESTRUCTURA — usa EXACTAMENTE estos headers ## (cada uno en su propia linea):\n\n"
                         "## \U0001f4ca Resumen ejecutivo\n"
                         "## \U0001f493 Distribucion por zonas de FC\n"
                         "## \u26a1 Efecto de entrenamiento y carga\n"
                         "## \U0001f4a7 Hidratacion recomendada\n"
                         "## \U0001f6cc Estado pre-carrera (body battery y sueno)\n"
-                        "## \U0001f504 Plan de recuperacion post-actividad\n"
-                        "## \U0001f3af Recomendaciones para la proxima edicion\n\n"
-                        "ESTILO: cada seccion debe tener 2-4 puntos (- ) con interpretacion real de coach. "
-                        "Ejemplo: en lugar de '- TSS: 162.9' escribe '- TSS de 162.9: sesion muy exigente que "
-                        "requiere 48-72h de recuperacion antes de volver a intensidad alta.'\n"
-                        "Interpreta FC, zonas, desnivel, carga en terminos de esfuerzo, adaptacion y recuperacion.\n\n"
+                        "## \U0001f504 Recuperacion y proximas sesiones\n\n"
+                        "ESTILO: cada seccion debe tener 2-4 puntos (- ) con interpretacion real de coach.\n"
+                        "Ejemplo: en lugar de '- TSS: 162.9' escribe '- TSS de 162.9: sesion muy exigente.'\n"
+                        "Interpreta FC, zonas, desnivel, carga en terminos de esfuerzo y adaptacion.\n\n"
+                        "SECCION '## \U0001f504 Recuperacion y proximas sesiones' (MUY IMPORTANTE):\n"
+                        "- Analiza la carga real (TSS, ATL/CTL/TSB si disponibles), el sueno y el body battery.\n"
+                        "- Si hay plan activo: adapta la recuperacion al plan (no recomiendas descanso si hay sesion).\n"
+                        "- Si no hay plan: da consejo de recuperacion personalizado Y sugiere que un plan "
+                        "estructurado ayudaria a gestionar mejor estas cargas.\n"
+                        "- Incluye: que hacer mañana, qué hacer en 2-3 dias, señales de alerta a vigilar.\n"
+                        "- Añade recomendaciones tecnicas para la proxima sesion similar (pace, zonas, nutricion).\n\n"
                         "REGLAS TECNICAS:\n"
-                        "- ZONAS FC: si existe bloque 'ZONAS FC REALES GARMIN', copia esas lineas exactas (no cambies los valores).\n"
-                        "- SUENO: en horas y minutos (nunca segundos). Menciona fases y puntuacion si estan disponibles.\n"
-                        "- BODY BATTERY: interpreta cargado/drenado con contexto de recuperacion.\n"
-                        "- PROHIBIDO: floats crudos como '3.7999953674316', velocidad en m/s, duracion en segundos.\n"
-                        "- Velocidad: km/h o min/km. Duracion: HH:MM o 'Xh Ymin'. Training Effect: redondea a 1 decimal.\n"
-                        "- Si una seccion no tiene datos: escribe '- Sin datos disponibles para esta fecha.'\n"
-                        "- CADA punto de lista en su PROPIA LINEA con '- '. NUNCA varios puntos en la misma linea."
+                        "- ZONAS FC: copia las lineas exactas del bloque 'ZONAS FC REALES GARMIN'.\n"
+                        "- SUENO: horas y minutos (nunca segundos). Fases y puntuacion si disponibles.\n"
+                        "- BODY BATTERY: interpreta el balance como energia disponible/gastada.\n"
+                        "- PROHIBIDO: floats crudos, velocidad en m/s, duracion en segundos.\n"
+                        "- Velocidad: km/h o min/km. Duracion: HH:MM o 'Xh Ymin'.\n"
+                        "- Si una seccion no tiene datos: '- Sin datos disponibles para esta fecha.'\n"
+                        "- CADA punto de lista en su PROPIA LINEA con '- '."
                     ),
                 })
             else:
