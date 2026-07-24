@@ -5175,23 +5175,34 @@ class TrainerAgent:
                         "start_date": user_date,
                         "end_date": user_date,
                     })
+                    # Log raw para diagnóstico (primeros 200 chars del raw antes de compactar)
+                    log.info(f"body_battery raw({user_date}): {(raw_bb or '')[:200]}")
                     bb_data = _compact_tool_result(raw_bb, "get_body_battery")
-                    log.info(f"body_battery({user_date}): {bb_data[:120] if bb_data else 'None'}")
+                    log.info(f"body_battery compact({user_date}): {bb_data[:120] if bb_data else 'None'}")
                     if bb_data and bb_data != "(sin datos)":
                         context_parts.append(f"BODY BATTERY del {user_date}:\n{bb_data}")
                 except Exception as e:
-                    log.debug(f"body_battery error: {e}")
+                    log.info(f"body_battery error: {e}")
 
                 # Sueño de la noche previa (recuperación pre-actividad)
+                # Garmin almacena el sueño bajo la fecha de DESPERTAR (user_date),
+                # no bajo la fecha en que te acostaste (user_date - 1).
                 try:
                     night_before = (date.fromisoformat(user_date) - timedelta(days=1)).isoformat()
-                    raw_sleep = await call_tool(self.mcp_session, "get_sleep_data", {"date": night_before})
-                    sleep_data = _compact_tool_result(raw_sleep, "get_sleep_data")
-                    log.info(f"sleep({night_before}): {sleep_data[:120] if sleep_data else 'None'}")
-                    if sleep_data and sleep_data != "(sin datos)":
-                        context_parts.append(f"SUENO noche previa ({night_before}):\n{sleep_data}")
+                    # Intentar con user_date primero (= fecha de despertar, que es como Garmin indexa)
+                    _sleep_added = False
+                    for _sleep_date in (user_date, night_before):
+                        _raw_s = await call_tool(self.mcp_session, "get_sleep_data", {"date": _sleep_date})
+                        _sd = _compact_tool_result(_raw_s, "get_sleep_data")
+                        log.info(f"sleep({_sleep_date}): {_sd[:120] if _sd else 'None'}")
+                        if _sd and _sd != "(sin datos)":
+                            context_parts.append(f"SUENO noche previa ({_sleep_date}):\n{_sd}")
+                            _sleep_added = True
+                            break
+                    if not _sleep_added:
+                        log.info("sleep: no se encontraron datos en ninguna fecha")
                 except Exception as e:
-                    log.debug(f"sleep error: {e}")
+                    log.info(f"sleep error: {e}")
 
                 # HRV del día de la actividad
                 try:
