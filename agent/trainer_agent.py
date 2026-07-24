@@ -376,6 +376,26 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
         # Procesado específico para récords personales
         if tool_name in {"get_personal_records", "get_personal_record"} and isinstance(data, list):
             return _compact_personal_records(data)
+        # Procesado específico para body battery: extrae campos clave antes del truncado
+        if tool_name == "get_body_battery" and isinstance(data, (dict, list)):
+            _bb_list = data if isinstance(data, list) else [data]
+            if _bb_list and isinstance(_bb_list[0], dict):
+                _bb = _bb_list[0]
+                _bb_out = {}
+                for _k, _aliases in (
+                    ("charged",  ["charged", "body_battery_charged", "bodyBatteryCharged"]),
+                    ("drained",  ["drained", "body_battery_drained", "bodyBatteryDrained"]),
+                    ("highest",  ["highestBodyBattery", "highest", "body_battery_highest"]),
+                    ("lowest",   ["lowestBodyBattery", "lowest", "body_battery_lowest"]),
+                    ("level",    ["body_battery_level", "bodyBatteryLevel", "bodyBatteryMostRecentValue", "current"]),
+                ):
+                    for _a in _aliases:
+                        _v = _bb.get(_a)
+                        if _v is not None:
+                            _bb_out[_k] = _v
+                            break
+                if _bb_out:
+                    return json.dumps(_bb_out, ensure_ascii=False, separators=(",", ":"))
         # Procesado específico para datos de sueño: extrae solo métricas clave antes del truncado
         if tool_name in {"get_sleep_data", "get_sleep_summary"} and isinstance(data, (dict, list)):
             _sd = data[0] if isinstance(data, list) and data else data
@@ -5367,10 +5387,12 @@ class TrainerAgent:
                 messages.insert(len(messages) - 1, {
                     "role": "system",
                     "content": (
-                        f"ANALISIS DE LA ACTIVIDAD DEL {user_date}:\n\n"
+                        f"DATOS DEL ENTRENAMIENTO DEL {user_date}:\n\n"
                         f"{analysis_block}\n\n"
                         f"{_zones_override}"
-                        "Escribe el analisis en Markdown con EXACTAMENTE estas secciones (cada una en su propia linea con ##):\n\n"
+                        "Eres Kairos, coach deportivo experto. Escribe un analisis detallado y conversacional "
+                        "hablando directamente al atleta. Usa estos datos como base y añade contexto e interpretacion.\n\n"
+                        "ESTRUCTURA — usa EXACTAMENTE estos headers ## (cada uno en su propia linea):\n\n"
                         "## \U0001f4ca Resumen ejecutivo\n"
                         "## \U0001f493 Distribucion por zonas de FC\n"
                         "## \u26a1 Efecto de entrenamiento y carga\n"
@@ -5378,15 +5400,18 @@ class TrainerAgent:
                         "## \U0001f6cc Estado pre-carrera (body battery y sueno)\n"
                         "## \U0001f504 Plan de recuperacion post-actividad\n"
                         "## \U0001f3af Recomendaciones para la proxima edicion\n\n"
-                        "FORMATO OBLIGATORIO: cada punto de lista en su PROPIA LINEA con '- '. "
-                        "NUNCA pongas varios puntos en la misma linea separados por ' - '.\n\n"
-                        "DATOS: usa los valores del bloque === arriba, interpreta con lenguaje natural de coach.\n"
-                        "ZONAS FC: si existe el bloque 'ZONAS FC REALES GARMIN', copia esas lineas exactas.\n"
-                        "SUENO: si hay bloque === SUENO, muestra duracion en 'Xh Ymin', fases y puntuacion. NUNCA segundos.\n"
-                        "BODY BATTERY: si hay bloque === BODY BATTERY, interpreta el balance energia del dia.\n"
-                        "Si una seccion no tiene datos disponibles, escribe '- Sin datos para esta fecha.'\n"
-                        "PROHIBIDO: floats crudos como '3.9000000953674316', velocidad en m/s, duracion en segundos.\n"
-                        "Velocidad: km/h o min/km. Duracion: HH:MM o 'Xh Ymin'. TSS/carga: interpreta como coach."
+                        "ESTILO: cada seccion debe tener 2-4 puntos (- ) con interpretacion real de coach. "
+                        "Ejemplo: en lugar de '- TSS: 162.9' escribe '- TSS de 162.9: sesion muy exigente que "
+                        "requiere 48-72h de recuperacion antes de volver a intensidad alta.'\n"
+                        "Interpreta FC, zonas, desnivel, carga en terminos de esfuerzo, adaptacion y recuperacion.\n\n"
+                        "REGLAS TECNICAS:\n"
+                        "- ZONAS FC: si existe bloque 'ZONAS FC REALES GARMIN', copia esas lineas exactas (no cambies los valores).\n"
+                        "- SUENO: en horas y minutos (nunca segundos). Menciona fases y puntuacion si estan disponibles.\n"
+                        "- BODY BATTERY: interpreta cargado/drenado con contexto de recuperacion.\n"
+                        "- PROHIBIDO: floats crudos como '3.7999953674316', velocidad en m/s, duracion en segundos.\n"
+                        "- Velocidad: km/h o min/km. Duracion: HH:MM o 'Xh Ymin'. Training Effect: redondea a 1 decimal.\n"
+                        "- Si una seccion no tiene datos: escribe '- Sin datos disponibles para esta fecha.'\n"
+                        "- CADA punto de lista en su PROPIA LINEA con '- '. NUNCA varios puntos en la misma linea."
                     ),
                 })
             else:
