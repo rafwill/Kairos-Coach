@@ -5156,7 +5156,7 @@ class TrainerAgent:
                         "end_date": user_date,
                     })
                     bb_data = _compact_tool_result(raw_bb, "get_body_battery")
-                    log.debug(f"body_battery({user_date}): {bb_data[:120] if bb_data else 'None'}")
+                    log.info(f"body_battery({user_date}): {bb_data[:120] if bb_data else 'None'}")
                     if bb_data and bb_data != "(sin datos)":
                         context_parts.append(f"BODY BATTERY del {user_date}:\n{bb_data}")
                 except Exception as e:
@@ -5167,7 +5167,7 @@ class TrainerAgent:
                     night_before = (date.fromisoformat(user_date) - timedelta(days=1)).isoformat()
                     raw_sleep = await call_tool(self.mcp_session, "get_sleep_data", {"date": night_before})
                     sleep_data = _compact_tool_result(raw_sleep, "get_sleep_data")
-                    log.debug(f"sleep({night_before}): {sleep_data[:120] if sleep_data else 'None'}")
+                    log.info(f"sleep({night_before}): {sleep_data[:120] if sleep_data else 'None'}")
                     if sleep_data and sleep_data != "(sin datos)":
                         context_parts.append(f"SUENO noche previa ({night_before}):\n{sleep_data}")
                 except Exception as e:
@@ -5367,31 +5367,26 @@ class TrainerAgent:
                 messages.insert(len(messages) - 1, {
                     "role": "system",
                     "content": (
-                        f"DATOS DE LA ACTIVIDAD DEL {user_date} (usa estos como base exacta):\n\n"
+                        f"ANALISIS DE LA ACTIVIDAD DEL {user_date}:\n\n"
                         f"{analysis_block}\n\n"
                         f"{_zones_override}"
-                        "INSTRUCCIONES:\n"
-                        "1. Estructura la respuesta en Markdown con estas secciones:\n"
-                        "   ## \U0001f4ca Resumen ejecutivo\n"
-                        "   ## \U0001f493 Distribucion por zonas de FC\n"
-                        "   ## \u26a1 Efecto de entrenamiento y carga\n"
-                        "   ## \U0001f4a7 Hidratacion recomendada\n"
-                        "   ## \U0001f6cc Estado pre-carrera (body battery y sueno)\n"
-                        "   ## \U0001f504 Plan de recuperacion post-actividad\n"
-                        "   ## \U0001f3af Recomendaciones para la proxima edicion\n\n"
-                        "2. ZONAS FC: copia las lineas exactas del bloque 'ZONAS FC REALES GARMIN'. "
-                        "NUNCA uses zonas_fc_estimadas ni calcules zonas por tu cuenta.\n"
-                        "3. Datos numericos del bloque ===: usa los valores calculados (no recalcules ni redondees diferente).\n"
-                        "4. Sueno y body battery: interpreta con lenguaje natural. "
-                        "Si hay datos de sueno en el bloque === SUENO, SIEMPRE incluye duracion, fases y puntuacion. "
-                        "NUNCA digas 'N segundos' — usa horas y minutos.\n"
-                        "5. TSS, carga, efecto de entrenamiento: interpreta con lenguaje de coach "
-                        "(alto, moderado, exigente, etc.) y explica implicaciones para la recuperacion.\n"
-                        "6. Plan de recuperacion y recomendaciones: especificas y personalizadas al atleta "
-                        "y al tipo de entrenamiento realizado.\n"
-                        "7. FORMATO: cada punto de lista en su propia linea. "
-                        "PROHIBIDO: velocidad en m/s, duracion en segundos, floats crudos como '3.9000000953674316'. "
-                        "Velocidad: km/h o min/km. Duracion: HH:MM:SS o 'X h Y min'."
+                        "Escribe el analisis en Markdown con EXACTAMENTE estas secciones (cada una en su propia linea con ##):\n\n"
+                        "## \U0001f4ca Resumen ejecutivo\n"
+                        "## \U0001f493 Distribucion por zonas de FC\n"
+                        "## \u26a1 Efecto de entrenamiento y carga\n"
+                        "## \U0001f4a7 Hidratacion recomendada\n"
+                        "## \U0001f6cc Estado pre-carrera (body battery y sueno)\n"
+                        "## \U0001f504 Plan de recuperacion post-actividad\n"
+                        "## \U0001f3af Recomendaciones para la proxima edicion\n\n"
+                        "FORMATO OBLIGATORIO: cada punto de lista en su PROPIA LINEA con '- '. "
+                        "NUNCA pongas varios puntos en la misma linea separados por ' - '.\n\n"
+                        "DATOS: usa los valores del bloque === arriba, interpreta con lenguaje natural de coach.\n"
+                        "ZONAS FC: si existe el bloque 'ZONAS FC REALES GARMIN', copia esas lineas exactas.\n"
+                        "SUENO: si hay bloque === SUENO, muestra duracion en 'Xh Ymin', fases y puntuacion. NUNCA segundos.\n"
+                        "BODY BATTERY: si hay bloque === BODY BATTERY, interpreta el balance energia del dia.\n"
+                        "Si una seccion no tiene datos disponibles, escribe '- Sin datos para esta fecha.'\n"
+                        "PROHIBIDO: floats crudos como '3.9000000953674316', velocidad en m/s, duracion en segundos.\n"
+                        "Velocidad: km/h o min/km. Duracion: HH:MM o 'Xh Ymin'. TSS/carga: interpreta como coach."
                     ),
                 })
             else:
