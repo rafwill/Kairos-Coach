@@ -3316,6 +3316,81 @@ _GARMIN_ZONE_NAMES_ES = {
     5: "Máximo",
 }
 
+# Mapeo de typeKey de actividades Garmin → nombre en español
+_GARMIN_ACTIVITY_NAMES_ES: dict[str, str] = {
+    "trail_running":           "Trail Running",
+    "running":                 "Running",
+    "indoor_running":          "Running Indoor (Cinta)",
+    "road_biking":             "Ciclismo de Carretera",
+    "mountain_biking":         "Ciclismo MTB",
+    "cycling":                 "Ciclismo",
+    "indoor_cycling":          "Ciclismo Indoor",
+    "virtual_ride":            "Ciclismo Virtual",
+    "gravel_cycling":          "Ciclismo Gravel",
+    "e_bike_mountain":         "E-Bike MTB",
+    "e_bike_fitness":          "E-Bike Carretera",
+    "strength_training":       "Entrenamiento de Fuerza",
+    "functional_strength_training": "Fuerza Funcional",
+    "swimming":                "Natación",
+    "lap_swimming":            "Natación en Piscina",
+    "open_water_swimming":     "Natación Aguas Abiertas",
+    "hiking":                  "Senderismo",
+    "walking":                 "Caminata",
+    "yoga":                    "Yoga",
+    "pilates":                 "Pilates",
+    "cardio_training":         "Cardio",
+    "fitness_equipment":       "Máquinas Fitness",
+    "elliptical":              "Elíptica",
+    "stair_climbing":          "Escaleras/Step",
+    "rowing":                  "Remo",
+    "paddleboarding":          "Paddle Surf",
+    "kayaking":                "Kayak",
+    "skiing":                  "Esquí",
+    "snowboarding":            "Snowboard",
+    "cross_country_skiing":    "Esquí de Fondo",
+    "triathlon":               "Triatlón",
+    "multi_sport":             "Multideporte",
+    "tennis":                  "Tenis",
+    "soccer":                  "Fútbol",
+    "basketball":              "Baloncesto",
+    "golf":                    "Golf",
+    "breathwork":              "Respiración/Mindfulness",
+}
+
+
+def _get_activity_name_es(act_type) -> str:
+    """Devuelve el nombre en español del tipo de actividad Garmin."""
+    if isinstance(act_type, dict):
+        key = str(act_type.get("typeKey") or act_type.get("typeName") or "").lower()
+    else:
+        key = str(act_type or "").lower()
+    # Buscar coincidencia exacta primero
+    if key in _GARMIN_ACTIVITY_NAMES_ES:
+        return _GARMIN_ACTIVITY_NAMES_ES[key]
+    # Coincidencia parcial por palabras clave
+    if "trail" in key:
+        return "Trail Running"
+    if "mountain_bik" in key or "mtb" in key:
+        return "Ciclismo MTB"
+    if "bik" in key or "cycl" in key or "cicl" in key:
+        return "Ciclismo"
+    if "run" in key or "corr" in key:
+        return "Running"
+    if "strength" in key or "fuerza" in key or "weight" in key:
+        return "Entrenamiento de Fuerza"
+    if "swim" in key or "natac" in key:
+        return "Natación"
+    if "hik" in key or "trek" in key:
+        return "Senderismo"
+    if "walk" in key:
+        return "Caminata"
+    if "yoga" in key:
+        return "Yoga"
+    # Fallback: formatear el typeKey si está disponible
+    if key:
+        return key.replace("_", " ").title()
+    return ""
+
 
 def _hr_zone_bar(pct: float, width: int = 10) -> str:
     """Barra visual █░ proporcional al porcentaje de zona de FC."""
@@ -3377,8 +3452,9 @@ def _build_activity_analysis_block(
     # ── Sección 1: Resumen básico ──────────────────────────────────────────
     lines.append("=== RESUMEN DE ACTIVIDAD (calculado) ===")
     lines.append(f"Nombre: {name}")
-    if act_type:
-        lines.append(f"Tipo: {act_type}")
+    _deporte_es = _get_activity_name_es(act_type)
+    if _deporte_es:
+        lines.append(f"Deporte: {_deporte_es}")
     if dur_s:
         lines.append(f"Duracion: {_seconds_to_hhmmss(dur_s)}")
         lines.append(f"Duracion total: {dur_s:.0f} segundos ({dur_s/3600:.2f} horas)")
