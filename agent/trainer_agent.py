@@ -5399,9 +5399,11 @@ class TrainerAgent:
                     _plan_title = _plan_obj.get("title") or _plan_obj.get("name") or "Plan activo"
                     _plan_ctx = (
                         f"\nPLAN DE ENTRENAMIENTO ACTIVO: {_plan_title}\n"
-                        "Tienes en cuenta este plan al dar el consejo de recuperación: "
-                        "no puedes recomendar 72h de descanso total si el plan tiene sesion al dia siguiente. "
-                        "Adapta la recuperacion a lo que el plan marca (sesiones suaves, descanso activo, etc.).\n"
+                        "Usa este plan como contexto para ver la progresión del atleta y las sesiones previstas, "
+                        "pero la recomendacion de recuperacion debe basarse SIEMPRE en los indicadores fisiologicos "
+                        "(TSS/ATL/CTL/TSB, sueno, body battery, HRV). "
+                        "Si los datos indican que el cuerpo necesita descanso, recomendalo aunque haya sesion planificada. "
+                        "Si los indicadores estan bien, puedes mencionar que el plan prevé X y el atleta está en condiciones de afrontarlo.\n"
                     )
                 else:
                     _plan_ctx = (
@@ -5431,11 +5433,13 @@ class TrainerAgent:
                         "Ejemplo: en lugar de '- TSS: 162.9' escribe '- TSS de 162.9: sesion muy exigente.'\n"
                         "Interpreta FC, zonas, desnivel, carga en terminos de esfuerzo y adaptacion.\n\n"
                         "SECCION '## \U0001f504 Recuperacion y proximas sesiones' (MUY IMPORTANTE):\n"
-                        "- Analiza la carga real (TSS, ATL/CTL/TSB si disponibles), el sueno y el body battery.\n"
-                        "- Si hay plan activo: adapta la recuperacion al plan (no recomiendas descanso si hay sesion).\n"
-                        "- Si no hay plan: da consejo de recuperacion personalizado Y sugiere que un plan "
-                        "estructurado ayudaria a gestionar mejor estas cargas.\n"
-                        "- Incluye: que hacer mañana, qué hacer en 2-3 dias, señales de alerta a vigilar.\n"
+                        "- Basa la recomendacion SIEMPRE en TSS, ATL/CTL/TSB, sueno, body battery y HRV.\n"
+                        "- Si los indicadores dicen descanso: recomendalo con claridad, aunque haya sesion en el plan.\n"
+                        "- Si los indicadores dicen que el atleta esta en buenas condiciones: puedes indicar que \n"
+                        "  el plan prevé una sesion y que los datos sugieren que puede afrontarla bien.\n"
+                        "- Si no hay plan: da consejo personalizado y sugiere que un plan estructurado \n"
+                        "  ayudaria a dosificar mejor la carga.\n"
+                        "- Incluye: que hacer mañana, que hacer en 2-3 dias, señales de alerta a vigilar.\n"
                         "- Añade recomendaciones tecnicas para la proxima sesion similar (pace, zonas, nutricion).\n\n"
                         "REGLAS TECNICAS:\n"
                         "- ZONAS FC: copia las lineas exactas del bloque 'ZONAS FC REALES GARMIN'.\n"
