@@ -19,7 +19,7 @@
 - Prompt y prompt compacto alineados al nuevo enfoque de coach.
 - Limpieza de memoria JSON legacy en runtime.
 - Documentacion principal alineada con DB-first.
-- Analisis profundo de actividad por fecha: pre-fetch enriquecido con zonas FC, hidratacion, sueno y body battery calculados en Python (el LLM solo interpreta y hace coaching).
+- Analisis profundo de actividad por fecha: pre-fetch enriquecido con zonas FC reales (Garmin, cascada 3 estrategias), body battery (compact handler), sueno (fecha exacta + fallback), HRV (compact handler + mapeo correcto de campos) y carga calculados en Python. El LLM solo interpreta. 6 secciones de salida estructuradas.
 - Arquitectura de dos capas documentada en system prompt: capa datos vs capa coaching.
 - Correccion de busqueda de actividades por fecha (campo start_time snake_case del MCP).
 - Auto-login con contrasena cifrada Fernet: al arrancar, si el usuario existe, accede directamente sin pedir password. Flujo de recuperacion si la contrasena de Garmin Connect cambia.
@@ -96,6 +96,15 @@
 
 #### 34) Protocolo de revisión post-sesión como entrenador
 - Nota estructurada corta al compartir actividad sin pedir analisis profundo: que fue bien / que se desvio / un ajuste.
+
+#### 41) Output del análisis de actividad — mejoras UX (2026-07-25)
+- Zonas FC sin barras gráficas (solo texto: nombre · rango bpm · %).
+- Tipo de deporte como primer bullet del resumen ejecutivo.
+- Secciones Plan de recuperación + Recomendaciones fusionadas en una sola: Recuperación y próximas sesiones.
+- Plan de entrenamiento activo inyectado como contexto (no restricción): si los indicadores piden descanso, se recomienda aunque haya sesión planificada.
+- HRV con datos reales (fix campo lastNightAvg + compact handler + media 7d + estado).
+- Estado pre-carrera con valores numéricos reales + interpretación coaching (body battery, sueño con fases, HRV).
+- Instrucciones de sección reescritas en prosa para evitar que llama-70b las copie como bullets de output.
 
 ---
 

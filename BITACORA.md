@@ -74,10 +74,10 @@ Este archivo registra el tiempo invertido por dia en el proyecto.
 | 22-07-2026 | 00:00 | sin sesiones registradas |
 | 23-07-2026 | 02:00 | session store, turnos 14:55–16:54 hora local (UTC+2) |
 | 24-07-2026 | 15:27 | session store, turnos 10:13–01:40+1 hora local (UTC+2); overhaul TSS, zonas FC reales, sleep/body-battery, HRV |
-| 25-07-2026 | en curso | session store (inicio ~01:40 hora local, UTC+2) |
+| 25-07-2026 | 02:30 | session store (turnos 01:04–03:30 hora local UTC+2, estimación al cierre de sesión) |
 
 ## Total acumulado
-- 43:51 (+ sesión 25-07 en curso)
+- 45:51
 
 ## Plantilla para nuevas entradas
 
