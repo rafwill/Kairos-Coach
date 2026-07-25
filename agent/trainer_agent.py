@@ -397,6 +397,24 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
                 if _bb_out:
                     return json.dumps(_bb_out, ensure_ascii=False, separators=(",", ":"))
         # Procesado específico para datos de sueño: extrae solo métricas clave antes del truncado
+        # Procesado específico para HRV: extrae campos clave antes del truncado
+        if tool_name == "get_hrv_data" and isinstance(data, (dict, list)):
+            _hd = data[0] if isinstance(data, list) and data else data
+            if isinstance(_hd, dict):
+                _hrv_out = {}
+                for _k, _aliases in (
+                    ("lastNightAvg",  ["lastNightAvg", "last_night_avg_hrv_ms", "avgOvernightHrv", "avgHrv", "averageHrv", "lastNight"]),
+                    ("weeklyAvg",     ["weeklyAvg", "weekly_avg_hrv_ms", "weeklyAvgHrv"]),
+                    ("status",        ["status", "hrvStatus"]),
+                    ("high5Min",      ["last_night_5min_high_hrv_ms", "highHrv", "high5Min"]),
+                ):
+                    for _a in _aliases:
+                        _v = _hd.get(_a)
+                        if _v is not None:
+                            _hrv_out[_k] = _v
+                            break
+                if _hrv_out:
+                    return json.dumps(_hrv_out, ensure_ascii=False, separators=(",", ":"))
         if tool_name in {"get_sleep_data", "get_sleep_summary"} and isinstance(data, (dict, list)):
             _sd = data[0] if isinstance(data, list) and data else data
             if isinstance(_sd, dict):
@@ -3713,14 +3731,24 @@ def _build_activity_analysis_block(
             hrv_json_str = hrv_raw.split("\n", 1)[1].strip() if "\n" in hrv_raw else hrv_raw
             hd = json.loads(hrv_json_str)
             if isinstance(hd, dict):
-                avg_hrv  = hd.get("last_night_avg_hrv_ms") or hd.get("avgHrv") or hd.get("averageHrv")
-                high_hrv = hd.get("last_night_5min_high_hrv_ms") or hd.get("highHrv")
+                avg_hrv  = (hd.get("lastNightAvg") or hd.get("last_night_avg_hrv_ms")
+                            or hd.get("avgOvernightHrv") or hd.get("avgHrv")
+                            or hd.get("averageHrv") or hd.get("lastNight"))
+                high_hrv = hd.get("high5Min") or hd.get("last_night_5min_high_hrv_ms") or hd.get("highHrv")
+                weekly_hrv = hd.get("weeklyAvg") or hd.get("weekly_avg_hrv_ms")
+                status_hrv = hd.get("status") or hd.get("hrvStatus")
                 lines.append("")
                 lines.append("=== HRV DIA ACTIVIDAD ===")
                 if avg_hrv:
-                    lines.append(f"HRV promedio noche: {avg_hrv} ms")
+                    lines.append(f"HRV promedio noche: {float(avg_hrv):.0f} ms")
+                if weekly_hrv:
+                    lines.append(f"HRV media 7 dias: {float(weekly_hrv):.0f} ms")
                 if high_hrv:
-                    lines.append(f"HRV maximo 5min: {high_hrv} ms")
+                    lines.append(f"HRV maximo 5min: {float(high_hrv):.0f} ms")
+                if status_hrv:
+                    lines.append(f"Estado HRV: {status_hrv}")
+                if not avg_hrv:
+                    lines.append(f"(raw compact: {hrv_json_str[:150]})")
         except Exception:
             lines.append("")
             lines.append("=== HRV DIA ACTIVIDAD ===")
@@ -5207,7 +5235,7 @@ class TrainerAgent:
                 try:
                     raw_hrv = await call_tool(self.mcp_session, "get_hrv_data", {"date": user_date})
                     hrv_data = _compact_tool_result(raw_hrv, "get_hrv_data")
-                    log.debug(f"hrv({user_date}): {hrv_data[:80] if hrv_data else 'None'}")
+                    log.info(f"hrv({user_date}): {hrv_data[:120] if hrv_data else 'None'}")
                     if hrv_data and hrv_data != "(sin datos)":
                         context_parts.append(f"HRV del {user_date}:\n{hrv_data}")
                 except Exception as e:
