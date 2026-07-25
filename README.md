@@ -213,10 +213,15 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
 
 * **📊 Análisis profundo de actividades por fecha:**
   - Pregunta directamente: *"Analiza mi competición del 2 de julio"* y el agente localiza la actividad automáticamente.
-  - Pre-fetch enriquecido: antes de llamar al LLM, el sistema carga actividad + zonas FC reales (cascada `get_activity_hr_in_timezones`) + body battery (extracción compacta) + sueño (fecha exacta con fallback) + HRV + carga de entrenamiento.
+  - Pre-fetch enriquecido: antes de llamar al LLM, el sistema carga actividad + zonas FC reales (cascada `get_activity_hr_in_timezones`) + body battery (extracción compacta) + sueño (fecha exacta con fallback) + HRV (compact handler con mapeo correcto de campos `lastNightAvg`/`weeklyAvg`/`status`) + carga de entrenamiento.
   - Todos los cálculos se realizan **en Python**: zonas FC Z1–Z5 con nombre en español, rango de FC en bpm y % sobre la duración total; ritmo en min/km; hidratación estimada; efecto de entrenamiento; sueño con fases; HRV. El LLM solo interpreta.
-  - El análisis post-actividad incluye 6 secciones: resumen ejecutivo, distribución por zonas de FC, efecto de entrenamiento y carga, hidratación, estado pre-carrera (body battery + sueño + HRV) y recuperación y próximas sesiones.
-  - La sección de recuperación considera TSS/ATL/CTL/TSB + sueño + body battery + HRV. El plan de entrenamiento activo (si existe) se inyecta como contexto — no como restricción: si los indicadores fisiológicos piden descanso, Kairos lo recomienda aunque el plan tenga sesión.
+  - El análisis post-actividad genera **6 secciones**:
+    1. **Resumen ejecutivo** — tipo de deporte como primer dato, luego duración, distancia, ritmo, FC, desnivel, calorías, TSS
+    2. **Distribución por zonas de FC** — nombre español · rango bpm · % (sin barras gráficas)
+    3. **Efecto de entrenamiento y carga** — Training Effect, carga de sesión, minutos de alta/moderada intensidad
+    4. **Hidratación recomendada** — estimación basada en duración y temperatura
+    5. **Estado pre-carrera** — body battery (valor numérico + interpretación), sueño con fases (valor + interpretación), HRV nocturno (valor + interpretación del SNA)
+    6. **Recuperación y próximas sesiones** — basada en TSS/ATL/CTL/TSB + sueño + body battery + HRV; plan activo como contexto (no restricción)
 
 * **💾 Memoria persistente entre sesiones:**
   - Al salir, el agente genera automáticamente un resumen compacto de la sesión con el propio LLM.
