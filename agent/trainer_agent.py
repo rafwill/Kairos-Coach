@@ -264,7 +264,7 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 10  # v10: trail calibrado por zonas; hike/walk y fuerza priorizan hrTSS por zonas sin calibración
+_TSS_FORMULA_VERSION = 11  # v11: ciclismo prioriza potencia+FTP; fallback principal a hrTSS por zonas si falta potencia o FTP
 
 # Calibración empírica para trail running al usar hrTSS por tiempo en zonas.
 # Se aplica antes del cap de 500 para evitar saturaciones prematuras en ultras.
@@ -1529,6 +1529,30 @@ def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float
     return max(0.0, min(hours * (if_pow ** 2) * 100.0, 500.0))
 
 
+def _has_activity_power_data(activity: dict) -> bool:
+    """Detecta si la actividad incluye un dato de potencia utilizable (>0)."""
+    if not isinstance(activity, dict):
+        return False
+    for key in (
+        "normalizedPower",
+        "normalizedPowerWatts",
+        "normalized_power_watts",
+        "avgPower",
+        "avg_power_watts",
+        "averagePower",
+        "average_power_watts",
+    ):
+        raw = activity.get(key)
+        if raw is None:
+            continue
+        try:
+            if float(raw) > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _estimate_tss_from_threshold_pace(
     activity: dict,
     hours: float,
@@ -1866,6 +1890,17 @@ def _estimate_session_tss(
         tss_pow = _estimate_tss_from_power_ftp(activity, ftp=ftp, hours=hours)
         if tss_pow is not None:
             return tss_pow, "TSS"
+
+        tss_hr_zones = _estimate_hr_tss_from_zones(
+            activity,
+            hours=hours,
+            hr_zones_raw=hr_zones_raw,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+        )
+        if tss_hr_zones is not None:
+            return tss_hr_zones, "hrTSS"
+
         if_hr = _estimate_if_from_hr(
             activity,
             cycling_formula=True,
@@ -5534,7 +5569,13 @@ class TrainerAgent:
                 continue
             act_type = act.get("type") or act.get("activityType") or ""
             hr_zones_raw: str | None = None
-            if _is_trail_hike_walk_activity(act_type) or _is_strength_activity(act_type):
+            should_fetch_hr_zones = _is_trail_hike_walk_activity(act_type) or _is_strength_activity(act_type)
+            if _is_cycling_activity(act_type):
+                # En ciclismo, potencia+FTP es prioridad. Solo pedimos zonas si falta
+                # potencia utilizable o no hay FTP del usuario para calcular TSS por potencia.
+                should_fetch_hr_zones = should_fetch_hr_zones or (not cycling_ftp or not _has_activity_power_data(act))
+
+            if should_fetch_hr_zones:
                 act_id = act.get("id") or act.get("activityId")
                 act_id_key = str(act_id) if act_id is not None else ""
                 if act_id_key:

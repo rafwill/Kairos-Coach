@@ -1872,7 +1872,7 @@ class TestLoadFatigueModel:
         assert tss_embedded > 0
         assert tss_embedded < tss_avg_only
 
-    def test_estimate_tss_cycling_prefers_power_ftp_then_hr(self):
+    def test_estimate_tss_cycling_prefers_power_ftp_then_hr_zones_then_hr(self):
         act_pow = {
             "type": "cycling",
             "duration": 3600,
@@ -1884,6 +1884,30 @@ class TestLoadFatigueModel:
         assert label_pow == "TSS"
         assert abs(tss_pow - 70.6) < 1.0
 
+        hr_zones_raw = json.dumps(
+            [
+                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
+                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
+                {"zoneNumber": 3, "secsInZone": 0, "minHeartRateIn": 139, "maxHeartRateIn": 151},
+            ]
+        )
+
+        # Sin FTP (aunque haya potencia), usa zonas FC.
+        tss_no_ftp, label_no_ftp = _estimate_session_tss(act_pow, ftp=None, hr_zones_raw=hr_zones_raw)
+        tss_no_ftp_hr_only, _ = _estimate_session_tss(act_pow, ftp=None)
+        assert label_no_ftp == "hrTSS"
+        assert tss_no_ftp > 0
+        assert abs(tss_no_ftp - tss_no_ftp_hr_only) > 0.5
+
+        # Sin potencia (aunque haya FTP), usa zonas FC.
+        act_no_power = {"type": "cycling", "duration": 3600, "averageHR": 145, "maxHR": 175}
+        tss_zones, label_zones = _estimate_session_tss(act_no_power, ftp=250.0, hr_zones_raw=hr_zones_raw)
+        tss_no_zones_hr_only, _ = _estimate_session_tss(act_no_power, ftp=250.0)
+        assert label_zones == "hrTSS"
+        assert tss_zones > 0
+        assert abs(tss_zones - tss_no_zones_hr_only) > 0.5
+
+        # Sin zonas, fallback final a FC media.
         act_hr = {"type": "cycling", "duration": 3600, "averageHR": 145, "maxHR": 175}
         tss_hr, label_hr = _estimate_session_tss(act_hr, ftp=250.0)
         assert label_hr == "hrTSS"
