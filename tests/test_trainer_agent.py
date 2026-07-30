@@ -1610,6 +1610,94 @@ class TestLoadFatigueModel:
         status_emojis = {"🟢", "🟠", "🔴", "🟡"}
         assert any(e in out for e in status_emojis)
 
+
+class TestSportSpecificLoadProfiles:
+    @staticmethod
+    def _build_fake_activities(days: int, default_tss: float, high_tss_days: int = 0, high_tss: float = 0.0) -> list[dict]:
+        """Genera actividades ficticias con trainingLoad diario para pruebas del modelo."""
+        today = date.today()
+        out: list[dict] = []
+        for i in range(days):
+            d = (today - timedelta(days=i)).isoformat()
+            tss = high_tss if i < high_tss_days else default_tss
+            out.append(
+                {
+                    "activityId": 900000 + i,
+                    "startTimeLocal": f"{d}T08:00:00.0",
+                    "trainingLoad": float(tss),
+                }
+            )
+        return out
+
+    def test_running_profile_matches_tp_like_defaults(self):
+        profile = {"goals": {"primary": "running"}}
+        activities = self._build_fake_activities(days=56, default_tss=55.0)
+
+        out = _compute_load_fatigue_metrics(
+            activities=activities,
+            trend_payload={},
+            profile=profile,
+            days_window=56,
+        )
+
+        assert out is not None
+        assert out["model"]["sport"] == "running"
+        assert out["model"]["atl_tau_days"] == 7
+        assert out["model"]["ctl_tau_days"] == 42
+        assert out["ranges"]["tsb_abs_floor"] == -30.0
+        assert out["latest"]["atl"] > 0 and out["latest"]["ctl"] > 0
+
+    def test_trail_profile_uses_slower_atl_and_deeper_tsb_floor(self):
+        activities = self._build_fake_activities(days=56, default_tss=55.0)
+        running_profile = {"goals": {"primary": "running"}}
+        trail_profile = {"goals": {"primary": "trail running"}}
+
+        run_out = _compute_load_fatigue_metrics(
+            activities=activities,
+            trend_payload={},
+            profile=running_profile,
+            days_window=56,
+        )
+        trail_out = _compute_load_fatigue_metrics(
+            activities=activities,
+            trend_payload={},
+            profile=trail_profile,
+            days_window=56,
+        )
+
+        assert run_out is not None and trail_out is not None
+        assert trail_out["model"]["sport"] == "trail running"
+        assert trail_out["model"]["atl_tau_days"] == 8
+        assert trail_out["model"]["ctl_tau_days"] == 42
+        assert trail_out["ranges"]["tsb_abs_floor"] == -35.0
+        # Misma carga, ATL trail debe responder algo más lento (igual o menor que running).
+        assert float(trail_out["latest"]["atl"]) <= float(run_out["latest"]["atl"]) + 0.2
+
+    def test_triathlon_profile_uses_longer_ctl_and_flags_recent_overload(self):
+        # Bloque agudo reciente para simular sobrecarga en un atleta de triatlón.
+        activities = self._build_fake_activities(
+            days=56,
+            default_tss=45.0,
+            high_tss_days=10,
+            high_tss=140.0,
+        )
+        tri_profile = {"goals": {"primary": "triatlón"}}
+
+        out = _compute_load_fatigue_metrics(
+            activities=activities,
+            trend_payload={},
+            profile=tri_profile,
+            days_window=56,
+        )
+
+        assert out is not None
+        assert out["model"]["sport"] == "triatlón"
+        assert out["model"]["atl_tau_days"] == 7
+        assert out["model"]["ctl_tau_days"] == 45
+        assert out["ranges"]["tsb_abs_floor"] == -35.0
+        assert out["status"] in {"fatigue_high", "overload"}
+
+class TestLoadFatigueModel:
     # ── Tests de _estimate_session_tss ────────────────────────────────────────
 
     def test_estimate_tss_priority1_uses_garmin_training_load(self):
