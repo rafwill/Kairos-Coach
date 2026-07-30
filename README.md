@@ -75,7 +75,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
 │  TrainerAgent (trainer_agent.py)                                │
 │  Agente LLM · 6 proveedores · Tool calling · Pre-cómputo        │
 │  Rutas deterministas · Memoria · RAG · TSS/ATL/CTL/TSB          │
-│  Tools internas (kairos_*) · 246 tests                          │
+│  Tools internas (kairos_*) · suite de tests                     │
 └──────────┬────────────────────────────────┬─────────────────────┘
            │                                │
 ┌──────────▼──────────┐         ┌──────────▼──────────────────────┐
@@ -89,6 +89,49 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
 **Capa de datos (sistema):** conecta con Garmin Connect para obtener señales base (actividades, FC, sueño, HRV, body battery, etc.) y, sobre esos datos, pre-procesa y calcula en Python las métricas derivadas antes de entregárselas al LLM (ritmo en min/km, zonas FC reales con nombre y rango en bpm, hidratación estimada, TSS por sesión y serie ATL/CTL/TSB).
 
 **Capa de coaching (LLM):** recibe datos ya calculados y aporta interpretación, contextualización con el perfil del atleta y recomendaciones accionables. Nunca hace aritmética.
+
+## 🗄️ Qué guarda Kairos en la BBDD (Supabase)
+
+Kairos no guarda solo chat: persiste estado operativo completo por usuario para que el coaching sea continuo y trazable.
+
+- **`app_user`**
+  - Identidad del usuario de aplicación (`id`, `username`)
+  - `password_hash` (PBKDF2)
+  - `credentials` auxiliares (incluye password Garmin cifrada con Fernet cuando aplica)
+
+- **`user_profile`**
+  - Perfil completo del atleta en JSON (`data`)
+  - Incluye objetivos (`goals`), plan activo en espejo (`training_plan`), rendimiento (`performance`) y bloque de carga/fatiga (`load_metrics`)
+  - También se persisten trazas recientes de inferencia de running (`running_session_inference`) para auditoría/calibración
+
+- **`session_context`**
+  - Historial reciente de conversación (`history`, limitado)
+  - Resúmenes de sesión (`session_summaries`)
+
+- **`athlete_knowledge`**
+  - Base de conocimiento textual del atleta (`content`) para contexto RAG
+
+- **`gemini_usage`**
+  - Consumo diario de tokens por usuario/clave (`tokens`)
+  - Estado de cuota agotada (`quota_exhausted`)
+
+- **`training_plan`**
+  - Cabecera del plan (título, objetivo, dificultad, duración, estado, fuente)
+  - `plan_data` en JSON para estructura extendida
+
+- **`training_plan_session`**
+  - Sesiones del plan por semana/día
+  - Tipo de sesión, duración, intensidad, ejercicios y notas
+
+- **`training_plan_version`**
+  - Snapshot versionado de cada cambio del plan
+  - `version_number` + `change_reason` para trazabilidad
+
+- **`load_metrics_daily`**
+  - Serie diaria de carga/fatiga por usuario: `TSS`, `ATL`, `CTL`, `TSB`, `activities_count`
+  - Base para análisis histórico y cálculo incremental
+
+**Importante:** hoy Kairos no persiste una tabla propia con todas las actividades Garmin crudas. La persistencia principal está centrada en perfil, contexto, planes y métricas derivadas.
 
 ---
 
@@ -148,6 +191,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
     - **ATL** (fatiga aguda, ventana 7 días por defecto): cuánto estás acumulando a corto plazo.
     - **CTL** (fitness crónico, ventana 42 días por defecto): tu nivel de forma construido en semanas/meses.
     - **TSB** (forma = CTL − ATL): disponibilidad real para entrenar hoy.
+  - En usuario nuevo, antes del primer briefing se fuerza un backfill completo desde Garmin para poblar la serie histórica en DB (hasta 120 días) y evitar arrancar con métricas vacías.
   - Los **tau** (constantes de tiempo) y **percentiles** se ajustan automáticamente al deporte principal del perfil:
     | Deporte | ATL tau | CTL tau | Percentiles TSB/ATL |
     |---------|--------:|--------:|---------------------|
@@ -256,7 +300,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
   - **Revisión post-sesión**: cuando el usuario comparte una actividad sin pedir análisis profundo, el coach da una nota estructurada rápida (qué fue bien / qué desvió / un ajuste).
 
 * **✅ CI/CD con GitHub Actions:**
-  - `.github/workflows/tests.yml` ejecuta la suite completa de pytest (246 tests) en cada push y pull request.
+  - `.github/workflows/tests.yml` ejecuta la suite completa de pytest en cada push y pull request.
   - Sin credenciales reales: los tests mockean toda la capa de Supabase y Garmin.
 
 ---
@@ -467,7 +511,8 @@ kairos-coach/
 │   ├── __init__.py
 │   ├── test_trainer_agent.py  # Tests de funciones puras + mock de Gemini.
 │   ├── test_main.py           # Tests de validaciones de input + flujo principal.
-│   └── test_storage.py        # Tests de persistencia DB-first y seguridad de credenciales.
+│   ├── test_storage.py        # Tests de persistencia DB-first y seguridad de credenciales.
+│   └── test_fit_tss_probe.py  # Tests sintéticos de detección de patrones de intervalos.
 ├── .env                   # Credenciales locales (no subir a git).
 ├── .env.example           # Plantilla de configuración con comentarios.
 ├── agent.log              # Log de ejecución del agente (local, no versionar).
@@ -670,7 +715,7 @@ Adicionalmente, durante el recálculo de carga se persiste una traza de inferenc
 
 ## 🧪 Tests
 
-El proyecto incluye una suite de **246 tests unitarios** que cubre las funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM.
+El proyecto incluye una suite activa de tests unitarios (233 validados en local a fecha 2026-07-30) que cubre las funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM.
 
 ### Instalar dependencias de desarrollo
 ```powershell
@@ -706,6 +751,7 @@ pytest --cov=agent --cov-report=html
 | `trainer_agent.py` | `_seconds_to_hhmmss`, `_normalize_date_args`, `_strip_garmin_object`, `_compact_tool_result`, `_compact_personal_records`, `_clean_schema_for_gemini`, `_GeminiCompletions._parse`, resolución de actividad por fecha, zonas FC y análisis profundo, estado proactivo 48h, fallbacks de planificación, modelo de carga/fatiga (TSS/ATL/CTL/TSB), configuración por deporte, tabla de tendencia `/carga`, plan trail específico, cálculo TSS por potencia+FTP / zonas FC / ritmo umbral / HR / RPE, fetch histórico por fechas |
 | `main.py` | `_validate_date`, `_validate_time`, `_validate_hours`, `_is_first_time`, KB enriquecida de onboarding, `_ensure_garmin_credentials`, `_build_enriched_athlete_knowledge` |
 | `storage.py` | sanitización de credenciales, no-persistencia de passwords Garmin |
+| `test_fit_tss_probe.py` | validación sintética del detector de intervalos (alta/media/baja probabilidad) |
 
 ---
 
