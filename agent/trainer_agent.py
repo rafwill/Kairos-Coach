@@ -2536,6 +2536,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     profile_changes = snapshot.get("profile_changes", []) or []
     plan_assigned = bool(snapshot.get("plan_assigned", False))
     plan_recommendation = str(snapshot.get("plan_recommendation") or "").strip()
+    daily_plan_decision = snapshot.get("daily_plan_decision") or {}
     body_battery = snapshot.get("body_battery", {}) or {}
     hrv = snapshot.get("hrv", {}) or {}
     sleep = snapshot.get("sleep", {}) or {}
@@ -2647,6 +2648,21 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         "### Recomendacion inicial",
         f"- {initial_recommendation}",
     ])
+    if isinstance(daily_plan_decision, dict) and daily_plan_decision.get("decision"):
+        decision = str(daily_plan_decision.get("decision") or "").strip().lower()
+        decision_label = {
+            "maintain": "mantener",
+            "reduce": "reducir",
+            "easy": "suave",
+            "rest": "descanso",
+        }.get(decision, decision or "n/d")
+        reason = str(daily_plan_decision.get("reason") or "").strip()
+        resulting = str(daily_plan_decision.get("resulting_session") or "").strip()
+        lines.append(f"- Motor determinista (día N): {decision_label}")
+        if reason:
+            lines.append(f"  - Motivo: {reason}")
+        if resulting:
+            lines.append(f"  - Sesión resultante: {resulting}")
     return "\n".join(lines)
 
 
@@ -3025,6 +3041,207 @@ def _build_startup_plan_recommendation(plan: dict) -> str:
     if today_focus:
         return f"Tienes plan activo ({title}). Sesión sugerida hoy: {today_focus}. ¿Quieres que la ajuste con tu estado actual?"
     return f"Tienes plan activo ({title}). ¿Quieres que adapte la sesión de hoy a ese plan?"
+
+
+def _extract_body_battery_level(payload: Any, target_date: str) -> float | None:
+    """Extrae nivel de Body Battery del día objetivo."""
+    day = _pick_day_payload(payload, target_date)
+    if not isinstance(day, dict):
+        return None
+    value = (
+        day.get("body_battery_level")
+        or day.get("bodyBatteryLevel")
+        or day.get("bodyBatteryMostRecentValue")
+        or day.get("current")
+    )
+    try:
+        return float(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def _extract_sleep_inputs(payload: Any, target_date: str) -> tuple[float | None, float | None]:
+    """Extrae horas de sueño y score del día objetivo."""
+    day = _pick_day_payload(payload, target_date)
+    if not isinstance(day, dict):
+        return (None, None)
+
+    sleep_hours = day.get("sleep_hours")
+    sleep_seconds = day.get("sleep_seconds") or day.get("sleepTimeSeconds")
+    if sleep_hours is None and sleep_seconds is not None:
+        try:
+            sleep_hours = float(sleep_seconds) / 3600.0
+        except Exception:
+            sleep_hours = None
+
+    score = day.get("sleep_score") or day.get("sleepScore")
+    try:
+        sleep_score = float(score) if score is not None else None
+    except Exception:
+        sleep_score = None
+
+    try:
+        sleep_hours_f = float(sleep_hours) if sleep_hours is not None else None
+    except Exception:
+        sleep_hours_f = None
+
+    return (sleep_hours_f, sleep_score)
+
+
+def _extract_hrv_inputs(payload: Any, target_date: str) -> tuple[float | None, float | None, str]:
+    """Extrae HRV media nocturna, media 7d y estado textual."""
+    day = _pick_day_payload(payload, target_date)
+    if not isinstance(day, dict):
+        return (None, None, "")
+
+    avg = (
+        day.get("last_night_avg_hrv_ms")
+        or day.get("lastNightAvg")
+        or day.get("avgOvernightHrv")
+        or day.get("avgHrv")
+    )
+    weekly = day.get("weekly_avg_hrv_ms") or day.get("weeklyAvg")
+    status = str(day.get("status") or "").strip().lower()
+
+    try:
+        avg_f = float(avg) if avg is not None else None
+    except Exception:
+        avg_f = None
+    try:
+        weekly_f = float(weekly) if weekly is not None else None
+    except Exception:
+        weekly_f = None
+
+    return (avg_f, weekly_f, status)
+
+
+def _resolve_today_plan_session(plan: dict) -> str:
+    """Obtiene una descripción breve de la sesión prevista hoy."""
+    if not isinstance(plan, dict):
+        return "sesión planificada"
+    today_focus = str(plan.get("today_focus") or plan.get("today_session") or "").strip()
+    if today_focus:
+        return today_focus
+    title = str(plan.get("title") or plan.get("name") or "sesión planificada").strip()
+    return title or "sesión planificada"
+
+
+def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | None:
+    """Motor determinista de ajuste diario del plan.
+
+    Entrada: TSB, ATL, TSS semanal, sueño, HRV, body battery y sesión planificada.
+    Salida: maintain, reduce, easy o rest.
+    """
+    if not isinstance(plan, dict):
+        return None
+
+    dates = snapshot.get("dates") or {}
+    today_iso = str(dates.get("today") or date.today().isoformat())
+
+    load_fatigue = snapshot.get("load_fatigue") or {}
+    latest = load_fatigue.get("latest") or {}
+    weekly = load_fatigue.get("weekly") or {}
+    ranges = load_fatigue.get("ranges") or {}
+
+    status = str(load_fatigue.get("status") or "neutral").strip().lower() or "neutral"
+    tsb = _safe_float(latest.get("tsb"), 0.0)
+    atl = _safe_float(latest.get("atl"), 0.0)
+    weekly_tss = _safe_float(weekly.get("current_tss"), 0.0)
+    atl_high = _safe_float(ranges.get("atl_high"), 0.0)
+
+    body_today_payload = (snapshot.get("body_battery") or {}).get("today")
+    hrv_today_payload = (snapshot.get("hrv") or {}).get("today")
+    sleep_today_payload = (snapshot.get("sleep") or {}).get("today")
+
+    bb_level = _extract_body_battery_level(body_today_payload, today_iso)
+    sleep_hours, sleep_score = _extract_sleep_inputs(sleep_today_payload, today_iso)
+    hrv_avg, hrv_weekly, hrv_status = _extract_hrv_inputs(hrv_today_payload, today_iso)
+    hrv_ratio = (hrv_avg / hrv_weekly) if (hrv_avg and hrv_weekly and hrv_weekly > 0) else None
+
+    low_bb = bb_level is not None and bb_level < 35.0
+    poor_sleep = (
+        (sleep_hours is not None and sleep_hours < 6.0)
+        or (sleep_score is not None and sleep_score < 60.0)
+    )
+    low_hrv = (
+        (hrv_ratio is not None and hrv_ratio < 0.90)
+        or (hrv_status in {"low", "unbalanced", "poor"})
+    )
+    high_weekly = (
+        _safe_float(weekly.get("high_tss"), 0.0) > 0
+        and weekly_tss >= _safe_float(weekly.get("high_tss"), 0.0)
+    )
+
+    stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv) + int(high_weekly)
+
+    # Reglas explícitas por estado.
+    if status == "overload":
+        decision = "rest"
+        rule = "overload"
+        reason = "TSB/estado en sobrecarga: activar descarga obligatoria"
+    elif status == "fatigue_high":
+        if stress_flags >= 2:
+            decision = "rest"
+            reason = "fatiga alta + señales de recuperación alteradas"
+        else:
+            decision = "easy"
+            reason = "fatiga alta: convertir sesión a suave"
+        rule = "fatigue_high"
+    elif status == "ready":
+        if stress_flags == 0:
+            decision = "maintain"
+            reason = "disponibilidad alta y recuperación estable"
+        elif stress_flags == 1:
+            decision = "reduce"
+            reason = "ready pero con una señal de riesgo"
+        else:
+            decision = "easy"
+            reason = "ready con múltiples señales de riesgo"
+        rule = "ready"
+    else:
+        if stress_flags >= 2:
+            decision = "easy"
+            reason = "estado neutral con recuperación comprometida"
+        elif stress_flags == 1:
+            decision = "reduce"
+            reason = "estado neutral con una señal de riesgo"
+        else:
+            decision = "maintain"
+            reason = "estado neutral sin alertas relevantes"
+        rule = "neutral"
+
+    planned_session = _resolve_today_plan_session(plan)
+    if decision == "rest":
+        resulting_session = "descanso + movilidad ligera (20-30 min)"
+    elif decision == "easy":
+        resulting_session = f"{planned_session} → versión suave (Z1-Z2, sin bloques intensos)"
+    elif decision == "reduce":
+        resulting_session = f"{planned_session} → reducir volumen 20-30% y bajar 1 zona de intensidad"
+    else:
+        resulting_session = planned_session
+
+    return {
+        "rule": rule,
+        "decision": decision,
+        "reason": reason,
+        "planned_session": planned_session,
+        "resulting_session": resulting_session,
+        "inputs": {
+            "status": status,
+            "tsb": tsb,
+            "atl": atl,
+            "atl_high": atl_high,
+            "weekly_tss": weekly_tss,
+            "body_battery": bb_level,
+            "sleep_hours": sleep_hours,
+            "sleep_score": sleep_score,
+            "hrv_avg": hrv_avg,
+            "hrv_weekly": hrv_weekly,
+            "hrv_ratio": hrv_ratio,
+            "hrv_status": hrv_status,
+            "stress_flags": stress_flags,
+        },
+    }
 
 
 def _build_goal_plan_fallback(profile: dict) -> str:
@@ -5937,6 +6154,7 @@ class TrainerAgent:
         snapshot["plan_assigned"] = bool(active_plan)
         if active_plan:
             snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
+            snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
         return _build_proactive_status_markdown(snapshot)
 
     async def build_onboarding_mcp_enrichment(self) -> dict:

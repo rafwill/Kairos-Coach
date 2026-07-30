@@ -35,6 +35,7 @@ from agent.trainer_agent import (
     _format_load_fatigue_summary,
     _resolve_sport_model_cfg,
     _build_recovery_fallback_snapshot,
+    _compute_daily_plan_adjustment,
     _clean_schema_for_gemini,
     _compact_personal_records,
     _compact_tool_result,
@@ -936,6 +937,62 @@ class TestStartupProactive:
         }
         out = _build_proactive_status_markdown(payload)
         assert "Tienes un objetivo activo (10K)" in out
+
+    def test_build_proactive_status_markdown_shows_deterministic_decision(self):
+        payload = {
+            "plan_assigned": True,
+            "plan_recommendation": "Plan activo",
+            "daily_plan_decision": {
+                "decision": "reduce",
+                "reason": "estado neutral con una señal de riesgo",
+                "resulting_session": "Rodaje 50' -> reducir volumen 20-30%",
+            },
+            "body_battery": {"summary": "sin datos"},
+            "hrv": {"summary": "sin datos"},
+            "sleep": {"summary": "sin datos"},
+            "trainings": [],
+        }
+        out = _build_proactive_status_markdown(payload)
+        assert "Motor determinista (día N): reducir" in out
+        assert "Motivo: estado neutral con una señal de riesgo" in out
+
+    def test_compute_daily_plan_adjustment_overload_forces_rest(self):
+        snapshot = {
+            "dates": {"today": date.today().isoformat()},
+            "load_fatigue": {
+                "status": "overload",
+                "latest": {"tsb": -40.0, "atl": 90.0},
+                "weekly": {"current_tss": 700.0},
+                "ranges": {"atl_high": 75.0},
+            },
+            "body_battery": {"today": {"date": date.today().isoformat(), "body_battery_level": 20}},
+            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 5.2, "sleep_score": 50}},
+            "hrv": {"today": {"date": date.today().isoformat(), "lastNightAvg": 35, "weeklyAvg": 50, "status": "low"}},
+        }
+        plan = {"title": "Plan 10K", "today_focus": "Series 6x800"}
+        out = _compute_daily_plan_adjustment(snapshot, plan)
+        assert out is not None
+        assert out["decision"] == "rest"
+        assert out["rule"] == "overload"
+
+    def test_compute_daily_plan_adjustment_ready_can_maintain(self):
+        snapshot = {
+            "dates": {"today": date.today().isoformat()},
+            "load_fatigue": {
+                "status": "ready",
+                "latest": {"tsb": 4.0, "atl": 55.0},
+                "weekly": {"current_tss": 300.0, "high_tss": 450.0},
+                "ranges": {"atl_high": 70.0},
+            },
+            "body_battery": {"today": {"date": date.today().isoformat(), "body_battery_level": 70}},
+            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 7.8, "sleep_score": 82}},
+            "hrv": {"today": {"date": date.today().isoformat(), "lastNightAvg": 52, "weeklyAvg": 50, "status": "balanced"}},
+        }
+        plan = {"title": "Plan 10K", "today_focus": "Tempo 40'"}
+        out = _compute_daily_plan_adjustment(snapshot, plan)
+        assert out is not None
+        assert out["decision"] == "maintain"
+        assert out["rule"] == "ready"
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_48h_collects_metrics(self):
