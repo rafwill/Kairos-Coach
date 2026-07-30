@@ -29,6 +29,7 @@ from agent.trainer_agent import (
     _build_athlete_knowledge_context,
     _build_proactive_status_markdown,
     _build_load_trend_table,
+    _classify_running_session_with_confidence,
     _estimate_session_tss,
     _compute_load_fatigue_metrics,
     _format_load_fatigue_summary,
@@ -38,6 +39,7 @@ from agent.trainer_agent import (
     _compact_personal_records,
     _compact_tool_result,
     _extract_activities_list,
+        _extract_threshold_pace_sec_per_km,
     _extract_iso_date_from_text,
     _generate_structured_plan_payload,
     _GeminiCompletions,
@@ -1517,6 +1519,23 @@ class TestLoadFatigueModel:
         assert label == "TSS"
         assert abs(tss - 100.0) < 1.0
 
+    def test_estimate_tss_running_uses_distance_meters_for_pace_fallback(self):
+        act = {
+            "type": "running",
+            "duration_seconds": 3600,
+            "distance_meters": 10000,
+        }
+        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+        assert label == "TSS"
+        # 10k en 1h => 6:00/km. Umbral 5:00/km => IF=0.833... => ~69.4 TSS
+        assert abs(tss - 69.4) < 1.0
+
+    def test_extract_threshold_pace_from_lactate_speed_mps_scaled_value(self):
+        pace = _extract_threshold_pace_sec_per_km({"lactate_threshold_speed_mps": 0.4083})
+        assert pace is not None
+        # 0.4083*10 m/s => ~4:05/km
+        assert 230.0 <= pace <= 260.0
+
     def test_estimate_tss_running_uses_higher_if_ceiling_than_trail(self):
         running_act = {
             "type": "running",
@@ -1538,6 +1557,51 @@ class TestLoadFatigueModel:
             running_threshold_pace_sec_per_km=300.0,
         )
 
+
+        def test_estimate_tss_running_interval_exam_always_on_increases_tss(self):
+            act = {
+                "type": "running",
+                "duration_seconds": 5278.944,
+                "distance_meters": 16168.79,
+                "avg_speed_mps": 3.063,
+                "max_speed_mps": 3.882,
+                "lap_count": 20,
+                "has_splits": True,
+                "vigorous_intensity_minutes": 85,
+                "workout_rpe": 80,
+                "training_effect_label": "LACTATE_THRESHOLD",
+                "name": "Fartlek cuestas",
+                "description": "6 x 4' Z4 + recuperacion",
+            }
+
+            tss_examined, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+
+            # Baseline (sin ajuste intervalico): IF=300/(5278.944/(16.16879)) ~= 0.919
+            # El examen intervalico debe elevar la carga por encima de ese baseline.
+            baseline_if = 300.0 / (5278.944 / 16.16879)
+            baseline_tss = (5278.944 / 3600.0) * (baseline_if ** 2) * 100.0
+
+            assert label == "TSS"
+            assert tss_examined > baseline_tss + 1.0
+
+        def test_estimate_tss_running_rodaje_not_artificially_inflated(self):
+            act = {
+                "type": "running",
+                "duration": 3600,
+                "distance": 10000,
+                "avg_speed_mps": 3.03,
+                "max_speed_mps": 3.33,
+                "lap_count": 17,
+                "has_splits": True,
+                "workout_rpe": 30,
+                "training_effect_label": "AEROBIC_BASE",
+                "name": "Rodaje suave",
+            }
+
+            tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+            assert label == "TSS"
+            # 10k en 1h => 6:00/km. Umbral 5:00/km => ~69.4 TSS (sin inflado intervalico)
+            assert abs(tss - 69.4) < 1.0
         # Running no trail: clamp IF a 1.30 => 1h => 169 TSS
         assert running_label == "TSS"
         assert abs(running_tss - 169.0) < 1.0
@@ -1545,6 +1609,108 @@ class TestLoadFatigueModel:
         # Trail/hike threshold fallback: clamp IF a 1.20 => 1h => 144 TSS
         assert trail_label == "TSS"
         assert abs(trail_tss - 144.0) < 1.0
+
+    def test_estimate_tss_running_fartlek_not_overinflated_vs_pace_baseline(self):
+        act = {
+            "type": "running",
+            "duration_seconds": 4385.93,
+            "distance_meters": 15115.87,
+            "avg_speed_mps": 3.446,
+            "max_speed_mps": 4.647,
+            "lap_count": 27,
+            "vigorous_intensity_minutes": 70,
+            "workout_rpe": 80,
+            "training_effect_label": "VO2MAX",
+            "name": "Fartlek. 2x5' + 2x4' +4x2'",
+        }
+
+        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+
+        baseline_if = 300.0 / (4385.93 / 15.11587)
+        baseline_tss = (4385.93 / 3600.0) * (baseline_if ** 2) * 100.0
+
+        assert label == "TSS"
+        # Debe mantenerse muy cerca del baseline por ritmo en fartlek largo.
+        assert tss >= baseline_tss
+        assert tss <= baseline_tss + 2.0
+
+    def test_estimate_tss_running_series_keeps_interval_uplift(self):
+        act = {
+            "type": "running",
+            "duration_seconds": 3475.483,
+            "distance_meters": 10776.09,
+            "avg_speed_mps": 3.101,
+            "max_speed_mps": 4.843,
+            "lap_count": 38,
+            "vigorous_intensity_minutes": 49,
+            "workout_rpe": 60,
+            "training_effect_label": "VO2MAX",
+            "name": "Series en el C.A.R. 8x500 REC 1'30",
+        }
+
+        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+
+        baseline_if = 300.0 / (3475.483 / 10.77609)
+        baseline_tss = (3475.483 / 3600.0) * (baseline_if ** 2) * 100.0
+
+        assert label == "TSS"
+        # Mantener uplift en series para no perder el ajuste del caso 8x500.
+        assert tss > baseline_tss + 7.0
+
+    def test_classify_running_session_rodaje(self):
+        act = {
+            "type": "running",
+            "avg_speed_mps": 3.10,
+            "max_speed_mps": 3.35,
+            "lap_count": 10,
+            "vigorous_intensity_minutes": 12,
+            "workout_rpe": 30,
+            "training_effect_label": "AEROBIC_BASE",
+            "name": "Rodaje suave zona 2",
+        }
+        cls = _classify_running_session_with_confidence(act)
+        assert cls["session_kind"] == "rodaje"
+        assert cls["confidence"] in {"medium", "high"}
+
+    def test_classify_running_session_fartlek(self):
+        act = {
+            "type": "running",
+            "avg_speed_mps": 3.40,
+            "max_speed_mps": 4.55,
+            "lap_count": 22,
+            "vigorous_intensity_minutes": 55,
+            "workout_rpe": 75,
+            "training_effect_label": "VO2MAX",
+            "name": "Fartlek 6x3' rec 2'",
+        }
+        cls = _classify_running_session_with_confidence(act)
+        assert cls["session_kind"] == "fartlek"
+        assert cls["scores"]["fartlek"] >= cls["scores"]["series"]
+
+    def test_classify_running_session_series(self):
+        act = {
+            "type": "running",
+            "avg_speed_mps": 3.05,
+            "max_speed_mps": 4.80,
+            "lap_count": 34,
+            "vigorous_intensity_minutes": 48,
+            "workout_rpe": 65,
+            "training_effect_label": "VO2MAX",
+            "name": "Series 10x400 rec 1'",
+            "description": "Trabajo de reps en pista",
+        }
+        cls = _classify_running_session_with_confidence(act)
+        assert cls["session_kind"] == "series"
+        assert cls["scores"]["series"] > cls["scores"]["rodaje"]
+
+    def test_classify_running_session_rodaje_from_name_only(self):
+        act = {
+            "type": "running",
+            "name": "Rodaje suave Z2 60'",
+            "training_effect_label": "AEROBIC_BASE",
+        }
+        cls = _classify_running_session_with_confidence(act)
+        assert cls["session_kind"] == "rodaje"
 
     def test_estimate_tss_trail_prefers_hr_then_threshold_then_rpe(self):
         act_hr = {

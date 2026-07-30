@@ -634,6 +634,35 @@ Notas de implementación:
 - Para ciclismo, el FTP se obtiene del perfil cacheado o de `get_cycling_ftp`.
 - Si faltan datos clave, el sistema conserva fallbacks defensivos (Training Load nativo, Training Effect y IF por defecto) para no perder continuidad de la serie ATL/CTL/TSB.
 
+### Clasificacion de running por tipo de sesion
+
+Para sesiones de running no-trail, Kairos clasifica cada actividad en una de estas categorias:
+
+- `rodaje`
+- `fartlek`
+- `series`
+- `calidad` (fallback cuando la evidencia es ambigua)
+
+La clasificacion usa señales combinadas del payload de actividad:
+
+- Relacion velocidad maxima / velocidad media (`speed_ratio`)
+- Numero de vueltas (`lap_count`)
+- Minutos vigorosos
+- RPE del entrenamiento
+- Etiqueta de efecto de entrenamiento (`training_effect_label`)
+- Texto de nombre/descripcion/notas (keywords de rodaje, fartlek y series)
+
+Cada clase obtiene un score, y el sistema estima ademas una confianza (`high`, `medium`, `low`).
+
+### Impacto directo en el calculo de TSS running
+
+- `rodaje`: se mantiene el TSS base por ritmo umbral (sin inflado artificial).
+- `fartlek`: uplift pequeno y acotado para evitar sobreestimacion sistematica.
+- `series`: uplift mayor para conservar sensibilidad en trabajos fraccionados.
+- Confianza baja: se reduce automaticamente el uplift para priorizar estabilidad.
+
+Adicionalmente, durante el recálculo de carga se persiste una traza de inferencia (`running_session_inference`) con muestras recientes de `session_kind` y `confidence` por actividad, para auditoria y calibracion futura.
+
 ---
 
 ## 🧪 Tests
