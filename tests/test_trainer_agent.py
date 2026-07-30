@@ -1474,9 +1474,36 @@ class TestLoadFatigueModel:
 
     def test_estimate_tss_strength_prefers_hr_then_rpe(self):
         act_hr = {"type": "strength_training", "averageHR": 145, "maxHR": 180, "duration": 3600, "rpe": 9}
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 115,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+            ]
+        )
+
+        tss_zones, label_zones = _estimate_session_tss(act_hr, hr_zones_raw=hr_zones_raw)
         tss_hr, label_hr = _estimate_session_tss(act_hr)
+
+        assert label_zones == "hrTSS"
+        assert abs(tss_zones - 56.25) < 0.05
         assert label_hr == "hrTSS"
-        assert tss_hr > 0
+        assert tss_hr > tss_zones
 
         act_rpe = {"type": "strength_training", "duration": 3600, "rpe": "7-8"}
         tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
@@ -1808,6 +1835,17 @@ class TestLoadFatigueModel:
         assert label_zones == "hrTSS"
         # Base sin calibración: 56.25 TSS (IF=0.75). Con factor 0.72 => 40.50
         assert abs(tss_zones - 40.5) < 0.05
+
+        hike_act = {
+            "type": "hiking",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+        }
+        tss_hike_zones, label_hike_zones = _estimate_session_tss(hike_act, hr_zones_raw=hr_zones_raw)
+        assert label_hike_zones == "hrTSS"
+        # En hike/walk no se aplica factor trail: se usa hrTSS por zonas directo.
+        assert abs(tss_hike_zones - 56.25) < 0.05
 
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
         act = {
