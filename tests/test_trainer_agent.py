@@ -1426,10 +1426,10 @@ class TestLoadFatigueModel:
         assert tss == 95.0
         assert label == "TSS"
 
-    def test_estimate_tss_priority1_clamps_to_500(self):
+    def test_estimate_tss_priority1_allows_over_500(self):
         act = {"trainingLoad": 999.0}
         tss, _ = _estimate_session_tss(act)
-        assert tss == 500.0
+        assert tss == 999.0
 
     def test_estimate_tss_priority2_hr_based_z2(self):
         """Sin trainingLoad, Z2 (avg_hr ~140, hr_rest 50, hr_max 185) → TSS razonable."""
@@ -1471,6 +1471,49 @@ class TestLoadFatigueModel:
         tss, _ = _estimate_session_tss(act)
         expected = 0.68 ** 2 * 100
         assert abs(tss - expected) < 1.0
+
+    def test_estimate_tss_other_modalities_prioritize_hr_zones(self):
+        act = {"type": "rowing", "duration": 3600, "averageHR": 150, "maxHR": 185}
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 110,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+                {
+                    "zoneNumber": 4,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 152,
+                    "maxHeartRateIn": 165,
+                },
+                {
+                    "zoneNumber": 5,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 166,
+                    "maxHeartRateIn": 185,
+                },
+            ]
+        )
+
+        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw, hr_rest_bpm=50, hr_max_bpm=185)
+
+        assert label == "hrTSS"
+        # Con 1h íntegra en Z1, el mapeo por HRR da IF≈0.725 => ~52.56 TSS
+        assert abs(tss - 52.56) < 0.3
 
     def test_estimate_tss_strength_prefers_hr_then_rpe(self):
         act_hr = {"type": "strength_training", "averageHR": 145, "maxHR": 180, "duration": 3600, "rpe": 9}
