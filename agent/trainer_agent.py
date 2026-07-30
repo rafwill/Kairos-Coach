@@ -157,7 +157,7 @@ def _build_mcp_read_only_block_message(tool_name: str) -> str:
             "tool": tool_name,
             "message": (
                 "Esta sesión está en modo solo consulta: se bloquean herramientas de escritura "
-                "(create/update/delete/schedule/upload/add/set)."
+                "(create/update/delete/schedule/unschedule/upload/add/set)."
             ),
         },
         ensure_ascii=False,

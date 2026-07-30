@@ -48,7 +48,7 @@ Cada vez que inicias el agente, recibe automáticamente:
 Esto funciona como el briefing que te daría un entrenador de élite antes de que hagas la primera pregunta.
 
 #### 6. Memoria entre sesiones
-Al salir, el agente resume la conversación con el propio LLM. Los últimos 5 resúmenes se inyectan como contexto al arrancar la siguiente sesión. El coach recuerda que hace tres días hablasteis de la fascitis plantar, o que lleváis dos semanas trabajando el umbral.
+Al salir, el agente resume la conversación con el propio LLM. Conserva hasta 10 resúmenes persistidos y, al arrancar la siguiente sesión, inyecta los 3 más recientes como contexto. El coach recuerda que hace tres días hablasteis de la fascitis plantar, o que lleváis dos semanas trabajando el umbral.
 
 #### 7. Sistema multiusuario con autenticación
 Varias personas pueden usar la misma instalación. Cada usuario tiene perfil, historial, plan y base de conocimiento separados. La contraseña se almacena cifrada con Fernet AES-128 + HMAC-SHA256. El auto-login evita escribir la contraseña en cada sesión.
@@ -269,7 +269,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
 
 * **💾 Memoria persistente entre sesiones:**
   - Al salir, el agente genera automáticamente un resumen compacto de la sesión con el propio LLM.
-  - Los últimos 5 resúmenes se inyectan como contexto al arrancar la siguiente sesión — el agente recuerda lo que habéis hablado.
+  - Conserva hasta 10 resúmenes persistidos e inyecta los últimos 3 como contexto al arrancar la siguiente sesión — el agente recuerda lo que habéis hablado.
   - Todo el estado de usuario (perfil, historial, base de conocimiento y cuota de Gemini) se guarda en Supabase por usuario.
   - Si el agente crea una planificación base por fallback, persiste un `training_plan` activo mínimo para distinguirlo del objetivo (`goals`).
 
