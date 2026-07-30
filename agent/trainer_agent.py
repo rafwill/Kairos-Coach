@@ -2537,6 +2537,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     plan_assigned = bool(snapshot.get("plan_assigned", False))
     plan_recommendation = str(snapshot.get("plan_recommendation") or "").strip()
     daily_plan_decision = snapshot.get("daily_plan_decision") or {}
+    plan_execution_feedback = snapshot.get("plan_execution_feedback") or {}
     body_battery = snapshot.get("body_battery", {}) or {}
     hrv = snapshot.get("hrv", {}) or {}
     sleep = snapshot.get("sleep", {}) or {}
@@ -2634,6 +2635,17 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             lines.append(f"  - {day}: {name}")
     else:
         lines.append("- Entrenamientos recientes: no se encontraron en las ultimas 48h")
+
+    if isinstance(plan_execution_feedback, dict) and plan_execution_feedback.get("adherence_score") is not None:
+        score = _safe_float(plan_execution_feedback.get("adherence_score"), 0.0)
+        label = str(plan_execution_feedback.get("adherence_label") or "n/d")
+        dev_pct = _safe_float(plan_execution_feedback.get("load_deviation_pct"), 0.0) * 100.0
+        next_adj = str(plan_execution_feedback.get("next_session_adjustment") or "").strip()
+        lines.append(
+            f"- Plan vs ejecutado (ayer): adherencia {score:.2f} ({label}) · desviacion carga {dev_pct:+.0f}%"
+        )
+        if next_adj:
+            lines.append(f"  - Ajuste sugerido por adherencia: {next_adj}")
 
     if plan_assigned:
         initial_recommendation = (
@@ -3126,6 +3138,206 @@ def _resolve_today_plan_session(plan: dict) -> str:
     return title or "sesión planificada"
 
 
+def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | None:
+    """Obtiene la sesión planificada para una fecha (template semanal por day_index)."""
+    if not isinstance(plan, dict):
+        return None
+    sessions = list(plan.get("sessions") or [])
+    if not sessions:
+        return None
+    try:
+        day_index = date.fromisoformat(target_date_iso).isoweekday()  # lunes=1..domingo=7
+    except Exception:
+        return None
+
+    candidates: list[dict] = []
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        try:
+            if int(session.get("day_index") or 0) == day_index:
+                candidates.append(session)
+        except Exception:
+            continue
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: int(x.get("week_index") or 1))
+    return candidates[0]
+
+
+def _extract_activity_duration_minutes(activity: dict) -> float:
+    """Normaliza duración de actividad (min) soportando claves camel/snake."""
+    if not isinstance(activity, dict):
+        return 0.0
+    raw = (
+        activity.get("duration_seconds")
+        or activity.get("duration")
+        or activity.get("moving_duration_seconds")
+        or activity.get("movingDuration")
+    )
+    try:
+        return max(0.0, float(raw) / 60.0)
+    except Exception:
+        return 0.0
+
+
+def _normalize_activity_group(activity: dict) -> str:
+    """Mapea una actividad real a grupo de modalidad para matching con plan."""
+    if not isinstance(activity, dict):
+        return "other"
+    act_type = str(
+        activity.get("type")
+        or activity.get("activityType")
+        or activity.get("activity_type")
+        or activity.get("name")
+        or ""
+    ).strip().lower()
+
+    if any(k in act_type for k in ("cycl", "bike", "bici")):
+        return "cycling"
+    if any(k in act_type for k in ("swim", "nat")):
+        return "swimming"
+    if any(k in act_type for k in ("strength", "gym", "weight", "fuerza", "pesas")):
+        return "strength"
+    if any(k in act_type for k in ("run", "trail", "carrera", "treadmill", "hike", "walk", "sender")):
+        return "running"
+    return "other"
+
+
+def _normalize_session_group(session_type: str) -> str:
+    """Mapea session_type del plan a grupo de modalidad para matching."""
+    st = str(session_type or "").strip().lower()
+    if st == "rest":
+        return "rest"
+    if "strength" in st or "fuerza" in st:
+        return "strength"
+    if "cycl" in st or "bike" in st or "bici" in st:
+        return "cycling"
+    if "swim" in st or "nat" in st:
+        return "swimming"
+    if any(k in st for k in ("run", "trail", "recovery", "long", "tempo", "z2", "quality", "hills")):
+        return "running"
+    return "other"
+
+
+def _extract_rpe_mid(intensity: str | None) -> float:
+    """Extrae RPE medio desde textos como 'RPE 7-8'."""
+    text = str(intensity or "").strip().lower().replace(",", ".")
+    m = re.search(r"rpe\s*(\d+(?:\.\d+)?)\s*(?:[-/]\s*(\d+(?:\.\d+)?))?", text)
+    if not m:
+        return 5.0
+    low = _safe_float(m.group(1), 5.0)
+    high = _safe_float(m.group(2), low)
+    return max(1.0, min(10.0, (low + high) / 2.0))
+
+
+def _estimate_planned_session_tss(session: dict) -> float:
+    """Estimación determinista de TSS planificado por sesión (cuando no hay potencia/HR real)."""
+    if not isinstance(session, dict):
+        return 0.0
+    duration_min = max(0.0, _safe_float(session.get("duration_min"), 0.0))
+    session_type = str(session.get("session_type") or "").strip().lower()
+    if session_type == "rest" or duration_min <= 0:
+        return 0.0
+
+    rpe_mid = _extract_rpe_mid(str(session.get("intensity") or ""))
+    # Aproximación conservadora: TSS/h ~ RPE*10 (RPE 5 => 50 TSS/h).
+    tss_hour = max(30.0, min(95.0, rpe_mid * 10.0))
+    return round((duration_min / 60.0) * tss_hour, 1)
+
+
+def _compute_plan_execution_feedback(
+    plan: dict,
+    activities_for_day: list[dict],
+    target_date_iso: str,
+    profile: dict,
+) -> dict | None:
+    """Compara planificado vs ejecutado en un día y devuelve adherencia + desviación."""
+    planned = _get_planned_session_for_date(plan, target_date_iso)
+    if not planned:
+        return None
+
+    planned_type = str(planned.get("session_type") or "session").strip().lower()
+    planned_group = _normalize_session_group(planned_type)
+    planned_duration = max(0.0, _safe_float(planned.get("duration_min"), 0.0))
+    planned_tss = _estimate_planned_session_tss(planned)
+
+    executed = [a for a in list(activities_for_day or []) if isinstance(a, dict)]
+    actual_duration = round(sum(_extract_activity_duration_minutes(a) for a in executed), 1)
+    actual_tss_acc = 0.0
+    for a in executed:
+        try:
+            tss_val, _ = _estimate_session_tss(a)
+        except Exception:
+            tss_val = 0.0
+        actual_tss_acc += max(0.0, float(tss_val or 0.0))
+    actual_tss = round(actual_tss_acc, 1)
+
+    if planned_group == "rest":
+        type_score = 1.0 if actual_duration <= 15.0 else 0.0
+        duration_score = 1.0 if actual_duration <= 15.0 else max(0.0, 1.0 - ((actual_duration - 15.0) / 60.0))
+    else:
+        if executed:
+            main_exec = max(executed, key=_extract_activity_duration_minutes)
+            actual_group = _normalize_activity_group(main_exec)
+        else:
+            actual_group = "none"
+
+        if actual_group == planned_group:
+            type_score = 1.0
+        elif planned_group == "running" and actual_group in {"other", "none"}:
+            type_score = 0.2
+        elif planned_group == "running":
+            type_score = 0.7
+        else:
+            type_score = 0.2
+
+        if planned_duration <= 0:
+            duration_score = 0.0
+        else:
+            duration_diff = abs(actual_duration - planned_duration) / max(planned_duration, 30.0)
+            duration_score = max(0.0, 1.0 - duration_diff)
+
+    adherence_score = round((0.6 * type_score) + (0.4 * duration_score), 2)
+    if adherence_score >= 0.75:
+        adherence_label = "adherente"
+    elif adherence_score >= 0.40:
+        adherence_label = "parcial"
+    else:
+        adherence_label = "baja"
+
+    load_deviation_pct = round(
+        ((actual_tss - planned_tss) / max(planned_tss, 1.0)),
+        2,
+    )
+    if load_deviation_pct > 0.25:
+        next_adjustment = "reducir siguiente sesión"
+    elif load_deviation_pct < -0.25:
+        next_adjustment = "progresar ligeramente siguiente sesión"
+    else:
+        next_adjustment = "mantener siguiente sesión"
+
+    return {
+        "date": target_date_iso,
+        "planned": {
+            "session_type": planned_type,
+            "duration_min": round(planned_duration, 1),
+            "intensity": str(planned.get("intensity") or ""),
+            "tss_est": planned_tss,
+        },
+        "executed": {
+            "activities": len(executed),
+            "duration_min": actual_duration,
+            "tss": actual_tss,
+        },
+        "adherence_score": adherence_score,
+        "adherence_label": adherence_label,
+        "load_deviation_pct": load_deviation_pct,
+        "next_session_adjustment": next_adjustment,
+    }
+
+
 def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | None:
     """Motor determinista de ajuste diario del plan.
 
@@ -3210,6 +3422,40 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
             reason = "estado neutral sin alertas relevantes"
         rule = "neutral"
 
+    # Ajuste fase 3: planificado vs ejecutado (día N-1) modifica la decisión base.
+    feedback = snapshot.get("plan_execution_feedback") or {}
+    adherence_score = _safe_float(feedback.get("adherence_score"), -1.0)
+    load_dev = _safe_float(feedback.get("load_deviation_pct"), 0.0)
+    adherence_adjustment = "none"
+
+    order = ["rest", "easy", "reduce", "maintain"]
+    rank = {name: idx for idx, name in enumerate(order)}
+
+    def _downgrade(current: str) -> str:
+        return order[max(0, rank.get(current, 2) - 1)]
+
+    def _upgrade(current: str) -> str:
+        return order[min(len(order) - 1, rank.get(current, 2) + 1)]
+
+    if decision != "rest" and adherence_score >= 0.0:
+        if load_dev > 0.25 or adherence_score < 0.40:
+            new_decision = _downgrade(decision)
+            if new_decision != decision:
+                decision = new_decision
+                adherence_adjustment = "down"
+                reason = f"{reason}; ajuste por exceso de carga/adherencia baja en dia previo"
+        elif (
+            load_dev < -0.30
+            and adherence_score >= 0.75
+            and stress_flags <= 1
+            and status in {"ready", "neutral"}
+        ):
+            new_decision = _upgrade(decision)
+            if new_decision != decision:
+                decision = new_decision
+                adherence_adjustment = "up"
+                reason = f"{reason}; ajuste por infra-carga adherente en dia previo"
+
     planned_session = _resolve_today_plan_session(plan)
     if decision == "rest":
         resulting_session = "descanso + movilidad ligera (20-30 min)"
@@ -3224,6 +3470,7 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         "rule": rule,
         "decision": decision,
         "reason": reason,
+        "adherence_adjustment": adherence_adjustment,
         "planned_session": planned_session,
         "resulting_session": resulting_session,
         "inputs": {
@@ -3240,6 +3487,8 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
             "hrv_ratio": hrv_ratio,
             "hrv_status": hrv_status,
             "stress_flags": stress_flags,
+            "adherence_score": adherence_score if adherence_score >= 0.0 else None,
+            "load_deviation_pct": load_dev if adherence_score >= 0.0 else None,
         },
     }
 
@@ -5997,6 +6246,43 @@ class TrainerAgent:
                 }
             )
 
+        # Fase 3: cierre del bucle planificado vs ejecutado (dia N-1).
+        plan_execution_feedback: dict = {}
+        active_plan = _get_active_training_plan(getattr(self, "user_profile", {}) or {})
+        if active_plan:
+            yday_activities: list[dict] = []
+            try:
+                yday_raw = await _tool_json(
+                    "get_activities_by_date",
+                    {
+                        "start_date": yesterday_iso,
+                        "end_date": yesterday_iso,
+                        "page": 0,
+                        "page_size": 100,
+                    },
+                )
+                if isinstance(yday_raw, dict):
+                    yday_activities = _extract_activities_list(yday_raw.get("activities") or yday_raw)
+                elif isinstance(yday_raw, list):
+                    yday_activities = _extract_activities_list(yday_raw)
+            except Exception:
+                yday_activities = []
+
+            # Fallback local: filtrar el lote reciente por fecha exacta de ayer.
+            if not yday_activities:
+                for _act in activities_recent:
+                    if _extract_activity_date_iso(_act) == yesterday_iso:
+                        yday_activities.append(_act)
+
+            feedback = _compute_plan_execution_feedback(
+                plan=active_plan,
+                activities_for_day=yday_activities,
+                target_date_iso=yesterday_iso,
+                profile=getattr(self, "user_profile", {}) if hasattr(self, "user_profile") else {},
+            )
+            if isinstance(feedback, dict):
+                plan_execution_feedback = feedback
+
         load_window_days = 56
         _load_debug: str = "sin datos canónicos en DB"
         load_fatigue = None
@@ -6143,6 +6429,7 @@ class TrainerAgent:
             "sleep": {"today": sleep_today, "yesterday": sleep_yday, "summary": sleep_summary},
             "load_fatigue": load_fatigue or {},
             "load_debug": _load_debug,
+            "plan_execution_feedback": plan_execution_feedback,
             "trainings": recent_trainings[:5],
         }
 

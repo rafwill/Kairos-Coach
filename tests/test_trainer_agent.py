@@ -36,6 +36,7 @@ from agent.trainer_agent import (
     _resolve_sport_model_cfg,
     _build_recovery_fallback_snapshot,
     _compute_daily_plan_adjustment,
+    _compute_plan_execution_feedback,
     _clean_schema_for_gemini,
     _compact_personal_records,
     _compact_tool_result,
@@ -993,6 +994,58 @@ class TestStartupProactive:
         assert out is not None
         assert out["decision"] == "maintain"
         assert out["rule"] == "ready"
+
+    def test_compute_plan_execution_feedback_returns_adherence_and_deviation(self):
+        yday = (date.today() - timedelta(days=1)).isoformat()
+        plan = {
+            "sessions": [
+                {
+                    "week_index": 1,
+                    "day_index": date.fromisoformat(yday).isoweekday(),
+                    "session_type": "running_quality",
+                    "duration_min": 60,
+                    "intensity": "RPE 7-8",
+                }
+            ]
+        }
+        acts = [
+            {
+                "activityId": 101,
+                "type": "running",
+                "duration_seconds": 3600,
+                "trainingLoad": 90,
+                "startTimeLocal": f"{yday}T08:00:00.0",
+            }
+        ]
+
+        out = _compute_plan_execution_feedback(plan, acts, yday, profile={})
+        assert out is not None
+        assert out["adherence_score"] >= 0.75
+        assert out["planned"]["duration_min"] == 60.0
+        assert "load_deviation_pct" in out
+
+    def test_compute_daily_plan_adjustment_degrades_on_high_positive_deviation(self):
+        snapshot = {
+            "dates": {"today": date.today().isoformat()},
+            "load_fatigue": {
+                "status": "ready",
+                "latest": {"tsb": 3.0, "atl": 50.0},
+                "weekly": {"current_tss": 250.0, "high_tss": 450.0},
+                "ranges": {"atl_high": 70.0},
+            },
+            "body_battery": {"today": {"date": date.today().isoformat(), "body_battery_level": 75}},
+            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 8.0, "sleep_score": 85}},
+            "hrv": {"today": {"date": date.today().isoformat(), "lastNightAvg": 50, "weeklyAvg": 50, "status": "balanced"}},
+            "plan_execution_feedback": {
+                "adherence_score": 0.9,
+                "load_deviation_pct": 0.5,
+            },
+        }
+        plan = {"title": "Plan 10K", "today_focus": "Tempo 45'"}
+        out = _compute_daily_plan_adjustment(snapshot, plan)
+        assert out is not None
+        assert out["decision"] == "reduce"
+        assert out["adherence_adjustment"] == "down"
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_48h_collects_metrics(self):
