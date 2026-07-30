@@ -3344,7 +3344,12 @@ def _resolve_today_plan_session(plan: dict) -> str:
 
 
 def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | None:
-    """Obtiene la sesión planificada para una fecha (template semanal por day_index)."""
+    """Obtiene la sesión planificada para una fecha.
+
+    Si el plan tiene sesiones por `week_index`, calcula la semana relativa desde
+    `plan_data.start_date` (o `created_at` como fallback) y selecciona primero
+    esa semana; si no existe, usa la primera semana disponible como fallback.
+    """
     if not isinstance(plan, dict):
         return None
     sessions = list(plan.get("sessions") or [])
@@ -3354,6 +3359,19 @@ def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | No
         day_index = date.fromisoformat(target_date_iso).isoweekday()  # lunes=1..domingo=7
     except Exception:
         return None
+
+    target_week_index = None
+    try:
+        plan_data = plan.get("plan_data") if isinstance(plan.get("plan_data"), dict) else plan
+        start_iso = str((plan_data or {}).get("start_date") or (plan_data or {}).get("created_at") or "").strip()
+        if start_iso:
+            start_d = date.fromisoformat(start_iso[:10])
+            target_d = date.fromisoformat(target_date_iso[:10])
+            delta_days = (target_d - start_d).days
+            if delta_days >= 0:
+                target_week_index = int(delta_days // 7) + 1
+    except Exception:
+        target_week_index = None
 
     candidates: list[dict] = []
     for session in sessions:
@@ -3367,6 +3385,16 @@ def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | No
 
     if not candidates:
         return None
+
+    if target_week_index is not None:
+        same_week = [
+            c for c in candidates
+            if int(c.get("week_index") or 1) == target_week_index
+        ]
+        if same_week:
+            same_week.sort(key=lambda x: int(x.get("day_index") or 1))
+            return same_week[0]
+
     candidates.sort(key=lambda x: int(x.get("week_index") or 1))
     return candidates[0]
 
@@ -3854,7 +3882,7 @@ def _generate_structured_plan_payload(
     user_message: str,
     base_plan: dict | None = None,
 ) -> tuple[dict, list[dict]]:
-    """Genera un plan estructurado y sesiones semanales listas para persistir."""
+    """Genera un plan estructurado progresivo y sesiones listas para persistir."""
     goals = (profile or {}).get("goals", {})
     health = (profile or {}).get("health", {})
 
@@ -3876,6 +3904,44 @@ def _generate_structured_plan_payload(
     has_injuries = bool(injuries)
     injuries_label = ", ".join(injuries[:2]) if injuries else ""
 
+    user_lower = str(user_message or "").lower()
+    primary = str((goals or {}).get("primary") or "running").strip().lower()
+    wants_gym = any(k in user_lower for k in ("gim", "fuerza", "pesas", "strength"))
+    wants_road_cycling = any(k in user_lower for k in ("carretera", "road", "ciclismo"))
+    wants_mtb = any(k in user_lower for k in ("montaña", "mtb", "mountain"))
+    wants_trail = ("trail" in user_lower) or ("trail" in primary)
+
+    # Si el mensaje no especifica, heredamos preferencias por deporte principal.
+    if not any((wants_gym, wants_road_cycling, wants_mtb, wants_trail)):
+        if "trail" in primary:
+            wants_trail = True
+            wants_gym = True
+        elif any(k in primary for k in ("tri", "multi")):
+            wants_gym = True
+            wants_road_cycling = True
+
+    def _parse_target_10k_pace() -> float | None:
+        txt = str(target_time or "").strip()
+        if not txt:
+            return None
+        m = re.match(r"^(\d{1,2}):(\d{2}):(\d{2})$", txt)
+        if not m:
+            return None
+        h, mm, ss = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        total = h * 3600 + mm * 60 + ss
+        # Solo aplicamos ritmo de 10k cuando el objetivo parece de 10k.
+        if "10" not in race.lower():
+            return None
+        if total <= 0:
+            return None
+        return total / 10.0
+
+    def _fmt_pace(sec_per_km: float) -> str:
+        sec = max(0, int(round(sec_per_km)))
+        return f"{sec // 60}:{sec % 60:02d} min/km"
+
+    target_10k_pace = _parse_target_10k_pace()
+
     difficulty = "moderate"
     difficulty_reason = ""
     if has_injuries:
@@ -3888,101 +3954,247 @@ def _generate_structured_plan_payload(
         difficulty_reason = f"Dificultad 'moderate' estándar."
 
     weekly_minutes = int(round(weekly_hours * 60))
-    # Distribución por bloques (debe sumar 100)
-    ratios = {
-        "strength": 10,
-        "quality_1": 18,
-        "easy": 16,
-        "quality_2": 18,
-        "rest": 0,
-        "long": 28,
-        "recovery": 10,
-    }
+    # Fases: base -> build -> peak -> taper.
+    taper_weeks = 2 if duration_weeks >= 10 else 1
+    peak_weeks = max(1, int(round(duration_weeks * 0.2)))
+    base_weeks = max(2, int(round(duration_weeks * 0.4)))
+    build_weeks = max(1, duration_weeks - taper_weeks - peak_weeks - base_weeks)
 
-    def _dur(key: str) -> int:
-        if key == "rest":
-            return 0
-        return max(25, int(round((weekly_minutes * ratios[key]) / 100)))
+    def _phase_for_week(wi: int) -> str:
+        if wi <= base_weeks:
+            return "base"
+        if wi <= base_weeks + build_weeks:
+            return "build"
+        if wi <= base_weeks + build_weeks + peak_weeks:
+            return "peak"
+        return "taper"
 
-    long_run_min = max(_dur("long"), 70)
-    easy_intensity = "RPE 3-4"
-    quality_intensity = "RPE 7-8" if not has_injuries else "RPE 5-6"
+    def _volume_multiplier(wi: int, phase: str) -> float:
+        # Patrón 3:1 (carga:carga:carga:descarga) + taper final.
+        if phase == "taper":
+            return 0.72 if (duration_weeks - wi) >= 1 else 0.58
+        cycle = (wi - 1) % 4
+        if cycle == 3:
+            return 0.82
+        base_mul = {"base": 0.95, "build": 1.05, "peak": 1.12}.get(phase, 1.0)
+        progressive = [0.96, 1.0, 1.06][cycle]
+        return base_mul * progressive
 
-    sessions = [
-        {
-            "week_index": 1,
-            "day_index": 1,
-            "session_type": "strength",
-            "duration_min": _dur("strength"),
-            "intensity": "RPE 4-5",
-            "exercises": ["movilidad cadera/tobillo", "fuerza general", "core"],
-            "notes": "Calentamiento 10'. Parte principal de fuerza funcional. Enfriamiento 5'. Hidratación 500-750 ml.",
-        },
-        {
-            "week_index": 1,
-            "day_index": 2,
-            "session_type": "running_quality",
-            "duration_min": _dur("quality_1"),
-            "intensity": quality_intensity,
-            "exercises": ["intervalos/umbral", "técnica de carrera"],
-            "notes": "Calentamiento 15'. Parte principal de calidad por RPE. Enfriamiento 10'. Nutrición pre-sesión + hidratación 500-750 ml.",
-        },
-        {
-            "week_index": 1,
-            "day_index": 3,
-            "session_type": "running_z2",
-            "duration_min": _dur("easy"),
-            "intensity": easy_intensity,
-            "exercises": ["rodaje continuo", "movilidad breve"],
-            "notes": "Calentamiento 10'. Parte principal en Z2. Enfriamiento 5-10'. Hidratación 500 ml.",
-        },
-        {
-            "week_index": 1,
-            "day_index": 4,
-            "session_type": "running_quality",
-            "duration_min": _dur("quality_2"),
-            "intensity": quality_intensity,
-            "exercises": ["tempo/cuetas", "economía de carrera"],
-            "notes": "Calentamiento 15'. Parte principal controlada por RPE. Enfriamiento 10'. Hidratación 500-750 ml.",
-        },
-        {
-            "week_index": 1,
-            "day_index": 5,
-            "session_type": "rest",
-            "duration_min": 0,
-            "intensity": "RPE 1-2",
-            "exercises": ["descanso activo opcional"],
-            "notes": "Recuperación activa opcional: caminar/movilidad 20-30'.",
-        },
-        {
-            "week_index": 1,
-            "day_index": 6,
-            "session_type": "long_run",
-            "duration_min": long_run_min,
-            "intensity": "RPE 4-5" if not has_injuries else "RPE 3-4",
-            "exercises": ["tirada larga progresiva"],
-            "notes": "Calentamiento 10-15'. Parte principal continua. Enfriamiento 10'. Nutrición 30-60 g CH/h e hidratación 500-800 ml/h.",
-        },
-        {
-            "week_index": 1,
-            "day_index": 7,
-            "session_type": "recovery",
-            "duration_min": _dur("recovery"),
-            "intensity": "RPE 2-3",
-            "exercises": ["rodaje suave", "movilidad"],
-            "notes": "Calentamiento suave. Parte principal muy ligera. Enfriamiento corto. Hidratación 400-600 ml.",
-        },
-    ]
+    def _split_weekly_minutes(total_min: int) -> dict[str, int]:
+        block = {
+            "strength": int(round(total_min * 0.12)),
+            "quality_1": int(round(total_min * 0.18)),
+            "easy": int(round(total_min * 0.14)),
+            "quality_2": int(round(total_min * 0.16)),
+            "long": int(round(total_min * 0.30)),
+            "recovery": int(round(total_min * 0.10)),
+        }
+        for k in list(block.keys()):
+            if k == "long":
+                block[k] = max(70, block[k])
+            elif k == "strength":
+                block[k] = max(30, block[k])
+            else:
+                block[k] = max(25, block[k])
+        return block
+
+    def _quality_workout(phase: str, wi: int, slot: int) -> tuple[str, str, str, list[str]]:
+        # slot=1 martes (series/umbral), slot=2 jueves (fartlek/tempo/cuestas)
+        if target_10k_pace is not None:
+            pace_mod = [10, 6, 3, 0, -2]
+            p = target_10k_pace + pace_mod[min(max(wi - 1, 0), len(pace_mod) - 1)]
+            pace_label = _fmt_pace(p)
+        else:
+            pace_label = "ritmo de trabajo por sensaciones"
+
+        if slot == 1:
+            if wants_trail:
+                notes = (
+                    "Calentamiento 15'. Parte principal: bloques de subida a umbral (ej. 4-6x6') con bajada técnica controlada como recuperación. "
+                    "Enfriamiento 10-12'."
+                )
+                return ("trail_tempo", "RPE 6-8", notes, ["subida sostenida", "descenso técnico", "economía en montaña"])
+            if phase == "base":
+                main = ["6x400m @ controlado", "4x1000m @ umbral"][(wi + 1) % 2]
+                notes = (
+                    f"Calentamiento 15' + técnica. Parte principal: {main} ({pace_label}) con recuperación 200m trote. "
+                    "Enfriamiento 10'."
+                )
+                return ("running_quality", "RPE 6-7", notes, ["series cortas", "técnica de carrera", "economía"])
+            if phase == "build":
+                main = ["5x1000m", "3x2000m", "8x500m"][(wi + slot) % 3]
+                notes = (
+                    f"Calentamiento 20'. Parte principal: {main} ({pace_label}) con recuperaciones controladas (90-150''). "
+                    "Enfriamiento 10-15'."
+                )
+                return ("running_quality", "RPE 7-8", notes, ["series medias", "umbral", "cadencia"])
+            if phase == "peak":
+                main = ["4x1200m", "10x300m"][(wi + slot) % 2]
+                notes = (
+                    f"Calentamiento 20'. Parte principal: {main} ({pace_label}) con recuperación incompleta. "
+                    "Enfriamiento 12'."
+                )
+                return ("running_quality", "RPE 8-9", notes, ["VO2 controlado", "economía a ritmo objetivo"])
+
+            notes = (
+                f"Calentamiento 15'. Activación pre-competición: 6x200m ({pace_label}) con recuperación completa. "
+                "Enfriamiento 10'."
+            )
+            return ("running_quality", "RPE 6-7", notes, ["afinado neuromuscular", "recordatorio de ritmo"])
+
+        # slot 2
+        if wants_trail:
+            notes = (
+                "Calentamiento 15'. Parte principal: cuestas técnicas (8-12 repeticiones de 60-90'') + bajadas con foco en cadencia. "
+                "Enfriamiento 10'."
+            )
+            return ("trail_hills", "RPE 6-8", notes, ["subidas técnicas", "bajadas", "uso de bastones si aplica"])
+
+        if phase == "base":
+            notes = "Calentamiento 15'. Parte principal: fartlek 10x(1' fuerte/1' suave). Enfriamiento 10'."
+            return ("running_quality", "RPE 6-7", notes, ["fartlek", "control de esfuerzo"])
+        if phase == "build":
+            notes = "Calentamiento 15'. Parte principal: tempo 3x10' (RPE 7) con 3' suaves. Enfriamiento 10'."
+            return ("running_quality", "RPE 7-8", notes, ["tempo", "umbral sostenible"])
+        if phase == "peak":
+            notes = "Calentamiento 15'. Parte principal: fartlek piramidal 1'-2'-3'-4'-3'-2'-1'. Enfriamiento 10'."
+            return ("running_quality", "RPE 7-8", notes, ["fartlek avanzado", "cambio de ritmo"])
+
+        notes = "Calentamiento 12'. Parte principal: 20' ritmo controlado + 4 rectas. Enfriamiento 10'."
+        return ("running_quality", "RPE 6-7", notes, ["tempo corto", "activación"])
+
+    sessions: list[dict] = []
+    for wi in range(1, duration_weeks + 1):
+        phase = _phase_for_week(wi)
+        volume_mul = _volume_multiplier(wi, phase)
+        week_min = int(round(weekly_minutes * volume_mul))
+        split = _split_weekly_minutes(week_min)
+
+        q1_type, q1_intensity, q1_notes, q1_ex = _quality_workout(phase, wi, slot=1)
+        q2_type, q2_intensity, q2_notes, q2_ex = _quality_workout(phase, wi, slot=2)
+
+        # Miércoles: alternancia determinista de aeróbico cruzado.
+        if wants_mtb and wi % 2 == 0:
+            d3_type = "cycling_mtb"
+            d3_ex = ["cadencia en subida", "tracción", "técnica en sendero"]
+            d3_notes = "Calentamiento 10'. Parte principal en Z2 por terreno variable. Enfriamiento 10'."
+        elif wants_road_cycling and wi % 2 == 1:
+            d3_type = "cycling_z2"
+            d3_ex = ["rodaje aeróbico", "cadencia 85-95 rpm", "control de potencia/RPE"]
+            d3_notes = "Calentamiento 10'. Parte principal continua en Z2. Enfriamiento 10'."
+        else:
+            d3_type = "trail_z2" if wants_trail else "running_z2"
+            d3_ex = ["rodaje continuo", "economía de carrera"]
+            d3_notes = "Calentamiento 10'. Parte principal en Z2 conversacional. Enfriamiento 8-10'."
+
+        # Domingo: recuperación o aeróbico cruzado suave.
+        d7_type = "recovery"
+        d7_ex = ["rodaje suave", "movilidad", "descarga miofascial"]
+        if wants_road_cycling and wi % 3 == 0:
+            d7_type = "cycling_recovery"
+            d7_ex = ["rodillo/carretera suave", "cadencia alta sin carga"]
+
+        strength_type = "strength"
+        strength_notes = (
+            "Calentamiento 10'. Parte principal de fuerza compensatoria (core, glúteo medio, sóleo, isquios). "
+            "Enfriamiento 5-10'."
+        )
+        if not wants_gym:
+            strength_type = "strength_home"
+            strength_notes = (
+                "Calentamiento 10'. Circuito funcional en casa (core, cadera, tobillo, estabilidad). Enfriamiento 5-10'."
+            )
+
+        long_type = "trail_long" if wants_trail else "long_run"
+        long_notes = (
+            "Calentamiento 12'. Parte principal continua en Z2. "
+            "Nutrición objetivo: 30-60 g CH/h e hidratación 500-800 ml/h. Enfriamiento 10'."
+        )
+        if wants_trail:
+            long_notes = (
+                "Calentamiento 12'. Parte principal en montaña con desnivel progresivo y control técnico en bajadas. "
+                "Nutrición objetivo: 40-70 g CH/h e hidratación 500-800 ml/h. Enfriamiento 10'."
+            )
+
+        # Regla de seguridad por lesión: reducir carga de calidad y long-run.
+        if has_injuries:
+            split["quality_1"] = int(round(split["quality_1"] * 0.85))
+            split["quality_2"] = int(round(split["quality_2"] * 0.80))
+            split["long"] = int(round(split["long"] * 0.85))
+            q1_intensity = "RPE 5-6"
+            q2_intensity = "RPE 5-6"
+
+        sessions.extend(
+            [
+                {
+                    "week_index": wi,
+                    "day_index": 1,
+                    "session_type": strength_type,
+                    "duration_min": split["strength"],
+                    "intensity": "RPE 4-5",
+                    "exercises": ["movilidad tobillo/cadera", "fuerza general", "core"],
+                    "notes": strength_notes,
+                },
+                {
+                    "week_index": wi,
+                    "day_index": 2,
+                    "session_type": q1_type,
+                    "duration_min": split["quality_1"],
+                    "intensity": q1_intensity,
+                    "exercises": q1_ex,
+                    "notes": q1_notes,
+                },
+                {
+                    "week_index": wi,
+                    "day_index": 3,
+                    "session_type": d3_type,
+                    "duration_min": split["easy"],
+                    "intensity": "RPE 3-4",
+                    "exercises": d3_ex,
+                    "notes": d3_notes,
+                },
+                {
+                    "week_index": wi,
+                    "day_index": 4,
+                    "session_type": q2_type,
+                    "duration_min": split["quality_2"],
+                    "intensity": q2_intensity,
+                    "exercises": q2_ex,
+                    "notes": q2_notes,
+                },
+                {
+                    "week_index": wi,
+                    "day_index": 5,
+                    "session_type": "rest",
+                    "duration_min": 0,
+                    "intensity": "RPE 1-2",
+                    "exercises": ["descanso activo opcional"],
+                    "notes": "Movilidad opcional 20-30' y monitorización de recuperación.",
+                },
+                {
+                    "week_index": wi,
+                    "day_index": 6,
+                    "session_type": long_type,
+                    "duration_min": split["long"],
+                    "intensity": "RPE 4-5" if not has_injuries else "RPE 3-4",
+                    "exercises": ["tirada larga progresiva", "estrategia de nutrición/hidratación"],
+                    "notes": long_notes,
+                },
+                {
+                    "week_index": wi,
+                    "day_index": 7,
+                    "session_type": d7_type,
+                    "duration_min": split["recovery"],
+                    "intensity": "RPE 2-3",
+                    "exercises": d7_ex,
+                    "notes": "Recuperación activa y descarga muscular. Prioriza sueño y rehidratación.",
+                },
+            ]
+        )
 
     objective_text = f"Preparación para {race}"
     if target_time:
         objective_text += f" con objetivo de {target_time}"
-
-    sport_primary = str((goals or {}).get("primary") or "running").strip().lower()
-    is_trail = "trail" in sport_primary
-
-    if is_trail:
-        sessions = _apply_trail_overrides(sessions, has_injuries=has_injuries)
 
     base_description = "Plan estructurado generado por el coach a partir de objetivos y perfil del atleta."
     if difficulty_reason:
@@ -4005,6 +4217,19 @@ def _generate_structured_plan_payload(
             "weekly_training_hours": weekly_hours,
             "injuries": injuries,
             "difficulty_reason": difficulty_reason,
+            "start_date": date.today().isoformat(),
+            "phase_weeks": {
+                "base": base_weeks,
+                "build": build_weeks,
+                "peak": peak_weeks,
+                "taper": taper_weeks,
+            },
+            "sports_mix": {
+                "gym": wants_gym,
+                "cycling_road": wants_road_cycling,
+                "cycling_mtb": wants_mtb,
+                "trail": wants_trail,
+            },
             "today_focus": "Sesión de calidad o ajuste por recuperación",
             "generation_note": (user_message or "")[:240],
             "base_plan_id": (base_plan or {}).get("id"),
@@ -4028,8 +4253,11 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
     if not sessions:
         errors.append("El plan no contiene sesiones.")
 
-    weekly_minutes = 0
+    by_week: dict[int, list[dict]] = {}
     for session in sessions:
+        week_idx = int(session.get("week_index") or 1)
+        by_week.setdefault(week_idx, []).append(session)
+
         day_index = int(session.get("day_index") or 0)
         if day_index < 1 or day_index > 7:
             errors.append("Hay sesiones con día fuera de rango (1-7).")
@@ -4040,13 +4268,57 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
         if session_type != "rest" and duration <= 0:
             errors.append("Hay sesiones activas con duración no válida.")
             break
-        weekly_minutes += max(0, duration)
+    duration_weeks = int(plan.get("duration_weeks") or 0)
+    if duration_weeks > 0 and len(by_week) < max(1, duration_weeks - 1):
+        errors.append("El plan no cubre suficientes semanas para la duración definida.")
+
+    weekly_totals: list[int] = []
+    quality_signatures: set[str] = set()
+    for wi in sorted(by_week.keys()):
+        week_rows = by_week[wi]
+        days = {int(s.get("day_index") or 0) for s in week_rows}
+        if len(days) < 7:
+            errors.append(f"La semana {wi} no contiene los 7 días planificados.")
+            break
+
+        rest_count = sum(1 for s in week_rows if str(s.get("session_type") or "").strip().lower() == "rest")
+        if rest_count != 1:
+            errors.append(f"La semana {wi} debe tener exactamente 1 día de descanso.")
+            break
+
+        quality_days = sorted(
+            int(s.get("day_index") or 0)
+            for s in week_rows
+            if any(k in str(s.get("session_type") or "").lower() for k in ("quality", "tempo", "hills"))
+        )
+        if len(quality_days) < 2:
+            errors.append(f"La semana {wi} necesita al menos 2 sesiones de calidad específicas.")
+            break
+        if abs(quality_days[0] - quality_days[1]) < 2:
+            errors.append(f"La semana {wi} concentra sesiones de calidad demasiado juntas.")
+            break
+
+        week_total = sum(max(0, int(s.get("duration_min") or 0)) for s in week_rows)
+        weekly_totals.append(week_total)
+
+        for s in week_rows:
+            st = str(s.get("session_type") or "").lower()
+            if any(k in st for k in ("quality", "tempo", "hills")):
+                quality_signatures.add(f"{st}|{str(s.get('notes') or '').strip()[:80]}")
 
     goals = (profile or {}).get("goals", {})
     expected_weekly_hours = _safe_float(goals.get("weekly_training_hours"), 8.0)
     expected_weekly_min = int(max(120, expected_weekly_hours * 60))
-    if weekly_minutes > int(expected_weekly_min * 1.35):
-        errors.append("La carga semanal propuesta excede claramente las horas semanales objetivo.")
+    if weekly_totals:
+        avg_week = sum(weekly_totals) / max(1, len(weekly_totals))
+        if avg_week > int(expected_weekly_min * 1.35):
+            errors.append("La carga semanal propuesta excede claramente las horas semanales objetivo.")
+
+        if len(set(weekly_totals)) <= 2 and len(weekly_totals) >= 6:
+            errors.append("El plan es demasiado plano: falta progresión/descarga semanal visible.")
+
+    if len(quality_signatures) < min(4, max(2, duration_weeks // 3)):
+        errors.append("Las sesiones de calidad se repiten demasiado; falta variedad específica por fases.")
 
     return errors
 
@@ -4110,17 +4382,38 @@ def _build_structured_plan_markdown(
     if plan_id:
         lines.append(f"ID del plan: {plan_id}")
 
+    by_week: dict[int, list[dict]] = {}
+    for s in sessions:
+        wi = int((s or {}).get("week_index") or 1)
+        by_week.setdefault(wi, []).append(s)
+
+    phase_weeks = (plan.get("plan_data") or {}).get("phase_weeks") if isinstance(plan.get("plan_data"), dict) else None
+    if isinstance(phase_weeks, dict):
+        lines.extend([
+            "",
+            "## 🧱 Fases",
+            f"- Base: {int(phase_weeks.get('base') or 0)} semanas",
+            f"- Construcción: {int(phase_weeks.get('build') or 0)} semanas",
+            f"- Pico: {int(phase_weeks.get('peak') or 0)} semanas",
+            f"- Taper: {int(phase_weeks.get('taper') or 0)} semanas",
+        ])
+
     lines.extend([
         "",
-        "## 📅 Semana tipo (estructura)",
+        "## 📅 Estructura semanal (primeras 3 semanas)",
     ])
 
-    for s in sorted(sessions, key=lambda x: (int(x.get("week_index") or 1), int(x.get("day_index") or 1))):
-        day = day_names.get(int(s.get("day_index") or 0), f"Día {s.get('day_index', '?')}")
-        session_type = str(s.get("session_type") or "sesión")
-        duration = int(s.get("duration_min") or 0)
-        intensity = str(s.get("intensity") or "RPE n/d")
-        lines.append(f"- {day}: {session_type} · {duration} min · {intensity}")
+    show_weeks = sorted(by_week.keys())[:3]
+    for wi in show_weeks:
+        week_rows = sorted(by_week[wi], key=lambda x: int(x.get("day_index") or 1))
+        week_total = sum(int((r or {}).get("duration_min") or 0) for r in week_rows)
+        lines.append(f"- Semana {wi}: ~{week_total} min")
+        for s in week_rows:
+            day = day_names.get(int(s.get("day_index") or 0), f"Día {s.get('day_index', '?')}")
+            session_type = str(s.get("session_type") or "sesión")
+            duration = int(s.get("duration_min") or 0)
+            intensity = str(s.get("intensity") or "RPE n/d")
+            lines.append(f"  - {day}: {session_type} · {duration} min · {intensity}")
 
     lines.extend([
         "",

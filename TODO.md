@@ -97,6 +97,12 @@
 - Se evita caída silenciosa al flujo LLM cuando falla la ruta estructurada: ahora responde por fallback determinista basado en objetivo.
 - Se añaden tests de regresión para afirmativo contextual con y sin oferta previa de plan.
 
+#### 50) [PLAN-ENGINE] Periodización progresiva multi-semana + validadores anti-plantilla (2026-07-31) — REALIZADO
+- Generador estructurado reescrito para producir semanas completas con fases base/build/peak/taper y progresión de carga con descarga/taper explícitos.
+- Sesiones ahora incluyen variación determinista de calidad, mezcla multideporte según preferencias y ajuste de intensidad/volumen por lesión.
+- Validación endurecida para rechazar planes planos o repetitivos (estructura semanal, separación de sesiones clave y checks de variedad).
+- Añadidos tests de regresión para progresión semanal, selección por week_index y rutas trail/multisport.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 

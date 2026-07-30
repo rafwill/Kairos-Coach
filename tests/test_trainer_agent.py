@@ -47,6 +47,7 @@ from agent.trainer_agent import (
     _generate_structured_plan_payload,
     _GeminiCompletions,
     _get_active_training_plan,
+    _get_planned_session_for_date,
     _has_goal_in_profile,
     _detect_personal_records_sport_intent,
     _is_generic_needs_more_info_reply,
@@ -2356,7 +2357,29 @@ class TestLoadFatigueModel:
         plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
         assert plan["title"].startswith("Plan hacia")
         assert plan["duration_weeks"] >= 4
-        assert len(sessions) == 7
+        assert len(sessions) == plan["duration_weeks"] * 7
+
+        week_indexes = sorted({int(s.get("week_index") or 0) for s in sessions})
+        assert week_indexes[0] == 1
+        assert week_indexes[-1] == plan["duration_weeks"]
+
+    def test_generate_structured_plan_payload_has_weekly_progression(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=98)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para 10K")
+        weekly_totals = []
+        for wi in range(1, int(plan["duration_weeks"]) + 1):
+            rows = [s for s in sessions if int(s.get("week_index") or 0) == wi]
+            weekly_totals.append(sum(int((r or {}).get("duration_min") or 0) for r in rows))
+
+        assert len(set(weekly_totals)) >= 3
+        assert weekly_totals[-1] < max(weekly_totals)  # taper final
 
     def test_trail_plan_uses_trail_session_types(self):
         """Plan con 'trail running' debe tener session_types específicos de trail."""
@@ -2420,6 +2443,24 @@ class TestLoadFatigueModel:
         assert "trail_long" not in session_types
         assert "trail_hills" not in session_types
 
+    def test_multisport_preferences_add_cycling_and_gym_sessions(self):
+        profile = {
+            "goals": {
+                "primary": "running",
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=70)).isoformat(),
+                "weekly_training_hours": 9,
+            },
+            "health": {"injuries": []},
+        }
+        _, sessions = _generate_structured_plan_payload(
+            profile,
+            "Quiero alternar gimnasio, ciclismo de carretera, de montaña y trail",
+        )
+        types = {str(s.get("session_type") or "") for s in sessions}
+        assert any("strength" in t for t in types)
+        assert any("cycl" in t for t in types)
+
     # ── Punto E: plan con lesión informa del ajuste de dificultad ────────────
 
     def test_plan_with_injury_has_difficulty_reason_in_description(self):
@@ -2466,6 +2507,37 @@ class TestLoadFatigueModel:
         sessions = [{"day_index": 9, "duration_min": 40, "session_type": "running_z2"}]
         errors = _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 6}})
         assert any("día fuera de rango" in e for e in errors)
+
+    def test_validate_structured_plan_flags_flat_weekly_template(self):
+        plan = {
+            "title": "Plan",
+            "objective": "Objetivo",
+            "duration_weeks": 8,
+        }
+        base_week = [
+            (1, "strength", 40, "RPE 4-5"),
+            (2, "running_quality", 45, "RPE 7-8"),
+            (3, "running_z2", 40, "RPE 3-4"),
+            (4, "running_quality", 45, "RPE 7-8"),
+            (5, "rest", 0, "RPE 1-2"),
+            (6, "long_run", 80, "RPE 4-5"),
+            (7, "recovery", 30, "RPE 2-3"),
+        ]
+        sessions = []
+        for wi in range(1, 9):
+            for day, stype, dur, intensity in base_week:
+                sessions.append(
+                    {
+                        "week_index": wi,
+                        "day_index": day,
+                        "session_type": stype,
+                        "duration_min": dur,
+                        "intensity": intensity,
+                        "notes": "template",
+                    }
+                )
+        errors = _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 8}})
+        assert any("demasiado plano" in e or "repiten" in e for e in errors)
 
     def test_summarize_plan_changes_includes_duration_and_volume(self):
         previous_plan = {"duration_weeks": 8, "difficulty": "moderate"}
@@ -2639,6 +2711,21 @@ class TestPlanStatusChatRoute:
         mocked_update.assert_not_called()
         assert "No pude persistir el plan propuesto" in out
         assert "Error de validación de prueba" in out
+
+
+class TestPlannedSessionSelection:
+    def test_get_planned_session_for_date_respects_week_index_when_available(self):
+        plan = {
+            "plan_data": {"start_date": "2026-01-06"},  # lunes
+            "sessions": [
+                {"week_index": 1, "day_index": 2, "session_type": "running_z2", "duration_min": 40},
+                {"week_index": 2, "day_index": 2, "session_type": "running_quality", "duration_min": 55},
+            ],
+        }
+        # 2026-01-13 es martes de la semana 2 desde start_date.
+        out = _get_planned_session_for_date(plan, "2026-01-13")
+        assert out is not None
+        assert out["session_type"] == "running_quality"
 
 
 class TestMcpReadOnlyPolicy:
