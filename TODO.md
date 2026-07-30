@@ -106,6 +106,13 @@
 - Estado pre-carrera con valores numéricos reales + interpretación coaching (body battery, sueño con fases, HRV).
 - Instrucciones de sección reescritas en prosa para evitar que llama-70b las copie como bullets de output.
 
+#### 42) [RUNNING-TSS] Clasificación explícita rodaje/fartlek/series + persistencia de inferencia (2026-07-30) — REALIZADO
+- Clasificación determinista de running no-trail por señales combinadas (speed ratio, laps, RPE, TE label y keywords del texto).
+- Nuevas clases operativas: `rodaje`, `fartlek`, `series` y `calidad` como fallback conservador.
+- Cálculo TSS condicionado por tipo y confianza (`high`/`medium`/`low`) para modular uplift.
+- Persistencia de trazas recientes de inferencia en perfil (`running_session_inference`) para auditoría/calibración.
+- Versión de fórmula incrementada a v7 para forzar recálculo automático de la serie histórica.
+
 ---
 
 ## ⏳ Pendiente

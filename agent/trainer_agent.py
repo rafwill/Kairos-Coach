@@ -246,7 +246,7 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 4  # v4: reglas explícitas por deporte (fuerza/running/trail/ciclismo)
+_TSS_FORMULA_VERSION = 7  # v7: clasificacion explicita running (rodaje/fartlek/series) + confianza
 
 
 # Metadatos de récords personales de Garmin (mapeado de typeId a categoría y formato)
@@ -1042,6 +1042,7 @@ def _extract_activity_duration_hours(activity: dict) -> float:
 def _extract_activity_distance_km(activity: dict) -> float | None:
     for key, in_meters in (
         ("distance", True),
+        ("distance_meters", True),
         ("distance_m", True),
         ("distanceInMeters", True),
         ("totalDistanceInMeters", True),
@@ -1101,6 +1102,31 @@ def _parse_pace_to_sec_per_km(raw: Any) -> float | None:
     if v < 20:
         return v * 60.0
     return v
+
+
+def _speed_ms_to_pace_sec_per_km(raw_speed: Any) -> float | None:
+    """Convierte velocidad (m/s) a ritmo (s/km) con saneamiento de outliers.
+
+    Algunos payloads de Garmin devuelven `lactate_threshold_speed_mps` con
+    escala 0.1 (p. ej. 0.408 en lugar de 4.08). Se corrige de forma segura.
+    """
+    if raw_speed is None:
+        return None
+    try:
+        speed_ms = float(raw_speed)
+    except Exception:
+        return None
+    if speed_ms <= 0:
+        return None
+
+    # Quirk observado en Garmin MCP: valor en m/s escalado por 0.1.
+    if 0.2 <= speed_ms <= 1.2:
+        speed_ms *= 10.0
+
+    # Rango fisiológicamente razonable para umbral de carrera.
+    if speed_ms < 1.5 or speed_ms > 8.5:
+        return None
+    return 1000.0 / speed_ms
 
 
 def _extract_avg_pace_sec_per_km(activity: dict) -> float | None:
@@ -1276,20 +1302,15 @@ def _extract_threshold_pace_sec_per_km(activity: dict, running_threshold_pace_se
             return pace
 
     for speed_key in (
+        "lactate_threshold_speed_mps",
         "lactateThresholdSpeed",
         "lactate_threshold_speed",
         "thresholdSpeed",
         "threshold_speed",
     ):
-        raw_speed = activity.get(speed_key)
-        if raw_speed is None:
-            continue
-        try:
-            speed_ms = float(raw_speed)
-        except Exception:
-            continue
-        if speed_ms > 0:
-            return 1000.0 / speed_ms
+        pace = _speed_ms_to_pace_sec_per_km(activity.get(speed_key))
+        if pace and pace > 0:
+            return pace
 
     return None
 
@@ -1372,6 +1393,275 @@ def _estimate_tss_from_threshold_pace(
     return max(0.0, min(hours * (if_pace ** 2) * 100.0, 500.0))
 
 
+def _extract_running_if_from_threshold_pace(
+    activity: dict,
+    running_threshold_pace_sec_per_km: float | None = None,
+    prefer_effective_running_pace: bool = False,
+    if_pace_ceiling: float = 1.20,
+) -> float | None:
+    threshold_pace = _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
+    avg_pace = (
+        _extract_running_effective_pace_sec_per_km(activity)
+        if prefer_effective_running_pace
+        else _extract_avg_pace_sec_per_km(activity)
+    )
+    if not threshold_pace or not avg_pace or threshold_pace <= 0 or avg_pace <= 0:
+        return None
+    return max(0.50, min(float(if_pace_ceiling), threshold_pace / avg_pace))
+
+
+def _extract_running_session_signals(activity: dict) -> dict[str, Any]:
+    def _first_float(*keys: str) -> float | None:
+        for key in keys:
+            raw = activity.get(key)
+            if raw is None:
+                continue
+            try:
+                return float(raw)
+            except Exception:
+                continue
+        return None
+
+    avg_speed = _first_float("avg_speed_mps", "averageSpeedMps", "average_speed_mps")
+    max_speed = _first_float("max_speed_mps", "maxSpeedMps", "max_speed_mps")
+    speed_ratio = (max_speed / avg_speed) if avg_speed and avg_speed > 0 and max_speed and max_speed > 0 else None
+
+    lap_count = _first_float("lap_count", "lapCount")
+    vigorous_min = _first_float("vigorous_intensity_minutes", "vigorousIntensityMinutes")
+    workout_rpe = _first_float("workout_rpe", "workoutRpe")
+    if workout_rpe is None:
+        generic_rpe = _estimate_if_from_rpe(activity)
+        if generic_rpe is not None:
+            workout_rpe = max(0.0, min(100.0, ((generic_rpe - 0.40) / 0.60) * 100.0))
+
+    te_label = str(activity.get("training_effect_label") or activity.get("trainingEffectLabel") or "").strip().lower()
+
+    txt = " ".join(
+        [
+            str(activity.get("name") or ""),
+            str(activity.get("description") or ""),
+            str(activity.get("notes") or ""),
+        ]
+    ).lower()
+    interval_keyword = bool(
+        re.search(
+            r"(interval|series|fartlek|cuestas|repet|z4|z5|vo2|\b\d+\s*[xX]\s*\d+|\b\d+['’]\s*[xX])",
+            txt,
+        )
+    )
+    series_keyword = bool(
+        re.search(
+            r"(interval|series|repet|cuestas|\b\d+\s*[xX]\s*\d+|\b\d+['’]\s*[xX])",
+            txt,
+        )
+    )
+    fartlek_keyword = bool(re.search(r"\bfartlek\b", txt))
+    rodaje_keyword = bool(re.search(r"\brodaje\b|\bz1\b|\bz2\b|\brecuperaci[oó]n\b|\bsuave\b", txt))
+
+    return {
+        "speed_ratio": speed_ratio,
+        "lap_count": int(lap_count) if lap_count is not None else 0,
+        "vigorous_min": float(vigorous_min) if vigorous_min is not None else 0.0,
+        "workout_rpe": float(workout_rpe) if workout_rpe is not None else None,
+        "te_label": te_label,
+        "interval_keyword": interval_keyword,
+        "series_keyword": series_keyword,
+        "fartlek_keyword": fartlek_keyword,
+        "rodaje_keyword": rodaje_keyword,
+    }
+
+
+def _classify_running_session_with_confidence(activity: dict) -> dict[str, Any]:
+    sig = _extract_running_session_signals(activity)
+    speed_ratio = float(sig.get("speed_ratio") or 0.0)
+    lap_count = int(sig.get("lap_count") or 0)
+    vigorous_min = float(sig.get("vigorous_min") or 0.0)
+    workout_rpe = sig.get("workout_rpe")
+    workout_rpe = float(workout_rpe) if workout_rpe is not None else 0.0
+    te_label = str(sig.get("te_label") or "")
+    interval_keyword = bool(sig.get("interval_keyword"))
+    series_keyword = bool(sig.get("series_keyword"))
+    fartlek_keyword = bool(sig.get("fartlek_keyword"))
+    rodaje_keyword = bool(sig.get("rodaje_keyword"))
+
+    high_te = te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}
+
+    rodaje_score = 0
+    if rodaje_keyword:
+        rodaje_score += 2
+    if speed_ratio > 0 and speed_ratio < 1.14:
+        rodaje_score += 2
+    if workout_rpe <= 45.0:
+        rodaje_score += 1
+    if te_label in {"aerobic_base", "recovery", ""}:
+        rodaje_score += 1
+    if vigorous_min <= 25.0:
+        rodaje_score += 1
+
+    fartlek_score = 0
+    if fartlek_keyword:
+        fartlek_score += 3
+    if interval_keyword:
+        fartlek_score += 1
+    if speed_ratio >= 1.14:
+        fartlek_score += 1
+    if workout_rpe >= 60.0:
+        fartlek_score += 1
+    if high_te:
+        fartlek_score += 1
+    if lap_count >= 14:
+        fartlek_score += 1
+
+    series_score = 0
+    if series_keyword:
+        series_score += 2
+    if interval_keyword and not fartlek_keyword:
+        series_score += 1
+    if speed_ratio >= 1.15:
+        series_score += 1
+    if lap_count >= 16:
+        series_score += 1
+    if workout_rpe >= 55.0:
+        series_score += 1
+    if vigorous_min >= 35.0:
+        series_score += 1
+    if high_te:
+        series_score += 1
+
+    calidad_score = 1
+    if high_te:
+        calidad_score += 1
+    if workout_rpe >= 50.0:
+        calidad_score += 1
+
+    scores = {
+        "rodaje": rodaje_score,
+        "fartlek": fartlek_score,
+        "series": series_score,
+        "calidad": calidad_score,
+    }
+
+    sorted_scores = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    top_kind, top_score = sorted_scores[0]
+    second_score = sorted_scores[1][1]
+    margin = top_score - second_score
+
+    if top_kind == "rodaje" and top_score < 4:
+        session_kind = "calidad"
+    elif top_kind in {"fartlek", "series"} and top_score < 4:
+        session_kind = "calidad"
+    else:
+        session_kind = top_kind
+
+    confidence = "low"
+    if top_score >= 5 and margin >= 2:
+        confidence = "high"
+    elif top_score >= 4 and margin >= 1:
+        confidence = "medium"
+
+    return {
+        "session_kind": session_kind,
+        "confidence": confidence,
+        "scores": scores,
+    }
+
+
+def _classify_running_session(activity: dict) -> str:
+    cls = _classify_running_session_with_confidence(activity)
+    return str(cls.get("session_kind") or "calidad")
+
+
+def _estimate_running_tss_examined(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> float | None:
+    if hours <= 0:
+        return None
+
+    base_if = _extract_running_if_from_threshold_pace(
+        activity,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+        prefer_effective_running_pace=True,
+        if_pace_ceiling=1.30,
+    )
+    tss_pace_base = (
+        max(0.0, min(hours * (base_if ** 2) * 100.0, 500.0))
+        if base_if is not None
+        else None
+    )
+
+    if_hr = _estimate_if_from_hr(
+        activity,
+        cycling_formula=False,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+    )
+    tss_hr = (
+        max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0))
+        if if_hr is not None
+        else None
+    )
+
+    if base_if is None:
+        return tss_hr
+
+    cls = _classify_running_session_with_confidence(activity)
+    session_kind = str(cls.get("session_kind") or "calidad")
+    confidence = str(cls.get("confidence") or "low")
+
+    if session_kind in {"fartlek", "series"}:
+        sig = _extract_running_session_signals(activity)
+        speed_ratio = float(sig.get("speed_ratio") or 1.0)
+        workout_rpe = sig.get("workout_rpe")
+        workout_rpe = float(workout_rpe) if workout_rpe is not None else 0.0
+        te_label = str(sig.get("te_label") or "")
+        interval_keyword = bool(sig.get("interval_keyword"))
+        fartlek_keyword = bool(sig.get("fartlek_keyword"))
+
+        confidence_factor = {"high": 1.0, "medium": 0.85, "low": 0.70}.get(confidence, 0.70)
+
+        uplift = 0.0
+        if session_kind == "fartlek" or fartlek_keyword:
+            # En fartlek largo el ritmo base ya captura buena parte del coste.
+            # Reducimos el uplift para evitar sobreestimacion sistematica.
+            if workout_rpe >= 80.0:
+                uplift += 0.002
+            elif workout_rpe >= 65.0:
+                uplift += 0.001
+            if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
+                uplift += 0.002
+            uplift *= confidence_factor
+            uplift = min(0.006, uplift)
+        else:
+            if speed_ratio > 1.12:
+                uplift += min(0.045, (speed_ratio - 1.12) * 0.20)
+            if workout_rpe >= 70.0:
+                uplift += 0.01
+            elif workout_rpe >= 55.0:
+                uplift += 0.005
+            if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
+                uplift += 0.008
+            if interval_keyword:
+                uplift += 0.008
+            uplift *= confidence_factor
+            uplift = min(0.07, uplift)
+
+        interval_if = max(0.50, min(1.30, base_if + uplift))
+        tss_interval = max(0.0, min(hours * (interval_if ** 2) * 100.0, 500.0))
+        if tss_pace_base is not None:
+            return max(tss_interval, tss_pace_base)
+        return tss_interval if tss_interval is not None else tss_hr
+
+    # Rodaje/calidad: mantener base por ritmo (comportamiento estable).
+    # FC se usa solo cuando no hay ritmo utilizable.
+    if tss_pace_base is not None:
+        return tss_pace_base
+    return tss_hr
+
+
 def _estimate_if_from_training_effect(activity: dict) -> float | None:
     effect = (
         activity.get("activityTrainingEffect")
@@ -1425,23 +1715,15 @@ def _estimate_session_tss(
             return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
 
     elif is_running_non_trail:
-        tss_pace = _estimate_tss_from_threshold_pace(
+        tss_running = _estimate_running_tss_examined(
             activity,
             hours=hours,
             running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-            prefer_effective_running_pace=True,
-            if_pace_ceiling=1.30,
-        )
-        if tss_pace is not None:
-            return tss_pace, "TSS"
-        if_hr = _estimate_if_from_hr(
-            activity,
-            cycling_formula=False,
             hr_rest_bpm=hr_rest_bpm,
             hr_max_bpm=hr_max_bpm,
         )
-        if if_hr is not None:
-            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+        if tss_running is not None:
+            return tss_running, "TSS"
 
     elif is_trail_hike_walk:
         if_hr = _estimate_if_from_hr(
@@ -1518,18 +1800,14 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
             return pace
 
     speed_candidates = [
+        perf.get("lactate_threshold_speed_mps"),
         perf.get("lactate_threshold_speed"),
         perf.get("running_threshold_speed"),
     ]
     for raw_speed in speed_candidates:
-        if raw_speed is None:
-            continue
-        try:
-            speed_ms = float(raw_speed)
-        except Exception:
-            continue
-        if speed_ms > 0:
-            return 1000.0 / speed_ms
+        pace = _speed_ms_to_pace_sec_per_km(raw_speed)
+        if pace and pace > 0:
+            return pace
 
     return None
 
@@ -5055,10 +5333,33 @@ class TrainerAgent:
         hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(self.user_profile)
         tss_by_day:   dict[str, float] = {}
         count_by_day: dict[str, int]   = {}
+        running_mix_by_day: dict[str, dict[str, int]] = {}
+        running_inference_samples: list[dict] = []
         for act in new_activities:
             d_iso = _extract_activity_date_iso(act)
             if not d_iso:
                 continue
+            act_type = act.get("type") or act.get("activityType") or ""
+            if _is_running_non_trail_activity(act_type):
+                cls = _classify_running_session_with_confidence(act)
+                kind = str(cls.get("session_kind") or "calidad")
+                conf = str(cls.get("confidence") or "low")
+                mix = running_mix_by_day.setdefault(
+                    d_iso,
+                    {"rodaje": 0, "fartlek": 0, "series": 0, "calidad": 0},
+                )
+                if kind not in mix:
+                    mix[kind] = 0
+                mix[kind] += 1
+                running_inference_samples.append(
+                    {
+                        "date": d_iso,
+                        "activity_id": act.get("id") or act.get("activityId"),
+                        "name": act.get("name") or act.get("activityName") or "running",
+                        "session_kind": kind,
+                        "confidence": conf,
+                    }
+                )
             tss, _ = _estimate_session_tss(
                 act,
                 ftp=cycling_ftp,
@@ -5072,6 +5373,16 @@ class TrainerAgent:
 
         log.info("compute_load: %d días con TSS desde %s (actividades=%d)",
                  len(tss_by_day), fetch_from, len(new_activities))
+
+        if running_inference_samples:
+            running_inference_samples.sort(key=lambda item: str(item.get("date") or ""), reverse=True)
+            self.user_profile["running_session_inference"] = {
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "window_start": fetch_from,
+                "window_end": today.isoformat(),
+                "samples": running_inference_samples[:30],
+                "mix_by_day": running_mix_by_day,
+            }
 
         # 6. Configuración de tau por deporte
         model_cfg = _resolve_sport_model_cfg(self.user_profile)
