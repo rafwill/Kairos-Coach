@@ -28,6 +28,7 @@ from agent.trainer_agent import (
     _build_goal_plan_fallback,
     _build_athlete_knowledge_context,
     _build_proactive_status_markdown,
+    _build_post_activity_section_spec,
     _build_load_trend_table,
     _classify_running_session_with_confidence,
     _estimate_session_tss,
@@ -51,6 +52,7 @@ from agent.trainer_agent import (
     _is_generic_needs_more_info_reply,
     _is_personal_records_followup_intent,
     _is_plan_status_intent,
+    _is_week_tss_intent,
     _is_planning_intent,
     _is_write_mcp_tool,
     _resolve_activity_id_from_query,
@@ -207,6 +209,22 @@ class TestSystemPromptPlanManagementRules:
         assert "/plan ver <plan_id>" in prompt
         assert "/plan activar <plan_id>" in prompt
         assert "nueva versión" in prompt or "nueva version" in prompt
+
+
+class TestPostActivitySectionSpec:
+    def test_recent_activity_keeps_recovery_next_sessions(self):
+        today_d = date(2026, 7, 30)
+        spec = _build_post_activity_section_spec("2026-07-29", today_d=today_d)
+        assert spec["plan_context"] == "recent"
+        assert "Recuperacion y proximas sesiones" in spec["header"]
+        assert "manana" in spec["guidance"]
+
+    def test_historical_activity_uses_learnings_no_short_term_schedule(self):
+        today_d = date(2026, 7, 30)
+        spec = _build_post_activity_section_spec("2026-07-20", today_d=today_d)
+        assert spec["plan_context"] == "historical"
+        assert "Aprendizajes" in spec["header"]
+        assert "PROHIBIDO dar plan temporal corto" in spec["guidance"]
 
 
 # ─── _strip_garmin_object ─────────────────────────────────────────────────────
@@ -2705,3 +2723,35 @@ class TestMcpReadOnlyPolicy:
                 out = await TrainerAgent.chat(agent, "Programa un entrenamiento para mañana")
 
         assert out == "respuesta final"
+
+
+class TestWeekTssDeterministicRoute:
+    def test_is_week_tss_intent_detects_weekly_tss_queries(self):
+        assert _is_week_tss_intent("Cuanto TSS llevo esta semana?")
+        assert _is_week_tss_intent("Dame el acumulado semanal de TSS")
+        assert not _is_week_tss_intent("Como esta mi HRV hoy?")
+
+    @pytest.mark.asyncio
+    async def test_chat_week_tss_route_does_not_call_llm(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"load_metrics": {"series": []}}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        with patch("agent.trainer_agent._build_current_week_tss_markdown", new=AsyncMock(return_value="## Consulta TSS semanal (datos reales)\n\n- ok\n\n_Respuesta determinista: sin inferencias del LLM para nombres/tipos de actividad._")) as weekly_mock, patch(
+            "agent.trainer_agent._save_history_entry"
+        ):
+            out = await TrainerAgent.chat(agent, "Cuánto TSS llevo esta semana?")
+
+        weekly_mock.assert_awaited_once()
+        assert out.startswith("## Consulta TSS semanal (datos reales)")
+        assert "sin inferencias del LLM" in out
+        assert len(agent.conversation_history) == 2
