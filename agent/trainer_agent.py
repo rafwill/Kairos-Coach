@@ -2737,6 +2737,27 @@ def _is_plan_status_intent(user_message: str) -> bool:
     return any(marker in text for marker in status_markers)
 
 
+def _is_week_tss_intent(user_message: str) -> bool:
+    """Detecta consultas de TSS semanal para responder por ruta determinista.
+
+    Esta intención evita respuestas generativas ambiguas y fuerza una salida
+    basada en semana natural (lunes→domingo), acumulada hasta hoy.
+    """
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+    if "tss" not in text:
+        return False
+    # Consulta explícita de datos/cifras: priorizar respuesta directa.
+    data_markers = [
+        "cuanto", "cuánto", "dime", "consulta", "datos", "acumulado", "llevo",
+    ]
+    week_markers = [
+        "esta semana", "semana", "semanal", "lunes", "domingo", "acumulado semanal",
+    ]
+    return any(marker in text for marker in week_markers) and any(marker in text for marker in data_markers)
+
+
 def _format_iso_date_es(value: Any) -> str:
     """Convierte fechas ISO (YYYY-MM-DD o ISO datetime) a DD/MM/AAAA para usuario."""
     if not value:
@@ -2756,6 +2777,164 @@ def _format_iso_date_es(value: Any) -> str:
         except Exception:
             return text
     return text
+
+
+def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | None = None) -> dict:
+    """Define el enfoque de la sección final según antigüedad de la actividad.
+
+    - Actividad reciente (<=2 días): recuperación inmediata y próximas sesiones.
+    - Actividad histórica (>2 días): aprendizajes transferibles, sin plan temporal corto.
+    """
+    today_ref = today_d or date.today()
+    is_recent = False
+    try:
+        act_d = date.fromisoformat(str(activity_date_iso or "")[:10])
+        is_recent = (today_ref - act_d).days <= 2
+    except Exception:
+        is_recent = False
+
+    if is_recent:
+        return {
+            "header": "## 🔄 Recuperacion y proximas sesiones",
+            "section_name": "## 🔄 Recuperacion y proximas sesiones",
+            "guidance": (
+                "Escribe 3-5 bullets originales de coach con consejos CONCRETOS usando los valores "
+                "numericos reales del bloque de datos (TSS, ATL, CTL, TSB, sueno, body battery, HRV). "
+                "NO copies estas instrucciones como bullets. Genera texto original.\n"
+                "Contenido esperado: que hacer manana (tipo sesion y duracion especifica o descanso), "
+                "que hacer en 2-3 dias, senales de alerta a vigilar, y consejo tecnico para la proxima "
+                "sesion similar (pace objetivo, zonas de FC, nutricion pre/post). "
+                "Si los datos indican que el cuerpo pide descanso, dilo con claridad aunque haya sesion en el plan. "
+                "Si los indicadores son buenos, menciona que puede afrontar la siguiente sesion."
+            ),
+            "plan_context": "recent",
+        }
+
+    return {
+        "header": "## 🧾 Aprendizajes para futuras sesiones similares",
+        "section_name": "## 🧾 Aprendizajes para futuras sesiones similares",
+        "guidance": (
+            "Escribe 3-5 bullets concisos con aprendizajes transferibles de esta actividad para futuras sesiones. "
+            "Usa SIEMPRE datos reales del bloque (TSS, FC, zonas, desnivel, sueno, HRV, body battery). "
+            "PROHIBIDO dar plan temporal corto (no 'manana', no 'en 2-3 dias'). "
+            "Enfoca en: pacing, control de intensidad, nutricion/hidratacion y senales de alerta a vigilar "
+            "en proximos entrenamientos similares."
+        ),
+        "plan_context": "historical",
+    }
+
+
+async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
+    """Construye un resumen determinista de TSS semanal (lunes→hoy).
+
+    Incluye:
+    - TSS por día de la semana natural actual.
+    - Actividades reales Garmin registradas en ese rango (sin inferencias del LLM).
+    """
+    series = ((profile or {}).get("load_metrics") or {}).get("series") or []
+    if not series:
+        return (
+            "## 📈 Carga semanal (TSS)\n\n"
+            "- No hay serie de carga/fatiga en perfil todavía.\n"
+            "- Ejecuta una sincronización/cálculo para poblar TSS diario."
+        )
+
+    today_d = date.today()
+    week_start = today_d - timedelta(days=today_d.weekday())  # lunes
+    week_dates = [week_start + timedelta(days=i) for i in range((today_d - week_start).days + 1)]
+
+    tss_by_day: dict[str, float] = {}
+    for row in series:
+        d_iso = str(row.get("date") or "")
+        if not d_iso:
+            continue
+        try:
+            d_obj = date.fromisoformat(d_iso)
+        except Exception:
+            continue
+        if week_start <= d_obj <= today_d:
+            tss_by_day[d_iso] = round(float(row.get("tss") or 0.0), 1)
+
+    current_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
+
+    activities: list[dict] = []
+    req_variants = [
+        {
+            "start_date": week_start.isoformat(),
+            "end_date": today_d.isoformat(),
+            "page": 0,
+            "page_size": 200,
+        },
+        {
+            "startdate": week_start.isoformat(),
+            "enddate": today_d.isoformat(),
+        },
+    ]
+    for args in req_variants:
+        try:
+            raw = await call_tool(mcp_session, "get_activities_by_date", args)
+            parsed = _try_parse_json(raw)
+            if parsed is None:
+                parsed = raw
+            acts = _extract_activities_list(parsed)
+            if acts:
+                activities = acts
+                break
+        except Exception:
+            continue
+
+    act_rows: list[tuple[date, str, str]] = []
+    for act in activities:
+        if not isinstance(act, dict):
+            continue
+        d_iso = _extract_activity_date_iso(act)
+        if not d_iso:
+            continue
+        try:
+            d_obj = date.fromisoformat(d_iso)
+        except Exception:
+            continue
+        if not (week_start <= d_obj <= today_d):
+            continue
+        name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
+        sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
+        act_rows.append((d_obj, sport, name))
+    act_rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
+
+    weekday_es = {
+        0: "lunes",
+        1: "martes",
+        2: "miercoles",
+        3: "jueves",
+        4: "viernes",
+        5: "sabado",
+        6: "domingo",
+    }
+
+    lines = [
+        "## Consulta TSS semanal (datos reales)",
+        "",
+        f"- Semana natural: {week_start.strftime('%d/%m/%Y')} → {today_d.strftime('%d/%m/%Y')}",
+        f"- TSS acumulado: {current_week_tss:.1f}",
+        "- TSS por día:",
+    ]
+
+    for d in week_dates:
+        d_iso = d.isoformat()
+        lines.append(
+            f"  - {weekday_es.get(d.weekday(), d.strftime('%A'))} {d.strftime('%d/%m')}: {tss_by_day.get(d_iso, 0.0):.1f}"
+        )
+
+    if act_rows:
+        lines.append("- Actividades fuente (Garmin):")
+        for d_obj, sport, name in act_rows:
+            lines.append(f"  - {d_obj.strftime('%d/%m')}: {sport} — {name}")
+    else:
+        lines.append("- Actividades fuente (Garmin): sin datos en el rango consultado.")
+
+    lines.append("")
+    lines.append("_Respuesta determinista: sin inferencias del LLM para nombres/tipos de actividad._")
+    return "\n".join(lines)
 
 
 def _build_training_plan_status_markdown(profile: dict) -> str:
@@ -6599,6 +6778,16 @@ class TrainerAgent:
             _save_history_entry("assistant", assistant_reply)
             return assistant_reply
 
+        # Ruta determinista para TSS semanal: evita ambigüedades del LLM
+        # y fuerza semana natural lunes→hoy con actividades reales de Garmin.
+        if _is_week_tss_intent(user_message):
+            assistant_reply = await _build_current_week_tss_markdown(self.mcp_session, self.user_profile)
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
+            _save_history_entry("user", user_message)
+            _save_history_entry("assistant", assistant_reply)
+            return assistant_reply
+
         # Ruta funcional de planificación: generación/actualización estructurada,
         # persistida y versionada en DB sin depender del LLM.
         if _is_planning_intent(user_message) and _has_goal_in_profile(self.user_profile):
@@ -6981,9 +7170,21 @@ class TrainerAgent:
                     if _zones_direct_text else ""
                 )
 
+                _post_activity_spec = _build_post_activity_section_spec(user_date)
+                _post_header = str(_post_activity_spec.get("header") or "## 🔄 Recuperacion y proximas sesiones")
+                _post_section_name = str(_post_activity_spec.get("section_name") or _post_header)
+                _post_guidance = str(_post_activity_spec.get("guidance") or "")
+                _post_plan_mode = str(_post_activity_spec.get("plan_context") or "recent")
+
                 # Contexto del plan de entrenamiento para la sección de recuperación
                 _plan_obj = _get_active_training_plan(self.user_profile)
-                if _plan_obj:
+                if _post_plan_mode == "historical":
+                    _plan_ctx = (
+                        "\nACTIVIDAD HISTORICA (>2 dias).\n"
+                        "No des recomendaciones de calendario inmediato (manana / 2-3 dias). "
+                        "Limita la ultima seccion a aprendizajes aplicables para futuras sesiones similares.\n"
+                    )
+                elif _plan_obj:
                     _plan_title = _plan_obj.get("title") or _plan_obj.get("name") or "Plan activo"
                     _plan_ctx = (
                         f"\nPLAN DE ENTRENAMIENTO ACTIVO: {_plan_title}\n"
@@ -7016,7 +7217,7 @@ class TrainerAgent:
                         "## \u26a1 Efecto de entrenamiento y carga\n"
                         "## \U0001f4a7 Hidratacion recomendada\n"
                         "## \U0001f6cc Estado pre-carrera (body battery, sueno y HRV)\n"
-                        "## \U0001f504 Recuperacion y proximas sesiones\n\n"
+                        f"{_post_header}\n\n"
                         "ESTILO: cada seccion debe tener 2-4 puntos (- ) con interpretacion real de coach.\n"
                         "Ejemplo: en lugar de '- TSS: 162.9' escribe '- TSS de 162.9: sesion muy exigente.'\n"
                         "Interpreta FC, zonas, desnivel, carga en terminos de esfuerzo y adaptacion.\n\n"
@@ -7034,15 +7235,8 @@ class TrainerAgent:
                         "Formato: '- Sueno: 7h 10min (86/100): [tu analisis original aqui]'\n"
                         "HRV: escribe el valor en ms e interpreta el estado del sistema nervioso autonomo. "
                         "Si no hay datos de HRV: un bullet indicandolo brevemente.\n\n"
-                        "SECCION '## \U0001f504 Recuperacion y proximas sesiones':\n"
-                        "Escribe 3-5 bullets originales de coach con consejos CONCRETOS usando los valores "
-                        "numericos reales del bloque de datos (TSS, ATL, CTL, TSB, sueno, body battery, HRV). "
-                        "NO copies estas instrucciones como bullets. Genera texto original.\n"
-                        "Contenido esperado: que hacer manana (tipo sesion y duracion especifica o descanso), "
-                        "que hacer en 2-3 dias, senales de alerta a vigilar, y consejo tecnico para la proxima "
-                        "sesion similar (pace objetivo, zonas de FC, nutricion pre/post). "
-                        "Si los datos indican que el cuerpo pide descanso, dilo con claridad aunque haya sesion en el plan. "
-                        "Si los indicadores son buenos, menciona que puede afrontar la siguiente sesion.\n\n"
+                        f"SECCION '{_post_section_name}':\n"
+                        f"{_post_guidance}\n\n"
                         "REGLAS TECNICAS:\n"
                         "- ZONAS FC: copia las lineas exactas del bloque 'ZONAS FC REALES GARMIN'.\n"
                         "- SUENO: horas y minutos (nunca segundos). Fases y puntuacion si disponibles.\n"
