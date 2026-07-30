@@ -2795,17 +2795,17 @@ def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | No
 
     if is_recent:
         return {
-            "header": "## 🔄 Recuperacion y proximas sesiones",
-            "section_name": "## 🔄 Recuperacion y proximas sesiones",
+            "header": "## 🔄 Recuperación y próximas sesiones",
+            "section_name": "## 🔄 Recuperación y próximas sesiones",
             "guidance": (
                 "Escribe 3-5 bullets originales de coach con consejos CONCRETOS usando los valores "
-                "numericos reales del bloque de datos (TSS, ATL, CTL, TSB, sueno, body battery, HRV). "
+                "numéricos reales del bloque de datos (TSS, ATL, CTL, TSB, sueño, body battery, HRV). "
                 "NO copies estas instrucciones como bullets. Genera texto original.\n"
-                "Contenido esperado: que hacer manana (tipo sesion y duracion especifica o descanso), "
-                "que hacer en 2-3 dias, senales de alerta a vigilar, y consejo tecnico para la proxima "
-                "sesion similar (pace objetivo, zonas de FC, nutricion pre/post). "
-                "Si los datos indican que el cuerpo pide descanso, dilo con claridad aunque haya sesion en el plan. "
-                "Si los indicadores son buenos, menciona que puede afrontar la siguiente sesion."
+                "Contenido esperado: qué hacer mañana (tipo sesión y duración específica o descanso), "
+                "qué hacer en 2-3 días, señales de alerta a vigilar, y consejo técnico para la próxima "
+                "sesión similar (pace objetivo, zonas de FC, nutrición pre/post). "
+                "Si los datos indican que el cuerpo pide descanso, dilo con claridad aunque haya sesión en el plan. "
+                "Si los indicadores son buenos, menciona que puede afrontar la siguiente sesión."
             ),
             "plan_context": "recent",
         }
@@ -2814,11 +2814,11 @@ def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | No
         "header": "## 🧾 Aprendizajes para futuras sesiones similares",
         "section_name": "## 🧾 Aprendizajes para futuras sesiones similares",
         "guidance": (
-            "Escribe 3-5 bullets concisos con aprendizajes transferibles de esta actividad para futuras sesiones. "
+            "Escribe 3-5 bullets concisos con aprendizajes transferibles de esta actividad para futuras sesiones similares. "
             "Usa SIEMPRE datos reales del bloque (TSS, FC, zonas, desnivel, sueno, HRV, body battery). "
-            "PROHIBIDO dar plan temporal corto (no 'manana', no 'en 2-3 dias'). "
-            "Enfoca en: pacing, control de intensidad, nutricion/hidratacion y senales de alerta a vigilar "
-            "en proximos entrenamientos similares."
+            "PROHIBIDO dar plan temporal corto (no 'mañana', no 'en 2-3 días'). "
+            "Enfoca en: pacing, control de intensidad, nutrición/hidratación y señales de alerta a vigilar "
+            "en próximos entrenamientos similares."
         ),
         "plan_context": "historical",
     }
@@ -7171,7 +7171,7 @@ class TrainerAgent:
                 )
 
                 _post_activity_spec = _build_post_activity_section_spec(user_date)
-                _post_header = str(_post_activity_spec.get("header") or "## 🔄 Recuperacion y proximas sesiones")
+                _post_header = str(_post_activity_spec.get("header") or "## 🔄 Recuperación y próximas sesiones")
                 _post_section_name = str(_post_activity_spec.get("section_name") or _post_header)
                 _post_guidance = str(_post_activity_spec.get("guidance") or "")
                 _post_plan_mode = str(_post_activity_spec.get("plan_context") or "recent")
@@ -7180,26 +7180,26 @@ class TrainerAgent:
                 _plan_obj = _get_active_training_plan(self.user_profile)
                 if _post_plan_mode == "historical":
                     _plan_ctx = (
-                        "\nACTIVIDAD HISTORICA (>2 dias).\n"
-                        "No des recomendaciones de calendario inmediato (manana / 2-3 dias). "
-                        "Limita la ultima seccion a aprendizajes aplicables para futuras sesiones similares.\n"
+                        "\nACTIVIDAD HISTÓRICA (>2 días).\n"
+                        "No des recomendaciones de calendario inmediato (mañana / 2-3 días). "
+                        "Limita la última sección a aprendizajes aplicables para futuras sesiones similares.\n"
                     )
                 elif _plan_obj:
                     _plan_title = _plan_obj.get("title") or _plan_obj.get("name") or "Plan activo"
                     _plan_ctx = (
                         f"\nPLAN DE ENTRENAMIENTO ACTIVO: {_plan_title}\n"
                         "Usa este plan como contexto para ver la progresión del atleta y las sesiones previstas, "
-                        "pero la recomendacion de recuperacion debe basarse SIEMPRE en los indicadores fisiologicos "
-                        "(TSS/ATL/CTL/TSB, sueno, body battery, HRV). "
-                        "Si los datos indican que el cuerpo necesita descanso, recomendalo aunque haya sesion planificada. "
-                        "Si los indicadores estan bien, puedes mencionar que el plan prevé X y el atleta está en condiciones de afrontarlo.\n"
+                        "pero la recomendación de recuperación debe basarse SIEMPRE en los indicadores fisiológicos "
+                        "(TSS/ATL/CTL/TSB, sueño, body battery, HRV). "
+                        "Si los datos indican que el cuerpo necesita descanso, recomiéndalo aunque haya sesión planificada. "
+                        "Si los indicadores están bien, puedes mencionar que el plan prevé X y el atleta está en condiciones de afrontarlo.\n"
                     )
                 else:
                     _plan_ctx = (
                         "\nSIN PLAN DE ENTRENAMIENTO ACTIVO.\n"
-                        "El atleta no tiene plan asignado. En la seccion de recuperacion, "
-                        "además de los consejos post-sesion, sugiere brevemente que crear un plan "
-                        "estructurado le ayudaría a dosificar mejor la carga y la recuperacion.\n"
+                        "El atleta no tiene plan asignado. En la sección de recuperación, "
+                        "además de los consejos post-sesión, sugiere brevemente que crear un plan "
+                        "estructurado le ayudaría a dosificar mejor la carga y la recuperación.\n"
                     )
 
                 messages.insert(len(messages) - 1, {
