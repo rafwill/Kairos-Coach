@@ -75,7 +75,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
 │  TrainerAgent (trainer_agent.py)                                │
 │  Agente LLM · 6 proveedores · Tool calling · Pre-cómputo        │
 │  Rutas deterministas · Memoria · RAG · TSS/ATL/CTL/TSB          │
-│  Tools internas (kairos_*) · 245 tests                          │
+│  Tools internas (kairos_*) · 246 tests                          │
 └──────────┬────────────────────────────────┬─────────────────────┘
            │                                │
 ┌──────────▼──────────┐         ┌──────────▼──────────────────────┐
@@ -256,7 +256,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
   - **Revisión post-sesión**: cuando el usuario comparte una actividad sin pedir análisis profundo, el coach da una nota estructurada rápida (qué fue bien / qué desvió / un ajuste).
 
 * **✅ CI/CD con GitHub Actions:**
-  - `.github/workflows/tests.yml` ejecuta la suite completa de pytest (245 tests) en cada push y pull request.
+  - `.github/workflows/tests.yml` ejecuta la suite completa de pytest (246 tests) en cada push y pull request.
   - Sin credenciales reales: los tests mockean toda la capa de Supabase y Garmin.
 
 ---
@@ -667,7 +667,7 @@ Adicionalmente, durante el recálculo de carga se persiste una traza de inferenc
 
 ## 🧪 Tests
 
-El proyecto incluye una suite de **245 tests unitarios** que cubre las funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM.
+El proyecto incluye una suite de **246 tests unitarios** que cubre las funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM.
 
 ### Instalar dependencias de desarrollo
 ```powershell
