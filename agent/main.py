@@ -1160,12 +1160,18 @@ async def main() -> None:
             f" ({active.get('user_id') or 'sin-id'})[/]"
         )
 
-        # ── Cálculo incremental de carga/fatiga (obligatorio antes del briefing) ──────
-        # Calcula TSS/ATL/CTL/TSB para los días nuevos desde el último registro en DB.
-        # Persiste en load_metrics_daily y actualiza agent.user_profile["load_metrics"].
+        # ── Cálculo de carga/fatiga previo al briefing ────────────────────────────────
+        # Usuario nuevo: backfill completo desde Garmin (ventana histórica del modelo)
+        # para poblar DB antes del primer flujo de coaching.
+        # Usuario existente: cálculo incremental desde último registro persistido.
         try:
-            with console.status("[dim]Calculando métricas de carga/fatiga (TSS·ATL·CTL·TSB)...[/]"):
-                await agent.compute_and_persist_load_metrics()
+            status_msg = (
+                "[dim]Inicializando histórico de carga desde Garmin (usuario nuevo)...[/]"
+                if is_new_user
+                else "[dim]Calculando métricas de carga/fatiga (TSS·ATL·CTL·TSB)...[/]"
+            )
+            with console.status(status_msg):
+                await agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user)
             lm = (agent.user_profile or {}).get("load_metrics") or {}
             last = lm.get("last") or {}
             if last.get("atl") or last.get("ctl"):

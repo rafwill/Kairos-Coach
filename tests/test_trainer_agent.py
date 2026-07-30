@@ -1137,6 +1137,89 @@ class TestStartupProactive:
         assert "No tienes plan asignado" in out
 
 
+class TestComputeAndPersistLoadMetrics:
+    @pytest.mark.asyncio
+    async def test_force_full_recalc_fetches_full_window_for_new_user(self):
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        expected_start = (today - timedelta(days=120)).isoformat()
+        captured_fetch = {}
+
+        async def _fake_fetch(_session, start_date, end_date):
+            captured_fetch["start_date"] = start_date
+            captured_fetch["end_date"] = end_date
+            return []
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {}
+
+        existing_series = [
+            {
+                "date": today.isoformat(),
+                "tss": 45.0,
+                "atl": 40.0,
+                "ctl": 30.0,
+                "tsb": -10.0,
+                "activities_count": 1,
+            }
+        ]
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today.isoformat()), \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
+
+        assert captured_fetch["start_date"] == expected_start
+        assert captured_fetch["end_date"] == today.isoformat()
+        upsert_mock.assert_called_once()
+        persisted_rows = upsert_mock.call_args[0][0]
+        assert persisted_rows, "Debe persistir la serie completa del rango histórico"
+        assert persisted_rows[0]["date"] == expected_start
+        assert persisted_rows[-1]["date"] == today.isoformat()
+        apply_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_existing_user_up_to_date_keeps_incremental_path(self):
+        import agent.trainer_agent as trainer_mod
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        existing_series = [
+            {
+                "date": today.isoformat(),
+                "tss": 55.0,
+                "atl": 48.0,
+                "ctl": 36.0,
+                "tsb": -12.0,
+                "activities_count": 1,
+            }
+        ]
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {
+            "load_metrics": {
+                "formula_version": trainer_mod._TSS_FORMULA_VERSION,
+            }
+        }
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", return_value=existing_series), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today.isoformat()), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", new=AsyncMock()) as fetch_mock, \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
+             patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
+
+        fetch_mock.assert_not_called()
+        upsert_mock.assert_not_called()
+        apply_mock.assert_called_once_with(existing_series, today)
+
+
 # ─── Fallback de planificacion y rangos trend ─────────────────────────────
 
 class TestPlanningFallbackAndRanges:
