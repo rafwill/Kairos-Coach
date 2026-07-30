@@ -29,6 +29,7 @@ node_modules/
 
 # Runtime local (no versionar)
 agent.log
+tmp/
 
 # Memoria local del usuario (puede contener datos personales)
 memory/*
