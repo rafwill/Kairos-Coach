@@ -36,6 +36,13 @@ Los tau y percentiles se ajustan automáticamente al deporte principal (running,
 #### 4. Planes de entrenamiento versionados y persistidos
 Puedes pedirle que te cree un plan de entrenamiento y lo guarda en Supabase (`training_plan`, `training_plan_session`, `training_plan_version`). Cada edición genera un snapshot de versión. El plan incluye sesiones estructuradas con calentamiento, parte principal en RPE, enfriamiento, hidratación y notas específicas. Si eres corredor de trail, las sesiones se adaptan con contenido específico de montaña. El coach sabe en todo momento si tienes plan activo o no, sin depender del LLM para esa decisión.
 
+Desde la versión actual, la generación del plan se hace con motor determinista multi-semana:
+- Periodización por fases `base -> build -> peak -> taper`.
+- Progresión de carga semanal con descarga/taper explícitos.
+- Variación determinista de sesiones de calidad (evita plantillas planas repetidas).
+- Soporte multideporte por preferencia del atleta (running/trail/ciclismo/fuerza).
+- Validación estricta antes de guardar (estructura semanal, separación de calidad, variedad y coherencia de carga).
+
 #### 5. Estado proactivo al arrancar (sin que preguntes nada)
 Cada vez que inicias el agente, recibe automáticamente:
 - Body battery de hoy y ayer
@@ -231,7 +238,9 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - Los planes se guardan en tablas dedicadas de Supabase (`training_plan`, `training_plan_session`, `training_plan_version`).
   - Cada edición del plan genera una nueva versión (snapshot) para trazabilidad.
   - Generación/ajuste funcional de planes por ruta determinista en runtime (sin depender del LLM para persistir/activar).
-  - Validación previa de coherencia (duración, sesiones, carga semanal y rangos de día) antes de guardar.
+  - Motor de periodización por fases (`base/build/peak/taper`) con progresión y taper explícitos.
+  - Variación de sesiones de calidad y mezcla multideporte según contexto del atleta.
+  - Validación previa de coherencia (duración, sesiones, estructura semanal, carga y rangos de día) antes de guardar.
   - Resumen de cambios entre versiones (duración, dificultad, sesiones y volumen semanal) visible en la respuesta del coach.
   - Existe una única fuente de verdad de plan activo por usuario (máximo uno activo a la vez).
   - Compatibilidad backward: el perfil mantiene `training_plan` como espejo temporal para rutas legacy.
