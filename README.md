@@ -222,6 +222,11 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - La respuesta se basa en `training_plan` real en base de datos (no en inferencias del LLM).
   - `goals` se muestra como objetivo guardado, pero no se interpreta como plan activo.
 
+* **📅 Consultas semanales de carga (deterministas):**
+  - Preguntas factuales como "Dime los TSS de esta semana y en qué actividades los he hecho" se resuelven por ruta determinista.
+  - La semana se calcula como semana natural (lunes → día actual).
+  - El detalle de actividades (tipo/nombre) se toma de Garmin como fuente real y se devuelve sin inferencias del LLM.
+
 * **🗂️ Planes de entrenamiento versionados (DB-first):**
   - Los planes se guardan en tablas dedicadas de Supabase (`training_plan`, `training_plan_session`, `training_plan_version`).
   - Cada edición del plan genera una nueva versión (snapshot) para trazabilidad.
@@ -265,7 +270,9 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
     3. **Efecto de entrenamiento y carga** — Training Effect, carga de sesión, minutos de alta/moderada intensidad
     4. **Hidratación recomendada** — estimación basada en duración y temperatura
     5. **Estado pre-carrera** — body battery (valor numérico + interpretación), sueño con fases (valor + interpretación), HRV nocturno (valor + interpretación del SNA)
-    6. **Recuperación y próximas sesiones** — basada en TSS/ATL/CTL/TSB + sueño + body battery + HRV; plan activo como contexto (no restricción)
+    6. **Bloque final contextual por recencia**:
+       - Actividad reciente: **Recuperación y próximas sesiones** (horizonte corto, con recomendaciones operativas).
+       - Actividad histórica: **Aprendizajes para futuras sesiones similares** (sin pautas de "mañana" o "en 2-3 días").
 
 * **💾 Memoria persistente entre sesiones:**
   - Al salir, el agente genera automáticamente un resumen compacto de la sesión con el propio LLM.

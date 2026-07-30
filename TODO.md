@@ -82,6 +82,16 @@
 - Documentadas tablas persistidas, tipos de dato almacenado y alcance real de persistencia.
 - Aclaración añadida: no se persiste una tabla propia con actividades Garmin crudas.
 
+#### 47) [FACTUAL-ROUTE] Consulta semanal de TSS por ruta determinista (2026-07-31) — REALIZADO
+- Se añadió una ruta determinista para preguntas factuales de TSS semanal (sin generación libre del LLM).
+- El rango temporal se fija a semana natural (lunes hasta hoy).
+- Las actividades fuente (tipo/nombre) se devuelven desde Garmin con datos reales para evitar alucinaciones.
+
+#### 48) [ANALISIS-HISTORICO] Bloque final por recencia en análisis de actividad (2026-07-31) — REALIZADO
+- Actividad reciente: mantiene sección "Recuperación y próximas sesiones" con orientación de corto plazo.
+- Actividad histórica: cambia a "Aprendizajes para futuras sesiones similares".
+- Se elimina en histórico la pauta operativa de horizonte inmediato (por ejemplo, "mañana" o "en 2-3 días").
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 
