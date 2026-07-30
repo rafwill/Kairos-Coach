@@ -246,7 +246,11 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 7  # v7: clasificacion explicita running (rodaje/fartlek/series) + confianza
+_TSS_FORMULA_VERSION = 9  # v9: calibra hrTSS trail por zonas para alinear con TP y mantener prioridad por zonas
+
+# Calibración empírica para trail/hike/walk al usar hrTSS por tiempo en zonas.
+# Se aplica antes del cap de 500 para evitar saturaciones prematuras en ultras.
+_TRAIL_ZONES_HRTSS_CALIBRATION = 0.72
 
 
 # Metadatos de récords personales de Garmin (mapeado de typeId a categoría y formato)
@@ -1237,6 +1241,142 @@ def _estimate_if_from_hr(
         return None
 
 
+def _estimate_hr_tss_from_zones(
+    activity: dict,
+    hours: float,
+    hr_zones_raw: str | None = None,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+    apply_cap: bool = True,
+) -> float | None:
+    """Calcula hrTSS desde tiempo real en zonas de FC cuando está disponible.
+
+    Usa los límites de cada zona para estimar un IF por bloque temporal y suma
+    la carga de cada bloque. Si faltan zonas o límites válidos, devuelve None.
+    """
+    if hours <= 0:
+        return None
+
+    zones = _parse_hr_zones_list(hr_zones_raw) if hr_zones_raw else None
+    if not zones and isinstance(activity, dict):
+        for key in (
+            "heartRateZones",
+            "hr_zones",
+            "hrZones",
+            "timeInHeartRateZones",
+            "heartRateTimeInZones",
+            "zones",
+        ):
+            raw_z = activity.get(key)
+            if not raw_z:
+                continue
+            try:
+                zones = _parse_hr_zones_list(json.dumps(raw_z, ensure_ascii=False))
+            except Exception:
+                zones = None
+            if zones:
+                break
+
+    if not zones:
+        return None
+
+    avg_hr_raw = (
+        activity.get("averageHR")
+        or activity.get("avgHr")
+        or activity.get("avg_hr_bpm")
+        or activity.get("averageHeartRate")
+    )
+    max_hr_raw = (
+        activity.get("maxHR")
+        or activity.get("maxHr")
+        or activity.get("max_hr_bpm")
+        or activity.get("maxHeartRate")
+    )
+
+    try:
+        avg_hr = float(avg_hr_raw) if avg_hr_raw is not None else None
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        hr_max = float(max_hr_raw) if max_hr_raw is not None else (
+            float(hr_max_bpm) if hr_max_bpm else 185.0
+        )
+        if hr_rest <= 0:
+            hr_rest = 50.0
+        if hr_max <= 0:
+            hr_max = 185.0
+        if avg_hr is not None:
+            hr_max = max(hr_max, avg_hr + 5.0)
+            hr_rest = min(hr_rest, avg_hr - 5.0)
+    except Exception:
+        return None
+
+    dur_s = hours * 3600.0
+    denom = max(1.0, hr_max - hr_rest)
+    total_secs = 0.0
+    tss_total = 0.0
+
+    for z in zones:
+        if not isinstance(z, dict):
+            continue
+
+        secs = 0.0
+        try:
+            secs = float(z.get("secsInZone") or 0.0)
+        except Exception:
+            secs = 0.0
+
+        if secs <= 0:
+            try:
+                pct = z.get("pctDirect")
+                if pct is not None:
+                    secs = max(0.0, float(pct) / 100.0 * dur_s)
+            except Exception:
+                secs = 0.0
+
+        if secs <= 0:
+            continue
+
+        lo_raw = z.get("minHeartRateIn")
+        hi_raw = z.get("maxHeartRateIn")
+        lo = hi = None
+        try:
+            if lo_raw not in (None, "?"):
+                lo = float(lo_raw)
+        except Exception:
+            lo = None
+        try:
+            if hi_raw not in (None, "?"):
+                hi = float(hi_raw)
+        except Exception:
+            hi = None
+
+        if lo is not None and hi is not None and hi < lo:
+            lo, hi = hi, lo
+
+        if lo is not None and hi is not None:
+            hr_mid = (lo + hi) / 2.0
+        elif lo is not None:
+            hr_mid = lo + 5.0
+        elif hi is not None:
+            hr_mid = hi - 5.0
+        else:
+            continue
+
+        hrr = (hr_mid - hr_rest) / denom
+        hrr = max(0.30, min(1.00, hrr))
+        if_zone = max(0.50, min(1.05, 0.40 + hrr * 0.65))
+
+        h = secs / 3600.0
+        tss_total += h * (if_zone ** 2) * 100.0
+        total_secs += secs
+
+    if total_secs <= 0:
+        return None
+
+    if apply_cap:
+        return max(0.0, min(tss_total, 500.0))
+    return max(0.0, tss_total)
+
+
 def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, float | None]:
     """Extrae FC de reposo y FC maxima desde perfil cacheado si existen."""
     if not isinstance(profile, dict):
@@ -1683,6 +1823,7 @@ def _estimate_session_tss(
     running_threshold_pace_sec_per_km: float | None = None,
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
+    hr_zones_raw: str | None = None,
 ) -> tuple[float, str]:
     """Estima carga de sesión con prioridades explícitas por tipo de actividad."""
     if not isinstance(activity, dict):
@@ -1726,6 +1867,18 @@ def _estimate_session_tss(
             return tss_running, "TSS"
 
     elif is_trail_hike_walk:
+        tss_hr_zones = _estimate_hr_tss_from_zones(
+            activity,
+            hours=hours,
+            hr_zones_raw=hr_zones_raw,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            apply_cap=False,
+        )
+        if tss_hr_zones is not None:
+            tss_cal = max(0.0, min(float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION, 500.0))
+            return tss_cal, "hrTSS"
+
         if_hr = _estimate_if_from_hr(
             activity,
             cycling_formula=False,
@@ -1956,6 +2109,11 @@ def _compute_load_fatigue_metrics(
             running_threshold_pace_sec_per_km=running_threshold_pace,
             hr_rest_bpm=hr_rest_bpm,
             hr_max_bpm=hr_max_bpm,
+            hr_zones_raw=(
+                act.get("_hr_zones_raw")
+                or act.get("hr_zones_raw")
+                or act.get("hrZonesRaw")
+            ),
         )
         if tss > 0:
             tss_by_day[d_iso] = tss_by_day.get(d_iso, 0.0) + tss
@@ -4213,6 +4371,7 @@ def _build_activity_analysis_block(
         act,
         ftp=ftp,
         running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+        hr_zones_raw=hr_zones_raw,
     )
     if _tss_val > 0:
         lines.append(f"{_tss_lbl}: {_tss_val:.1f}")
@@ -5335,11 +5494,32 @@ class TrainerAgent:
         count_by_day: dict[str, int]   = {}
         running_mix_by_day: dict[str, dict[str, int]] = {}
         running_inference_samples: list[dict] = []
+        _trail_hr_zones_cache: dict[str, str | None] = {}
         for act in new_activities:
             d_iso = _extract_activity_date_iso(act)
             if not d_iso:
                 continue
             act_type = act.get("type") or act.get("activityType") or ""
+            hr_zones_raw: str | None = None
+            if _is_trail_hike_walk_activity(act_type):
+                act_id = act.get("id") or act.get("activityId")
+                act_id_key = str(act_id) if act_id is not None else ""
+                if act_id_key:
+                    if act_id_key in _trail_hr_zones_cache:
+                        hr_zones_raw = _trail_hr_zones_cache[act_id_key]
+                    else:
+                        try:
+                            hr_zones_raw = await call_tool(
+                                self.mcp_session,
+                                "get_activity_hr_in_timezones",
+                                {"activity_id": int(act_id)},
+                            )
+                        except Exception:
+                            hr_zones_raw = None
+                        _trail_hr_zones_cache[act_id_key] = hr_zones_raw
+                if hr_zones_raw:
+                    act["_hr_zones_raw"] = hr_zones_raw
+
             if _is_running_non_trail_activity(act_type):
                 cls = _classify_running_session_with_confidence(act)
                 kind = str(cls.get("session_kind") or "calidad")
@@ -5366,6 +5546,7 @@ class TrainerAgent:
                 running_threshold_pace_sec_per_km=running_threshold_pace,
                 hr_rest_bpm=hr_rest_bpm,
                 hr_max_bpm=hr_max_bpm,
+                hr_zones_raw=hr_zones_raw,
             )
             if tss > 0:
                 tss_by_day[d_iso]   = tss_by_day.get(d_iso, 0.0) + tss

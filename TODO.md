@@ -113,6 +113,12 @@
 - Persistencia de trazas recientes de inferencia en perfil (`running_session_inference`) para auditoría/calibración.
 - Versión de fórmula incrementada a v7 para forzar recálculo automático de la serie histórica.
 
+#### 43) [TRAIL-TSS] Priorización por zonas FC + calibración final (2026-07-30) — REALIZADO
+- Trail/hike/walk prioriza hrTSS por tiempo en zonas FC reales cuando existe payload de zonas.
+- Calibración empírica v9 para alinear con TP (`_TRAIL_ZONES_HRTSS_CALIBRATION = 0.72`).
+- Corrección de ultras: el factor se aplica sobre hrTSS sin cap y luego se limita a 500 (evita infraestimar por saturación previa).
+- Test de regresión añadido para blindar la calibración por zonas en trail.
+
 ---
 
 ## ⏳ Pendiente

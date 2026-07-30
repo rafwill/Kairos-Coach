@@ -1735,6 +1735,105 @@ class TestLoadFatigueModel:
         assert label_rpe == "hrTSS"
         assert tss_rpe > 0
 
+    def test_estimate_tss_trail_uses_hr_zones_when_available(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 115,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+            ]
+        )
+
+        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
+        tss_avg, label_avg = _estimate_session_tss(act)
+
+        assert label_zones == "hrTSS"
+        assert label_avg == "hrTSS"
+        assert tss_zones > 0
+        assert tss_zones < tss_avg
+
+    def test_estimate_tss_trail_hr_zones_applies_calibration_factor(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 115,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+            ]
+        )
+
+        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
+
+        assert label_zones == "hrTSS"
+        # Base sin calibración: 56.25 TSS (IF=0.75). Con factor 0.72 => 40.50
+        assert abs(tss_zones - 40.5) < 0.05
+
+    def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+            "heartRateZones": [
+                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
+                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
+                {"zoneNumber": 3, "secsInZone": 0, "minHeartRateIn": 139, "maxHeartRateIn": 151},
+            ],
+        }
+
+        tss_embedded, label_embedded = _estimate_session_tss(act)
+        tss_avg_only, _ = _estimate_session_tss({
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+        })
+
+        assert label_embedded == "hrTSS"
+        assert tss_embedded > 0
+        assert tss_embedded < tss_avg_only
+
     def test_estimate_tss_cycling_prefers_power_ftp_then_hr(self):
         act_pow = {
             "type": "cycling",
