@@ -5758,13 +5758,9 @@ class TrainerAgent:
         hrv_yday = await _tool_json("get_hrv_data", {"date": yesterday_iso})
         sleep_today = await _tool_json("get_sleep_summary", {"date": today_iso})
         sleep_yday = await _tool_json("get_sleep_summary", {"date": yesterday_iso})
-        load_trend = await _tool_json(
-            "get_training_load_trend",
-            {
-                "start_date": (date.today() - timedelta(days=56)).isoformat(),
-                "end_date": today_iso,
-            },
-        )
+        # Fuente canónica de carga/fatiga: serie persistida en DB.
+        # Solo si no existe, intentamos recálculo en vivo como fallback.
+        load_trend = None
 
         # ── Actividades recientes (48h) para el briefing proactivo ─────────────
         # Solo necesitamos las últimas actividades para saber qué entrenó ayer/hoy.
@@ -5784,63 +5780,98 @@ class TrainerAgent:
                 }
             )
 
-        # ── Actividades históricas por rango de fechas para el modelo TSS/ATL/CTL ──
-        # El modelo EWMA necesita TODOS los entrenamientos del período de cálculo,
-        # independientemente del número total. Un atleta que doble sesiones tendría
-        # 2 actividades/día → limit=N actividades no garantiza cobertura temporal.
-        # Usamos get_activities_by_date con el mismo rango que days_window.
         load_window_days = 56
-        load_start_iso = (date.today() - timedelta(days=load_window_days)).isoformat()
-        activities_for_load: list[dict] = []
-        _load_debug: str = "ok"
+        _load_debug: str = "sin datos canónicos en DB"
+        load_fatigue = None
+
+        # 1) Prioridad absoluta: serie persistida en DB (fuente canónica).
         try:
-            hist_raw = await _tool_json(
-                "get_activities_by_date",
+            canonical_series = _storage.get_load_metrics_series(days=120)
+        except Exception as _db_exc:
+            canonical_series = []
+            _load_debug = f"error leyendo DB canónica: {_db_exc}"
+
+        if canonical_series:
+            model_cfg = _resolve_sport_model_cfg(getattr(self, "user_profile", {}))
+            model_cfg["_sport"] = str(
+                ((self.user_profile.get("goals") or {}).get("primary") or "running")
+            ).strip().lower()
+            load_fatigue = _build_load_fatigue_dict_from_series(canonical_series, model_cfg)
+            if load_fatigue:
+                _load_debug = f"usando serie canónica de DB ({len(canonical_series)} días)"
+
+        # 2) Fallback legacy: recálculo en vivo sólo si no hay serie canónica.
+        if load_fatigue is None:
+            # ── Actividades históricas por rango de fechas para el modelo TSS/ATL/CTL ──
+            # El modelo EWMA necesita TODOS los entrenamientos del período de cálculo,
+            # independientemente del número total. Un atleta que doble sesiones tendría
+            # 2 actividades/día → limit=N actividades no garantiza cobertura temporal.
+            # Usamos get_activities_by_date con el mismo rango que days_window.
+            load_start_iso = (date.today() - timedelta(days=load_window_days)).isoformat()
+            activities_for_load: list[dict] = []
+            try:
+                hist_raw = await _tool_json(
+                    "get_activities_by_date",
+                    {
+                        "start_date": load_start_iso,
+                        "end_date": today_iso,
+                        "page": 0,
+                        "page_size": 200,
+                    },
+                )
+                if isinstance(hist_raw, dict):
+                    page_acts = _extract_activities_list(hist_raw.get("activities") or hist_raw)
+                    activities_for_load.extend(page_acts)
+                elif isinstance(hist_raw, list):
+                    activities_for_load.extend(_extract_activities_list(hist_raw))
+                elif isinstance(hist_raw, str):
+                    # get_activities_by_date devolvió cadena — intentar parseo manual
+                    try:
+                        parsed = json.loads(hist_raw)
+                        if isinstance(parsed, list):
+                            activities_for_load.extend(_extract_activities_list(parsed))
+                        elif isinstance(parsed, dict):
+                            activities_for_load.extend(_extract_activities_list(parsed.get("activities") or parsed))
+                    except Exception:
+                        pass
+            except Exception as _e:
+                _load_debug = f"excepcion get_activities_by_date: {_e}"
+                log.warning("collect_startup: get_activities_by_date falló: %s", _e)
+
+            # Fallback: si get_activities_by_date no retornó actividades, intentar get_activities con mayor límite
+            if not activities_for_load:
+                _load_debug = "get_activities_by_date sin datos — usando fallback get_activities(100)"
+                log.info("collect_startup: get_activities_by_date sin datos, fallback a get_activities(100)")
+                try:
+                    fallback_raw = await _tool_json("get_activities", {"start": "0", "limit": "100"})
+                    activities_for_load = _extract_activities_list(fallback_raw)
+                    if activities_for_load:
+                        log.info("collect_startup: fallback ok — %d actividades obtenidas", len(activities_for_load))
+                        _load_debug = f"fallback ok: {len(activities_for_load)} actividades via get_activities"
+                    else:
+                        _load_debug = "sin actividades en fallback — usuario nuevo o sin datos en Garmin"
+                        log.info("collect_startup: fallback también vacío — usuario nuevo o sin datos")
+                except Exception as _e2:
+                    _load_debug = f"fallback también falló: {_e2}"
+                    log.warning("collect_startup: fallback get_activities falló: %s", _e2)
+                    activities_for_load = list(activities_recent)
+            else:
+                log.info("collect_startup: %d actividades obtenidas via get_activities_by_date", len(activities_for_load))
+
+            load_trend = await _tool_json(
+                "get_training_load_trend",
                 {
-                    "start_date": load_start_iso,
+                    "start_date": (date.today() - timedelta(days=56)).isoformat(),
                     "end_date": today_iso,
-                    "page": 0,
-                    "page_size": 200,
                 },
             )
-            if isinstance(hist_raw, dict):
-                page_acts = _extract_activities_list(hist_raw.get("activities") or hist_raw)
-                activities_for_load.extend(page_acts)
-            elif isinstance(hist_raw, list):
-                activities_for_load.extend(_extract_activities_list(hist_raw))
-            elif isinstance(hist_raw, str):
-                # get_activities_by_date devolvió cadena — intentar parseo manual
-                try:
-                    parsed = json.loads(hist_raw)
-                    if isinstance(parsed, list):
-                        activities_for_load.extend(_extract_activities_list(parsed))
-                    elif isinstance(parsed, dict):
-                        activities_for_load.extend(_extract_activities_list(parsed.get("activities") or parsed))
-                except Exception:
-                    pass
-        except Exception as _e:
-            _load_debug = f"excepcion get_activities_by_date: {_e}"
-            log.warning("collect_startup: get_activities_by_date falló: %s", _e)
 
-        # Fallback: si get_activities_by_date no retornó actividades, intentar get_activities con mayor límite
-        if not activities_for_load:
-            _load_debug = "get_activities_by_date sin datos — usando fallback get_activities(100)"
-            log.info("collect_startup: get_activities_by_date sin datos, fallback a get_activities(100)")
-            try:
-                fallback_raw = await _tool_json("get_activities", {"start": "0", "limit": "100"})
-                activities_for_load = _extract_activities_list(fallback_raw)
-                if activities_for_load:
-                    log.info("collect_startup: fallback ok — %d actividades obtenidas", len(activities_for_load))
-                    _load_debug = f"fallback ok: {len(activities_for_load)} actividades via get_activities"
-                else:
-                    _load_debug = "sin actividades en fallback — usuario nuevo o sin datos en Garmin"
-                    log.info("collect_startup: fallback también vacío — usuario nuevo o sin datos")
-            except Exception as _e2:
-                _load_debug = f"fallback también falló: {_e2}"
-                log.warning("collect_startup: fallback get_activities falló: %s", _e2)
-                activities_for_load = list(activities_recent)
-        else:
-            log.info("collect_startup: %d actividades obtenidas via get_activities_by_date", len(activities_for_load))
+            load_fatigue = _compute_load_fatigue_metrics(
+                activities=activities_for_load,
+                trend_payload=load_trend,
+                profile=getattr(self, "user_profile", {}) if hasattr(self, "user_profile") else {},
+                days_window=load_window_days,
+            )
 
         body_summary = (
             f"hoy={_format_body_battery_day(body_today, today_iso)} · "
@@ -5855,17 +5886,8 @@ class TrainerAgent:
             f"ayer={_format_sleep_day(sleep_yday, yesterday_iso)}"
         )
 
-        load_fatigue = _compute_load_fatigue_metrics(
-            activities=activities_for_load,
-            trend_payload=load_trend,
-            profile=getattr(self, "user_profile", {}) if hasattr(self, "user_profile") else {},
-            days_window=load_window_days,
-        )
-
-        # ── Fallback: usar métricas precalculadas del perfil (de compute_and_persist) ──
-        # compute_and_persist_load_metrics se ejecuta antes en main.py y deja
-        # user_profile["load_metrics"] actualizado. Si la descarga de actividades
-        # falla aquí, leemos esa caché en lugar de mostrar zeros.
+        # 3) Fallback final: usar caché de perfil si tampoco hubo serie canónica
+        # ni recálculo en vivo exitoso.
         if load_fatigue is None:
             cached_lm = (getattr(self, "user_profile", None) or {}).get("load_metrics") or {}
             cached_series = cached_lm.get("series") or []
@@ -5876,7 +5898,7 @@ class TrainerAgent:
                 ).strip().lower()
                 load_fatigue = _build_load_fatigue_dict_from_series(cached_series, model_cfg)
                 if load_fatigue:
-                    _load_debug = "usando métricas cacheadas de DB (cálculo incremental previo)"
+                    _load_debug = "usando caché de perfil (fallback)"
                     log.info("collect_startup: cargadas métricas cacheadas (%d días)", len(cached_series))
 
         if isinstance(getattr(self, "user_profile", None), dict) and load_fatigue:
