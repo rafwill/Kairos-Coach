@@ -1066,6 +1066,34 @@ class TestStartupProactive:
         assert out["decision"] == "reduce"
         assert out["adherence_adjustment"] == "down"
 
+    def test_compute_daily_plan_adjustment_respects_unavailable_day(self):
+        today_iso = date.today().isoformat()
+        today_idx = date.today().isoweekday()
+        plan = {
+            "title": "Plan general",
+            "plan_data": {"constraints": {"unavailable_days": [today_idx]}},
+            "sessions": [
+                {
+                    "week_index": 1,
+                    "day_index": today_idx,
+                    "session_type": "running_quality",
+                    "duration_min": 60,
+                    "intensity": "RPE 7-8",
+                }
+            ],
+        }
+        snapshot = {
+            "dates": {"today": today_iso},
+            "load_fatigue": {"status": "ready", "latest": {}, "weekly": {}, "ranges": {}},
+            "body_battery": {"today": {"date": today_iso, "body_battery_level": 80}},
+            "sleep": {"today": {"date": today_iso, "sleep_hours": 8.0, "sleep_score": 85}},
+            "hrv": {"today": {"date": today_iso, "lastNightAvg": 55, "weeklyAvg": 50, "status": "balanced"}},
+        }
+        out = _compute_daily_plan_adjustment(snapshot, plan)
+        assert out is not None
+        assert out["decision"] == "rest"
+        assert out["rule"] == "availability"
+
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_48h_collects_metrics(self):
         from agent.trainer_agent import TrainerAgent
@@ -2380,6 +2408,47 @@ class TestLoadFatigueModel:
 
         assert len(set(weekly_totals)) >= 3
         assert weekly_totals[-1] < max(weekly_totals)  # taper final
+
+    def test_generate_structured_plan_payload_respects_unavailable_days(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+                "availability": {
+                    "unavailable_days": ["sabado", "domingo"],
+                },
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame")
+        assert plan.get("plan_data", {}).get("constraints")
+        assert len(sessions) == int(plan["duration_weeks"]) * 7
+
+        for s in sessions:
+            if int(s.get("day_index") or 0) in {6, 7}:
+                assert str(s.get("session_type") or "").lower() == "rest"
+
+    def test_generate_structured_plan_payload_respects_day_max_minutes(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+                "availability": {
+                    "max_minutes_per_day": {"lunes": 40, "martes": 45, "miércoles": 50, "jueves": 45, "viernes": 0, "sábado": 70, "domingo": 35},
+                },
+            },
+            "health": {},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "Plan general")
+        caps = {1: 40, 2: 45, 3: 50, 4: 45, 5: 0, 6: 70, 7: 35}
+        for s in sessions:
+            d = int(s.get("day_index") or 0)
+            dur = int(s.get("duration_min") or 0)
+            assert dur <= caps[d]
+            if d == 5:
+                assert str(s.get("session_type") or "").lower() == "rest"
 
     def test_trail_plan_uses_trail_session_types(self):
         """Plan con 'trail running' debe tener session_types específicos de trail."""

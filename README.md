@@ -42,6 +42,8 @@ Desde la versión actual, la generación del plan se hace con motor determinista
 - Variación determinista de sesiones de calidad (evita plantillas planas repetidas).
 - Soporte multideporte por preferencia del atleta (running/trail/ciclismo/fuerza).
 - Validación estricta antes de guardar (estructura semanal, separación de calidad, variedad y coherencia de carga).
+- Planificación por restricciones del atleta (general, no acoplada a una patología concreta): días entrenables/no entrenables, límites de minutos por día, mínimo de descanso semanal y tope de sesiones de calidad.
+- El ajuste diario del plan también respeta esas restricciones: si hoy es día no entrenable o supera cap diario, el motor propone descanso o reducción automática.
 
 #### 5. Estado proactivo al arrancar (sin que preguntes nada)
 Cada vez que inicias el agente, recibe automáticamente:
@@ -239,8 +241,10 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - Cada edición del plan genera una nueva versión (snapshot) para trazabilidad.
   - Generación/ajuste funcional de planes por ruta determinista en runtime (sin depender del LLM para persistir/activar).
   - Motor de periodización por fases (`base/build/peak/taper`) con progresión y taper explícitos.
+  - Distribución del microciclo por restricciones reales del perfil (`availability`): días disponibles, días bloqueados y límites de minutos por día.
+  - Reglas generales de salud por impacto funcional (`none/low/moderate/high`) para modular volumen e intensidad sin hardcode por enfermedad.
   - Variación de sesiones de calidad y mezcla multideporte según contexto del atleta.
-  - Validación previa de coherencia (duración, sesiones, estructura semanal, carga y rangos de día) antes de guardar.
+  - Validación previa de coherencia (duración, sesiones, estructura semanal, carga, disponibilidad y rangos de día) antes de guardar.
   - Resumen de cambios entre versiones (duración, dificultad, sesiones y volumen semanal) visible en la respuesta del coach.
   - Existe una única fuente de verdad de plan activo por usuario (máximo uno activo a la vez).
   - Compatibilidad backward: el perfil mantiene `training_plan` como espejo temporal para rutas legacy.

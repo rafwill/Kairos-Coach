@@ -3582,6 +3582,39 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
 
     dates = snapshot.get("dates") or {}
     today_iso = str(dates.get("today") or date.today().isoformat())
+    try:
+        today_idx = date.fromisoformat(today_iso).isoweekday()
+    except Exception:
+        today_idx = date.today().isoweekday()
+
+    plan_data = plan.get("plan_data") if isinstance(plan.get("plan_data"), dict) else {}
+    plan_constraints = plan_data.get("constraints") if isinstance(plan_data.get("constraints"), dict) else {}
+    unavailable_days = set(int(d) for d in (plan_constraints.get("unavailable_days") or []))
+    max_minutes_per_day = {
+        int(k): int(v)
+        for k, v in (plan_constraints.get("max_minutes_per_day") or {}).items()
+        if 1 <= int(k) <= 7 and int(v) >= 0
+    }
+
+    planned_session = _resolve_today_plan_session(plan)
+    planned_row = _get_planned_session_for_date(plan, today_iso)
+    planned_duration_min = int((planned_row or {}).get("duration_min") or 0)
+
+    if today_idx in unavailable_days:
+        return {
+            "rule": "availability",
+            "decision": "rest",
+            "reason": "día no entrenable según disponibilidad declarada",
+            "adherence_adjustment": "none",
+            "planned_session": planned_session,
+            "resulting_session": "descanso + movilidad ligera (20-30 min)",
+            "inputs": {
+                "status": "neutral",
+                "today_day_index": today_idx,
+                "planned_duration_min": planned_duration_min,
+                "stress_flags": None,
+            },
+        }
 
     load_fatigue = snapshot.get("load_fatigue") or {}
     latest = load_fatigue.get("latest") or {}
@@ -3689,7 +3722,11 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
                 adherence_adjustment = "up"
                 reason = f"{reason}; ajuste por infra-carga adherente en dia previo"
 
-    planned_session = _resolve_today_plan_session(plan)
+    day_cap = max_minutes_per_day.get(today_idx)
+    if day_cap is not None and planned_duration_min > day_cap and decision != "rest":
+        decision = "reduce" if day_cap > 0 else "rest"
+        reason = f"{reason}; sesión ajustada por límite diario ({day_cap} min)"
+
     if decision == "rest":
         resulting_session = "descanso + movilidad ligera (20-30 min)"
     elif decision == "easy":
@@ -3722,6 +3759,9 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
             "stress_flags": stress_flags,
             "adherence_score": adherence_score if adherence_score >= 0.0 else None,
             "load_deviation_pct": load_dev if adherence_score >= 0.0 else None,
+            "today_day_index": today_idx,
+            "planned_duration_min": planned_duration_min,
+            "day_cap_min": day_cap,
         },
     }
 
@@ -3736,6 +3776,12 @@ def _build_goal_plan_fallback(profile: dict) -> str:
     target_time = goals.get("target_time") or "tiempo por definir"
     weekly_hours = goals.get("weekly_training_hours") or "8-10"
     injuries = ", ".join(health.get("injuries", [])) if health.get("injuries") else "ninguna relevante"
+    constraints = _resolve_training_constraints(goals if isinstance(goals, dict) else {}, health if isinstance(health, dict) else {}, "")
+    available = constraints.get("available_days") or [1, 2, 3, 4, 5, 6, 7]
+    unavailable = constraints.get("unavailable_days") or []
+    day_names = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves", 5: "Viernes", 6: "Sábado", 7: "Domingo"}
+    available_label = ", ".join(day_names.get(int(d), str(d)) for d in available)
+    unavailable_label = ", ".join(day_names.get(int(d), str(d)) for d in unavailable) if unavailable else "ninguno"
 
     return (
         "## Planificación Inicial para tu Objetivo\n\n"
@@ -3743,15 +3789,13 @@ def _build_goal_plan_fallback(profile: dict) -> str:
         f"- Fecha objetivo: {race_date}\n"
         f"- Tiempo objetivo: {target_time}\n"
         f"- Horas semanales estimadas: {weekly_hours}\n"
+        f"- Días entrenables declarados: {available_label}\n"
+        f"- Días no entrenables declarados: {unavailable_label}\n"
         f"- Condiciones de salud declaradas: {injuries}\n\n"
         "### Estructura semanal propuesta (base)\n"
-        "- Lunes: descanso o movilidad + fuerza 30-40 min\n"
-        "- Martes: calidad (intervalos/umbral)\n"
-        "- Miércoles: rodaje Z2 suave\n"
-        "- Jueves: calidad controlada (tempo o cuestas)\n"
-        "- Viernes: descanso activo\n"
-        "- Sábado: tirada larga progresiva\n"
-        "- Domingo: rodaje de recuperación + técnica\n\n"
+        "- El microciclo se distribuye automáticamente según disponibilidad diaria real.\n"
+        "- Prioriza: calidad separada, tirada larga, aeróbico suave y recuperación.\n"
+        "- Incluye descansos obligatorios y límites de carga por día/semana.\n\n"
         "### Próximos pasos\n"
         "- En la siguiente interacción ajustaré paces, volúmenes y progresión según tus datos Garmin recientes "
         "(carga, HRV, sueño y entrenamientos)."
@@ -3763,6 +3807,175 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+_DAY_TOKEN_TO_INDEX = {
+    "1": 1, "lunes": 1, "lun": 1, "monday": 1, "mon": 1,
+    "2": 2, "martes": 2, "mar": 2, "tuesday": 2, "tue": 2,
+    "3": 3, "miercoles": 3, "miércoles": 3, "mie": 3, "mié": 3, "wednesday": 3, "wed": 3,
+    "4": 4, "jueves": 4, "jue": 4, "thursday": 4, "thu": 4,
+    "5": 5, "viernes": 5, "vie": 5, "friday": 5, "fri": 5,
+    "6": 6, "sabado": 6, "sábado": 6, "sab": 6, "saturday": 6, "sat": 6,
+    "7": 7, "domingo": 7, "dom": 7, "sunday": 7, "sun": 7,
+}
+
+
+def _parse_day_indexes(value: Any) -> set[int]:
+    out: set[int] = set()
+    if value is None:
+        return out
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+    elif isinstance(value, str):
+        items = re.split(r"[,;/\\|]+", value)
+    else:
+        items = [value]
+
+    for raw in items:
+        token = str(raw or "").strip().lower()
+        if not token:
+            continue
+        if token in _DAY_TOKEN_TO_INDEX:
+            out.add(_DAY_TOKEN_TO_INDEX[token])
+            continue
+        try:
+            num = int(float(token))
+        except Exception:
+            continue
+        if 1 <= num <= 7:
+            out.add(num)
+    return out
+
+
+def _extract_max_minutes_per_day(value: Any) -> dict[int, int]:
+    out: dict[int, int] = {}
+    if not isinstance(value, dict):
+        return out
+    for key, raw_val in value.items():
+        day_idxs = _parse_day_indexes(key)
+        if not day_idxs:
+            continue
+        try:
+            minutes = int(round(float(raw_val)))
+        except Exception:
+            continue
+        if minutes < 0:
+            continue
+        for d in day_idxs:
+            out[d] = minutes
+    return out
+
+
+def _resolve_training_constraints(goals: dict, health: dict, user_message: str = "") -> dict:
+    """Resuelve restricciones generales de planificación desde perfil + mensaje."""
+    availability = goals.get("availability") if isinstance(goals.get("availability"), dict) else {}
+    all_days = {1, 2, 3, 4, 5, 6, 7}
+
+    training_days = _parse_day_indexes(
+        goals.get("training_days")
+        or goals.get("availability_days")
+        or availability.get("training_days")
+        or availability.get("available_days")
+    )
+    unavailable_days = _parse_day_indexes(
+        goals.get("unavailable_days")
+        or goals.get("rest_days")
+        or availability.get("unavailable_days")
+        or availability.get("rest_days")
+    )
+
+    weekend_available = availability.get("weekend_available")
+    if isinstance(weekend_available, bool) and not weekend_available:
+        unavailable_days.update({6, 7})
+
+    user_lower = str(user_message or "").lower()
+    if any(k in user_lower for k in ("sin fin de semana", "no fin de semana", "solo entre semana", "entre semana")):
+        unavailable_days.update({6, 7})
+
+    if training_days:
+        available_days = set(training_days)
+    else:
+        available_days = set(all_days)
+    available_days -= unavailable_days
+    if not available_days:
+        available_days = set(all_days - unavailable_days) or set(all_days)
+
+    max_minutes = _extract_max_minutes_per_day(
+        goals.get("max_minutes_per_day") or availability.get("max_minutes_per_day")
+    )
+    max_session = goals.get("max_session_minutes") or availability.get("max_session_minutes")
+    try:
+        max_session_int = int(round(float(max_session))) if max_session is not None else None
+    except Exception:
+        max_session_int = None
+    if max_session_int is not None and max_session_int >= 0:
+        for d in available_days:
+            prev = max_minutes.get(d)
+            max_minutes[d] = min(prev, max_session_int) if prev is not None else max_session_int
+
+    for d in list(available_days):
+        if max_minutes.get(d) == 0:
+            available_days.discard(d)
+            unavailable_days.add(d)
+
+    if not available_days:
+        available_days = set(all_days - unavailable_days) or set(all_days)
+
+    min_rest = goals.get("min_rest_days") or availability.get("min_rest_days") or 1
+    try:
+        min_rest_days = max(1, min(4, int(round(float(min_rest)))))
+    except Exception:
+        min_rest_days = 1
+
+    max_quality = goals.get("max_quality_sessions_per_week") or availability.get("max_quality_sessions_per_week") or 2
+    try:
+        max_quality_sessions = max(1, min(3, int(round(float(max_quality)))))
+    except Exception:
+        max_quality_sessions = 2
+
+    health_constraints = health.get("training_constraints") if isinstance(health.get("training_constraints"), dict) else {}
+    impact_level = str(
+        health_constraints.get("impact_level")
+        or health.get("impact_level")
+        or ""
+    ).strip().lower()
+
+    conditions = health.get("conditions") if isinstance(health.get("conditions"), list) else []
+    pathologies = health.get("pathologies") if isinstance(health.get("pathologies"), list) else []
+    injuries = health.get("injuries") if isinstance(health.get("injuries"), list) else []
+    has_health_flags = bool(conditions or pathologies or injuries)
+
+    if impact_level not in {"low", "moderate", "high"}:
+        impact_level = "moderate" if has_health_flags else "none"
+
+    volume_factor_map = {"none": 1.00, "low": 0.95, "moderate": 0.88, "high": 0.78}
+    intensity_factor_map = {"none": 1.00, "low": 0.95, "moderate": 0.86, "high": 0.74}
+    volume_factor = volume_factor_map.get(impact_level, 1.00)
+    intensity_factor = intensity_factor_map.get(impact_level, 1.00)
+
+    long_pref = _parse_day_indexes(
+        goals.get("long_run_days")
+        or availability.get("long_run_days")
+        or availability.get("long_session_days")
+    )
+    if not long_pref:
+        weekend_pref = [d for d in (6, 7) if d in available_days]
+        if weekend_pref:
+            long_pref = set(weekend_pref)
+        else:
+            long_pref = set(sorted(available_days, reverse=True))
+
+    return {
+        "available_days": sorted(available_days),
+        "unavailable_days": sorted(all_days - available_days),
+        "max_minutes_per_day": {int(k): int(v) for k, v in max_minutes.items()},
+        "min_rest_days": int(min_rest_days),
+        "max_quality_sessions_per_week": int(max_quality_sessions),
+        "long_day_preferences": sorted(long_pref),
+        "health_impact_level": impact_level,
+        "volume_factor": float(volume_factor),
+        "intensity_factor": float(intensity_factor),
+    }
 
 
 def _wants_new_plan_intent(user_message: str) -> bool:
@@ -3891,6 +4104,11 @@ def _generate_structured_plan_payload(
     target_time = str(goals.get("target_time") or "").strip()
     weekly_hours = _safe_float(goals.get("weekly_training_hours"), 8.0)
     weekly_hours = min(24.0, max(3.0, weekly_hours))
+    constraints = _resolve_training_constraints(
+        goals if isinstance(goals, dict) else {},
+        health if isinstance(health, dict) else {},
+        user_message,
+    )
 
     duration_weeks = 8
     if race_date:
@@ -3911,7 +4129,6 @@ def _generate_structured_plan_payload(
     wants_mtb = any(k in user_lower for k in ("montaña", "mtb", "mountain"))
     wants_trail = ("trail" in user_lower) or ("trail" in primary)
 
-    # Si el mensaje no especifica, heredamos preferencias por deporte principal.
     if not any((wants_gym, wants_road_cycling, wants_mtb, wants_trail)):
         if "trail" in primary:
             wants_trail = True
@@ -3929,10 +4146,7 @@ def _generate_structured_plan_payload(
             return None
         h, mm, ss = int(m.group(1)), int(m.group(2)), int(m.group(3))
         total = h * 3600 + mm * 60 + ss
-        # Solo aplicamos ritmo de 10k cuando el objetivo parece de 10k.
-        if "10" not in race.lower():
-            return None
-        if total <= 0:
+        if "10" not in race.lower() or total <= 0:
             return None
         return total / 10.0
 
@@ -3942,19 +4156,30 @@ def _generate_structured_plan_payload(
 
     target_10k_pace = _parse_target_10k_pace()
 
+    impact_level = str(constraints.get("health_impact_level") or "none")
     difficulty = "moderate"
-    difficulty_reason = ""
-    if has_injuries:
+    if impact_level in {"high", "moderate"}:
         difficulty = "easy"
-        difficulty_reason = f"Dificultad reducida a 'easy' por lesión activa: {injuries_label}."
     elif weekly_hours >= 10:
         difficulty = "hard"
+
+    if impact_level == "high":
+        difficulty_reason = "Dificultad reducida a 'easy' por restricciones de salud de alto impacto."
+    elif impact_level == "moderate":
+        difficulty_reason = "Dificultad reducida a 'easy' por restricciones de salud de impacto moderado."
+    elif has_injuries:
+        difficulty_reason = f"Dificultad reducida a 'easy' por lesión activa: {injuries_label}."
+    elif weekly_hours >= 10:
         difficulty_reason = f"Dificultad 'hard' por disponibilidad semanal alta ({weekly_hours}h)."
     else:
-        difficulty_reason = f"Dificultad 'moderate' estándar."
+        difficulty_reason = "Dificultad 'moderate' estándar."
+
+    if injuries:
+        detail = ", ".join(str(x) for x in injuries[:2] if str(x).strip())
+        if detail and detail.lower() not in difficulty_reason.lower():
+            difficulty_reason = f"{difficulty_reason} Contexto reportado: lesión/condición activa ({detail})."
 
     weekly_minutes = int(round(weekly_hours * 60))
-    # Fases: base -> build -> peak -> taper.
     taper_weeks = 2 if duration_weeks >= 10 else 1
     peak_weeks = max(1, int(round(duration_weeks * 0.2)))
     base_weeks = max(2, int(round(duration_weeks * 0.4)))
@@ -3970,7 +4195,6 @@ def _generate_structured_plan_payload(
         return "taper"
 
     def _volume_multiplier(wi: int, phase: str) -> float:
-        # Patrón 3:1 (carga:carga:carga:descarga) + taper final.
         if phase == "taper":
             return 0.72 if (duration_weeks - wi) >= 1 else 0.58
         cycle = (wi - 1) % 4
@@ -3999,7 +4223,6 @@ def _generate_structured_plan_payload(
         return block
 
     def _quality_workout(phase: str, wi: int, slot: int) -> tuple[str, str, str, list[str]]:
-        # slot=1 martes (series/umbral), slot=2 jueves (fartlek/tempo/cuestas)
         if target_10k_pace is not None:
             pace_mod = [10, 6, 3, 0, -2]
             p = target_10k_pace + pace_mod[min(max(wi - 1, 0), len(pace_mod) - 1)]
@@ -4042,7 +4265,6 @@ def _generate_structured_plan_payload(
             )
             return ("running_quality", "RPE 6-7", notes, ["afinado neuromuscular", "recordatorio de ritmo"])
 
-        # slot 2
         if wants_trail:
             notes = (
                 "Calentamiento 15'. Parte principal: cuestas técnicas (8-12 repeticiones de 60-90'') + bajadas con foco en cadencia. "
@@ -4051,156 +4273,240 @@ def _generate_structured_plan_payload(
             return ("trail_hills", "RPE 6-8", notes, ["subidas técnicas", "bajadas", "uso de bastones si aplica"])
 
         if phase == "base":
-            notes = "Calentamiento 15'. Parte principal: fartlek 10x(1' fuerte/1' suave). Enfriamiento 10'."
-            return ("running_quality", "RPE 6-7", notes, ["fartlek", "control de esfuerzo"])
+            return ("running_quality", "RPE 6-7", "Calentamiento 15'. Parte principal: fartlek 10x(1' fuerte/1' suave). Enfriamiento 10'.", ["fartlek", "control de esfuerzo"])
         if phase == "build":
-            notes = "Calentamiento 15'. Parte principal: tempo 3x10' (RPE 7) con 3' suaves. Enfriamiento 10'."
-            return ("running_quality", "RPE 7-8", notes, ["tempo", "umbral sostenible"])
+            return ("running_quality", "RPE 7-8", "Calentamiento 15'. Parte principal: tempo 3x10' (RPE 7) con 3' suaves. Enfriamiento 10'.", ["tempo", "umbral sostenible"])
         if phase == "peak":
-            notes = "Calentamiento 15'. Parte principal: fartlek piramidal 1'-2'-3'-4'-3'-2'-1'. Enfriamiento 10'."
-            return ("running_quality", "RPE 7-8", notes, ["fartlek avanzado", "cambio de ritmo"])
+            return ("running_quality", "RPE 7-8", "Calentamiento 15'. Parte principal: fartlek piramidal 1'-2'-3'-4'-3'-2'-1'. Enfriamiento 10'.", ["fartlek avanzado", "cambio de ritmo"])
+        return ("running_quality", "RPE 6-7", "Calentamiento 12'. Parte principal: 20' ritmo controlado + 4 rectas. Enfriamiento 10'.", ["tempo corto", "activación"])
 
-        notes = "Calentamiento 12'. Parte principal: 20' ritmo controlado + 4 rectas. Enfriamiento 10'."
-        return ("running_quality", "RPE 6-7", notes, ["tempo corto", "activación"])
+    available_days = set(int(x) for x in (constraints.get("available_days") or [])) or {1, 2, 3, 4, 5, 6, 7}
+    unavailable_days = set(int(x) for x in (constraints.get("unavailable_days") or []))
+    day_caps = {
+        int(k): int(v)
+        for k, v in (constraints.get("max_minutes_per_day") or {}).items()
+        if 1 <= int(k) <= 7 and int(v) >= 0
+    }
+    min_rest_days = max(1, min(4, int(constraints.get("min_rest_days") or 1)))
+    max_quality_sessions = max(1, min(3, int(constraints.get("max_quality_sessions_per_week") or 2)))
+    long_day_pref = [int(d) for d in (constraints.get("long_day_preferences") or []) if 1 <= int(d) <= 7]
+
+    def _cap_duration(day_idx: int, duration: int) -> int:
+        cap = day_caps.get(day_idx)
+        if cap is None:
+            return max(0, int(duration))
+        return max(0, min(int(duration), int(cap)))
 
     sessions: list[dict] = []
     for wi in range(1, duration_weeks + 1):
         phase = _phase_for_week(wi)
         volume_mul = _volume_multiplier(wi, phase)
-        week_min = int(round(weekly_minutes * volume_mul))
+        week_min = int(round(weekly_minutes * volume_mul * float(constraints.get("volume_factor") or 1.0)))
         split = _split_weekly_minutes(week_min)
-
         q1_type, q1_intensity, q1_notes, q1_ex = _quality_workout(phase, wi, slot=1)
         q2_type, q2_intensity, q2_notes, q2_ex = _quality_workout(phase, wi, slot=2)
 
-        # Miércoles: alternancia determinista de aeróbico cruzado.
+        intensity_factor = float(constraints.get("intensity_factor") or 1.0)
+        if intensity_factor < 0.90:
+            q1_intensity = "RPE 5-6"
+            q2_intensity = "RPE 5-6"
+        elif intensity_factor < 1.0:
+            q1_intensity = "RPE 6-7"
+            q2_intensity = "RPE 6-7"
+
         if wants_mtb and wi % 2 == 0:
-            d3_type = "cycling_mtb"
-            d3_ex = ["cadencia en subida", "tracción", "técnica en sendero"]
-            d3_notes = "Calentamiento 10'. Parte principal en Z2 por terreno variable. Enfriamiento 10'."
+            easy_type = "cycling_mtb"
+            easy_ex = ["cadencia en subida", "tracción", "técnica en sendero"]
+            easy_notes = "Calentamiento 10'. Parte principal en Z2 por terreno variable. Enfriamiento 10'."
         elif wants_road_cycling and wi % 2 == 1:
-            d3_type = "cycling_z2"
-            d3_ex = ["rodaje aeróbico", "cadencia 85-95 rpm", "control de potencia/RPE"]
-            d3_notes = "Calentamiento 10'. Parte principal continua en Z2. Enfriamiento 10'."
+            easy_type = "cycling_z2"
+            easy_ex = ["rodaje aeróbico", "cadencia 85-95 rpm", "control de potencia/RPE"]
+            easy_notes = "Calentamiento 10'. Parte principal continua en Z2. Enfriamiento 10'."
         else:
-            d3_type = "trail_z2" if wants_trail else "running_z2"
-            d3_ex = ["rodaje continuo", "economía de carrera"]
-            d3_notes = "Calentamiento 10'. Parte principal en Z2 conversacional. Enfriamiento 8-10'."
+            easy_type = "trail_z2" if wants_trail else "running_z2"
+            easy_ex = ["rodaje continuo", "economía de carrera"]
+            easy_notes = "Calentamiento 10'. Parte principal en Z2 conversacional. Enfriamiento 8-10'."
 
-        # Domingo: recuperación o aeróbico cruzado suave.
-        d7_type = "recovery"
-        d7_ex = ["rodaje suave", "movilidad", "descarga miofascial"]
+        recovery_type = "recovery"
+        recovery_ex = ["rodaje suave", "movilidad", "descarga miofascial"]
         if wants_road_cycling and wi % 3 == 0:
-            d7_type = "cycling_recovery"
-            d7_ex = ["rodillo/carretera suave", "cadencia alta sin carga"]
+            recovery_type = "cycling_recovery"
+            recovery_ex = ["rodillo/carretera suave", "cadencia alta sin carga"]
 
-        strength_type = "strength"
+        strength_type = "strength" if wants_gym else "strength_home"
         strength_notes = (
             "Calentamiento 10'. Parte principal de fuerza compensatoria (core, glúteo medio, sóleo, isquios). "
             "Enfriamiento 5-10'."
+            if wants_gym
+            else "Calentamiento 10'. Circuito funcional en casa (core, cadera, tobillo, estabilidad). Enfriamiento 5-10'."
         )
-        if not wants_gym:
-            strength_type = "strength_home"
-            strength_notes = (
-                "Calentamiento 10'. Circuito funcional en casa (core, cadera, tobillo, estabilidad). Enfriamiento 5-10'."
-            )
 
         long_type = "trail_long" if wants_trail else "long_run"
         long_notes = (
-            "Calentamiento 12'. Parte principal continua en Z2. "
-            "Nutrición objetivo: 30-60 g CH/h e hidratación 500-800 ml/h. Enfriamiento 10'."
+            "Calentamiento 12'. Parte principal en montaña con desnivel progresivo y control técnico en bajadas. "
+            "Nutrición objetivo: 40-70 g CH/h e hidratación 500-800 ml/h. Enfriamiento 10'."
+            if wants_trail
+            else "Calentamiento 12'. Parte principal continua en Z2. Nutrición objetivo: 30-60 g CH/h e hidratación 500-800 ml/h. Enfriamiento 10'."
         )
-        if wants_trail:
-            long_notes = (
-                "Calentamiento 12'. Parte principal en montaña con desnivel progresivo y control técnico en bajadas. "
-                "Nutrición objetivo: 40-70 g CH/h e hidratación 500-800 ml/h. Enfriamiento 10'."
-            )
 
-        # Regla de seguridad por lesión: reducir carga de calidad y long-run.
-        if has_injuries:
+        if has_injuries or float(constraints.get("volume_factor") or 1.0) < 1.0:
             split["quality_1"] = int(round(split["quality_1"] * 0.85))
             split["quality_2"] = int(round(split["quality_2"] * 0.80))
             split["long"] = int(round(split["long"] * 0.85))
-            q1_intensity = "RPE 5-6"
-            q2_intensity = "RPE 5-6"
 
-        sessions.extend(
-            [
-                {
+        blocked_days = set(unavailable_days)
+        extra_rest: set[int] = set()
+        if len(blocked_days) < min_rest_days:
+            for pref_day in (5, 1, 3, 7, 2, 4, 6):
+                if pref_day in available_days and pref_day not in blocked_days:
+                    extra_rest.add(pref_day)
+                    if len(blocked_days) + len(extra_rest) >= min_rest_days:
+                        break
+
+        training_slots = sorted([d for d in available_days if d not in extra_rest])
+        if not training_slots:
+            training_slots = [2, 4, 6]
+
+        if len(training_slots) >= 6:
+            role_plan = ["strength", "quality_1", "easy", "quality_2", "long", "recovery"]
+        elif len(training_slots) == 5:
+            role_plan = ["strength", "quality_1", "easy", "quality_2", "long"]
+        elif len(training_slots) == 4:
+            role_plan = ["quality_1", "easy", "quality_2", "long"]
+        elif len(training_slots) == 3:
+            role_plan = ["quality_1", "easy", "long"]
+        elif len(training_slots) == 2:
+            role_plan = ["quality_1", "long"]
+        else:
+            role_plan = ["easy"]
+
+        day_to_role: dict[int, str] = {}
+        free_days = set(training_slots)
+
+        if "long" in role_plan:
+            long_candidates = [d for d in long_day_pref if d in free_days]
+            if not long_candidates:
+                long_candidates = sorted(free_days, key=lambda d: day_caps.get(d, 10_000), reverse=True)
+            if long_candidates:
+                day = long_candidates[0]
+                day_to_role[day] = "long"
+                free_days.discard(day)
+
+        quality_roles = [r for r in role_plan if r.startswith("quality")][:max_quality_sessions]
+        quality_pref = [2, 4, 3, 5, 1, 6, 7]
+        prev_q_day: int | None = None
+        for role_name in quality_roles:
+            candidates = [d for d in quality_pref if d in free_days]
+            if prev_q_day is not None:
+                spaced = [d for d in candidates if abs(d - prev_q_day) >= 2]
+                if spaced:
+                    candidates = spaced
+            if "long" in day_to_role.values():
+                long_day = next((k for k, v in day_to_role.items() if v == "long"), None)
+                if long_day is not None:
+                    away_from_long = [d for d in candidates if abs(d - long_day) >= 2]
+                    if away_from_long:
+                        candidates = away_from_long
+            if candidates:
+                day = candidates[0]
+                day_to_role[day] = role_name
+                free_days.discard(day)
+                prev_q_day = day
+
+        for role_name in role_plan:
+            if role_name in day_to_role.values() or role_name.startswith("quality"):
+                continue
+            if not free_days:
+                break
+            pref = [1, 3, 5, 7, 2, 4, 6]
+            candidates = [d for d in pref if d in free_days]
+            day = candidates[0] if candidates else sorted(free_days)[0]
+            day_to_role[day] = role_name
+            free_days.discard(day)
+
+        for day_idx in range(1, 8):
+            role_name = day_to_role.get(day_idx)
+            if day_idx in blocked_days or day_idx in extra_rest or role_name is None:
+                sessions.append(
+                    {
+                        "week_index": wi,
+                        "day_index": day_idx,
+                        "session_type": "rest",
+                        "duration_min": 0,
+                        "intensity": "RPE 1-2",
+                        "exercises": ["descanso activo opcional"],
+                        "notes": "Día de recuperación/descanso según restricciones y disponibilidad.",
+                    }
+                )
+                continue
+
+            if role_name == "strength":
+                sessions.append({
                     "week_index": wi,
-                    "day_index": 1,
+                    "day_index": day_idx,
                     "session_type": strength_type,
-                    "duration_min": split["strength"],
+                    "duration_min": _cap_duration(day_idx, split["strength"]),
                     "intensity": "RPE 4-5",
                     "exercises": ["movilidad tobillo/cadera", "fuerza general", "core"],
                     "notes": strength_notes,
-                },
-                {
+                })
+            elif role_name == "quality_1":
+                sessions.append({
                     "week_index": wi,
-                    "day_index": 2,
+                    "day_index": day_idx,
                     "session_type": q1_type,
-                    "duration_min": split["quality_1"],
+                    "duration_min": _cap_duration(day_idx, split["quality_1"]),
                     "intensity": q1_intensity,
                     "exercises": q1_ex,
                     "notes": q1_notes,
-                },
-                {
+                })
+            elif role_name == "quality_2":
+                sessions.append({
                     "week_index": wi,
-                    "day_index": 3,
-                    "session_type": d3_type,
-                    "duration_min": split["easy"],
-                    "intensity": "RPE 3-4",
-                    "exercises": d3_ex,
-                    "notes": d3_notes,
-                },
-                {
-                    "week_index": wi,
-                    "day_index": 4,
+                    "day_index": day_idx,
                     "session_type": q2_type,
-                    "duration_min": split["quality_2"],
+                    "duration_min": _cap_duration(day_idx, split["quality_2"]),
                     "intensity": q2_intensity,
                     "exercises": q2_ex,
                     "notes": q2_notes,
-                },
-                {
+                })
+            elif role_name == "easy":
+                sessions.append({
                     "week_index": wi,
-                    "day_index": 5,
-                    "session_type": "rest",
-                    "duration_min": 0,
-                    "intensity": "RPE 1-2",
-                    "exercises": ["descanso activo opcional"],
-                    "notes": "Movilidad opcional 20-30' y monitorización de recuperación.",
-                },
-                {
+                    "day_index": day_idx,
+                    "session_type": easy_type,
+                    "duration_min": _cap_duration(day_idx, split["easy"]),
+                    "intensity": "RPE 3-4",
+                    "exercises": easy_ex,
+                    "notes": easy_notes,
+                })
+            elif role_name == "long":
+                sessions.append({
                     "week_index": wi,
-                    "day_index": 6,
+                    "day_index": day_idx,
                     "session_type": long_type,
-                    "duration_min": split["long"],
+                    "duration_min": _cap_duration(day_idx, split["long"]),
                     "intensity": "RPE 4-5" if not has_injuries else "RPE 3-4",
                     "exercises": ["tirada larga progresiva", "estrategia de nutrición/hidratación"],
                     "notes": long_notes,
-                },
-                {
+                })
+            else:
+                sessions.append({
                     "week_index": wi,
-                    "day_index": 7,
-                    "session_type": d7_type,
-                    "duration_min": split["recovery"],
+                    "day_index": day_idx,
+                    "session_type": recovery_type,
+                    "duration_min": _cap_duration(day_idx, split["recovery"]),
                     "intensity": "RPE 2-3",
-                    "exercises": d7_ex,
+                    "exercises": recovery_ex,
                     "notes": "Recuperación activa y descarga muscular. Prioriza sueño y rehidratación.",
-                },
-            ]
-        )
+                })
 
     objective_text = f"Preparación para {race}"
     if target_time:
         objective_text += f" con objetivo de {target_time}"
 
     base_description = "Plan estructurado generado por el coach a partir de objetivos y perfil del atleta."
-    if difficulty_reason:
-        plan_description = f"{base_description} {difficulty_reason}"
-    else:
-        plan_description = base_description
+    plan_description = f"{base_description} {difficulty_reason}" if difficulty_reason else base_description
 
     plan = {
         "title": f"Plan hacia {race}",
@@ -4230,6 +4536,7 @@ def _generate_structured_plan_payload(
                 "cycling_mtb": wants_mtb,
                 "trail": wants_trail,
             },
+            "constraints": constraints,
             "today_focus": "Sesión de calidad o ajuste por recuperación",
             "generation_note": (user_message or "")[:240],
             "base_plan_id": (base_plan or {}).get("id"),
@@ -4272,6 +4579,22 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
     if duration_weeks > 0 and len(by_week) < max(1, duration_weeks - 1):
         errors.append("El plan no cubre suficientes semanas para la duración definida.")
 
+    goals = (profile or {}).get("goals", {})
+    health = (profile or {}).get("health", {})
+    plan_data = plan.get("plan_data") if isinstance(plan.get("plan_data"), dict) else {}
+    constraints = plan_data.get("constraints") if isinstance(plan_data.get("constraints"), dict) else None
+    if not isinstance(constraints, dict):
+        constraints = _resolve_training_constraints(goals if isinstance(goals, dict) else {}, health if isinstance(health, dict) else {}, "")
+
+    unavailable_days = set(int(d) for d in (constraints.get("unavailable_days") or []))
+    max_minutes_per_day = {
+        int(k): int(v)
+        for k, v in (constraints.get("max_minutes_per_day") or {}).items()
+        if 1 <= int(k) <= 7 and int(v) >= 0
+    }
+    min_rest_days = max(1, min(4, int(constraints.get("min_rest_days") or 1)))
+    max_quality_sessions = max(1, min(3, int(constraints.get("max_quality_sessions_per_week") or 2)))
+
     weekly_totals: list[int] = []
     quality_signatures: set[str] = set()
     for wi in sorted(by_week.keys()):
@@ -4282,8 +4605,22 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
             break
 
         rest_count = sum(1 for s in week_rows if str(s.get("session_type") or "").strip().lower() == "rest")
-        if rest_count != 1:
-            errors.append(f"La semana {wi} debe tener exactamente 1 día de descanso.")
+        if rest_count < min_rest_days:
+            errors.append(f"La semana {wi} debe tener al menos {min_rest_days} día(s) de descanso.")
+            break
+
+        for s in week_rows:
+            d = int(s.get("day_index") or 0)
+            st = str(s.get("session_type") or "").strip().lower()
+            dur = int(s.get("duration_min") or 0)
+            if d in unavailable_days and st != "rest":
+                errors.append(f"La semana {wi} incumple disponibilidad: día {d} debe ser descanso.")
+                break
+            day_cap = max_minutes_per_day.get(d)
+            if day_cap is not None and dur > day_cap:
+                errors.append(f"La semana {wi} excede minutos máximos en día {d}.")
+                break
+        if errors:
             break
 
         quality_days = sorted(
@@ -4291,10 +4628,14 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
             for s in week_rows
             if any(k in str(s.get("session_type") or "").lower() for k in ("quality", "tempo", "hills"))
         )
-        if len(quality_days) < 2:
-            errors.append(f"La semana {wi} necesita al menos 2 sesiones de calidad específicas.")
+        min_quality_sessions = min(2, max_quality_sessions)
+        if len(quality_days) > max_quality_sessions:
+            errors.append(f"La semana {wi} excede el máximo de sesiones de calidad ({max_quality_sessions}).")
             break
-        if abs(quality_days[0] - quality_days[1]) < 2:
+        if len(quality_days) < min_quality_sessions:
+            errors.append(f"La semana {wi} necesita al menos {min_quality_sessions} sesión(es) de calidad específicas.")
+            break
+        if len(quality_days) >= 2 and abs(quality_days[0] - quality_days[1]) < 2:
             errors.append(f"La semana {wi} concentra sesiones de calidad demasiado juntas.")
             break
 
@@ -4306,7 +4647,6 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
             if any(k in st for k in ("quality", "tempo", "hills")):
                 quality_signatures.add(f"{st}|{str(s.get('notes') or '').strip()[:80]}")
 
-    goals = (profile or {}).get("goals", {})
     expected_weekly_hours = _safe_float(goals.get("weekly_training_hours"), 8.0)
     expected_weekly_min = int(max(120, expected_weekly_hours * 60))
     if weekly_totals:
