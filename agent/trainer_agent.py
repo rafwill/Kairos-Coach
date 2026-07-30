@@ -218,9 +218,35 @@ def _is_cycling_activity(act_type) -> bool:
     return any(kw in t for kw in ("cycling", "biking", "bike", "virtual_ride", "bmx", "cicl"))
 
 
+def _is_strength_activity(act_type) -> bool:
+    """True para actividades de fuerza (pesas/functional strength/gym)."""
+    if isinstance(act_type, dict):
+        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
+    t = str(act_type or "").lower()
+    return any(kw in t for kw in ("strength", "fuerza", "weight", "gym", "functional_strength"))
+
+
+def _is_trail_hike_walk_activity(act_type) -> bool:
+    """True para trail running, senderismo/hike y caminar/walking."""
+    if isinstance(act_type, dict):
+        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
+    t = str(act_type or "").lower()
+    return any(kw in t for kw in ("trail", "hike", "hiking", "sender", "trek", "walk", "camin"))
+
+
+def _is_running_non_trail_activity(act_type) -> bool:
+    """True para running/carrera (excepto trail, hiking y walking)."""
+    if _is_trail_hike_walk_activity(act_type):
+        return False
+    if isinstance(act_type, dict):
+        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
+    t = str(act_type or "").lower()
+    return any(kw in t for kw in ("running", "run", "corr"))
+
+
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 3  # v3: enrichment de actividades recientes con get_activity (trainingStressScore)
+_TSS_FORMULA_VERSION = 4  # v4: reglas explícitas por deporte (fuerza/running/trail/ciclismo)
 
 
 # Metadatos de récords personales de Garmin (mapeado de typeId a categoría y formato)
@@ -997,33 +1023,139 @@ def _extract_training_load_points(payload: Any) -> list[dict]:
     return points
 
 
-def _estimate_session_tss(activity: dict, ftp: float | None = None) -> tuple[float, str]:
-    """Estima TSS de una sesión. Devuelve (valor, etiqueta) donde:
-      etiqueta = "TSS"   si la fuente es potenciómetro o dato nativo de Garmin.
-      etiqueta = "hrTSS" si la fuente es estimación por FC o genérico.
+def _extract_activity_duration_hours(activity: dict) -> float:
+    duration_seconds = (
+        activity.get("duration_seconds")
+        or activity.get("duration")
+        or activity.get("durationInSeconds")
+        or activity.get("elapsedDuration")
+        or activity.get("movingDuration")
+        or activity.get("moving_duration_seconds")
+        or 0
+    )
+    try:
+        return max(0.0, float(duration_seconds) / 3600.0)
+    except Exception:
+        return 0.0
 
-    Prioridades:
-    1.  trainingStressScore / Training Load de Garmin  (más preciso)
-    1.5 Potencia (NP o avgPower) + FTP  — solo ciclismo
-    2.  FC media  — Ciclismo: IF=%HRR (Coggan)  /  Running: IF=0.40+HRR×0.65
-    3.  Training Effect aeróbico
-    4.  IF genérico por deporte
-    """
-    if not isinstance(activity, dict):
-        return 0.0, "hrTSS"
 
-    # Detectar ciclismo para aplicar la fórmula IF correcta
-    _act_type = activity.get("type") or activity.get("activityType") or ""
-    _cycling = _is_cycling_activity(_act_type)
+def _extract_activity_distance_km(activity: dict) -> float | None:
+    for key, in_meters in (
+        ("distance", True),
+        ("distance_m", True),
+        ("distanceInMeters", True),
+        ("totalDistanceInMeters", True),
+        ("distanceKm", False),
+        ("distance_km", False),
+    ):
+        raw = activity.get(key)
+        if raw is None:
+            continue
+        try:
+            val = float(raw)
+        except Exception:
+            continue
+        if val <= 0:
+            continue
+        return (val / 1000.0) if in_meters else val
+    return None
 
-    # ── Prioridad 1: Training Load de Garmin ─────────────────────────────────
-    # Nota: se omiten valores <= 0 para permitir el fallback por FC cuando Garmin
-    # no calculó el training load (activityTrainingLoad=0 significa "sin dato").
+
+def _parse_pace_to_sec_per_km(raw: Any) -> float | None:
+    if raw is None:
+        return None
+
+    if isinstance(raw, (int, float)):
+        v = float(raw)
+        if v <= 0:
+            return None
+        if v < 20:
+            return v * 60.0
+        return v
+
+    text = str(raw).strip().lower()
+    if not text:
+        return None
+
+    mmss = re.search(r"(\d{1,2})\s*[:m]\s*(\d{1,2})", text)
+    if mmss:
+        mm = int(mmss.group(1))
+        ss = int(mmss.group(2))
+        if mm >= 0 and 0 <= ss < 60:
+            return mm * 60.0 + ss
+
+    number = re.search(r"(\d+(?:[\.,]\d+)?)", text)
+    if not number:
+        return None
+    try:
+        v = float(number.group(1).replace(",", "."))
+    except Exception:
+        return None
+    if v <= 0:
+        return None
+
+    if "km/h" in text or "kph" in text:
+        return 3600.0 / v
+    if "m/s" in text:
+        return 1000.0 / v
+    if v < 20:
+        return v * 60.0
+    return v
+
+
+def _extract_avg_pace_sec_per_km(activity: dict) -> float | None:
     for key in (
-        "trainingStressScore",    # TSS nativo (potencia / cycling)
+        "averagePaceSecPerKm",
+        "average_pace_sec_per_km",
+        "avgPaceSecPerKm",
+        "averagePace",
+        "avgPace",
+        "pace",
+    ):
+        pace = _parse_pace_to_sec_per_km(activity.get(key))
+        if pace and pace > 0:
+            return pace
+
+    distance_km = _extract_activity_distance_km(activity)
+    hours = _extract_activity_duration_hours(activity)
+    if distance_km and distance_km > 0 and hours > 0:
+        return (hours * 3600.0) / distance_km
+    return None
+
+
+def _extract_running_effective_pace_sec_per_km(activity: dict) -> float | None:
+    """Extrae un ritmo más representativo del coste fisiológico en running.
+
+    Prioriza ritmos normalizados o ajustados por pendiente cuando existen y
+    hace fallback a ritmo medio estándar.
+    """
+    for key in (
+        "normalizedPaceSecPerKm",
+        "normalized_pace_sec_per_km",
+        "normalizedPace",
+        "normalized_pace",
+        "gradeAdjustedPaceSecPerKm",
+        "grade_adjusted_pace_sec_per_km",
+        "gradeAdjustedPace",
+        "grade_adjusted_pace",
+        "movingPaceSecPerKm",
+        "moving_pace_sec_per_km",
+        "averageMovingPace",
+        "avgMovingPace",
+        "movingPace",
+    ):
+        pace = _parse_pace_to_sec_per_km(activity.get(key))
+        if pace and pace > 0:
+            return pace
+    return _extract_avg_pace_sec_per_km(activity)
+
+
+def _extract_training_load_tss(activity: dict) -> float | None:
+    for key in (
+        "trainingStressScore",
         "trainingLoad",
         "training_load",
-        "activityTrainingLoad",   # Training Load interno de Garmin (TE)
+        "activityTrainingLoad",
         "loadValue",
     ):
         raw_load = activity.get(key)
@@ -1033,54 +1165,17 @@ def _estimate_session_tss(activity: dict, ftp: float | None = None) -> tuple[flo
             val = float(raw_load)
         except Exception:
             continue
-        if val <= 0:
-            continue   # 0 = Garmin no lo calculó → caer al fallback de FC
-        return max(0.0, min(val, 500.0)), "TSS"
+        if val > 0:
+            return max(0.0, min(val, 500.0))
+    return None
 
-    # ── Duración — necesaria para todas las estimaciones restantes ────────────
-    duration_seconds = (
-        activity.get("duration_seconds")      # garmin-mcp (snake_case)
-        or activity.get("duration")
-        or activity.get("durationInSeconds")
-        or activity.get("elapsedDuration")
-        or activity.get("movingDuration")
-        or activity.get("moving_duration_seconds")  # garmin-mcp fallback
-        or 0
-    )
-    try:
-        hours = max(0.0, float(duration_seconds) / 3600.0)
-    except Exception:
-        hours = 0.0
-    if hours <= 0:
-        return 0.0, "hrTSS"
 
-    if_value: float | None = None
-
-    # ── Prioridad 1.5: potencia + FTP (solo ciclismo, más preciso que FC) ─────────
-    # Usa Normalized Power si está disponible (mejor que avg para TSS),
-    # o Average Power como alternativa. Si no hay FTP conocido, pasa al fallback FC.
-    if _cycling and hours > 0:
-        power_raw = (
-            activity.get("normalizedPower")
-            or activity.get("normalized_power_watts")
-            or activity.get("avgPower")
-            or activity.get("avg_power_watts")
-            or activity.get("averagePower")
-            or activity.get("average_power_watts")
-        )
-        if power_raw is not None:
-            try:
-                power_w = float(power_raw)
-                if power_w > 0 and ftp and ftp > 0:
-                    if_pow = power_w / ftp
-                    tss_pow = hours * (if_pow ** 2) * 100.0
-                    return max(0.0, min(tss_pow, 500.0)), "TSS"
-            except (ValueError, TypeError):
-                pass
-    # (sin potencia o sin FTP → continuar hacia estimación por FC)
-
-    # ── Prioridad 2: estimación por FC media (método Karvonen %HRR) ──────────
-    # IF ≈ 0.40 + %HRR × 0.65  →  Z1(~45%HRR)≈0.69 · Z2(~65%)≈0.82 · Z4(~85%)≈0.95
+def _estimate_if_from_hr(
+    activity: dict,
+    cycling_formula: bool,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+) -> float | None:
     avg_hr_raw = (
         activity.get("averageHR")
         or activity.get("avgHr")
@@ -1093,47 +1188,350 @@ def _estimate_session_tss(activity: dict, ftp: float | None = None) -> tuple[flo
         or activity.get("max_hr_bpm")
         or activity.get("maxHeartRate")
     )
-    if avg_hr_raw is not None:
-        try:
-            avg_hr  = float(avg_hr_raw)
-            hr_rest = 50.0                                        # RHR típico de atleta
-            hr_max  = float(max_hr_raw) if max_hr_raw else 185.0 # máx sesión o estimado
-            hr_max  = max(hr_max, avg_hr + 5.0)                  # máx > promedio siempre
-            hr_rest = min(hr_rest, avg_hr - 5.0)                 # reposo < promedio siempre
+    if avg_hr_raw is None:
+        return None
+    try:
+        avg_hr = float(avg_hr_raw)
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        hr_max = float(max_hr_raw) if max_hr_raw else (float(hr_max_bpm) if hr_max_bpm else 185.0)
+        if hr_rest <= 0:
+            hr_rest = 50.0
+        if hr_max <= 0:
+            hr_max = 185.0
+        hr_max = max(hr_max, avg_hr + 5.0)
+        hr_rest = min(hr_rest, avg_hr - 5.0)
 
-            hrr = (avg_hr - hr_rest) / (hr_max - hr_rest)
-            hrr = max(0.30, min(1.00, hrr))
+        hrr = (avg_hr - hr_rest) / (hr_max - hr_rest)
+        hrr = max(0.30, min(1.00, hrr))
 
-            if _cycling:
-                # Ciclismo: IF = %HRR  (Coggan hrTSS, equivalente a TrainingPeaks HR-based)
-                # Validado: 129bpm avg / 167bpm max / 2h33min → IF=0.675 → TSS≈116 (TP: 116 HR-based)
-                if_value = max(0.35, min(1.05, hrr))
-            else:
-                # Running/natación/otros: IF = 0.40 + %HRR × 0.65  (Karvonen-TRIMP)
-                if_value = max(0.50, min(1.05, 0.40 + hrr * 0.65))
-        except Exception:
-            if_value = None
+        if cycling_formula:
+            return max(0.35, min(1.05, hrr))
+        return max(0.50, min(1.05, 0.40 + hrr * 0.65))
+    except Exception:
+        return None
 
-    # ── Prioridad 3: Training Effect aeróbico de Garmin (escala 0–5) ─────────
-    if if_value is None:
-        effect = (
-            activity.get("activityTrainingEffect")
-            or activity.get("trainingEffect")
-            or activity.get("aerobicTrainingEffect")
-        )
-        if effect is not None:
+
+def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, float | None]:
+    """Extrae FC de reposo y FC maxima desde perfil cacheado si existen."""
+    if not isinstance(profile, dict):
+        return None, None
+
+    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+    health = profile.get("health") if isinstance(profile.get("health"), dict) else {}
+
+    hr_rest_candidates = [
+        perf.get("resting_hr"),
+        perf.get("restingHeartRate"),
+        perf.get("resting_heart_rate"),
+        health.get("resting_hr"),
+        health.get("restingHeartRate"),
+        health.get("resting_heart_rate"),
+        profile.get("resting_hr"),
+        profile.get("restingHeartRate"),
+        profile.get("resting_heart_rate"),
+        profile.get("rhr"),
+    ]
+    hr_max_candidates = [
+        perf.get("max_hr"),
+        perf.get("maxHeartRate"),
+        perf.get("max_heart_rate"),
+        health.get("max_hr"),
+        health.get("maxHeartRate"),
+        health.get("max_heart_rate"),
+        profile.get("max_hr"),
+        profile.get("maxHeartRate"),
+        profile.get("max_heart_rate"),
+    ]
+
+    def _pick(candidates: list[Any], min_v: float, max_v: float) -> float | None:
+        for raw in candidates:
+            if raw is None:
+                continue
             try:
-                effect_norm = max(0.0, min(float(effect) / 5.0, 1.2))
-                if_value = max(0.50, min(1.05, 0.50 + (effect_norm * 0.45)))
+                val = float(raw)
             except Exception:
-                if_value = None
+                continue
+            if min_v <= val <= max_v:
+                return val
+        return None
 
-    # ── Prioridad 4: IF genérico por deporte ─────────────────────────────────
-    if if_value is None:
-        if_value = 0.60 if _cycling else 0.68  # ciclismo Z2 ≈ 0.60, running Z2 ≈ 0.68
+    return _pick(hr_rest_candidates, 30.0, 100.0), _pick(hr_max_candidates, 120.0, 240.0)
 
-    tss = hours * (if_value ** 2) * 100.0
-    return max(0.0, min(tss, 500.0)), "hrTSS"
+
+def _extract_threshold_pace_sec_per_km(activity: dict, running_threshold_pace_sec_per_km: float | None = None) -> float | None:
+    if running_threshold_pace_sec_per_km and running_threshold_pace_sec_per_km > 0:
+        return float(running_threshold_pace_sec_per_km)
+
+    for key in (
+        "thresholdPaceSecPerKm",
+        "threshold_pace_sec_per_km",
+        "lactateThresholdPace",
+        "lactate_threshold_pace",
+        "thresholdPace",
+        "threshold_pace",
+        "paceAtLactateThreshold",
+    ):
+        pace = _parse_pace_to_sec_per_km(activity.get(key))
+        if pace and pace > 0:
+            return pace
+
+    for speed_key in (
+        "lactateThresholdSpeed",
+        "lactate_threshold_speed",
+        "thresholdSpeed",
+        "threshold_speed",
+    ):
+        raw_speed = activity.get(speed_key)
+        if raw_speed is None:
+            continue
+        try:
+            speed_ms = float(raw_speed)
+        except Exception:
+            continue
+        if speed_ms > 0:
+            return 1000.0 / speed_ms
+
+    return None
+
+
+def _estimate_if_from_rpe(activity: dict) -> float | None:
+    raw = (
+        activity.get("rpe")
+        or activity.get("sessionRpe")
+        or activity.get("session_rpe")
+        or activity.get("perceivedExertion")
+        or activity.get("perceived_exertion")
+        or activity.get("effort")
+    )
+    if raw is None:
+        return None
+
+    if isinstance(raw, (int, float)):
+        rpe = float(raw)
+    else:
+        raw_text = str(raw)
+        # Handle canonical formats like "7/10" as a single RPE value.
+        fraction_match = re.search(r"(?<!\d)(\d+(?:[\.,]\d+)?)\s*/\s*10(?:[\.,]0+)?\b", raw_text)
+        if fraction_match:
+            rpe = float(fraction_match.group(1).replace(",", "."))
+        else:
+            nums = [float(x.replace(",", ".")) for x in re.findall(r"\d+(?:[\.,]\d+)?", raw_text)]
+            if not nums:
+                return None
+            rpe = sum(nums) / len(nums)
+
+    if rpe <= 0:
+        return None
+    rpe = max(1.0, min(10.0, rpe))
+    return max(0.45, min(1.05, 0.40 + (rpe / 10.0) * 0.60))
+
+
+def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
+    if hours <= 0 or not ftp or ftp <= 0:
+        return None
+    power_raw = (
+        activity.get("normalizedPower")
+        or activity.get("normalized_power_watts")
+        or activity.get("avgPower")
+        or activity.get("avg_power_watts")
+        or activity.get("averagePower")
+        or activity.get("average_power_watts")
+    )
+    if power_raw is None:
+        return None
+    try:
+        power_w = float(power_raw)
+    except (ValueError, TypeError):
+        return None
+    if power_w <= 0:
+        return None
+
+    if_pow = power_w / ftp
+    return max(0.0, min(hours * (if_pow ** 2) * 100.0, 500.0))
+
+
+def _estimate_tss_from_threshold_pace(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None = None,
+    prefer_effective_running_pace: bool = False,
+    if_pace_ceiling: float = 1.20,
+) -> float | None:
+    if hours <= 0:
+        return None
+    threshold_pace = _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
+    avg_pace = (
+        _extract_running_effective_pace_sec_per_km(activity)
+        if prefer_effective_running_pace
+        else _extract_avg_pace_sec_per_km(activity)
+    )
+    if not threshold_pace or not avg_pace or threshold_pace <= 0 or avg_pace <= 0:
+        return None
+
+    if_pace = max(0.50, min(float(if_pace_ceiling), threshold_pace / avg_pace))
+    return max(0.0, min(hours * (if_pace ** 2) * 100.0, 500.0))
+
+
+def _estimate_if_from_training_effect(activity: dict) -> float | None:
+    effect = (
+        activity.get("activityTrainingEffect")
+        or activity.get("trainingEffect")
+        or activity.get("aerobicTrainingEffect")
+    )
+    if effect is None:
+        return None
+    try:
+        effect_norm = max(0.0, min(float(effect) / 5.0, 1.2))
+        return max(0.50, min(1.05, 0.50 + (effect_norm * 0.45)))
+    except Exception:
+        return None
+
+
+def _estimate_session_tss(
+    activity: dict,
+    ftp: float | None = None,
+    running_threshold_pace_sec_per_km: float | None = None,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+) -> tuple[float, str]:
+    """Estima carga de sesión con prioridades explícitas por tipo de actividad."""
+    if not isinstance(activity, dict):
+        return 0.0, "hrTSS"
+
+    act_type = activity.get("type") or activity.get("activityType") or ""
+    is_cycling = _is_cycling_activity(act_type)
+    is_strength = _is_strength_activity(act_type)
+    is_trail_hike_walk = _is_trail_hike_walk_activity(act_type)
+    is_running_non_trail = _is_running_non_trail_activity(act_type)
+    tss_native = _extract_training_load_tss(activity)
+
+    hours = _extract_activity_duration_hours(activity)
+    if hours <= 0:
+        if tss_native is not None:
+            return tss_native, "TSS"
+        return 0.0, "hrTSS"
+
+    if is_cycling:
+        tss_pow = _estimate_tss_from_power_ftp(activity, ftp=ftp, hours=hours)
+        if tss_pow is not None:
+            return tss_pow, "TSS"
+        if_hr = _estimate_if_from_hr(
+            activity,
+            cycling_formula=True,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+        )
+        if if_hr is not None:
+            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+
+    elif is_running_non_trail:
+        tss_pace = _estimate_tss_from_threshold_pace(
+            activity,
+            hours=hours,
+            running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+            prefer_effective_running_pace=True,
+            if_pace_ceiling=1.30,
+        )
+        if tss_pace is not None:
+            return tss_pace, "TSS"
+        if_hr = _estimate_if_from_hr(
+            activity,
+            cycling_formula=False,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+        )
+        if if_hr is not None:
+            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+
+    elif is_trail_hike_walk:
+        if_hr = _estimate_if_from_hr(
+            activity,
+            cycling_formula=False,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+        )
+        if if_hr is not None:
+            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+        tss_pace = _estimate_tss_from_threshold_pace(
+            activity,
+            hours=hours,
+            running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+        )
+        if tss_pace is not None:
+            return tss_pace, "TSS"
+        if_rpe = _estimate_if_from_rpe(activity)
+        if if_rpe is not None:
+            return max(0.0, min(hours * (if_rpe ** 2) * 100.0, 500.0)), "hrTSS"
+
+    elif is_strength:
+        if_hr = _estimate_if_from_hr(
+            activity,
+            cycling_formula=False,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+        )
+        if if_hr is not None:
+            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+        if_rpe = _estimate_if_from_rpe(activity)
+        if if_rpe is not None:
+            return max(0.0, min(hours * (if_rpe ** 2) * 100.0, 500.0)), "hrTSS"
+
+    if tss_native is not None:
+        return tss_native, "TSS"
+
+    if_hr_fallback = _estimate_if_from_hr(
+        activity,
+        cycling_formula=is_cycling,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+    )
+    if if_hr_fallback is not None:
+        return max(0.0, min(hours * (if_hr_fallback ** 2) * 100.0, 500.0)), "hrTSS"
+
+    if_te = _estimate_if_from_training_effect(activity)
+    if if_te is not None:
+        return max(0.0, min(hours * (if_te ** 2) * 100.0, 500.0)), "hrTSS"
+
+    if_default = 0.60 if is_cycling else 0.68
+    return max(0.0, min(hours * (if_default ** 2) * 100.0, 500.0)), "hrTSS"
+
+
+def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
+    """Extrae ritmo umbral (s/km) desde perfil cacheado en cualquier forma razonable."""
+    if not isinstance(profile, dict):
+        return None
+
+    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+    candidates: list[Any] = [
+        perf.get("running_threshold_pace_sec_per_km"),
+        perf.get("running_threshold_pace"),
+        perf.get("lactate_threshold_pace_sec_per_km"),
+        perf.get("lactate_threshold_pace"),
+        perf.get("pace_at_lactate_threshold"),
+        perf.get("threshold_pace"),
+        profile.get("running_threshold_pace_sec_per_km"),
+        profile.get("running_threshold_pace"),
+    ]
+    for raw in candidates:
+        pace = _parse_pace_to_sec_per_km(raw)
+        if pace and pace > 0:
+            return pace
+
+    speed_candidates = [
+        perf.get("lactate_threshold_speed"),
+        perf.get("running_threshold_speed"),
+    ]
+    for raw_speed in speed_candidates:
+        if raw_speed is None:
+            continue
+        try:
+            speed_ms = float(raw_speed)
+        except Exception:
+            continue
+        if speed_ms > 0:
+            return 1000.0 / speed_ms
+
+    return None
 
 
 def _percentile(values: list[float], pct: float, default: float = 0.0) -> float:
@@ -1241,6 +1639,8 @@ def _compute_load_fatigue_metrics(
     """Calcula TSS/ATL/CTL/TSB y reglas de actuación con rangos individualizados por deporte."""
     today = date.today()
     start_day = today - timedelta(days=max(14, days_window - 1))
+    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
+    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
 
     tss_by_day: dict[str, float] = {}
 
@@ -1273,7 +1673,12 @@ def _compute_load_fatigue_metrics(
             continue
         if d_obj < start_day or d_obj > today:
             continue
-        tss, _ = _estimate_session_tss(act)
+        tss, _ = _estimate_session_tss(
+            act,
+            running_threshold_pace_sec_per_km=running_threshold_pace,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+        )
         if tss > 0:
             tss_by_day[d_iso] = tss_by_day.get(d_iso, 0.0) + tss
 
@@ -3443,6 +3848,7 @@ def _build_activity_analysis_block(
     hrv_raw: str | None = None,
     training_load_raw: str | None = None,
     ftp: float | None = None,
+    running_threshold_pace_sec_per_km: float | None = None,
     hr_zones_raw: str | None = None,
 ) -> str:
     """Construye un bloque de análisis pre-computado en Python para inyectar al LLM.
@@ -3525,7 +3931,11 @@ def _build_activity_analysis_block(
     if calories:
         lines.append(f"Calorias: {float(calories):.0f} kcal")
     # TSS o hrTSS calculado para este entrenamiento
-    _tss_val, _tss_lbl = _estimate_session_tss(act, ftp=ftp)
+    _tss_val, _tss_lbl = _estimate_session_tss(
+        act,
+        ftp=ftp,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+    )
     if _tss_val > 0:
         lines.append(f"{_tss_lbl}: {_tss_val:.1f}")
 
@@ -4566,6 +4976,42 @@ class TrainerAgent:
         else:
             log.info("compute_load: FTP ciclismo no disponible — usando estimación por FC")
 
+        # 2b. Ritmo umbral de running: cacheado en perfil o consultado a Garmin.
+        running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(self.user_profile)
+        if not running_threshold_pace:
+            try:
+                raw_lt = await call_tool(self.mcp_session, "get_lactate_threshold", {})
+                if raw_lt and raw_lt.strip():
+                    lt_data = json.loads(raw_lt) if raw_lt.strip()[0] in ("{", "[") else {}
+                    if isinstance(lt_data, list) and lt_data:
+                        lt_data = lt_data[0]
+                    if isinstance(lt_data, dict):
+                        running_threshold_pace = _extract_threshold_pace_sec_per_km(lt_data)
+                        if not running_threshold_pace:
+                            speed_raw = (
+                                lt_data.get("lactateThresholdSpeed")
+                                or lt_data.get("lactate_threshold_speed")
+                                or lt_data.get("thresholdSpeed")
+                            )
+                            if speed_raw:
+                                speed_ms = float(speed_raw)
+                                if speed_ms > 0:
+                                    running_threshold_pace = 1000.0 / speed_ms
+            except Exception:
+                running_threshold_pace = None
+
+        if running_threshold_pace:
+            perf = self.user_profile.setdefault("performance", {})
+            perf["running_threshold_pace_sec_per_km"] = round(float(running_threshold_pace), 1)
+            perf["running_threshold_pace"] = f"{int(running_threshold_pace // 60)}:{int(running_threshold_pace % 60):02d}"
+            perf["running_threshold_pace_date"] = today.isoformat()
+            log.info(
+                "compute_load: ritmo umbral running=%.1f s/km (usado para TSS por ritmo)",
+                running_threshold_pace,
+            )
+        else:
+            log.info("compute_load: ritmo umbral running no disponible — fallback por FC/RPE")
+
         # 3. Obtener actividades nuevas usando la función paginada probada
         new_activities = await _fetch_activities_for_load_calc(
             self.mcp_session, fetch_from, today.isoformat()
@@ -4606,13 +5052,20 @@ class TrainerAgent:
                     pass
 
         # 4. TSS por día para las actividades nuevas
+        hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(self.user_profile)
         tss_by_day:   dict[str, float] = {}
         count_by_day: dict[str, int]   = {}
         for act in new_activities:
             d_iso = _extract_activity_date_iso(act)
             if not d_iso:
                 continue
-            tss, _ = _estimate_session_tss(act, ftp=cycling_ftp)
+            tss, _ = _estimate_session_tss(
+                act,
+                ftp=cycling_ftp,
+                running_threshold_pace_sec_per_km=running_threshold_pace,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+            )
             if tss > 0:
                 tss_by_day[d_iso]   = tss_by_day.get(d_iso, 0.0) + tss
                 count_by_day[d_iso] = count_by_day.get(d_iso, 0) + 1
@@ -5349,6 +5802,7 @@ class TrainerAgent:
                     hrv_raw=next((p for p in context_parts if "HRV" in p), None),
                     training_load_raw=next((p for p in context_parts if "CARGA" in p), None),
                     ftp=float((self.user_profile.get("performance") or {}).get("cycling_ftp") or 0) or None,
+                    running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(self.user_profile),
                     hr_zones_raw=raw_hr_zones,
                 )
 

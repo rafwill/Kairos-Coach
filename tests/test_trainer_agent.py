@@ -1449,6 +1449,13 @@ class TestLoadFatigueModel:
         # Con max_hr real del reloj (175) vs estimado (185): la %HRR difiere → TSS difiere
         assert with_max != without_max
 
+    def test_estimate_tss_priority2_uses_profile_hr_when_activity_has_no_max(self):
+        act = {"averageHR": 150, "duration": 3600}
+        default_tss, _ = _estimate_session_tss(act)
+        profile_tss, _ = _estimate_session_tss(act, hr_rest_bpm=60, hr_max_bpm=190)
+        assert profile_tss != default_tss
+        assert profile_tss < default_tss
+
     def test_estimate_tss_priority3_training_effect_fallback(self):
         """Sin HR ni trainingLoad, usa Training Effect aeróbico."""
         act = {"aerobicTrainingEffect": 3.0, "duration": 3600}
@@ -1462,6 +1469,122 @@ class TestLoadFatigueModel:
         tss, _ = _estimate_session_tss(act)
         expected = 0.68 ** 2 * 100
         assert abs(tss - expected) < 1.0
+
+    def test_estimate_tss_strength_prefers_hr_then_rpe(self):
+        act_hr = {"type": "strength_training", "averageHR": 145, "maxHR": 180, "duration": 3600, "rpe": 9}
+        tss_hr, label_hr = _estimate_session_tss(act_hr)
+        assert label_hr == "hrTSS"
+        assert tss_hr > 0
+
+        act_rpe = {"type": "strength_training", "duration": 3600, "rpe": "7-8"}
+        tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
+        assert label_rpe == "hrTSS"
+        assert tss_rpe > 0
+
+    def test_estimate_tss_strength_rpe_fraction_uses_numerator(self):
+        act_fraction = {"type": "strength_training", "duration": 3600, "rpe": "7/10"}
+        act_plain = {"type": "strength_training", "duration": 3600, "rpe": 7}
+        tss_fraction, label_fraction = _estimate_session_tss(act_fraction)
+        tss_plain, label_plain = _estimate_session_tss(act_plain)
+
+        assert label_fraction == "hrTSS"
+        assert label_plain == "hrTSS"
+        assert abs(tss_fraction - tss_plain) < 0.01
+
+    def test_estimate_tss_running_prefers_threshold_pace_over_hr(self):
+        act = {
+            "type": "running",
+            "duration": 3600,
+            "distance": 10000,
+            "averageHR": 160,
+            "maxHR": 185,
+        }
+        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+        # 10k en 1h => 6:00/km. Umbral 5:00/km => IF=0.833... => ~69.4 TSS
+        assert label == "TSS"
+        assert abs(tss - 69.4) < 1.0
+
+    def test_estimate_tss_running_prefers_effective_pace_when_available(self):
+        act = {
+            "type": "running",
+            "duration": 3600,
+            "distance": 10000,
+            "averagePace": "6:00",
+            "normalizedPace": "5:00",
+        }
+        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+        # Si usa normalizedPace=5:00 con umbral 5:00, IF=1.0 => 100 TSS
+        assert label == "TSS"
+        assert abs(tss - 100.0) < 1.0
+
+    def test_estimate_tss_running_uses_higher_if_ceiling_than_trail(self):
+        running_act = {
+            "type": "running",
+            "duration": 3600,
+            "averagePace": "3:20",  # 200 s/km
+        }
+        trail_act = {
+            "type": "hiking",
+            "duration": 3600,
+            "averagePace": "3:20",  # 200 s/km
+        }
+
+        running_tss, running_label = _estimate_session_tss(
+            running_act,
+            running_threshold_pace_sec_per_km=300.0,
+        )
+        trail_tss, trail_label = _estimate_session_tss(
+            trail_act,
+            running_threshold_pace_sec_per_km=300.0,
+        )
+
+        # Running no trail: clamp IF a 1.30 => 1h => 169 TSS
+        assert running_label == "TSS"
+        assert abs(running_tss - 169.0) < 1.0
+
+        # Trail/hike threshold fallback: clamp IF a 1.20 => 1h => 144 TSS
+        assert trail_label == "TSS"
+        assert abs(trail_tss - 144.0) < 1.0
+
+    def test_estimate_tss_trail_prefers_hr_then_threshold_then_rpe(self):
+        act_hr = {
+            "type": "trail_running",
+            "duration": 7200,
+            "distance": 14000,
+            "averageHR": 150,
+            "maxHR": 180,
+            "rpe": 9,
+        }
+        tss_hr, label_hr = _estimate_session_tss(act_hr, running_threshold_pace_sec_per_km=320.0)
+        assert label_hr == "hrTSS"
+        assert tss_hr > 0
+
+        act_pace = {"type": "hiking", "duration": 7200, "distance": 14000}
+        tss_pace, label_pace = _estimate_session_tss(act_pace, running_threshold_pace_sec_per_km=320.0)
+        assert label_pace == "TSS"
+        assert tss_pace > 0
+
+        act_rpe = {"type": "walking", "duration": 3600, "rpe": 6}
+        tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
+        assert label_rpe == "hrTSS"
+        assert tss_rpe > 0
+
+    def test_estimate_tss_cycling_prefers_power_ftp_then_hr(self):
+        act_pow = {
+            "type": "cycling",
+            "duration": 3600,
+            "normalizedPower": 210,
+            "averageHR": 160,
+            "maxHR": 185,
+        }
+        tss_pow, label_pow = _estimate_session_tss(act_pow, ftp=250.0)
+        assert label_pow == "TSS"
+        assert abs(tss_pow - 70.6) < 1.0
+
+        act_hr = {"type": "cycling", "duration": 3600, "averageHR": 145, "maxHR": 175}
+        tss_hr, label_hr = _estimate_session_tss(act_hr, ftp=250.0)
+        assert label_hr == "hrTSS"
+        assert tss_hr > 0
 
     def test_estimate_tss_zero_duration_returns_zero(self):
         act = {"averageHR": 145, "duration": 0}

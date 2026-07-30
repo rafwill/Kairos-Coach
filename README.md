@@ -75,7 +75,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
 │  TrainerAgent (trainer_agent.py)                                │
 │  Agente LLM · 6 proveedores · Tool calling · Pre-cómputo        │
 │  Rutas deterministas · Memoria · RAG · TSS/ATL/CTL/TSB          │
-│  Tools internas (kairos_*) · 223 tests                          │
+│  Tools internas (kairos_*) · 227 tests                          │
 └──────────┬────────────────────────────────┬─────────────────────┘
            │                                │
 ┌──────────▼──────────┐         ┌──────────▼──────────────────────┐
@@ -256,7 +256,7 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
   - **Revisión post-sesión**: cuando el usuario comparte una actividad sin pedir análisis profundo, el coach da una nota estructurada rápida (qué fue bien / qué desvió / un ajuste).
 
 * **✅ CI/CD con GitHub Actions:**
-  - `.github/workflows/tests.yml` ejecuta la suite completa de pytest (223 tests) en cada push y pull request.
+  - `.github/workflows/tests.yml` ejecuta la suite completa de pytest (227 tests) en cada push y pull request.
   - Sin credenciales reales: los tests mockean toda la capa de Supabase y Garmin.
 
 ---
@@ -523,7 +523,7 @@ main.py → asyncio.run(run_agent())
 
 ### Cálculo del modelo TSS/ATL/CTL/TSB
 
-> **Overhaul completo (2026-07-23):** La serie se calcula de forma incremental (solo procesa días nuevos desde el último registro en DB). Migración automática de fórmulas legacy (v0→v3). Los 9 últimos días se re-enriquecen con detalle de actividad (`trainingStressScore` y potencia) en cada arranque para corregir estimaciones.
+> **Overhaul completo (2026-07-23):** La serie se calcula de forma incremental (solo procesa días nuevos desde el último registro en DB). Migración automática de fórmulas legacy (v0→v4). Los 14 últimos días se re-enriquecen con detalle de actividad (`trainingStressScore` y potencia) en cada arranque para corregir estimaciones.
 
 ```
 _compute_load_fatigue_metrics(activities, trend_payload, profile, days_window)
@@ -620,13 +620,25 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 
 **Por qué nuestro modelo es válido:** ATL/CTL/TSB son modelos relacionales, no absolutos. Lo que importa es que la unidad de carga sea **consistente para el mismo atleta**, no que sea exactamente 100 en umbral. La individualización está en los tau y percentiles propios de cada atleta, no en el valor absoluto de cada sesión.
 
-**Fallback cuando Garmin no tiene Training Load** (actividades antiguas o importadas): se usa una estimación por FC media aplicando el método Karvonen (%HRR → IF → TSS), similar a hrTSS pero sin requerir que el atleta conozca su LTHR.
+**Unidad de esfuerzo por tipo de actividad (persistida en el agente):**
+
+| Tipo de actividad | Prioridad 1 | Prioridad 2 | Prioridad 3 |
+|-------------------|-------------|-------------|-------------|
+| Fuerza | **hrTSS por FC** | **hrTSS por RPE** (si no hay FC) | - |
+| Running (no Trail) | **TSS por ritmo umbral** | **hrTSS por FC** | - |
+| Trail running / Senderismo / Hike / Caminar | **hrTSS por FC** | **TSS por ritmo umbral** | **hrTSS por RPE** |
+| Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por FC** (si no hay potencia/FTP) | - |
+
+Notas de implementación:
+- Para running, el ritmo umbral se obtiene del perfil cacheado o de `get_lactate_threshold`.
+- Para ciclismo, el FTP se obtiene del perfil cacheado o de `get_cycling_ftp`.
+- Si faltan datos clave, el sistema conserva fallbacks defensivos (Training Load nativo, Training Effect y IF por defecto) para no perder continuidad de la serie ATL/CTL/TSB.
 
 ---
 
 ## 🧪 Tests
 
-El proyecto incluye una suite de **más de 220 tests unitarios** que cubre las funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM.
+El proyecto incluye una suite de **227 tests unitarios** que cubre las funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM.
 
 ### Instalar dependencias de desarrollo
 ```powershell
@@ -636,6 +648,12 @@ pip install -r requirements-dev.txt
 ### Ejecutar los tests
 ```powershell
 pytest
+```
+
+En Windows, si aparece un error de captura de salida (`ValueError: I/O operation on closed file`), usa:
+
+```powershell
+pytest -s
 ```
 
 ### Ejecutar con informe de cobertura
