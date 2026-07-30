@@ -2693,11 +2693,37 @@ def _is_generic_needs_more_info_reply(text: str) -> bool:
     return any(marker in raw for marker in markers)
 
 
-def _is_planning_intent(user_message: str) -> bool:
-    """Detecta intención de planificación en la consulta del usuario."""
+def _is_planning_intent(user_message: str, history: list[dict] | None = None) -> bool:
+    """Detecta intención de planificación en la consulta del usuario.
+
+    También detecta confirmaciones cortas ("sí", "vale", "ok") cuando el
+    turno anterior del asistente proponía explícitamente crear un plan activo.
+    """
     text = (user_message or "").strip().lower()
     if not text:
         return False
+
+    # Follow-up afirmativo corto después de propuesta explícita de crear plan.
+    affirmative_markers = {
+        "si", "sí", "ok", "vale", "dale", "adelante", "perfecto", "de acuerdo",
+    }
+    compact_text = re.sub(r"\s+", " ", re.sub(r"[!?.,;:¡¿]", "", text)).strip()
+    if compact_text in affirmative_markers and history:
+        recent_assistant = [
+            str(msg.get("content") or "").lower()
+            for msg in (history or [])[-6:]
+            if msg.get("role") == "assistant"
+        ]
+        creation_prompts = (
+            "si quieres, te preparo un plan activo",
+            "si quieres, te preparo un plan",
+            "te preparo un plan activo",
+            "te preparo un plan a partir de ese objetivo",
+            "no tienes plan asignado ahora mismo",
+        )
+        if any(any(marker in content for marker in creation_prompts) for content in recent_assistant):
+            return True
+
     # Palabras que indican CREAR o MODIFICAR un plan, no consultar stats.
     # 'semana' y 'bloque' se eliminaron: son demasiado genéricas y
     # provocan falsos positivos en consultas de estadisticas ('cuantos km esta semana').
@@ -2815,7 +2841,7 @@ def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | No
         "section_name": "## 🧾 Aprendizajes para futuras sesiones similares",
         "guidance": (
             "Escribe 3-5 bullets concisos con aprendizajes transferibles de esta actividad para futuras sesiones similares. "
-            "Usa SIEMPRE datos reales del bloque (TSS, FC, zonas, desnivel, sueno, HRV, body battery). "
+            "Usa SIEMPRE datos reales del bloque (TSS, FC, zonas, desnivel, sueño, HRV, body battery). "
             "PROHIBIDO dar plan temporal corto (no 'mañana', no 'en 2-3 días'). "
             "Enfoca en: pacing, control de intensidad, nutrición/hidratación y señales de alerta a vigilar "
             "en próximos entrenamientos similares."
@@ -6790,7 +6816,7 @@ class TrainerAgent:
 
         # Ruta funcional de planificación: generación/actualización estructurada,
         # persistida y versionada en DB sin depender del LLM.
-        if _is_planning_intent(user_message) and _has_goal_in_profile(self.user_profile):
+        if _is_planning_intent(user_message, self.conversation_history) and _has_goal_in_profile(self.user_profile):
             try:
                 previous_plan_row = None
                 previous_plan = None
@@ -6866,9 +6892,14 @@ class TrainerAgent:
                 _save_history_entry("user", user_message)
                 _save_history_entry("assistant", assistant_reply)
                 return assistant_reply
-            except Exception:
-                # Fallback conservador al flujo anterior
-                pass
+            except Exception as exc:
+                log.warning("structured planning route failed, using goal fallback: %s", exc)
+                assistant_reply = _build_goal_plan_fallback(self.user_profile)
+                self.conversation_history.append({"role": "user", "content": user_message})
+                self.conversation_history.append({"role": "assistant", "content": assistant_reply})
+                _save_history_entry("user", user_message)
+                _save_history_entry("assistant", assistant_reply)
+                return assistant_reply
 
         # Ruta directa para récords personales: evita respuestas de "sin acceso"
         # y asegura que se entreguen distancia + marca desde la primera respuesta.
@@ -7445,7 +7476,7 @@ class TrainerAgent:
             # devolver una planificación base en lugar de pedir contexto redundante.
             if (
                 _is_generic_needs_more_info_reply(assistant_reply)
-                and _is_planning_intent(user_message)
+                and _is_planning_intent(user_message, self.conversation_history)
                 and _has_goal_in_profile(self.user_profile)
             ):
                 assistant_reply = _build_goal_plan_fallback(self.user_profile)
