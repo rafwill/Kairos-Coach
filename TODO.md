@@ -92,6 +92,11 @@
 - Actividad histórica: cambia a "Aprendizajes para futuras sesiones similares".
 - Se elimina en histórico la pauta operativa de horizonte inmediato (por ejemplo, "mañana" o "en 2-3 días").
 
+#### 49) [PLAN-ROUTING] Confirmación "sí" tras oferta de plan y fallback determinista (2026-07-31) — REALIZADO
+- Se corrige el enrutado conversacional para que un follow-up corto ("sí", "ok", "vale") tras "te preparo un plan activo" active la ruta estructurada de planificación.
+- Se evita caída silenciosa al flujo LLM cuando falla la ruta estructurada: ahora responde por fallback determinista basado en objetivo.
+- Se añaden tests de regresión para afirmativo contextual con y sin oferta previa de plan.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 

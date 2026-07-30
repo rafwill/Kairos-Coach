@@ -216,8 +216,8 @@ class TestPostActivitySectionSpec:
         today_d = date(2026, 7, 30)
         spec = _build_post_activity_section_spec("2026-07-29", today_d=today_d)
         assert spec["plan_context"] == "recent"
-        assert "Recuperacion y proximas sesiones" in spec["header"]
-        assert "manana" in spec["guidance"]
+        assert "Recuperación y próximas sesiones" in spec["header"]
+        assert "mañana" in spec["guidance"]
 
     def test_historical_activity_uses_learnings_no_short_term_schedule(self):
         today_d = date(2026, 7, 30)
@@ -1285,6 +1285,19 @@ class TestPlanningFallbackAndRanges:
 
     def test_planning_intent_true_for_microciclo(self):
         assert _is_planning_intent("¿cómo planteo el microciclo esta semana?")
+
+    def test_planning_intent_true_for_affirmative_followup_to_plan_offer(self):
+        history = [
+            {
+                "role": "assistant",
+                "content": "## ✅ Siguiente paso\nSi quieres, te preparo un plan activo a partir de ese objetivo.",
+            }
+        ]
+        assert _is_planning_intent("Sí", history)
+
+    def test_planning_intent_false_for_affirmative_without_plan_offer(self):
+        history = [{"role": "assistant", "content": "¿Cómo te encuentras hoy?"}]
+        assert not _is_planning_intent("Sí", history)
 
     def test_plan_status_intent_true_for_have_plan_question(self):
         assert _is_plan_status_intent("Tengo algun plan asignado?")
