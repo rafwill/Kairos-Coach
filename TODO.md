@@ -116,7 +116,7 @@
 #### 43) [TRAIL-TSS] Priorización por zonas FC + calibración final (2026-07-30) — REALIZADO
 - Trail/hike/walk prioriza hrTSS por tiempo en zonas FC reales cuando existe payload de zonas.
 - Calibración empírica v9 para alinear con TP (`_TRAIL_ZONES_HRTSS_CALIBRATION = 0.72`) aplicada solo a trail running.
-- Corrección de ultras: el factor se aplica sobre hrTSS sin cap y luego se limita a 500 (evita infraestimar por saturación previa).
+- Corrección de ultras REALIZADO: el factor se aplica sobre hrTSS sin cap y se preservan valores >500 cuando corresponde.
 - Test de regresión añadido para blindar la calibración por zonas en trail.
 
 #### 44) [CYCLING-TSS] Priorización potencia+FTP con fallback a zonas FC (2026-07-30) — REALIZADO

@@ -264,10 +264,10 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 11  # v11: ciclismo prioriza potencia+FTP; fallback principal a hrTSS por zonas si falta potencia o FTP
+_TSS_FORMULA_VERSION = 12  # v12: se elimina cap de 500 en TSS por actividad (incluye ultras)
 
 # Calibración empírica para trail running al usar hrTSS por tiempo en zonas.
-# Se aplica antes del cap de 500 para evitar saturaciones prematuras en ultras.
+# Se aplica sobre hrTSS por zonas y preserva valores >500 cuando corresponde.
 _TRAIL_ZONES_HRTSS_CALIBRATION = 0.72
 
 
@@ -1214,7 +1214,7 @@ def _extract_training_load_tss(activity: dict) -> float | None:
         except Exception:
             continue
         if val > 0:
-            return max(0.0, min(val, 500.0))
+            return max(0.0, val)
     return None
 
 
@@ -1390,8 +1390,9 @@ def _estimate_hr_tss_from_zones(
     if total_secs <= 0:
         return None
 
+    # `apply_cap` se conserva por compatibilidad de firma, pero ya no se limita TSS.
     if apply_cap:
-        return max(0.0, min(tss_total, 500.0))
+        return max(0.0, tss_total)
     return max(0.0, tss_total)
 
 
@@ -1526,7 +1527,7 @@ def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float
         return None
 
     if_pow = power_w / ftp
-    return max(0.0, min(hours * (if_pow ** 2) * 100.0, 500.0))
+    return max(0.0, hours * (if_pow ** 2) * 100.0)
 
 
 def _has_activity_power_data(activity: dict) -> bool:
@@ -1572,7 +1573,7 @@ def _estimate_tss_from_threshold_pace(
         return None
 
     if_pace = max(0.50, min(float(if_pace_ceiling), threshold_pace / avg_pace))
-    return max(0.0, min(hours * (if_pace ** 2) * 100.0, 500.0))
+    return max(0.0, hours * (if_pace ** 2) * 100.0)
 
 
 def _extract_running_if_from_threshold_pace(
@@ -1770,7 +1771,7 @@ def _estimate_running_tss_examined(
         if_pace_ceiling=1.30,
     )
     tss_pace_base = (
-        max(0.0, min(hours * (base_if ** 2) * 100.0, 500.0))
+        max(0.0, hours * (base_if ** 2) * 100.0)
         if base_if is not None
         else None
     )
@@ -1782,7 +1783,7 @@ def _estimate_running_tss_examined(
         hr_max_bpm=hr_max_bpm,
     )
     tss_hr = (
-        max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0))
+        max(0.0, hours * (if_hr ** 2) * 100.0)
         if if_hr is not None
         else None
     )
@@ -1832,7 +1833,7 @@ def _estimate_running_tss_examined(
             uplift = min(0.07, uplift)
 
         interval_if = max(0.50, min(1.30, base_if + uplift))
-        tss_interval = max(0.0, min(hours * (interval_if ** 2) * 100.0, 500.0))
+        tss_interval = max(0.0, hours * (interval_if ** 2) * 100.0)
         if tss_pace_base is not None:
             return max(tss_interval, tss_pace_base)
         return tss_interval if tss_interval is not None else tss_hr
@@ -1908,7 +1909,7 @@ def _estimate_session_tss(
             hr_max_bpm=hr_max_bpm,
         )
         if if_hr is not None:
-            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+            return max(0.0, hours * (if_hr ** 2) * 100.0), "hrTSS"
 
     elif is_running_non_trail:
         tss_running = _estimate_running_tss_examined(
@@ -1932,10 +1933,10 @@ def _estimate_session_tss(
         )
         if tss_hr_zones is not None:
             if is_trail:
-                tss_cal = max(0.0, min(float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION, 500.0))
+                tss_cal = max(0.0, float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION)
                 return tss_cal, "hrTSS"
             if is_hike_walk:
-                return max(0.0, min(float(tss_hr_zones), 500.0)), "hrTSS"
+                return max(0.0, float(tss_hr_zones)), "hrTSS"
 
         if_hr = _estimate_if_from_hr(
             activity,
@@ -1944,7 +1945,7 @@ def _estimate_session_tss(
             hr_max_bpm=hr_max_bpm,
         )
         if if_hr is not None:
-            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+            return max(0.0, hours * (if_hr ** 2) * 100.0), "hrTSS"
         tss_pace = _estimate_tss_from_threshold_pace(
             activity,
             hours=hours,
@@ -1954,7 +1955,7 @@ def _estimate_session_tss(
             return tss_pace, "TSS"
         if_rpe = _estimate_if_from_rpe(activity)
         if if_rpe is not None:
-            return max(0.0, min(hours * (if_rpe ** 2) * 100.0, 500.0)), "hrTSS"
+            return max(0.0, hours * (if_rpe ** 2) * 100.0), "hrTSS"
 
     elif is_strength:
         tss_hr_zones = _estimate_hr_tss_from_zones(
@@ -1974,13 +1975,25 @@ def _estimate_session_tss(
             hr_max_bpm=hr_max_bpm,
         )
         if if_hr is not None:
-            return max(0.0, min(hours * (if_hr ** 2) * 100.0, 500.0)), "hrTSS"
+            return max(0.0, hours * (if_hr ** 2) * 100.0), "hrTSS"
         if_rpe = _estimate_if_from_rpe(activity)
         if if_rpe is not None:
-            return max(0.0, min(hours * (if_rpe ** 2) * 100.0, 500.0)), "hrTSS"
+            return max(0.0, hours * (if_rpe ** 2) * 100.0), "hrTSS"
 
     if tss_native is not None:
         return tss_native, "TSS"
+
+    # Para modalidades sin fórmula específica (p. ej. natación, remo, cardio indoor),
+    # priorizamos hrTSS por tiempo en zonas si hay payload de zonas disponible.
+    tss_hr_zones_generic = _estimate_hr_tss_from_zones(
+        activity,
+        hours=hours,
+        hr_zones_raw=hr_zones_raw,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+    )
+    if tss_hr_zones_generic is not None:
+        return tss_hr_zones_generic, "hrTSS"
 
     if_hr_fallback = _estimate_if_from_hr(
         activity,
@@ -1989,14 +2002,14 @@ def _estimate_session_tss(
         hr_max_bpm=hr_max_bpm,
     )
     if if_hr_fallback is not None:
-        return max(0.0, min(hours * (if_hr_fallback ** 2) * 100.0, 500.0)), "hrTSS"
+        return max(0.0, hours * (if_hr_fallback ** 2) * 100.0), "hrTSS"
 
     if_te = _estimate_if_from_training_effect(activity)
     if if_te is not None:
-        return max(0.0, min(hours * (if_te ** 2) * 100.0, 500.0)), "hrTSS"
+        return max(0.0, hours * (if_te ** 2) * 100.0), "hrTSS"
 
     if_default = 0.60 if is_cycling else 0.68
-    return max(0.0, min(hours * (if_default ** 2) * 100.0, 500.0)), "hrTSS"
+    return max(0.0, hours * (if_default ** 2) * 100.0), "hrTSS"
 
 
 def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
