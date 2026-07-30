@@ -3,7 +3,7 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 223 tests. CI/CD con GitHub Actions activo.
+- Suite de tests: 233 tests (validados localmente a 2026-07-30). CI/CD con GitHub Actions activo.
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 
 ---
@@ -70,7 +70,17 @@
 - `kairos_weekly_sport_breakdown`: consulta Garmin MCP, agrupa por deporte y devuelve sesiones/horas/km.
 
 #### 21) GitHub Actions CI
-- `.github/workflows/tests.yml` ejecuta la suite de 223 tests en cada push y pull request, sin credenciales reales.
+- `.github/workflows/tests.yml` ejecuta la suite de tests en cada push y pull request, sin credenciales reales.
+
+#### 45) [VALIDACION] Batería sintética multi-atleta para carga/fatiga (2026-07-30) — REALIZADO
+- Añadidos escenarios ficticios por deporte (running, trail y triatlón) para validar comportamiento específico ATL/CTL/TSB.
+- Cobertura de reglas por perfil: tau por deporte, suelo de TSB y detección de fatiga/sobrecarga reciente.
+- Ejecutada validación integral de `tests/test_trainer_agent.py` en verde tras integración.
+
+#### 46) [DOCS] Persistencia en BBDD documentada en README (2026-07-30) — REALIZADO
+- Añadida sección explícita "Qué guarda Kairos en la BBDD (Supabase)" en README.
+- Documentadas tablas persistidas, tipos de dato almacenado y alcance real de persistencia.
+- Aclaración añadida: no se persiste una tabla propia con actividades Garmin crudas.
 
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.

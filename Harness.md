@@ -102,7 +102,7 @@ Regla: declarar N (tamaño de muestra) y calidad del dato en toda afirmación so
 
 ### Sensores del sistema (sobre el agente)
 
-#### Suite de tests (223 tests)
+#### Suite de tests (233 tests validados localmente a 2026-07-30)
 **Directorio:** `tests/`
 
 Verifica que el harness no se rompe:
@@ -201,7 +201,7 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 │  anomalías biométricas      ✓ en prompting          │
 │  TSS/ATL/CTL/TSB EWMA       ✓ operativo             │
 │  guardrail read-only        ✓ operativo             │
-│  suite de tests 223         ✓ operativo             │
+│  suite de tests 233         ✓ operativo             │
 │  CI GitHub Actions          ✓ operativo             │
 │  spike semanal >20%         ✗ pendiente (#27)       │
 │  logging por niveles        ✗ pendiente (#4)        │
