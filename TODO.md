@@ -103,6 +103,13 @@
 - Validación endurecida para rechazar planes planos o repetitivos (estructura semanal, separación de sesiones clave y checks de variedad).
 - Añadidos tests de regresión para progresión semanal, selección por week_index y rutas trail/multisport.
 
+#### 51) [PLAN-CONSTRAINTS] Planificador general por restricciones del atleta (2026-07-31) — REALIZADO
+- El plan estructurado ahora distribuye el microciclo por disponibilidad real declarada (días entrenables/no entrenables, límites de minutos por día, descanso mínimo y tope de calidad semanal).
+- Se elimina dependencia de plantilla fija por día de la semana: el motor asigna sesiones por reglas deterministas según restricciones y objetivo.
+- La modulación de carga por salud pasa a modelo general por impacto funcional (`none/low/moderate/high`), sin lógica hardcodeada por patología concreta.
+- El ajuste diario del plan fuerza descanso/reducción cuando el día está bloqueado o excede límites diarios.
+- El validador incorpora checks de cumplimiento de disponibilidad y caps diarios, con tests de regresión en `tests/test_trainer_agent.py`.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 
