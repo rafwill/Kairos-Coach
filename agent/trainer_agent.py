@@ -234,6 +234,24 @@ def _is_trail_hike_walk_activity(act_type) -> bool:
     return any(kw in t for kw in ("trail", "hike", "hiking", "sender", "trek", "walk", "camin"))
 
 
+def _is_trail_activity(act_type) -> bool:
+    """True para trail running."""
+    if isinstance(act_type, dict):
+        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
+    t = str(act_type or "").lower()
+    return "trail" in t
+
+
+def _is_hike_walk_activity(act_type) -> bool:
+    """True para senderismo/hike y caminar/walking (excluye trail running)."""
+    if _is_trail_activity(act_type):
+        return False
+    if isinstance(act_type, dict):
+        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
+    t = str(act_type or "").lower()
+    return any(kw in t for kw in ("hike", "hiking", "sender", "trek", "walk", "camin"))
+
+
 def _is_running_non_trail_activity(act_type) -> bool:
     """True para running/carrera (excepto trail, hiking y walking)."""
     if _is_trail_hike_walk_activity(act_type):
@@ -246,9 +264,9 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 9  # v9: calibra hrTSS trail por zonas para alinear con TP y mantener prioridad por zonas
+_TSS_FORMULA_VERSION = 10  # v10: trail calibrado por zonas; hike/walk y fuerza priorizan hrTSS por zonas sin calibración
 
-# Calibración empírica para trail/hike/walk al usar hrTSS por tiempo en zonas.
+# Calibración empírica para trail running al usar hrTSS por tiempo en zonas.
 # Se aplica antes del cap de 500 para evitar saturaciones prematuras en ultras.
 _TRAIL_ZONES_HRTSS_CALIBRATION = 0.72
 
@@ -1833,6 +1851,8 @@ def _estimate_session_tss(
     is_cycling = _is_cycling_activity(act_type)
     is_strength = _is_strength_activity(act_type)
     is_trail_hike_walk = _is_trail_hike_walk_activity(act_type)
+    is_trail = _is_trail_activity(act_type)
+    is_hike_walk = _is_hike_walk_activity(act_type)
     is_running_non_trail = _is_running_non_trail_activity(act_type)
     tss_native = _extract_training_load_tss(activity)
 
@@ -1876,8 +1896,11 @@ def _estimate_session_tss(
             apply_cap=False,
         )
         if tss_hr_zones is not None:
-            tss_cal = max(0.0, min(float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION, 500.0))
-            return tss_cal, "hrTSS"
+            if is_trail:
+                tss_cal = max(0.0, min(float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION, 500.0))
+                return tss_cal, "hrTSS"
+            if is_hike_walk:
+                return max(0.0, min(float(tss_hr_zones), 500.0)), "hrTSS"
 
         if_hr = _estimate_if_from_hr(
             activity,
@@ -1899,6 +1922,16 @@ def _estimate_session_tss(
             return max(0.0, min(hours * (if_rpe ** 2) * 100.0, 500.0)), "hrTSS"
 
     elif is_strength:
+        tss_hr_zones = _estimate_hr_tss_from_zones(
+            activity,
+            hours=hours,
+            hr_zones_raw=hr_zones_raw,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+        )
+        if tss_hr_zones is not None:
+            return tss_hr_zones, "hrTSS"
+
         if_hr = _estimate_if_from_hr(
             activity,
             cycling_formula=False,
@@ -5494,19 +5527,19 @@ class TrainerAgent:
         count_by_day: dict[str, int]   = {}
         running_mix_by_day: dict[str, dict[str, int]] = {}
         running_inference_samples: list[dict] = []
-        _trail_hr_zones_cache: dict[str, str | None] = {}
+        _hr_zones_cache: dict[str, str | None] = {}
         for act in new_activities:
             d_iso = _extract_activity_date_iso(act)
             if not d_iso:
                 continue
             act_type = act.get("type") or act.get("activityType") or ""
             hr_zones_raw: str | None = None
-            if _is_trail_hike_walk_activity(act_type):
+            if _is_trail_hike_walk_activity(act_type) or _is_strength_activity(act_type):
                 act_id = act.get("id") or act.get("activityId")
                 act_id_key = str(act_id) if act_id is not None else ""
                 if act_id_key:
-                    if act_id_key in _trail_hr_zones_cache:
-                        hr_zones_raw = _trail_hr_zones_cache[act_id_key]
+                    if act_id_key in _hr_zones_cache:
+                        hr_zones_raw = _hr_zones_cache[act_id_key]
                     else:
                         try:
                             hr_zones_raw = await call_tool(
@@ -5516,7 +5549,7 @@ class TrainerAgent:
                             )
                         except Exception:
                             hr_zones_raw = None
-                        _trail_hr_zones_cache[act_id_key] = hr_zones_raw
+                        _hr_zones_cache[act_id_key] = hr_zones_raw
                 if hr_zones_raw:
                     act["_hr_zones_raw"] = hr_zones_raw
 
