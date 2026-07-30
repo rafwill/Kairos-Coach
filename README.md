@@ -80,13 +80,13 @@ La respuesta es una arquitectura en tres capas donde **los datos siempre van por
            │                                │
 ┌──────────▼──────────┐         ┌──────────▼──────────────────────┐
 │  Garmin MCP         │         │  Supabase (storage.py)          │
-│  ~80 tools live     │         │  7 tablas · Multiusuario        │
+│  hasta 126 tools    │         │  7 tablas · Multiusuario        │
 │  datos en tiempo    │         │  Perfil · Plan · Sesiones       │
 │  real vía stdio     │         │  TSS series · Knowledge         │
 └─────────────────────┘         └─────────────────────────────────┘
 ```
 
-**Capa de datos (sistema):** conecta con Garmin Connect, pre-procesa y calcula todas las métricas antes de entregárselas al LLM (ritmo en min/km, zonas FC reales de Garmin con nombre y rango en bpm, body battery, sueño con fases, HRV, hidratación estimada, TSS/ATL/CTL/TSB).
+**Capa de datos (sistema):** conecta con Garmin Connect para obtener señales base (actividades, FC, sueño, HRV, body battery, etc.) y, sobre esos datos, pre-procesa y calcula en Python las métricas derivadas antes de entregárselas al LLM (ritmo en min/km, zonas FC reales con nombre y rango en bpm, hidratación estimada, TSS por sesión y serie ATL/CTL/TSB).
 
 **Capa de coaching (LLM):** recibe datos ya calculados y aporta interpretación, contextualización con el perfil del atleta y recomendaciones accionables. Nunca hace aritmética.
 
@@ -593,7 +593,9 @@ Cuando `TSB ≤ floor` el sistema fuerza `status=OVERLOAD` independientemente de
 
 ### Training Load de Garmin vs. TSS de TrainingPeaks
 
-El sistema usa el **Training Load de Garmin como proxy de TSS**. Aquí la diferencia técnica entre ambos:
+Kairos **no toma ATL/CTL/TSB de Garmin**: los calcula localmente en Python.
+Para el **TSS por actividad**, Kairos aplica una jerarquía por modalidad (potencia+FTP, zonas FC, ritmo umbral, RPE) y usa `trainingStressScore`/`trainingLoad` nativo de Garmin como fuente/fallback cuando está disponible.
+Aquí la diferencia técnica entre referencias:
 
 **Training Load de Garmin** se basa en **EPOC** (Excess Post-exercise Oxygen Consumption):
 
@@ -624,15 +626,16 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 
 | Tipo de actividad | Prioridad 1 | Prioridad 2 | Prioridad 3 |
 |-------------------|-------------|-------------|-------------|
-| Fuerza | **hrTSS por FC** | **hrTSS por RPE** (si no hay FC) | - |
+| Fuerza | **hrTSS por zonas FC** | **hrTSS por FC** | **hrTSS por RPE** |
 | Running (no Trail) | **TSS por ritmo umbral** | **hrTSS por FC** | - |
-| Trail running / Senderismo / Hike / Caminar | **hrTSS por FC** | **TSS por ritmo umbral** | **hrTSS por RPE** |
-| Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por FC** (si no hay potencia/FTP) | - |
+| Trail running / Senderismo / Hike / Caminar | **hrTSS por zonas FC** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
+| Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por zonas FC** | **hrTSS por FC** |
+| Otras modalidades (natación, remo, etc.) | **hrTSS por zonas FC** | **hrTSS por FC** | **Training Effect / IF por defecto** |
 
 Notas de implementación:
 - Para running, el ritmo umbral se obtiene del perfil cacheado o de `get_lactate_threshold`.
 - Para ciclismo, el FTP se obtiene del perfil cacheado o de `get_cycling_ftp`.
-- Si faltan datos clave, el sistema conserva fallbacks defensivos (Training Load nativo, Training Effect y IF por defecto) para no perder continuidad de la serie ATL/CTL/TSB.
+- Si faltan datos clave, el sistema conserva fallbacks defensivos (trainingStressScore/trainingLoad nativo, Training Effect e IF por defecto) para no perder continuidad de la serie ATL/CTL/TSB.
 
 ### Clasificacion de running por tipo de sesion
 
@@ -700,7 +703,7 @@ pytest --cov=agent --cov-report=html
 
 | Módulo | Qué cubre |
 |--------|-----------|
-| `trainer_agent.py` | `_seconds_to_hhmmss`, `_normalize_date_args`, `_strip_garmin_object`, `_compact_tool_result`, `_compact_personal_records`, `_clean_schema_for_gemini`, `_GeminiCompletions._parse`, resolución de actividad por fecha, zonas FC y análisis profundo, estado proactivo 48h, fallbacks de planificación, modelo de carga/fatiga (TSS/ATL/CTL/TSB), configuración por deporte, tabla de tendencia `/carga`, plan trail específico, cálculo TSS por FC media (Karvonen), fetch histórico por fechas |
+| `trainer_agent.py` | `_seconds_to_hhmmss`, `_normalize_date_args`, `_strip_garmin_object`, `_compact_tool_result`, `_compact_personal_records`, `_clean_schema_for_gemini`, `_GeminiCompletions._parse`, resolución de actividad por fecha, zonas FC y análisis profundo, estado proactivo 48h, fallbacks de planificación, modelo de carga/fatiga (TSS/ATL/CTL/TSB), configuración por deporte, tabla de tendencia `/carga`, plan trail específico, cálculo TSS por potencia+FTP / zonas FC / ritmo umbral / HR / RPE, fetch histórico por fechas |
 | `main.py` | `_validate_date`, `_validate_time`, `_validate_hours`, `_is_first_time`, KB enriquecida de onboarding, `_ensure_garmin_credentials`, `_build_enriched_athlete_knowledge` |
 | `storage.py` | sanitización de credenciales, no-persistencia de passwords Garmin |
 
