@@ -692,15 +692,25 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 | Tipo de actividad | Prioridad 1 | Prioridad 2 | Prioridad 3 |
 |-------------------|-------------|-------------|-------------|
 | Fuerza | **hrTSS por zonas FC** | **hrTSS por FC** | **hrTSS por RPE** |
-| Running (no Trail) | **TSS por ritmo umbral** | **hrTSS por FC** | - |
+| Running (no Trail) | **TSS por ritmo umbral (rTSS interno)** | **hrTSS por FC** | - |
 | Trail running / Senderismo / Hike / Caminar | **hrTSS por zonas FC** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
 | Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por zonas FC** | **hrTSS por FC** |
 | Otras modalidades (natación, remo, etc.) | **hrTSS por zonas FC** | **hrTSS por FC** | **Training Effect / IF por defecto** |
 
 Notas de implementación:
-- Para running, el ritmo umbral se obtiene del perfil cacheado o de `get_lactate_threshold`.
+- Para running, el ritmo umbral se obtiene del perfil persistido por usuario (`/perfil umbral <mm:ss>`).
 - Para ciclismo, el FTP se obtiene del perfil cacheado o de `get_cycling_ftp`.
 - Si faltan datos clave, el sistema conserva fallbacks defensivos (trainingStressScore/trainingLoad nativo, Training Effect e IF por defecto) para no perder continuidad de la serie ATL/CTL/TSB.
+
+Reglas verificadas por tipología:
+- Running asfalto/pista: `rTSS`.
+- Trail/hike/walk: `hrTSS`.
+- Ciclismo con potencia+FTP: `TSS de potencia`.
+
+Persistencia de umbral de running por usuario (`user_profile.data.performance`):
+- `running_threshold_pace_sec_per_km`
+- `running_threshold_pace`
+- `running_threshold_pace_date`
 
 ### Clasificacion de running por tipo de sesion
 
@@ -730,6 +740,8 @@ Cada clase obtiene un score, y el sistema estima ademas una confianza (`high`, `
 - Confianza baja: se reduce automaticamente el uplift para priorizar estabilidad.
 
 Adicionalmente, durante el recálculo de carga se persiste una traza de inferencia (`running_session_inference`) con muestras recientes de `session_kind` y `confidence` por actividad, para auditoria y calibracion futura.
+
+En recálculo completo (`force_full_recalc=True`), Kairos enriquece ciclismo y running no-trail con `get_activity` para incorporar señales de variabilidad (`lap_count`, `avg_speed_mps`, `max_speed_mps`, `workout_rpe`, `training_effect_label`) antes de calcular TSS.
 
 ---
 

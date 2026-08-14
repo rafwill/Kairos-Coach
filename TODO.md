@@ -67,7 +67,7 @@
 - Implementado via `kairos_load_trends` sobre `load_metrics.series` en Supabase.
 
 #### 19) Desglose semanal y por deporte
-- `kairos_weekly_sport_breakdown`: consulta Garmin MCP, agrupa por deporte y devuelve sesiones/horas/km.
+- `kairos_weekly_sport_breakdown`: consulta Garmin MCP, agrupa por deporte y devuelve sesiones, horas y km.
 
 #### 21) GitHub Actions CI
 - `.github/workflows/tests.yml` ejecuta la suite de tests en cada push y pull request, sin credenciales reales.

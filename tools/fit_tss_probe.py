@@ -198,8 +198,8 @@ def analyze_fit(path: Path, threshold_pace_sec_km: float) -> None:
     series_tss, series_if, details = _tss_by_point_series(records, threshold_pace_sec_km)
 
     print("\nComputed")
-    print(f"  threshold={threshold_pace_sec_km:.3f}s/km ({_sec_to_mmss(threshold_pace_sec_km)}/km)")
-    print(f"  avg_method:    pace={avg_pace:.3f}s/km ({_sec_to_mmss(avg_pace)}/km) IF={avg_if:.4f} TSS={avg_tss:.2f}")
+    print(f"  threshold={_sec_to_mmss(threshold_pace_sec_km)}/km ({threshold_pace_sec_km:.1f} s)")
+    print(f"  avg_method:    pace={_sec_to_mmss(avg_pace)}/km ({avg_pace:.1f} s) IF={avg_if:.4f} TSS={avg_tss:.2f}")
     print(f"  series_method: IF={series_if:.4f} TSS={series_tss:.2f}")
     print(f"  delta(series-avg)={series_tss - avg_tss:+.2f}")
 
@@ -213,7 +213,7 @@ def analyze_fit(path: Path, threshold_pace_sec_km: float) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Probe TSS from FIT files using average vs point-series methods.")
     parser.add_argument("fit_files", nargs="+", help="Path(s) to FIT activity file(s)")
-    parser.add_argument("--threshold", type=float, required=True, help="Running threshold pace in seconds per km")
+    parser.add_argument("--threshold", type=float, required=True, help="Running threshold pace in min/km encoded as MMSS seconds (e.g. 245 for 4:05 min/km)")
     args = parser.parse_args()
 
     for item in args.fit_files:

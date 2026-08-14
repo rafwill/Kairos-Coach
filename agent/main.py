@@ -169,6 +169,91 @@ def _validate_hours(value: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _parse_running_threshold_pace_to_sec_per_km(value: str) -> float | None:
+    """Convierte un ritmo umbral en formato min/km a segundos por km.
+
+    Acepta formatos habituales como `4:15`, `04:15`, `4.15` y `4,15`.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    colon_match = re.match(r"^(\d{1,2}):(\d{2})$", raw)
+    if colon_match:
+        mm = int(colon_match.group(1))
+        ss = int(colon_match.group(2))
+        if 0 <= ss < 60:
+            pace = mm * 60 + ss
+            return float(pace) if pace > 0 else None
+        return None
+
+    dot_or_comma_match = re.match(r"^(\d{1,2})[\.,](\d{2})$", raw)
+    if dot_or_comma_match:
+        mm = int(dot_or_comma_match.group(1))
+        ss = int(dot_or_comma_match.group(2))
+        if 0 <= ss < 60:
+            pace = mm * 60 + ss
+            return float(pace) if pace > 0 else None
+        return None
+
+    return None
+
+
+def _set_running_threshold_pace(profile: dict, pace_raw: str) -> tuple[bool, str]:
+    """Actualiza el ritmo umbral de running en el perfil.
+
+    Returns:
+        (ok, message) donde message es error o el valor formateado (`m:ss`).
+    """
+    pace_sec = _parse_running_threshold_pace_to_sec_per_km(pace_raw)
+    if pace_sec is None:
+        return False, "Formato no válido. Usa mm:ss (ej: 4:15)."
+
+    if profile is None:
+        profile = {}
+    perf = profile.setdefault("performance", {})
+    perf["running_threshold_pace_sec_per_km"] = round(float(pace_sec), 1)
+    perf["running_threshold_pace"] = f"{int(pace_sec // 60)}:{int(pace_sec % 60):02d}"
+    perf["running_threshold_pace_date"] = date.today().isoformat()
+    return True, str(perf["running_threshold_pace"])
+
+
+def _ensure_running_threshold_pace(profile: dict) -> dict:
+    """Garantiza que el perfil tenga ritmo umbral de running configurado por el usuario.
+
+    Se pregunta solo cuando falta el dato; se persiste en `performance`.
+    """
+    profile = profile or {}
+    perf = profile.setdefault("performance", {})
+    existing = perf.get("running_threshold_pace_sec_per_km")
+    try:
+        if existing is not None and float(existing) > 0:
+            return profile
+    except (TypeError, ValueError):
+        pass
+
+    console.print(Panel.fit(
+        "[bold]Necesito tu ritmo umbral de carrera[/]\n"
+        "Lo usaremos para calcular TSS de running (rodaje/fartlek/series).\n"
+        "Formato: [bold]min/km[/bold] (ej: 4:15)",
+        title="[bold blue]Kairos Coach — Umbral de running[/]",
+        border_style="blue",
+    ))
+
+    while True:
+        pace_raw = Prompt.ask("Ritmo umbral (min/km)", default="4:30").strip()
+        ok, msg = _set_running_threshold_pace(profile, pace_raw)
+        if not ok:
+            console.print(f"[red]✗[/] {msg}")
+            continue
+        _save_user_profile(profile)
+        console.print(
+            "[green]✓[/] Umbral de running guardado: "
+            f"[bold]{msg} min/km[/bold]"
+        )
+        return profile
+
+
 def _build_initial_athlete_knowledge(profile: dict) -> str:
     """Genera una base de conocimiento inicial mínima a partir del perfil."""
     p = profile.get("personal", {})
@@ -533,6 +618,9 @@ def _show_profile() -> None:
         f"[bold]Fecha evento:[/]    {g.get('target_race_date', '—')}",
         f"[bold]Tiempo objetivo:[/] {g.get('target_time', '—')}",
     ]
+    perf = profile.get("performance", {}) if isinstance(profile.get("performance"), dict) else {}
+    threshold_pace = perf.get("running_threshold_pace") or "—"
+    lines.append(f"[bold]Umbral running:[/]  {threshold_pace} min/km")
     injuries = h.get("injuries", [])
     lines.append(f"[bold]Lesiones:[/]        {', '.join(injuries) if injuries else '—'}")
     if h.get("notes"):
@@ -856,6 +944,7 @@ def _show_help() -> None:
         "  [bold cyan]/perfil editar objetivo[/bold cyan]  Cambiar deporte, carrera, tiempo meta\n"
         "  [bold cyan]/perfil editar salud[/bold cyan]     Cambiar lesiones y notas de salud\n"
         "  [bold cyan]/perfil editar[/bold cyan]           Editar todo el perfil\n"
+        "  [bold cyan]/perfil umbral <mm:ss>[/bold cyan]   Cambiar umbral running (ej: /perfil umbral 4:15)\n"
         "  [bold cyan]/plan listar[/bold cyan]             Ver planes de entrenamiento\n"
         "  [bold cyan]/plan ver <id>[/bold cyan]           Ver detalle de un plan\n"
         "  [bold cyan]/plan activar <id>[/bold cyan]       Activar plan por id\n"
@@ -1139,6 +1228,10 @@ async def main() -> None:
         profile_changes = await _sync_from_garmin(agent)
         agent.user_profile = _load_user_profile()
 
+        # Umbral de running: se solicita una vez al usuario y se guarda por perfil.
+        # A partir de aquí, el cálculo de TSS de carrera usa este valor persistido.
+        agent.user_profile = _ensure_running_threshold_pace(agent.user_profile)
+
         # Si es usuario nuevo o aún no terminó setup, completar onboarding.
         is_first = _is_first_time()
         if is_new_user or is_first:
@@ -1318,6 +1411,22 @@ async def main() -> None:
                 _save_user_profile(profile)
                 agent.user_profile = _load_user_profile()
                 console.print("[green]✓[/] Perfil actualizado.")
+                continue
+
+            if cmd.startswith("/perfil umbral"):
+                raw_cmd = user_input.strip()
+                parts = raw_cmd.split(maxsplit=2)
+                if len(parts) < 3 or not parts[2].strip():
+                    console.print("[yellow]Uso:[/] /perfil umbral <mm:ss> (ej: /perfil umbral 4:15)")
+                    continue
+                profile = _load_user_profile()
+                ok, msg = _set_running_threshold_pace(profile, parts[2].strip())
+                if not ok:
+                    console.print(f"[red]✗[/] {msg}")
+                    continue
+                _save_user_profile(profile)
+                agent.user_profile = _load_user_profile()
+                console.print(f"[green]✓[/] Umbral running actualizado a [bold]{msg} min/km[/bold].")
                 continue
 
             if cmd.startswith("/carga"):
