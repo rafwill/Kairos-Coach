@@ -691,7 +691,7 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 
 | Tipo de actividad | Prioridad 1 | Prioridad 2 | Prioridad 3 |
 |-------------------|-------------|-------------|-------------|
-| Fuerza | **hrTSS por zonas FC** | **hrTSS por FC** | **hrTSS por RPE** |
+| Fuerza / Gimnasio | **hrTSS por zonas FC (si cobertura >=35%)** | **TSS por IF estimado de fuerza** | **TSS por RPE/minuto** |
 | Running (no Trail) | **TSS por ritmo umbral (rTSS interno)** | **hrTSS por FC** | - |
 | Trail running / Senderismo / Hike / Caminar | **hrTSS por zonas FC** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
 | Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por zonas FC** | **hrTSS por FC** |
@@ -700,6 +700,18 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 Notas de implementación:
 - Para running, el ritmo umbral se obtiene del perfil persistido por usuario (`/perfil umbral <mm:ss>`).
 - Para ciclismo, el FTP se obtiene del perfil cacheado o de `get_cycling_ftp`.
+- Para fuerza/gimnasio sin señales fiables de FC, se usa IF por tipología de sesión:
+  - Movilidad/acondicionamiento ligero: IF ~= 0.50
+  - Mantenimiento: IF ~= 0.55
+  - Fuerza general/hipertrofia: IF ~= 0.56
+  - Neuromuscular: IF ~= 0.57
+  - Fuerza máxima/potencia pesada: IF ~= 0.80
+- Fallback por RPE/minuto en fuerza cuando hay RPE explícito:
+  - RPE 3-4: ~0.5 TSS/min
+  - RPE 5-6: ~1.0 TSS/min
+  - RPE 7: ~1.2 TSS/min
+  - RPE 8: ~1.35 TSS/min
+  - RPE 9-10: ~1.5 TSS/min
 - Si faltan datos clave, el sistema conserva fallbacks defensivos (trainingStressScore/trainingLoad nativo, Training Effect e IF por defecto) para no perder continuidad de la serie ATL/CTL/TSB.
 
 Reglas verificadas por tipología:

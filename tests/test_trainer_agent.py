@@ -1890,13 +1890,15 @@ class TestLoadFatigueModel:
 
         assert label_zones == "hrTSS"
         assert abs(tss_zones - 56.25) < 0.05
-        assert label_hr == "hrTSS"
-        assert tss_hr > tss_zones
+        assert label_hr == "TSS"
+        # RPE 9 => fuerza maxima/potencia (IF 0.80) => ~64 TSS en 1h.
+        assert abs(tss_hr - 64.0) < 0.1
 
         act_rpe = {"type": "strength_training", "duration": 3600, "rpe": "7-8"}
         tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
-        assert label_rpe == "hrTSS"
-        assert tss_rpe > 0
+        assert label_rpe == "TSS"
+        # "7-8" => RPE medio 7.5 => bucket intenso (IF 0.80) en el método IF.
+        assert abs(tss_rpe - 64.0) < 0.1
 
     def test_estimate_tss_strength_rpe_fraction_uses_numerator(self):
         act_fraction = {"type": "strength_training", "duration": 3600, "rpe": "7/10"}
@@ -1904,9 +1906,56 @@ class TestLoadFatigueModel:
         tss_fraction, label_fraction = _estimate_session_tss(act_fraction)
         tss_plain, label_plain = _estimate_session_tss(act_plain)
 
-        assert label_fraction == "hrTSS"
-        assert label_plain == "hrTSS"
+        assert label_fraction == "TSS"
+        assert label_plain == "TSS"
         assert abs(tss_fraction - tss_plain) < 0.01
+
+    def test_estimate_tss_strength_sparse_hr_zones_falls_back_to_hr(self):
+        act = {
+            "type": "strength_training",
+            "duration": 3600,
+            "averageHR": 145,
+            "maxHR": 180,
+        }
+        # Solo 1 minuto de zonas para una sesión de 60 minutos: cobertura insuficiente.
+        hr_zones_raw = json.dumps([
+            {
+                "zoneNumber": 1,
+                "secsInZone": 60,
+                "minHeartRateIn": 115,
+                "maxHeartRateIn": 125,
+            }
+        ])
+
+        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
+
+        assert label == "TSS"
+        # Sin cobertura suficiente de zonas, usa IF conservador por defecto (0.56).
+        assert abs(tss - 31.36) < 0.2
+
+    def test_estimate_tss_strength_manual_if_override(self):
+        act = {
+            "type": "strength_training",
+            "duration": 3600,
+            "gym_if": 0.85,
+        }
+
+        tss, label = _estimate_session_tss(act)
+
+        assert label == "TSS"
+        assert abs(tss - 72.25) < 0.1
+
+    def test_estimate_tss_strength_light_session_keyword(self):
+        act = {
+            "type": "strength_training",
+            "duration": 3600,
+            "name": "Movilidad y tonificación ligera",
+        }
+
+        tss, label = _estimate_session_tss(act)
+
+        assert label == "TSS"
+        assert abs(tss - 25.0) < 0.1
 
     def test_estimate_tss_running_prefers_threshold_pace_over_hr(self):
         act = {
