@@ -17,10 +17,13 @@ import pytest
 from agent.main import (
     _auto_select_provider,
     _build_enriched_athlete_knowledge,
+    _ensure_running_threshold_pace,
     _ensure_garmin_credentials,
     _format_coach_markdown,
     _is_first_time,
+    _parse_running_threshold_pace_to_sec_per_km,
     _parse_plan_command,
+    _set_running_threshold_pace,
     _validate_date,
     _validate_hours,
     _validate_time,
@@ -172,6 +175,60 @@ class TestValidateHours:
         ok, err = _validate_hours("")
         assert not ok
         assert "número" in err
+
+
+class TestParseRunningThresholdPace:
+    def test_accepts_mm_ss(self):
+        assert _parse_running_threshold_pace_to_sec_per_km("4:15") == 255.0
+
+    def test_accepts_dot_format(self):
+        assert _parse_running_threshold_pace_to_sec_per_km("4.15") == 255.0
+
+    def test_accepts_comma_format(self):
+        assert _parse_running_threshold_pace_to_sec_per_km("4,15") == 255.0
+
+    def test_rejects_invalid_seconds(self):
+        assert _parse_running_threshold_pace_to_sec_per_km("4:75") is None
+
+    def test_rejects_invalid_text(self):
+        assert _parse_running_threshold_pace_to_sec_per_km("abc") is None
+
+
+class TestEnsureRunningThresholdPace:
+    def test_skips_prompt_if_existing(self):
+        profile = {"performance": {"running_threshold_pace_sec_per_km": 250.0}}
+        with patch("agent.main.Prompt.ask") as ask_mock, patch("agent.main._save_user_profile") as save_mock:
+            out = _ensure_running_threshold_pace(profile)
+        assert out["performance"]["running_threshold_pace_sec_per_km"] == 250.0
+        ask_mock.assert_not_called()
+        save_mock.assert_not_called()
+
+    def test_prompts_and_persists_when_missing(self):
+        profile = {}
+        with patch("agent.main.Prompt.ask", return_value="4:15") as ask_mock, patch("agent.main._save_user_profile") as save_mock:
+            out = _ensure_running_threshold_pace(profile)
+        assert out["performance"]["running_threshold_pace_sec_per_km"] == 255.0
+        assert out["performance"]["running_threshold_pace"] == "4:15"
+        ask_mock.assert_called_once()
+        save_mock.assert_called_once()
+
+
+class TestSetRunningThresholdPace:
+    def test_sets_fields_when_valid(self):
+        profile = {}
+        ok, msg = _set_running_threshold_pace(profile, "4:10")
+        assert ok is True
+        assert msg == "4:10"
+        perf = profile.get("performance") or {}
+        assert perf.get("running_threshold_pace_sec_per_km") == 250.0
+        assert perf.get("running_threshold_pace") == "4:10"
+        assert perf.get("running_threshold_pace_date")
+
+    def test_returns_error_when_invalid(self):
+        profile = {}
+        ok, msg = _set_running_threshold_pace(profile, "foo")
+        assert ok is False
+        assert "Formato no válido" in msg
 
 
 # ─── _is_first_time ──────────────────────────────────────────────────────────

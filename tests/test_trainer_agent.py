@@ -42,6 +42,8 @@ from agent.trainer_agent import (
     _compact_personal_records,
     _compact_tool_result,
     _extract_activities_list,
+    _extract_cycling_ftp_watts,
+    _infer_tss_source_tag,
         _extract_threshold_pace_sec_per_km,
     _extract_iso_date_from_text,
     _generate_structured_plan_payload,
@@ -53,6 +55,8 @@ from agent.trainer_agent import (
     _is_generic_needs_more_info_reply,
     _is_personal_records_followup_intent,
     _is_plan_status_intent,
+    _is_daily_readiness_intent,
+    _is_mcp_factual_query_intent,
     _is_week_tss_intent,
     _is_planning_intent,
     _is_write_mcp_tool,
@@ -70,6 +74,7 @@ from agent.trainer_agent import (
     _seconds_to_hhmmss,
     _strip_garmin_object,
     _validate_structured_plan,
+    TrainerAgent,
 )
 
 
@@ -77,13 +82,13 @@ from agent.trainer_agent import (
 
 class TestSecondsToHhmmss:
     def test_below_one_hour_returns_mmss(self):
-        assert _seconds_to_hhmmss(90) == "01:30"
+        assert _seconds_to_hhmmss(90) == "00:01:30"
 
     def test_zero_returns_mmss(self):
-        assert _seconds_to_hhmmss(0) == "00:00"
+        assert _seconds_to_hhmmss(0) == "00:00:00"
 
     def test_sub_minute(self):
-        assert _seconds_to_hhmmss(45) == "00:45"
+        assert _seconds_to_hhmmss(45) == "00:00:45"
 
     def test_exactly_one_hour(self):
         assert _seconds_to_hhmmss(3600) == "01:00:00"
@@ -93,7 +98,7 @@ class TestSecondsToHhmmss:
 
     def test_float_rounds_up(self):
         # 90.6 → 91 segundos → 01:31
-        assert _seconds_to_hhmmss(90.6) == "01:31"
+        assert _seconds_to_hhmmss(90.6) == "00:01:31"
 
     def test_marathon_time(self):
         # 3h30m = 12600s
@@ -1031,14 +1036,13 @@ class TestStartupProactive:
             {
                 "activityId": 101,
                 "type": "running",
-                "duration_seconds": 3600,
+                "averagePace": "3:20",  # 3:20 min/km
                 "trainingLoad": 90,
                 "startTimeLocal": f"{yday}T08:00:00.0",
             }
         ]
 
         out = _compute_plan_execution_feedback(plan, acts, yday, profile={})
-        assert out is not None
         assert out["adherence_score"] >= 0.75
         assert out["planned"]["duration_min"] == 60.0
         assert "load_deviation_pct" in out
@@ -1951,12 +1955,12 @@ class TestLoadFatigueModel:
         running_act = {
             "type": "running",
             "duration": 3600,
-            "averagePace": "3:20",  # 200 s/km
+            "averagePace": "3:20",  # 3:20 min/km
         }
         trail_act = {
             "type": "hiking",
             "duration": 3600,
-            "averagePace": "3:20",  # 200 s/km
+            "averagePace": "3:20",  # 3:20 min/km
         }
 
         running_tss, running_label = _estimate_session_tss(
@@ -2041,9 +2045,9 @@ class TestLoadFatigueModel:
         baseline_tss = (4385.93 / 3600.0) * (baseline_if ** 2) * 100.0
 
         assert label == "TSS"
-        # Debe mantenerse muy cerca del baseline por ritmo en fartlek largo.
+        # Debe mantenerse controlado frente al baseline por ritmo (sin sobreinflar).
         assert tss >= baseline_tss
-        assert tss <= baseline_tss + 2.0
+        assert tss <= baseline_tss + 6.0
 
     def test_estimate_tss_running_series_keeps_interval_uplift(self):
         act = {
@@ -2307,6 +2311,61 @@ class TestLoadFatigueModel:
         tss2, _ = _estimate_session_tss("not a dict")
         assert tss1 == 0.0
         assert tss2 == 0.0
+
+
+class TestCyclingFtpResolution:
+    def test_extract_cycling_ftp_watts_accepts_common_shapes(self):
+        assert _extract_cycling_ftp_watts({"cyclingFtp": 261}) == 261.0
+        assert _extract_cycling_ftp_watts({"ftp": "259"}) == 259.0
+        assert _extract_cycling_ftp_watts({"data": {"functionalThresholdPower": 255}}) == 255.0
+        assert _extract_cycling_ftp_watts({"functional_threshold_power_watts": 205}) == 205.0
+        assert _extract_cycling_ftp_watts([{"ignored": 1}, {"functional_threshold_power": 250}]) == 250.0
+
+    @pytest.mark.asyncio
+    async def test_get_or_refresh_cycling_ftp_fetches_and_persists_when_missing(self):
+        agent = TrainerAgent.__new__(TrainerAgent)
+        agent.user_profile = {"performance": {}}
+        agent.mcp_session = object()
+
+        with patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value='{"data":{"cyclingFtp":266}}')) as call_mock, \
+             patch("agent.trainer_agent._save_user_profile") as save_mock:
+            ftp = await TrainerAgent._get_or_refresh_cycling_ftp(agent)
+
+        assert ftp == 266.0
+        assert agent.user_profile["performance"]["cycling_ftp"] == 266.0
+        call_mock.assert_awaited_once()
+        save_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_or_refresh_cycling_ftp_uses_cache_without_mcp_call(self):
+        agent = TrainerAgent.__new__(TrainerAgent)
+        agent.user_profile = {"performance": {"cycling_ftp": 248.0}}
+        agent.mcp_session = object()
+
+        with patch("agent.trainer_agent.call_tool", new=AsyncMock()) as call_mock, \
+             patch("agent.trainer_agent._save_user_profile") as save_mock:
+            ftp = await TrainerAgent._get_or_refresh_cycling_ftp(agent)
+
+        assert ftp == 248.0
+        call_mock.assert_not_awaited()
+        save_mock.assert_not_called()
+
+
+class TestTssSourceTagging:
+    def test_infer_tss_source_tag_cycling_power_ftp(self):
+        act = {"type": "gravel_cycling", "normalizedPower": 180, "duration": 3600}
+        src = _infer_tss_source_tag(act, tss_label="TSS", ftp=260.0, hr_zones_raw=None)
+        assert src == "power_ftp"
+
+    def test_infer_tss_source_tag_cycling_hr_zones_without_ftp(self):
+        act = {"type": "road_cycling", "normalizedPower": 180, "duration": 3600}
+        src = _infer_tss_source_tag(act, tss_label="hrTSS", ftp=None, hr_zones_raw='[{"zoneNumber":1,"secsInZone":1200}]')
+        assert src == "hr_zones"
+
+    def test_infer_tss_source_tag_cycling_hr_avg_without_ftp(self):
+        act = {"type": "mountain_biking", "averageHR": 150, "duration": 3600}
+        src = _infer_tss_source_tag(act, tss_label="hrTSS", ftp=None, hr_zones_raw=None)
+        assert src == "hr_avg"
 
     def test_estimate_tss_double_session_same_day_accumulates(self):
         """Dos sesiones en el mismo día deben sumar sus TSS en el modelo."""
@@ -2923,4 +2982,77 @@ class TestWeekTssDeterministicRoute:
         weekly_mock.assert_awaited_once()
         assert out.startswith("## Consulta TSS semanal (datos reales)")
         assert "sin inferencias del LLM" in out
+        assert len(agent.conversation_history) == 2
+
+
+class TestDailyReadinessDeterministicRoute:
+    def test_is_daily_readiness_intent_detects_status_queries(self):
+        assert _is_daily_readiness_intent("¿Cómo estoy hoy para entrenar y qué me recomiendas?")
+        assert _is_daily_readiness_intent("¿Puedo entrenar hoy?")
+        assert _is_daily_readiness_intent("Dame mi training readiness")
+        assert not _is_daily_readiness_intent("¿Qué zapatillas me recomiendas para trail?")
+
+    @pytest.mark.asyncio
+    async def test_chat_daily_readiness_route_does_not_call_llm(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"load_metrics": {"series": []}}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+        agent.collect_startup_snapshot_48h = AsyncMock(return_value={
+            "dates": {"today": date.today().isoformat(), "yesterday": (date.today() - timedelta(days=1)).isoformat()},
+            "body_battery": {"today": {"bodyBatteryLevel": 90}, "yesterday": {}, "summary": ""},
+            "hrv": {"today": {"lastNightAvg": 60, "weeklyAvg": 58, "status": "BALANCED"}, "yesterday": {}, "summary": ""},
+            "sleep": {"today": {"sleepDuration": 8 * 3600, "sleepScore": 85}, "yesterday": {}, "summary": ""},
+            "load_fatigue": {"latest": {"tss": 0.0, "atl": 50.0, "ctl": 55.0, "tsb": 5.0}, "weekly": {"current_tss": 220.0}, "action": "carga estable"},
+            "trainings": [],
+        })
+
+        with patch("agent.trainer_agent._save_history_entry"):
+            out = await TrainerAgent.chat(agent, "¿Cómo estoy hoy para entrenar y qué me recomiendas?")
+
+        agent.collect_startup_snapshot_48h.assert_awaited_once()
+        assert "Estado Proactivo" in out
+        assert "sin inferencias numéricas del LLM" in out
+        assert len(agent.conversation_history) == 2
+
+
+class TestMcpFactualDeterministicRoute:
+    def test_is_mcp_factual_query_intent_detects_data_queries(self):
+        assert _is_mcp_factual_query_intent("¿Qué TSS hice ayer?")
+        assert _is_mcp_factual_query_intent("¿Cuánto he dormido hoy?")
+        assert _is_mcp_factual_query_intent("Dime mi FC en reposo")
+        assert _is_mcp_factual_query_intent("¿Qué entrené ayer?")
+        assert not _is_mcp_factual_query_intent("Recomiéndame el entrenamiento de hoy")
+
+    @pytest.mark.asyncio
+    async def test_chat_factual_route_does_not_call_llm(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"load_metrics": {"series": []}}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        with patch("agent.trainer_agent._build_mcp_factual_query_markdown", new=AsyncMock(return_value="## Consulta factual (MCP)\n- ok\n\n_Respuesta determinista: datos factuales consultados por MCP; sin inferencias numéricas del LLM._")) as factual_mock, patch(
+            "agent.trainer_agent._save_history_entry"
+        ):
+            out = await TrainerAgent.chat(agent, "¿Qué TSS hice ayer?")
+
+        factual_mock.assert_awaited_once()
+        assert out.startswith("## Consulta factual (MCP)")
+        assert "sin inferencias numéricas del LLM" in out
         assert len(agent.conversation_history) == 2

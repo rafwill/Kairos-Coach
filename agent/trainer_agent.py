@@ -200,14 +200,12 @@ def _strip_garmin_object(obj):
 
 
 def _seconds_to_hhmmss(seconds: float) -> str:
-    """Convierte segundos a HH:MM:SS o MM:SS según la duración."""
+    """Convierte segundos a HH:MM:SS."""
     total = int(round(seconds))
     h = total // 3600
     m = (total % 3600) // 60
     s = total % 60
-    if h > 0:
-        return f"{h:02d}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def _is_cycling_activity(act_type) -> bool:
@@ -861,6 +859,54 @@ def _extract_activities_list(payload: Any) -> list[dict]:
     return []
 
 
+def _extract_cycling_ftp_watts(payload: Any) -> float | None:
+    """Extrae FTP de ciclismo (vatios) desde respuestas MCP heterogéneas."""
+    if payload is None:
+        return None
+
+    candidate_keys = (
+        "cyclingFtp",
+        "cycling_ftp",
+        "ftp",
+        "functionalThresholdPower",
+        "functional_threshold_power",
+        "functional_threshold_power_watts",
+    )
+
+    def _to_positive_float(raw: Any) -> float | None:
+        try:
+            val = float(raw)
+        except Exception:
+            return None
+        if val <= 0:
+            return None
+        return round(val, 1)
+
+    if isinstance(payload, (int, float, str)):
+        return _to_positive_float(payload)
+
+    if isinstance(payload, list):
+        for item in payload:
+            ftp = _extract_cycling_ftp_watts(item)
+            if ftp:
+                return ftp
+        return None
+
+    if isinstance(payload, dict):
+        for key in candidate_keys:
+            if key in payload:
+                ftp = _to_positive_float(payload.get(key))
+                if ftp:
+                    return ftp
+        # Respuestas anidadas comunes de MCP/API wrappers
+        for nested_key in ("data", "result", "profile", "performance", "userData"):
+            if nested_key in payload:
+                ftp = _extract_cycling_ftp_watts(payload.get(nested_key))
+                if ftp:
+                    return ftp
+    return None
+
+
 def _is_activity_in_last_48h(activity: dict, now: datetime | None = None) -> bool:
     """Comprueba si una actividad cae en la ventana de últimas 48h."""
     now_dt = now or datetime.now()
@@ -978,6 +1024,28 @@ def _format_sleep_day(payload: Any, target_date: str) -> str:
     if parts:
         return " · ".join(parts)
     return "datos disponibles"
+
+
+def _format_rhr_day(payload: Any, target_date: str) -> str:
+    """Formatea FC en reposo del día cuando exista."""
+    day = _pick_day_payload(payload, target_date)
+    if not day:
+        return "sin datos"
+
+    rhr = (
+        day.get("restingHeartRate")
+        or day.get("resting_heart_rate")
+        or day.get("resting_hr")
+        or day.get("rhr")
+        or day.get("value")
+    )
+    if rhr is None:
+        return "sin datos"
+
+    try:
+        return f"{int(float(rhr))} bpm"
+    except Exception:
+        return f"{rhr}"
 
 
 def _to_iso_date(value: Any) -> str | None:
@@ -1127,7 +1195,7 @@ def _parse_pace_to_sec_per_km(raw: Any) -> float | None:
 
 
 def _speed_ms_to_pace_sec_per_km(raw_speed: Any) -> float | None:
-    """Convierte velocidad (m/s) a ritmo (s/km) con saneamiento de outliers.
+    """Convierte velocidad (m/s) a ritmo interno en min/km con saneamiento de outliers.
 
     Algunos payloads de Garmin devuelven `lactate_threshold_speed_mps` con
     escala 0.1 (p. ej. 0.408 en lugar de 4.08). Se corrige de forma segura.
@@ -1798,6 +1866,7 @@ def _estimate_running_tss_examined(
     if session_kind in {"fartlek", "series"}:
         sig = _extract_running_session_signals(activity)
         speed_ratio = float(sig.get("speed_ratio") or 1.0)
+        lap_count = int(sig.get("lap_count") or 0)
         workout_rpe = sig.get("workout_rpe")
         workout_rpe = float(workout_rpe) if workout_rpe is not None else 0.0
         te_label = str(sig.get("te_label") or "")
@@ -1808,16 +1877,26 @@ def _estimate_running_tss_examined(
 
         uplift = 0.0
         if session_kind == "fartlek" or fartlek_keyword:
-            # En fartlek largo el ritmo base ya captura buena parte del coste.
-            # Reducimos el uplift para evitar sobreestimacion sistematica.
+            # Fartlek: añadimos un uplift moderado por variabilidad de ritmo
+            # (bloques/tramos), manteniendo un techo bajo para no sobreinflar.
+            if speed_ratio > 1.10:
+                uplift += min(0.014, (speed_ratio - 1.10) * 0.12)
+            if lap_count >= 24:
+                uplift += 0.006
+            elif lap_count >= 16:
+                uplift += 0.003
+            if interval_keyword:
+                uplift += 0.004
+            if fartlek_keyword:
+                uplift += 0.003
             if workout_rpe >= 80.0:
-                uplift += 0.002
+                uplift += 0.003
             elif workout_rpe >= 65.0:
-                uplift += 0.001
+                uplift += 0.002
             if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
                 uplift += 0.002
             uplift *= confidence_factor
-            uplift = min(0.006, uplift)
+            uplift = min(0.018, uplift)
         else:
             if speed_ratio > 1.12:
                 uplift += min(0.045, (speed_ratio - 1.12) * 0.20)
@@ -2012,8 +2091,45 @@ def _estimate_session_tss(
     return max(0.0, hours * (if_default ** 2) * 100.0), "hrTSS"
 
 
+def _infer_tss_source_tag(
+    activity: dict,
+    tss_label: str,
+    ftp: float | None,
+    hr_zones_raw: str | None,
+) -> str:
+    """Etiqueta la fuente principal del TSS para trazabilidad operativa."""
+    if not isinstance(activity, dict):
+        return "unknown"
+
+    act_type = activity.get("type") or activity.get("activityType") or ""
+    is_cycling = _is_cycling_activity(act_type)
+
+    if is_cycling:
+        if tss_label == "TSS" and ftp and ftp > 0 and _has_activity_power_data(activity):
+            return "power_ftp"
+        if tss_label == "hrTSS" and hr_zones_raw:
+            return "hr_zones"
+        if tss_label == "hrTSS":
+            return "hr_avg"
+        native_tss = _extract_training_load_tss(activity)
+        if native_tss is not None:
+            return "native_tss"
+        return "cycling_fallback"
+
+    if tss_label == "TSS":
+        native_tss = _extract_training_load_tss(activity)
+        if native_tss is not None:
+            return "native_tss"
+        return "pace_or_model"
+    if tss_label == "hrTSS" and hr_zones_raw:
+        return "hr_zones"
+    if tss_label == "hrTSS":
+        return "hr_avg_or_rpe"
+    return "unknown"
+
+
 def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
-    """Extrae ritmo umbral (s/km) desde perfil cacheado en cualquier forma razonable."""
+    """Extrae ritmo umbral (unidad interna min/km) desde perfil cacheado en cualquier forma razonable."""
     if not isinstance(profile, dict):
         return None
 
@@ -2784,6 +2900,124 @@ def _is_week_tss_intent(user_message: str) -> bool:
     return any(marker in text for marker in week_markers) and any(marker in text for marker in data_markers)
 
 
+def _resolve_target_date_from_message(user_message: str) -> date:
+    """Resuelve la fecha objetivo (hoy/ayer/anteayer/ISO) para consultas factuales."""
+    text = (user_message or "").strip().lower()
+    explicit_iso = _extract_iso_date_from_text(user_message)
+    if explicit_iso:
+        try:
+            return date.fromisoformat(explicit_iso)
+        except Exception:
+            pass
+
+    if "anteayer" in text:
+        return date.today() - timedelta(days=2)
+    if "ayer" in text:
+        return date.today() - timedelta(days=1)
+    return date.today()
+
+
+def _is_mcp_factual_query_intent(user_message: str) -> bool:
+    """Detecta consultas factuales que deben resolverse por MCP sin LLM."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    # Exclusiones: aquí no entran preguntas de planificación/coaching.
+    coaching_markers = (
+        "recomienda",
+        "recomend",
+        "plan",
+        "ajusta",
+        "ajusta",
+        "deberia entrenar",
+        "debería entrenar",
+        "que hago",
+        "qué hago",
+    )
+    if any(marker in text for marker in coaching_markers):
+        return False
+
+    factual_markers = (
+        "tss",
+        "hrv",
+        "body battery",
+        "sueno",
+        "sueño",
+        "dormi",
+        "dormí",
+        "sleep",
+        "fc en reposo",
+        "frecuencia cardiaca en reposo",
+        "frecuencia cardíaca en reposo",
+        "rhr",
+        "pulso en reposo",
+        "entrenamiento reciente",
+        "actividad de ayer",
+        "actividades de ayer",
+        "que entrene ayer",
+        "qué entrené ayer",
+        "que entrene ayer",
+        "que entrene hoy",
+        "qué entrené hoy",
+        "que entrene hoy",
+        "que hice ayer",
+        "qué hice ayer",
+        "que hice hoy",
+        "qué hice hoy",
+    )
+    return any(marker in text for marker in factual_markers)
+
+
+def _is_daily_readiness_intent(user_message: str) -> bool:
+    """Detecta consultas sobre estado de hoy y recomendación de entrenamiento.
+
+    Se usa para forzar una respuesta determinista basada en snapshot real
+    y evitar cifras inventadas por el LLM.
+    """
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    explicit_markers = [
+        "como estoy hoy para entrenar",
+        "cómo estoy hoy para entrenar",
+        "como estoy",
+        "cómo estoy",
+        "que me recomiendas hoy",
+        "qué me recomiendas hoy",
+        "que hago hoy",
+        "qué hago hoy",
+        "puedo entrenar hoy",
+        "estoy para entrenar hoy",
+        "training readiness",
+        "readiness hoy",
+    ]
+    if any(marker in text for marker in explicit_markers):
+        return True
+
+    today_markers = (" hoy", "hoy ", " hoy?", "today")
+    status_markers = (
+        "como estoy",
+        "cómo estoy",
+        "estado",
+        "recuperacion",
+        "recuperación",
+        "recovery",
+        "body battery",
+        "hrv",
+        "sueno",
+        "sueño",
+        "fc en reposo",
+        "frecuencia cardiaca en reposo",
+        "frecuencia cardíaca en reposo",
+    )
+    if any(m in text for m in today_markers) and any(m in text for m in status_markers):
+        return True
+
+    return False
+
+
 def _format_iso_date_es(value: Any) -> str:
     """Convierte fechas ISO (YYYY-MM-DD o ISO datetime) a DD/MM/AAAA para usuario."""
     if not value:
@@ -2960,6 +3194,107 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
 
     lines.append("")
     lines.append("_Respuesta determinista: sin inferencias del LLM para nombres/tipos de actividad._")
+    return "\n".join(lines)
+
+
+async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_message: str) -> str:
+    """Resuelve consultas factuales diarias con MCP como fuente principal."""
+    target_d = _resolve_target_date_from_message(user_message)
+    target_iso = target_d.isoformat()
+
+    async def _tool_json(tool_name: str, args: dict) -> Any:
+        try:
+            raw = await call_tool(mcp_session, tool_name, args)
+        except Exception:
+            return None
+        parsed_raw = _try_parse_json(raw)
+        if parsed_raw is not None:
+            return parsed_raw
+        compact = _compact_tool_result(raw, tool_name)
+        parsed = _try_parse_json(compact)
+        return parsed if parsed is not None else compact
+
+    body_payload = await _tool_json("get_body_battery", {"start_date": target_iso, "end_date": target_iso})
+    hrv_payload = await _tool_json("get_hrv_data", {"date": target_iso})
+    sleep_payload = await _tool_json("get_sleep_summary", {"date": target_iso})
+    rhr_payload = await _tool_json("get_rhr_day", {"date": target_iso})
+
+    activities: list[dict] = []
+    for args in (
+        {"start_date": target_iso, "end_date": target_iso, "page": 0, "page_size": 100},
+        {"startdate": target_iso, "enddate": target_iso},
+    ):
+        payload = await _tool_json("get_activities_by_date", args)
+        acts = _extract_activities_list(payload)
+        if acts:
+            activities = acts
+            break
+
+    # TSS del día: priorizar tendencia MCP; fallback a serie local calculada desde Garmin.
+    tss_day: float | None = None
+    trend_payload = await _tool_json(
+        "get_training_load_trend",
+        {
+            "start_date": (target_d - timedelta(days=7)).isoformat(),
+            "end_date": target_iso,
+        },
+    )
+    trend_points = _extract_training_load_points(trend_payload)
+    for row in trend_points:
+        if str(row.get("date") or "") == target_iso:
+            try:
+                tss_day = float(row.get("tss") or 0.0)
+            except Exception:
+                tss_day = None
+            break
+
+    tss_source = "get_training_load_trend"
+    if tss_day is None:
+        series = ((profile or {}).get("load_metrics") or {}).get("series") or []
+        for row in series:
+            if str(row.get("date") or "") == target_iso:
+                try:
+                    tss_day = float(row.get("tss") or 0.0)
+                    tss_source = "load_metrics(series)"
+                except Exception:
+                    tss_day = None
+                break
+
+    def _duration_min(activity: dict) -> int | None:
+        dur = activity.get("duration") or activity.get("duration_seconds") or activity.get("movingDuration")
+        if dur is None:
+            return None
+        try:
+            return int(round(float(dur) / 60.0))
+        except Exception:
+            return None
+
+    lines = [
+        "## Consulta factual (MCP)",
+        "",
+        f"- Fecha consultada: {target_d.strftime('%d/%m/%Y')}",
+        f"- TSS del día: {f'{tss_day:.1f}' if tss_day is not None else 'sin datos'} (fuente: {tss_source if tss_day is not None else 'no disponible'})",
+        f"- FC en reposo: {_format_rhr_day(rhr_payload, target_iso)}",
+        f"- Sueño: {_format_sleep_day(sleep_payload, target_iso)}",
+        f"- Body Battery: {_format_body_battery_day(body_payload, target_iso)}",
+        f"- HRV: {_format_hrv_day(hrv_payload, target_iso)}",
+    ]
+
+    if activities:
+        lines.append("- Actividades del día (Garmin):")
+        for act in activities[:6]:
+            name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
+            sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
+            dur_m = _duration_min(act)
+            if dur_m is not None:
+                lines.append(f"  - {sport} — {name} ({dur_m} min)")
+            else:
+                lines.append(f"  - {sport} — {name}")
+    else:
+        lines.append("- Actividades del día (Garmin): sin datos")
+
+    lines.append("")
+    lines.append("_Respuesta determinista: datos factuales consultados por MCP; sin inferencias numéricas del LLM._")
     return "\n".join(lines)
 
 
@@ -5722,7 +6057,6 @@ def _build_activity_analysis_block(
         lines.append(f"Deporte: {_deporte_es}")
     if dur_s:
         lines.append(f"Duracion: {_seconds_to_hhmmss(dur_s)}")
-        lines.append(f"Duracion total: {dur_s:.0f} segundos ({dur_s/3600:.2f} horas)")
     if dist_km:
         lines.append(f"Distancia: {dist_km:.2f} km")
     if dur_s and dist_km and dist_km > 0:
@@ -5878,7 +6212,7 @@ def _build_activity_analysis_block(
         low  = round(dur_h * 0.5, 1)
         high = round(dur_h * 0.8, 1)
         hot  = round(dur_h * 1.0, 1)
-        lines.append(f"Duracion {dur_h:.1f}h -> minimo {low}-{high}L (condiciones normales)")
+        lines.append(f"Duracion {_seconds_to_hhmmss(dur_s)} -> minimo {low}-{high}L (condiciones normales)")
         lines.append(f"Con calor/altitud -> hasta {hot}L")
         if dist_km and dist_km > 30:
             lines.append("  -> Ultra: añadir electrolitos cada 45-60 min ademas de agua")
@@ -6623,6 +6957,34 @@ class TrainerAgent:
             if role in ("user", "assistant") and content:
                 self.conversation_history.append({"role": role, "content": content})
 
+    async def _get_or_refresh_cycling_ftp(self, force_refresh: bool = False) -> float | None:
+        """Obtiene FTP de ciclismo desde perfil o MCP y lo persiste en DB si aparece."""
+        perf = self.user_profile.setdefault("performance", {}) if isinstance(self.user_profile, dict) else {}
+
+        cached_ftp = None
+        try:
+            cached_ftp = float(perf.get("cycling_ftp") or 0) or None
+        except (ValueError, TypeError):
+            cached_ftp = None
+
+        if cached_ftp and not force_refresh:
+            return round(cached_ftp, 1)
+
+        raw_ftp = await call_tool(self.mcp_session, "get_cycling_ftp", {})
+        ftp_payload = _try_parse_json(raw_ftp)
+        ftp_live = _extract_cycling_ftp_watts(ftp_payload if ftp_payload is not None else raw_ftp)
+
+        if ftp_live:
+            perf["cycling_ftp"] = ftp_live
+            perf["cycling_ftp_date"] = date.today().isoformat()
+            try:
+                _save_user_profile(self.user_profile)
+            except Exception:
+                pass
+            return ftp_live
+
+        return round(cached_ftp, 1) if cached_ftp else None
+
     async def fetch_garmin_personal_data(self) -> dict:
         """
         Obtiene datos personales del usuario directamente desde Garmin Connect.
@@ -6763,73 +7125,31 @@ class TrainerAgent:
 
         log.info("compute_load: fetch incremental desde %s", fetch_from)
 
-        # 2. FTP de ciclismo: intentar desde perfil cacheado o desde Garmin
-        cycling_ftp: float | None = None
+        # 2. FTP de ciclismo: primero perfil/DB; si falta, consultar MCP y persistir.
+        cycling_ftp = None
         try:
-            cycling_ftp = float(
-                (self.user_profile.get("performance") or {}).get("cycling_ftp") or 0
-            ) or None
-        except (ValueError, TypeError):
+            cycling_ftp = await self._get_or_refresh_cycling_ftp()
+        except Exception:
             cycling_ftp = None
-        if not cycling_ftp:
-            try:
-                raw_ftp = await call_tool(self.mcp_session, "get_cycling_ftp", {})
-                if raw_ftp and raw_ftp.strip():
-                    ftp_data = json.loads(raw_ftp) if raw_ftp.strip()[0] in ("{", "[") else {}
-                    if isinstance(ftp_data, list) and ftp_data:
-                        ftp_data = ftp_data[0]
-                    if isinstance(ftp_data, dict):
-                        ftp_val = (
-                            ftp_data.get("cyclingFtp")
-                            or ftp_data.get("ftp")
-                            or ftp_data.get("functionalThresholdPower")
-                            or ftp_data.get("functional_threshold_power")
-                        )
-                        if ftp_val:
-                            cycling_ftp = round(float(ftp_val), 1)
-            except Exception:
-                pass
         if cycling_ftp:
             log.info("compute_load: FTP ciclismo=%.0f W (usado para TSS por potencia)", cycling_ftp)
-            # Cachear en perfil para el próximo arranque
-            perf = self.user_profile.setdefault("performance", {})
-            perf["cycling_ftp"] = cycling_ftp
-            perf["cycling_ftp_date"] = today.isoformat()
         else:
             log.info("compute_load: FTP ciclismo no disponible — usando estimación por FC")
 
-        # 2b. Ritmo umbral de running: cacheado en perfil o consultado a Garmin.
+        # 2b. Ritmo umbral de running: solo perfil persistido por usuario.
+        # No se consulta MCP aquí para mantener el cálculo determinista y
+        # desacoplado de la disponibilidad/calidad del dato en Garmin Connect.
         running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(self.user_profile)
-        if not running_threshold_pace:
-            try:
-                raw_lt = await call_tool(self.mcp_session, "get_lactate_threshold", {})
-                if raw_lt and raw_lt.strip():
-                    lt_data = json.loads(raw_lt) if raw_lt.strip()[0] in ("{", "[") else {}
-                    if isinstance(lt_data, list) and lt_data:
-                        lt_data = lt_data[0]
-                    if isinstance(lt_data, dict):
-                        running_threshold_pace = _extract_threshold_pace_sec_per_km(lt_data)
-                        if not running_threshold_pace:
-                            speed_raw = (
-                                lt_data.get("lactateThresholdSpeed")
-                                or lt_data.get("lactate_threshold_speed")
-                                or lt_data.get("thresholdSpeed")
-                            )
-                            if speed_raw:
-                                speed_ms = float(speed_raw)
-                                if speed_ms > 0:
-                                    running_threshold_pace = 1000.0 / speed_ms
-            except Exception:
-                running_threshold_pace = None
 
         if running_threshold_pace:
             perf = self.user_profile.setdefault("performance", {})
             perf["running_threshold_pace_sec_per_km"] = round(float(running_threshold_pace), 1)
             perf["running_threshold_pace"] = f"{int(running_threshold_pace // 60)}:{int(running_threshold_pace % 60):02d}"
             perf["running_threshold_pace_date"] = today.isoformat()
+            threshold_pace_min_km = f"{int(running_threshold_pace // 60)}:{int(running_threshold_pace % 60):02d} min/km"
             log.info(
-                "compute_load: ritmo umbral running=%.1f s/km (usado para TSS por ritmo)",
-                running_threshold_pace,
+                "compute_load: ritmo umbral running=%s (usado para TSS por ritmo)",
+                threshold_pace_min_km,
             )
         else:
             log.info("compute_load: ritmo umbral running no disponible — fallback por FC/RPE")
@@ -6839,34 +7159,60 @@ class TrainerAgent:
             self.mcp_session, fetch_from, today.isoformat()
         )
 
-        # 3b. Enriquecer actividades recientes (últimos 14 días) con detalle de get_activity
-        # para obtener trainingStressScore (TSS nativo por potenciómetro) y campos de potencia.
-        # Esto garantiza que Priority 1 use el TSS de Garmin cuando está disponible.
+        # 3b. Enriquecer actividades con detalle de get_activity para obtener
+        # trainingStressScore y potencia.
+        # - Recalc incremental: mantener ventana corta (rendimiento).
+        # - Recalc forzado: enriquecer TODO el ciclismo del rango para recalcular
+        #   TSS por potencia+FTP de forma consistente en el histórico.
         _ENRICH_DAYS = 14
         _enrich_cutoff = (today - timedelta(days=_ENRICH_DAYS)).isoformat()
-        _recent = [a for a in new_activities
-                   if (_extract_activity_date_iso(a) or "") >= _enrich_cutoff]
-        if _recent:
+        if force_full_recalc:
+            _to_enrich = [
+                a for a in new_activities
+                if (
+                    _is_cycling_activity(a.get("type") or a.get("activityType") or "")
+                    or _is_running_non_trail_activity(a.get("type") or a.get("activityType") or "")
+                )
+            ]
+        else:
+            _to_enrich = [
+                a for a in new_activities
+                if (_extract_activity_date_iso(a) or "") >= _enrich_cutoff
+            ]
+
+        if _to_enrich:
             log.info(
-                "compute_load: enriqueciendo %d actividades recientes con detalle (trainingStressScore/potencia)",
-                len(_recent),
+                "compute_load: enriqueciendo %d actividades con detalle (trainingStressScore/potencia)",
+                len(_to_enrich),
             )
-            for _act in _recent:
+            for _act in _to_enrich:
                 _act_id = _act.get("id") or _act.get("activityId")
                 if not _act_id:
                     continue
                 try:
                     _raw_d = await call_tool(
-                        self.mcp_session, "get_activity", {"activityId": str(_act_id)}
+                        self.mcp_session, "get_activity", {"activity_id": int(_act_id)}
                     )
                     if _raw_d and _raw_d.strip():
                         _detail = json.loads(_raw_d) if _raw_d.strip()[0] in ("{", "[") else {}
+                        if isinstance(_detail, list) and _detail:
+                            _detail = _detail[0]
+                        if isinstance(_detail, dict) and isinstance(_detail.get("activity"), dict):
+                            _detail = _detail["activity"]
                         if isinstance(_detail, dict):
                             for _k in (
+                                # Potencia/carga embebida (ciclismo)
                                 "trainingStressScore",
                                 "normalizedPower", "normalizedPowerWatts",
+                                "normalized_power_watts",
                                 "avgPower", "averagePower", "avg_power_watts",
                                 "activityTrainingLoad",
+                                # Señales de variabilidad para running quality
+                                "lap_count", "lapCount",
+                                "avg_speed_mps", "averageSpeedMps", "average_speed_mps",
+                                "max_speed_mps", "maxSpeedMps", "max_speed_mps",
+                                "workout_rpe", "workoutRpe",
+                                "training_effect_label", "trainingEffectLabel",
                             ):
                                 if _detail.get(_k) is not None:
                                     _act[_k] = _detail[_k]
@@ -6931,13 +7277,32 @@ class TrainerAgent:
                         "confidence": conf,
                     }
                 )
-            tss, _ = _estimate_session_tss(
+            tss, tss_label = _estimate_session_tss(
                 act,
                 ftp=cycling_ftp,
                 running_threshold_pace_sec_per_km=running_threshold_pace,
                 hr_rest_bpm=hr_rest_bpm,
                 hr_max_bpm=hr_max_bpm,
                 hr_zones_raw=hr_zones_raw,
+            )
+            tss_source = _infer_tss_source_tag(
+                activity=act,
+                tss_label=tss_label,
+                ftp=cycling_ftp,
+                hr_zones_raw=hr_zones_raw,
+            )
+            act_id = act.get("id") or act.get("activityId")
+            act_type = act.get("type") or act.get("activityType") or "unknown"
+            log.info(
+                "compute_load: actividad id=%s fecha=%s tipo=%s tss=%.2f label=%s source=%s ftp=%s has_power=%s",
+                act_id,
+                d_iso,
+                act_type,
+                float(tss or 0.0),
+                tss_label,
+                tss_source,
+                f"{cycling_ftp:.1f}" if cycling_ftp else "none",
+                _has_activity_power_data(act),
             )
             if tss > 0:
                 tss_by_day[d_iso]   = tss_by_day.get(d_iso, 0.0) + tss
@@ -7447,6 +7812,41 @@ class TrainerAgent:
             _save_history_entry("assistant", assistant_reply)
             return assistant_reply
 
+        # Ruta MCP-first para consultas factuales de métricas diarias.
+        # Evita pasar por LLM cuando la pregunta se puede responder con
+        # datos directos de Garmin Connect.
+        if _is_mcp_factual_query_intent(user_message):
+            assistant_reply = await _build_mcp_factual_query_markdown(
+                self.mcp_session,
+                self.user_profile,
+                user_message,
+            )
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
+            _save_history_entry("user", user_message)
+            _save_history_entry("assistant", assistant_reply)
+            return assistant_reply
+
+        # Ruta determinista para readiness diario: evita respuestas del LLM
+        # con métricas inventadas y fuerza snapshot real de Garmin.
+        if _is_daily_readiness_intent(user_message):
+            snapshot = await self.collect_startup_snapshot_48h()
+            snapshot["profile_changes"] = []
+            active_plan = _get_active_training_plan(self.user_profile)
+            snapshot["plan_assigned"] = bool(active_plan)
+            if active_plan:
+                snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
+                snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
+            assistant_reply = (
+                _build_proactive_status_markdown(snapshot)
+                + "\n\n_Respuesta determinista: valores tomados del snapshot real de Garmin y modelo de carga; sin inferencias numéricas del LLM._"
+            )
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
+            _save_history_entry("user", user_message)
+            _save_history_entry("assistant", assistant_reply)
+            return assistant_reply
+
         # Ruta funcional de planificación: generación/actualización estructurada,
         # persistida y versionada en DB sin depender del LLM.
         if _is_planning_intent(user_message, self.conversation_history) and _has_goal_in_profile(self.user_profile):
@@ -7754,13 +8154,19 @@ class TrainerAgent:
                         log.debug("pre_data zone update error: %s", _ze)
 
                 # Construir bloque de análisis pre-computado en Python
+                cycling_ftp_for_analysis = None
+                try:
+                    cycling_ftp_for_analysis = await self._get_or_refresh_cycling_ftp()
+                except Exception:
+                    cycling_ftp_for_analysis = None
+
                 analysis_block = _build_activity_analysis_block(
                     activity_raw=raw_pre,
                     body_battery_raw=next((p for p in context_parts[1:] if "BODY BATTERY" in p), None),
                     sleep_raw=next((p for p in context_parts if "SUENO" in p), None),
                     hrv_raw=next((p for p in context_parts if "HRV" in p), None),
                     training_load_raw=next((p for p in context_parts if "CARGA" in p), None),
-                    ftp=float((self.user_profile.get("performance") or {}).get("cycling_ftp") or 0) or None,
+                    ftp=cycling_ftp_for_analysis,
                     running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(self.user_profile),
                     hr_zones_raw=raw_hr_zones,
                 )
