@@ -262,7 +262,7 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 12  # v12: se elimina cap de 500 en TSS por actividad (incluye ultras)
+_TSS_FORMULA_VERSION = 13  # v13: calibracion especifica para walking/hiking por bandas de TSS/h
 
 # Calibración empírica para trail running al usar hrTSS por tiempo en zonas.
 # Se aplica sobre hrTSS por zonas y preserva valores >500 cuando corresponde.
@@ -1704,6 +1704,114 @@ def _estimate_strength_tss_from_rpe_minutes(activity: dict, hours: float) -> flo
     return max(0.0, minutes * tss_per_min)
 
 
+def _estimate_walk_hike_tss(
+    activity: dict,
+    hours: float,
+    hr_zones_raw: str | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> tuple[float | None, str | None]:
+    """Estimador específico de caminatas/senderismo usando bandas de TSS/h.
+
+    Referencia operativa:
+    - Caminata suave: 15-25 TSS/h
+    - Caminata ritmo vivo: 25-40 TSS/h
+    - Senderismo con carga/cuestas: 40-60+ TSS/h
+    """
+    if hours <= 0:
+        return None, None
+
+    txt = " ".join(
+        [
+            str(activity.get("name") or ""),
+            str(activity.get("activityName") or ""),
+            str(activity.get("description") or ""),
+            str(activity.get("notes") or ""),
+        ]
+    ).lower()
+    act_type = str(activity.get("type") or activity.get("activityType") or "").lower()
+
+    def _first_float(*keys: str) -> float | None:
+        for key in keys:
+            raw = activity.get(key)
+            if raw is None:
+                continue
+            try:
+                return float(raw)
+            except Exception:
+                continue
+        return None
+
+    distance_m = _first_float("distance", "distance_m", "distanceMeters")
+    elev_gain = _first_float(
+        "elevationGain", "elevation_gain", "totalAscent", "total_ascent", "elev_gain"
+    )
+    speed_mps = None
+    if distance_m and hours > 0:
+        speed_mps = distance_m / (hours * 3600.0)
+    kmh = speed_mps * 3.6 if speed_mps is not None else None
+
+    heavy_kw = (
+        "mochila", "backpack", "cuesta", "cuestas", "desnivel", "palos", "sender", "trek",
+        "hiking", "mountain", "monta", "trail walk",
+    )
+    brisk_kw = (
+        "power walking", "ritmo vivo", "vivo", "marcha", "brisk", "ligero rapido", "ligero rápido",
+    )
+
+    is_heavy = (
+        any(k in txt for k in heavy_kw)
+        or "hiking" in act_type
+        or (elev_gain is not None and elev_gain >= 250.0)
+        or (
+            elev_gain is not None and distance_m and distance_m > 0
+            and (elev_gain / max(1.0, distance_m / 1000.0)) >= 35.0
+        )
+    )
+    is_brisk = (
+        any(k in txt for k in brisk_kw)
+        or (kmh is not None and kmh >= 5.8)
+    )
+
+    if is_heavy:
+        # Senderismo/carga: centro ~50 TSS/h, sin techo estricto (60+ posible)
+        if_model = 0.71
+        min_h, max_h = 40.0, None
+    elif is_brisk:
+        # Caminata viva: centro ~32 TSS/h
+        if_model = 0.57
+        min_h, max_h = 25.0, 40.0
+    else:
+        # Paseo suave/regenerativo: centro ~20 TSS/h
+        if_model = 0.45
+        min_h, max_h = 15.0, 25.0
+
+    tss_model = max(0.0, hours * (if_model ** 2) * 100.0)
+
+    tss_zones = _estimate_hr_tss_from_zones(
+        activity,
+        hours=hours,
+        hr_zones_raw=hr_zones_raw,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+        apply_cap=False,
+        min_coverage_ratio=0.35,
+    )
+
+    if tss_zones is not None:
+        # Mantener predominio de la señal fisiológica, amortiguando outliers.
+        blended = (0.70 * float(tss_zones)) + (0.30 * float(tss_model))
+        tss = max(0.0, blended)
+        tss_h = tss / hours if hours > 0 else 0.0
+        if max_h is not None:
+            tss_h = min(max_h, tss_h)
+        tss_h = max(min_h, tss_h)
+        return max(0.0, tss_h * hours), "hrTSS"
+
+    # Sin cobertura fiable de zonas, usar estimación por banda.
+    return tss_model, "TSS"
+
+
 def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
     if hours <= 0 or not ftp or ftp <= 0:
         return None
@@ -2132,20 +2240,29 @@ def _estimate_session_tss(
             return tss_running, "TSS"
 
     elif is_trail_hike_walk:
-        tss_hr_zones = _estimate_hr_tss_from_zones(
-            activity,
-            hours=hours,
-            hr_zones_raw=hr_zones_raw,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            apply_cap=False,
-        )
-        if tss_hr_zones is not None:
-            if is_trail:
+        if is_trail:
+            tss_hr_zones = _estimate_hr_tss_from_zones(
+                activity,
+                hours=hours,
+                hr_zones_raw=hr_zones_raw,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+                apply_cap=False,
+            )
+            if tss_hr_zones is not None:
                 tss_cal = max(0.0, float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION)
                 return tss_cal, "hrTSS"
-            if is_hike_walk:
-                return max(0.0, float(tss_hr_zones)), "hrTSS"
+
+        if is_hike_walk:
+            tss_walk, lbl_walk = _estimate_walk_hike_tss(
+                activity,
+                hours=hours,
+                hr_zones_raw=hr_zones_raw,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+            )
+            if tss_walk is not None:
+                return max(0.0, float(tss_walk)), str(lbl_walk or "TSS")
 
         if_hr = _estimate_if_from_hr(
             activity,

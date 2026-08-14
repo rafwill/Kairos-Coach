@@ -2070,9 +2070,9 @@ class TestLoadFatigueModel:
         assert running_label == "TSS"
         assert abs(running_tss - 169.0) < 1.0
 
-        # Trail/hike threshold fallback: clamp IF a 1.20 => 1h => 144 TSS
+        # Hike/walk usa bandas específicas (no clamp de running/trail).
         assert trail_label == "TSS"
-        assert abs(trail_tss - 144.0) < 1.0
+        assert abs(trail_tss - 50.41) < 1.0
 
     def test_estimate_tss_running_fartlek_not_overinflated_vs_pace_baseline(self):
         act = {
@@ -2196,7 +2196,7 @@ class TestLoadFatigueModel:
 
         act_rpe = {"type": "walking", "duration": 3600, "rpe": 6}
         tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
-        assert label_rpe == "hrTSS"
+        assert label_rpe == "TSS"
         assert tss_rpe > 0
 
     def test_estimate_tss_trail_uses_hr_zones_when_available(self):
@@ -2281,8 +2281,54 @@ class TestLoadFatigueModel:
         }
         tss_hike_zones, label_hike_zones = _estimate_session_tss(hike_act, hr_zones_raw=hr_zones_raw)
         assert label_hike_zones == "hrTSS"
-        # En hike/walk no se aplica factor trail: se usa hrTSS por zonas directo.
-        assert abs(tss_hike_zones - 56.25) < 0.05
+        # En hike/walk se usa banda específica y blend con zonas (sin factor trail).
+        assert 45.0 <= tss_hike_zones <= 60.0
+
+    def test_estimate_tss_walking_easy_band_caps_zones(self):
+        act = {
+            "type": "walking",
+            "duration": 3600,
+            "name": "Paseo regenerativo suave",
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 145,
+                    "maxHeartRateIn": 155,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 130,
+                    "maxHeartRateIn": 144,
+                },
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 110,
+                    "maxHeartRateIn": 129,
+                },
+            ]
+        )
+
+        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
+
+        assert label == "hrTSS"
+        assert 15.0 <= tss <= 25.0
+
+    def test_estimate_tss_walking_power_band(self):
+        act = {
+            "type": "walking",
+            "duration": 3600,
+            "name": "Power walking ritmo vivo",
+        }
+
+        tss, label = _estimate_session_tss(act)
+
+        assert label == "TSS"
+        assert 25.0 <= tss <= 40.0
 
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
         act = {
