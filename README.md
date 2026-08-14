@@ -590,6 +590,21 @@ main.py → asyncio.run(run_agent())
 
 > **Overhaul completo (2026-07-23):** La serie se calcula de forma incremental (solo procesa días nuevos desde el último registro en DB). Migración automática de fórmulas legacy (v0→v4). Los 14 últimos días se re-enriquecen con detalle de actividad (`trainingStressScore` y potencia) en cada arranque para corregir estimaciones.
 
+### Reset one-shot del precálculo (cuando cambia la fórmula)
+
+Si cambias la lógica de cálculo (por ejemplo `walking/hiking`, fuerza o running) y quieres reconstruir toda la serie desde cero:
+
+1. Borra `load_metrics_daily` del usuario activo.
+2. Elimina `load_metrics` dentro de `user_profile.data` del mismo usuario.
+3. Arranca Kairos normalmente.
+
+En el siguiente arranque, al no existir serie previa, Kairos recalcula la ventana completa (120 días) y repuebla DB.
+
+Comportamiento normal de arranque:
+
+- Si `formula_version` guardada en perfil es distinta de la versión del código, fuerza recálculo completo automático.
+- Si la versión coincide y la serie está al día, reutiliza DB y hace cálculo incremental.
+
 ```
 _compute_load_fatigue_metrics(activities, trend_payload, profile, days_window)
   │

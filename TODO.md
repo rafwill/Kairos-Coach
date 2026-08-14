@@ -122,6 +122,11 @@
 - Se mantiene intacta la lógica de `trail_running` (hrTSS por zonas + calibración trail existente), sin cambios funcionales en ese flujo.
 - Recalculo completo de 120 días y validación focalizada de tests de `walking/hiking` y regresión de fuerza.
 
+#### 54) [LOAD-RESET] Reset one-shot de carga/fatiga para recálculo limpio (2026-08-14) — REALIZADO
+- Procedimiento operativo aplicado: borrado de `load_metrics_daily` y limpieza de `load_metrics` en `user_profile` del usuario activo.
+- Resultado esperado documentado: en el siguiente arranque, reconstrucción completa de 120 días con la fórmula vigente.
+- Se documenta además la regla de `formula_version`: si cambia, Kairos fuerza recálculo completo automáticamente.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 
