@@ -1334,6 +1334,7 @@ def _estimate_hr_tss_from_zones(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
     apply_cap: bool = True,
+    min_coverage_ratio: float = 0.0,
 ) -> float | None:
     """Calcula hrTSS desde tiempo real en zonas de FC cuando está disponible.
 
@@ -1458,6 +1459,12 @@ def _estimate_hr_tss_from_zones(
     if total_secs <= 0:
         return None
 
+    # Si la cobertura temporal de zonas es demasiado baja, la estimación por zonas
+    # no es funcional para la sesión completa.
+    coverage_ratio = total_secs / dur_s if dur_s > 0 else 0.0
+    if coverage_ratio < max(0.0, float(min_coverage_ratio or 0.0)):
+        return None
+
     # `apply_cap` se conserva por compatibilidad de firma, pero ya no se limita TSS.
     if apply_cap:
         return max(0.0, tss_total)
@@ -1572,6 +1579,129 @@ def _estimate_if_from_rpe(activity: dict) -> float | None:
         return None
     rpe = max(1.0, min(10.0, rpe))
     return max(0.45, min(1.05, 0.40 + (rpe / 10.0) * 0.60))
+
+
+def _extract_strength_rpe_10(activity: dict) -> float | None:
+    """Extrae RPE normalizado a escala 1-10 para sesiones de fuerza."""
+    raw = (
+        activity.get("rpe")
+        or activity.get("sessionRpe")
+        or activity.get("session_rpe")
+        or activity.get("workout_rpe")
+        or activity.get("workoutRpe")
+        or activity.get("perceivedExertion")
+        or activity.get("perceived_exertion")
+    )
+    if raw is None:
+        return None
+
+    if isinstance(raw, (int, float)):
+        rpe = float(raw)
+    else:
+        raw_text = str(raw)
+        fraction_match = re.search(r"(?<!\d)(\d+(?:[\.,]\d+)?)\s*/\s*10(?:[\.,]0+)?\b", raw_text)
+        if fraction_match:
+            rpe = float(fraction_match.group(1).replace(",", "."))
+        else:
+            nums = [float(x.replace(",", ".")) for x in re.findall(r"\d+(?:[\.,]\d+)?", raw_text)]
+            if not nums:
+                return None
+            rpe = sum(nums) / len(nums)
+
+    # Garmin puede enviar workout_rpe en escala 0-100.
+    if rpe > 10.0:
+        rpe = rpe / 10.0
+
+    if rpe <= 0:
+        return None
+    return max(1.0, min(10.0, rpe))
+
+
+def _estimate_strength_if(activity: dict) -> float | None:
+    """Estima IF para gimnasio por tipo de trabajo, con soporte de override explícito."""
+    for key in ("gym_if", "strength_if", "intensityFactor", "intensity_factor", "if"):
+        raw = activity.get(key)
+        if raw is None:
+            continue
+        try:
+            val = float(raw)
+        except Exception:
+            continue
+        if 0.35 <= val <= 1.10:
+            return val
+
+    txt = " ".join(
+        [
+            str(activity.get("name") or ""),
+            str(activity.get("activityName") or ""),
+            str(activity.get("description") or ""),
+            str(activity.get("notes") or ""),
+        ]
+    ).lower()
+
+    light_keywords = (
+        "movilidad", "mobility", "tonificacion", "tonificación", "acondicionamiento",
+        "activation", "activacion", "activación", "core suave", "recovery", "recuperacion", "recuperación",
+    )
+    maintenance_keywords = (
+        "mantenimiento", "maintain", "maintenance", "base",
+    )
+    neuromuscular_keywords = (
+        "neuromuscular",
+    )
+    general_keywords = (
+        "fuerza general", "hipertrofia", "fuerza resistencia", "full tren inferior",
+        "full body", "tren inferior", "tren superior", "gym", "gimnasio",
+    )
+    heavy_keywords = (
+        "fuerza maxima", "fuerza máxima", "max strength", "power", "potencia", "heavy",
+        "1rm", "one rep max", "haltero", "weightlifting", "olimpic", "olympic",
+    )
+
+    if any(k in txt for k in heavy_keywords):
+        return 0.80
+    if any(k in txt for k in light_keywords):
+        return 0.50
+    if any(k in txt for k in neuromuscular_keywords):
+        return 0.57
+    if any(k in txt for k in maintenance_keywords):
+        return 0.55
+    if any(k in txt for k in general_keywords):
+        return 0.56
+
+    rpe = _extract_strength_rpe_10(activity)
+    if rpe is not None:
+        if rpe <= 4.0:
+            return 0.50
+        if rpe <= 6.0:
+            return 0.56
+        return 0.80
+
+    # Fallback conservador cuando Garmin no aporta señales de intensidad.
+    return 0.56
+
+
+def _estimate_strength_tss_from_rpe_minutes(activity: dict, hours: float) -> float | None:
+    """Fallback de gimnasio: TSS por minuto en función de RPE (escala 1-10)."""
+    if hours <= 0:
+        return None
+    rpe = _extract_strength_rpe_10(activity)
+    if rpe is None:
+        return None
+
+    minutes = hours * 60.0
+    if rpe <= 4.0:
+        tss_per_min = 0.5
+    elif rpe <= 6.0:
+        tss_per_min = 1.0
+    elif rpe <= 7.0:
+        tss_per_min = 1.2
+    elif rpe <= 8.0:
+        tss_per_min = 1.35
+    else:
+        tss_per_min = 1.5
+
+    return max(0.0, minutes * tss_per_min)
 
 
 def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
@@ -2043,9 +2173,18 @@ def _estimate_session_tss(
             hr_zones_raw=hr_zones_raw,
             hr_rest_bpm=hr_rest_bpm,
             hr_max_bpm=hr_max_bpm,
+            min_coverage_ratio=0.35,
         )
         if tss_hr_zones is not None:
             return tss_hr_zones, "hrTSS"
+
+        if_strength = _estimate_strength_if(activity)
+        if if_strength is not None:
+            return max(0.0, hours * (if_strength ** 2) * 100.0), "TSS"
+
+        tss_rpe_minutes = _estimate_strength_tss_from_rpe_minutes(activity, hours)
+        if tss_rpe_minutes is not None:
+            return tss_rpe_minutes, "TSS"
 
         if_hr = _estimate_if_from_hr(
             activity,

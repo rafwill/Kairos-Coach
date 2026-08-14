@@ -110,6 +110,12 @@
 - El ajuste diario del plan fuerza descanso/reducción cuando el día está bloqueado o excede límites diarios.
 - El validador incorpora checks de cumplimiento de disponibilidad y caps diarios, con tests de regresión en `tests/test_trainer_agent.py`.
 
+#### 52) [GYM-TSS] Recalibración de fuerza/gimnasio alineada con TP (2026-08-14) — REALIZADO
+- Nueva jerarquía para fuerza: `hrTSS por zonas (cobertura >=35%) -> TSS por IF de tipología -> TSS por RPE/minuto -> fallback FC`.
+- Ajuste de IF por tipología con calibración práctica: movilidad (0.50), mantenimiento (0.55), fuerza general/hipertrofia (0.56), neuromuscular (0.57), fuerza máxima/potencia (0.80).
+- Corrección de falsos positivos por matching textual en nombres de sesión (caso "Pesadoira").
+- Verificación cruzada frente a sesiones TP clave y auditoría de 120 días de sesiones de fuerza para validar coherencia global.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 
