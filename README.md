@@ -693,7 +693,8 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 |-------------------|-------------|-------------|-------------|
 | Fuerza / Gimnasio | **hrTSS por zonas FC (si cobertura >=35%)** | **TSS por IF estimado de fuerza** | **TSS por RPE/minuto** |
 | Running (no Trail) | **TSS por ritmo umbral (rTSS interno)** | **hrTSS por FC** | - |
-| Trail running / Senderismo / Hike / Caminar | **hrTSS por zonas FC** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
+| Trail running | **hrTSS por zonas FC (calibrado)** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
+| Senderismo / Hike / Caminar | **TSS por bandas walking/hiking (suave, vivo, carga/cuestas)** | **Blend con hrTSS por zonas (si cobertura >=35%)** | **TSS por banda sin zonas** |
 | Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por zonas FC** | **hrTSS por FC** |
 | Otras modalidades (natación, remo, etc.) | **hrTSS por zonas FC** | **hrTSS por FC** | **Training Effect / IF por defecto** |
 
@@ -712,11 +713,17 @@ Notas de implementación:
   - RPE 7: ~1.2 TSS/min
   - RPE 8: ~1.35 TSS/min
   - RPE 9-10: ~1.5 TSS/min
+- Para walking/hiking se aplica una calibración por bandas de carga por hora:
+  - Caminata suave / regenerativa: 15-25 TSS/h
+  - Caminata ritmo vivo / power walking: 25-40 TSS/h
+  - Senderismo con mochila / cuestas largas: 40-60+ TSS/h
+- Importante: esta calibración afecta solo a `walking/hiking`; la lógica de `trail_running` se mantiene sin cambios (hrTSS por zonas + factor de calibración trail).
 - Si faltan datos clave, el sistema conserva fallbacks defensivos (trainingStressScore/trainingLoad nativo, Training Effect e IF por defecto) para no perder continuidad de la serie ATL/CTL/TSB.
 
 Reglas verificadas por tipología:
 - Running asfalto/pista: `rTSS`.
-- Trail/hike/walk: `hrTSS`.
+- Trail running: `hrTSS` calibrado.
+- Walking/hiking: `TSS` por bandas (con blend de zonas cuando existe cobertura suficiente).
 - Ciclismo con potencia+FTP: `TSS de potencia`.
 
 Persistencia de umbral de running por usuario (`user_profile.data.performance`):

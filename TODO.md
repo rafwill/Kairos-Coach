@@ -116,6 +116,12 @@
 - Corrección de falsos positivos por matching textual en nombres de sesión (caso "Pesadoira").
 - Verificación cruzada frente a sesiones TP clave y auditoría de 120 días de sesiones de fuerza para validar coherencia global.
 
+#### 53) [WALKING-TSS] Calibración específica de caminata/senderismo (2026-08-14) — REALIZADO
+- Se añade estimador dedicado para `walking/hiking` por bandas de TSS/h: suave (15-25), ritmo vivo (25-40), carga/cuestas (40-60+).
+- Integración con zonas FC cuando hay cobertura suficiente mediante blend con la banda para reducir outliers.
+- Se mantiene intacta la lógica de `trail_running` (hrTSS por zonas + calibración trail existente), sin cambios funcionales en ese flujo.
+- Recalculo completo de 120 días y validación focalizada de tests de `walking/hiking` y regresión de fuerza.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 
