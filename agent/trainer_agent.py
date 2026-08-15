@@ -13,7 +13,7 @@ import asyncio
 import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 import truststore
@@ -136,6 +136,12 @@ _WRITE_TOOL_PREFIXES = (
 def _is_mcp_read_only_enabled() -> bool:
     """Lee la política de solo lectura para tools MCP (por defecto activada)."""
     raw = str(os.environ.get("MCP_READ_ONLY", "true")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _is_deterministic_router_enabled() -> bool:
+    """Activa/desactiva el router determinista para intenciones críticas."""
+    raw = str(os.environ.get("KAIROS_DETERMINISTIC_ROUTER", "true")).strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
@@ -669,6 +675,84 @@ def _build_tools_schema(tools: list[dict]) -> list[dict]:
         }
         for tool in tools
     ]
+
+
+_HookHandler = Callable[[dict[str, Any]], Any | Awaitable[Any]]
+
+
+class HookManager:
+    """Gestor mínimo de hooks para observabilidad y extensibilidad local."""
+
+    _EVENTS = {
+        "before_message",
+        "after_message",
+        "before_tool_call",
+        "after_tool_call",
+        "on_error",
+    }
+
+    def __init__(self) -> None:
+        self._handlers: dict[str, list[_HookHandler]] = {event: [] for event in self._EVENTS}
+
+    def register(self, event: str, handler: _HookHandler) -> None:
+        event_name = str(event or "").strip()
+        if event_name not in self._EVENTS:
+            raise ValueError(f"Hook event no soportado: {event_name}")
+        self._handlers[event_name].append(handler)
+
+    async def emit(self, event: str, payload: dict[str, Any]) -> None:
+        event_name = str(event or "").strip()
+        handlers = list(self._handlers.get(event_name) or [])
+        if not handlers:
+            return
+        for handler in handlers:
+            try:
+                result = handler(payload)
+                if asyncio.iscoroutine(result):
+                    await result
+            except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                log.debug("Hook '%s' falló: %s", event_name, exc)
+
+    async def before_message(self, payload: dict[str, Any]) -> None:
+        await self.emit("before_message", payload)
+
+    async def after_message(self, payload: dict[str, Any]) -> None:
+        await self.emit("after_message", payload)
+
+    async def before_tool_call(self, payload: dict[str, Any]) -> None:
+        await self.emit("before_tool_call", payload)
+
+    async def after_tool_call(self, payload: dict[str, Any]) -> None:
+        await self.emit("after_tool_call", payload)
+
+    async def on_error(self, payload: dict[str, Any]) -> None:
+        await self.emit("on_error", payload)
+
+
+class ToolRouter:
+    """Router determinista opcional para intenciones críticas."""
+
+    def __init__(self, enabled: bool = True) -> None:
+        self.enabled = bool(enabled)
+
+    def route_key(self, user_message: str, history: list[dict], profile: dict) -> str | None:
+        if not self.enabled:
+            return None
+        if _is_plan_status_intent(user_message):
+            return "plan_status"
+        if _is_week_tss_intent(user_message):
+            return "week_tss"
+        if _is_running_threshold_query_intent(user_message):
+            return "running_threshold"
+        if _is_mcp_factual_query_intent(user_message):
+            return "mcp_factual"
+        if _is_daily_readiness_intent(user_message):
+            return "daily_readiness"
+        if _is_planning_intent(user_message, history) and _has_goal_in_profile(profile):
+            return "planning"
+        if _is_personal_records_intent(user_message) or _is_personal_records_followup_intent(user_message, history):
+            return "personal_records"
+        return None
 
 
 def _resolve_kb_paths(env_value: str | None, project_root: Path | None = None) -> list[Path]:
@@ -7860,6 +7944,8 @@ class TrainerAgent:
         # Variables para tracking de tokens de la sesión
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self.hook_manager = HookManager()
+        self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
 
     def set_provider(self, provider: str) -> None:
         """Configura o cambia el proveedor de LLM actual."""
@@ -8793,64 +8879,96 @@ class TrainerAgent:
         messages.append({"role": "user", "content": user_message})
         return messages
 
+    async def _finalize_chat_reply(
+        self,
+        user_message: str,
+        assistant_reply: str,
+        route: str,
+    ) -> str:
+        """Persiste el turno y emite hook post-mensaje de forma uniforme."""
+        await self.hook_manager.after_message(
+            {
+                "route": route,
+                "provider": getattr(self, "provider", "unknown"),
+                "user_message": user_message,
+                "assistant_reply": assistant_reply,
+            }
+        )
+        self.conversation_history.append({"role": "user", "content": user_message})
+        self.conversation_history.append({"role": "assistant", "content": assistant_reply})
+        _save_history_entry("user", user_message)
+        _save_history_entry("assistant", assistant_reply)
+        return assistant_reply
+
+    async def _emit_chat_error_hook(self, stage: str, error: Exception, extra: dict | None = None) -> None:
+        payload: dict[str, Any] = {
+            "stage": stage,
+            "provider": getattr(self, "provider", "unknown"),
+            "error_type": type(error).__name__,
+            "error": str(error),
+        }
+        if isinstance(extra, dict) and extra:
+            payload.update(extra)
+        await self.hook_manager.on_error(payload)
+
     async def chat(self, user_message: str) -> str:
         """
         Procesa un mensaje del usuario y devuelve la respuesta del agente.
         Gestiona automáticamente las llamadas a herramientas de Garmin.
         """
+        if not hasattr(self, "hook_manager") or not isinstance(getattr(self, "hook_manager", None), HookManager):
+            self.hook_manager = HookManager()
+        if not hasattr(self, "tool_router") or not isinstance(getattr(self, "tool_router", None), ToolRouter):
+            self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
+
+        await self.hook_manager.before_message(
+            {
+                "provider": getattr(self, "provider", "unknown"),
+                "user_message": user_message,
+            }
+        )
         messages = self._build_messages(user_message)
+        route_key = self.tool_router.route_key(
+            user_message,
+            self.conversation_history,
+            self.user_profile,
+        )
 
         # Ruta determinista para estado de plan: evita alucinaciones del LLM
         # cuando la pregunta es "¿tengo plan?" o "¿cuál es mi plan?".
-        if _is_plan_status_intent(user_message):
+        if route_key == "plan_status":
             assistant_reply = _build_training_plan_status_markdown(self.user_profile)
-            self.conversation_history.append({"role": "user", "content": user_message})
-            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-            _save_history_entry("user", user_message)
-            _save_history_entry("assistant", assistant_reply)
-            return assistant_reply
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="plan_status")
 
         # Ruta determinista para TSS semanal: evita ambigüedades del LLM
         # y fuerza semana natural lunes→hoy con actividades reales de Garmin.
-        if _is_week_tss_intent(user_message):
+        if route_key == "week_tss":
             assistant_reply = await _build_current_week_tss_markdown(self.mcp_session, self.user_profile)
-            self.conversation_history.append({"role": "user", "content": user_message})
-            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-            _save_history_entry("user", user_message)
-            _save_history_entry("assistant", assistant_reply)
-            return assistant_reply
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="week_tss")
 
         # Ruta determinista para ritmo umbral de running.
         # Carga el perfil más reciente para evitar responder con valores obsoletos.
-        if _is_running_threshold_query_intent(user_message):
+        if route_key == "running_threshold":
             latest_profile = _load_user_profile()
             if isinstance(latest_profile, dict) and latest_profile:
                 self.user_profile = latest_profile
             assistant_reply = _build_running_threshold_profile_markdown(self.user_profile)
-            self.conversation_history.append({"role": "user", "content": user_message})
-            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-            _save_history_entry("user", user_message)
-            _save_history_entry("assistant", assistant_reply)
-            return assistant_reply
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="running_threshold")
 
         # Ruta MCP-first para consultas factuales de métricas diarias.
         # Evita pasar por LLM cuando la pregunta se puede responder con
         # datos directos de Garmin Connect.
-        if _is_mcp_factual_query_intent(user_message):
+        if route_key == "mcp_factual":
             assistant_reply = await _build_mcp_factual_query_markdown(
                 self.mcp_session,
                 self.user_profile,
                 user_message,
             )
-            self.conversation_history.append({"role": "user", "content": user_message})
-            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-            _save_history_entry("user", user_message)
-            _save_history_entry("assistant", assistant_reply)
-            return assistant_reply
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="mcp_factual")
 
         # Ruta determinista para readiness diario: evita respuestas del LLM
         # con métricas inventadas y fuerza snapshot real de Garmin.
-        if _is_daily_readiness_intent(user_message):
+        if route_key == "daily_readiness":
             snapshot = await self.collect_startup_snapshot_48h()
             snapshot["profile_changes"] = []
             active_plan = _get_active_training_plan(self.user_profile)
@@ -8862,15 +8980,11 @@ class TrainerAgent:
                 _build_proactive_status_markdown(snapshot)
                 + "\n\n_Respuesta determinista: valores tomados del snapshot real de Garmin y modelo de carga; sin inferencias numéricas del LLM._"
             )
-            self.conversation_history.append({"role": "user", "content": user_message})
-            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-            _save_history_entry("user", user_message)
-            _save_history_entry("assistant", assistant_reply)
-            return assistant_reply
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="daily_readiness")
 
         # Ruta funcional de planificación: generación/actualización estructurada,
         # persistida y versionada en DB sin depender del LLM.
-        if _is_planning_intent(user_message, self.conversation_history) and _has_goal_in_profile(self.user_profile):
+        if route_key == "planning":
             try:
                 previous_plan_row = None
                 previous_plan = None
@@ -8941,26 +9055,20 @@ class TrainerAgent:
                     self.user_profile["training_plan"] = persisted_plan
                     _save_user_profile(self.user_profile)
 
-                self.conversation_history.append({"role": "user", "content": user_message})
-                self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-                _save_history_entry("user", user_message)
-                _save_history_entry("assistant", assistant_reply)
-                return assistant_reply
+                return await self._finalize_chat_reply(user_message, assistant_reply, route="planning")
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                 log.warning("structured planning route failed, using goal fallback: %s", exc)
+                await self._emit_chat_error_hook(
+                    stage="planning_route",
+                    error=exc,
+                    extra={"user_message": user_message},
+                )
                 assistant_reply = _build_goal_plan_fallback(self.user_profile)
-                self.conversation_history.append({"role": "user", "content": user_message})
-                self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-                _save_history_entry("user", user_message)
-                _save_history_entry("assistant", assistant_reply)
-                return assistant_reply
+                return await self._finalize_chat_reply(user_message, assistant_reply, route="planning_fallback")
 
         # Ruta directa para récords personales: evita respuestas de "sin acceso"
         # y asegura que se entreguen distancia + marca desde la primera respuesta.
-        force_personal_records = (
-            _is_personal_records_intent(user_message)
-            or _is_personal_records_followup_intent(user_message, self.conversation_history)
-        )
+        force_personal_records = route_key == "personal_records"
         if force_personal_records:
             try:
                 available_tool_names = {
@@ -8975,18 +9083,34 @@ class TrainerAgent:
                     records_tool = "get_personal_records"
 
                 if records_tool:
+                    await self.hook_manager.before_tool_call(
+                        {
+                            "tool_name": records_tool,
+                            "arguments": {},
+                            "source": "deterministic_personal_records",
+                        }
+                    )
                     records_raw = await call_tool(self.mcp_session, records_tool, {})
+                    await self.hook_manager.after_tool_call(
+                        {
+                            "tool_name": records_tool,
+                            "arguments": {},
+                            "source": "deterministic_personal_records",
+                            "success": True,
+                        }
+                    )
                     records_compact = _compact_tool_result(records_raw, records_tool)
                     if records_compact and records_compact != "(sin datos)" and not _is_no_data_result(records_raw):
                         records_sport = _detect_personal_records_sport_intent(user_message, self.conversation_history)
                         assistant_reply = _build_personal_records_markdown(records_compact, preferred_sport=records_sport)
-                        self.conversation_history.append({"role": "user", "content": user_message})
-                        self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-                        _save_history_entry("user", user_message)
-                        _save_history_entry("assistant", assistant_reply)
-                        return assistant_reply
+                        return await self._finalize_chat_reply(user_message, assistant_reply, route="personal_records")
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                 log.debug("personal records route falló: %s", exc)
+                await self._emit_chat_error_hook(
+                    stage="personal_records_route",
+                    error=exc,
+                    extra={"user_message": user_message},
+                )
 
         # Pre-fetch proactivo: si el usuario menciona una fecha explícita,
         # resolver y cargar la actividad + contexto completo ANTES del bucle LLM.
@@ -9349,11 +9473,7 @@ class TrainerAgent:
             if iteration > _MAX_TOOL_ITER:
                 log.debug(f"Límite de {_MAX_TOOL_ITER} iteraciones de herramientas alcanzado. Abortando.")
                 assistant_reply = "[Lo siento, la consulta requirió demasiadas llamadas a herramientas. Por favor, reformula tu pregunta de forma más concreta.]"
-                self.conversation_history.append({"role": "user", "content": user_message})
-                self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-                _save_history_entry("user", user_message)
-                _save_history_entry("assistant", assistant_reply)
-                return assistant_reply
+                return await self._finalize_chat_reply(user_message, assistant_reply, route="max_tool_iterations")
             try:
                 response = await self.client.chat.completions.create(
                     model=self.model,
@@ -9363,6 +9483,11 @@ class TrainerAgent:
                 )
             except Exception as api_exc:
                 err_str = str(api_exc)
+                await self._emit_chat_error_hook(
+                    stage="llm_completion",
+                    error=api_exc,
+                    extra={"user_message": user_message},
+                )
                 
                 # Detectar si la clave ha agotado recursos o cuota y marcarlo en la BBDD
                 is_quota_exhausted = (
@@ -9383,11 +9508,7 @@ class TrainerAgent:
                         "- Divide el análisis en pasos: primero métricas de hoy, luego tendencias, luego plan\n"
                         "- Si no estás en red corporativa, reinicia el agente o usa /modelo para cambiar a un modelo con contexto más grande (como Gemini)"
                     )
-                    self.conversation_history.append({"role": "user", "content": user_message})
-                    self.conversation_history.append({"role": "assistant", "content": msg})
-                    _save_history_entry("user", user_message)
-                    _save_history_entry("assistant", msg)
-                    return msg
+                    return await self._finalize_chat_reply(user_message, msg, route="llm_request_too_large")
                 raise
 
             # Track and log token usage
@@ -9456,9 +9577,26 @@ class TrainerAgent:
                                     arguments = {"activity_id": resolved_id}
                     arguments = _normalize_trend_date_range(tool_name, arguments)
 
+                    await self.hook_manager.before_tool_call(
+                        {
+                            "tool_name": tool_name,
+                            "arguments": arguments,
+                            "source": "llm_tool_call",
+                        }
+                    )
+
                     if self.mcp_read_only and _is_write_mcp_tool(tool_name):
                         log.debug(f"Bloqueada tool de escritura por MCP_READ_ONLY: {tool_name}")
                         raw_result = _build_mcp_read_only_block_message(tool_name)
+                        await self.hook_manager.after_tool_call(
+                            {
+                                "tool_name": tool_name,
+                                "arguments": arguments,
+                                "source": "llm_tool_call",
+                                "success": False,
+                                "blocked": True,
+                            }
+                        )
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -9467,13 +9605,28 @@ class TrainerAgent:
                         continue
 
                     log.debug(f"Ejecutando: {tool_name}({arguments})")
-                    if tool_name == "get_activity" and not (isinstance(arguments, dict) and arguments.get("activity_id")):
-                        raw_result = await _build_activity_candidates_payload(self.mcp_session, user_message)
-                    elif tool_name.startswith("kairos_"):
-                        raw_result = await self._handle_internal_tool(tool_name, arguments)
-                    else:
-                        raw_result = await call_tool(
-                            self.mcp_session, tool_name, arguments
+                    try:
+                        if tool_name == "get_activity" and not (isinstance(arguments, dict) and arguments.get("activity_id")):
+                            raw_result = await _build_activity_candidates_payload(self.mcp_session, user_message)
+                        elif tool_name.startswith("kairos_"):
+                            raw_result = await self._handle_internal_tool(tool_name, arguments)
+                        else:
+                            raw_result = await call_tool(
+                                self.mcp_session, tool_name, arguments
+                            )
+                    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as tool_exc:
+                        await self._emit_chat_error_hook(
+                            stage="tool_call",
+                            error=tool_exc,
+                            extra={"tool_name": tool_name, "arguments": arguments},
+                        )
+                        raw_result = json.dumps(
+                            {
+                                "error": "tool_call_failed",
+                                "tool": tool_name,
+                                "message": str(tool_exc),
+                            },
+                            ensure_ascii=False,
                         )
 
                     # Si no hay training_readiness, enriquecer contexto con métricas de recuperación
@@ -9492,6 +9645,15 @@ class TrainerAgent:
 
                     tool_result = _compact_tool_result(raw_result, tool_name)
                     log.debug(f"Resultado ({len(raw_result or '')} -> {len(tool_result)} chars): {tool_result[:150]}")
+                    await self.hook_manager.after_tool_call(
+                        {
+                            "tool_name": tool_name,
+                            "arguments": arguments,
+                            "source": "llm_tool_call",
+                            "success": not _is_no_data_result(raw_result),
+                            "result_preview": tool_result[:200],
+                        }
+                    )
 
                     messages.append({
                         "role": "tool",
@@ -9524,13 +9686,33 @@ class TrainerAgent:
                         records_tool = "get_personal_records"
 
                     if records_tool:
+                        await self.hook_manager.before_tool_call(
+                            {
+                                "tool_name": records_tool,
+                                "arguments": {},
+                                "source": "fallback_personal_records",
+                            }
+                        )
                         records_raw = await call_tool(self.mcp_session, records_tool, {})
+                        await self.hook_manager.after_tool_call(
+                            {
+                                "tool_name": records_tool,
+                                "arguments": {},
+                                "source": "fallback_personal_records",
+                                "success": True,
+                            }
+                        )
                         records_compact = _compact_tool_result(records_raw, records_tool)
                         if records_compact and records_compact != "(sin datos)" and not _is_no_data_result(records_raw):
                             records_sport = _detect_personal_records_sport_intent(user_message, self.conversation_history)
                             assistant_reply = _build_personal_records_markdown(records_compact, preferred_sport=records_sport)
                 except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                     log.debug("records tool route no disponible: %s", exc)
+                    await self._emit_chat_error_hook(
+                        stage="records_no_access_fallback",
+                        error=exc,
+                        extra={"user_message": user_message},
+                    )
 
             # Fallback anti-respuesta genérica: si ya existe objetivo en perfil,
             # devolver una planificación base en lugar de pedir contexto redundante.
@@ -9583,15 +9765,7 @@ class TrainerAgent:
                 except (RuntimeError, ValueError, TypeError, OSError) as exc:
                     log.debug("No se pudo persistir plan fallback en perfil: %s", exc)
 
-            # Guardar en historial de conversación
-            self.conversation_history.append({"role": "user", "content": user_message})
-            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-
-            # Guardar en memoria persistente
-            _save_history_entry("user", user_message)
-            _save_history_entry("assistant", assistant_reply)
-
-            return assistant_reply
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="llm")
 
     async def generate_session_summary(self) -> str:
         """Genera un resumen compacto de la sesión actual usando el LLM."""
