@@ -13,16 +13,6 @@ from datetime import date
 from pathlib import Path
 import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("agent.log", encoding="utf-8"),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-
 
 # Forzar UTF-8 en Windows para mostrar correctamente acentos y ñ en terminal.
 if sys.platform == "win32":
@@ -50,6 +40,51 @@ from rich.table import Table
 
 # Cargar variables de entorno desde .env
 load_dotenv(encoding="utf-8")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _configure_logging() -> tuple[logging.Logger, bool]:
+    """Configura logging con parámetros de entorno para producción."""
+    level_name = (os.environ.get("KAIROS_LOG_LEVEL") or "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    log_file = (os.environ.get("KAIROS_LOG_FILE") or "agent.log").strip()
+    log_stdout = _env_bool("KAIROS_LOG_STDOUT", True)
+
+    handlers: list[logging.Handler] = []
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+    if log_stdout:
+        handlers.append(logging.StreamHandler(sys.stdout))
+    if not handlers:
+        handlers.append(logging.NullHandler())
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+
+    # Reduce ruido de librerías HTTP en producción.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    return logging.getLogger(__name__), _env_bool("KAIROS_DEBUG_CONSOLE", False)
+
+
+log, _DEBUG_CONSOLE = _configure_logging()
+
+
+def _debug_console(message: str) -> None:
+    """Muestra trazas de consola solo si KAIROS_DEBUG_CONSOLE=true."""
+    if _DEBUG_CONSOLE:
+        console.print(message)
 
 # Parchear SSL para usar el almacén de certificados del sistema (necesario con Zscaler)
 try:
@@ -95,7 +130,7 @@ async def _sync_from_garmin(agent) -> list[str]:
     try:
         garmin_data = await agent.fetch_garmin_personal_data()
     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
-        logging.debug("_sync_from_garmin: error leyendo datos MCP: %s", exc)
+        log.debug("_sync_from_garmin: error leyendo datos MCP: %s", exc)
         garmin_data = {}
 
     if not garmin_data:
@@ -754,7 +789,7 @@ def _show_training_plan(plan_id: str) -> None:
     try:
         sessions = list_training_plan_sessions(plan_id)
     except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
-        logging.debug("_show_training_plan: no se pudieron cargar sesiones de %s: %s", plan_id, exc)
+        log.debug("_show_training_plan: no se pudieron cargar sesiones de %s: %s", plan_id, exc)
         sessions = []
 
     lines = [
@@ -1252,7 +1287,7 @@ async def main() -> None:
                     return
                 app_password = new_pw
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
-            logging.debug("Verificación inicial de Garmin falló (no bloqueante): %s", exc)
+            log.debug("Verificación inicial de Garmin falló (no bloqueante): %s", exc)
             pass  # No bloquear el arranque si el test de verificación falla
 
         # Sincronizar datos personales desde Garmin
@@ -1328,7 +1363,7 @@ async def main() -> None:
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as status_exc:
             console.print(f"[dim yellow]No se pudo generar el estado proactivo inicial: {status_exc}[/]")
 
-        console.print("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
+        _debug_console("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
         
         daily_info = agent.get_daily_usage_info()
         provider_name = provider.capitalize() if provider != "vpn" else "GitHub Models"
@@ -1339,7 +1374,7 @@ async def main() -> None:
                 f"        - Tokens disponibles hoy: 0[/]"
             )
         else:
-            console.print(
+            _debug_console(
                 f"[dim dimgray][debug] Acumulado diario de {provider_name}: "
                 f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
                 f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
@@ -1365,10 +1400,10 @@ async def main() -> None:
                 c_tokens = agent.total_completion_tokens
                 t_tokens = p_tokens + c_tokens
                 old_provider_name = provider.capitalize() if provider != "vpn" else "GitHub Models"
-                console.print(f"\n[bold dimgray][debug] Cambiando de modelo. Tokens gastados con {old_provider_name} en esta sesión:[/]")
-                console.print(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
-                console.print(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
-                console.print(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
+                _debug_console(f"\n[bold dimgray][debug] Cambiando de modelo. Tokens gastados con {old_provider_name} en esta sesión:[/]")
+                _debug_console(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
+                _debug_console(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
+                _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
                 
                 # Seleccionar nuevo proveedor
                 on_vpn = _detect_zscaler()
@@ -1404,7 +1439,7 @@ async def main() -> None:
                         f"        - Tokens disponibles hoy: 0[/]"
                     )
                 else:
-                    console.print(
+                    _debug_console(
                         f"[dim dimgray][debug] Acumulado diario de {new_provider_name}: "
                         f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
                         f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
@@ -1505,6 +1540,7 @@ async def main() -> None:
                 # Checkpoint incremental del resumen para no bloquear el cierre.
                 agent.save_session_summary_checkpoint()
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
+                log.exception("Error en chat del agente")
                 console.print(f"\n[bold red]Error en el Agente:[/] {e}")
 
         # Al salir de la sesión, guardar checkpoint ligero sin llamada al LLM.
@@ -1514,16 +1550,16 @@ async def main() -> None:
                     agent.save_session_summary_checkpoint()
                 console.print("[dim]✓ Sesión guardada en memoria[/]")
             except (RuntimeError, ValueError, TypeError, OSError) as exc:
-                logging.debug("No se pudo guardar checkpoint final de sesión: %s", exc)
+                log.debug("No se pudo guardar checkpoint final de sesión: %s", exc)
 
         # Al salir de la sesión, mostrar resumen de tokens gastados
         p_tokens = agent.total_prompt_tokens
         c_tokens = agent.total_completion_tokens
         t_tokens = p_tokens + c_tokens
-        console.print("\n[bold dimgray][debug] Fin de la sesión. Resumen de tokens gastados en esta sesión:[/]")
-        console.print(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
-        console.print(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
-        console.print(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
+        _debug_console("\n[bold dimgray][debug] Fin de la sesión. Resumen de tokens gastados en esta sesión:[/]")
+        _debug_console(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
+        _debug_console(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
+        _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
         
         daily_info = agent.get_daily_usage_info()
         provider_name = provider.capitalize() if provider != "vpn" else "GitHub Models"
@@ -1534,7 +1570,7 @@ async def main() -> None:
                 f"        - Tokens gratuitos hoy: 0[/]"
             )
         else:
-            console.print(
+            _debug_console(
                 f"[dim dimgray][debug] Acumulado diario de {provider_name} global: "
                 f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
                 f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"

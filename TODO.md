@@ -65,10 +65,6 @@
 - Separar claramente presentacion (CLI), negocio (coach) y datos (Garmin/LLM/storage).
 - Reducir acoplamiento entre agent/main.py y agent/trainer_agent.py.
 
-#### 4) Logging de producción
-- Sustituir mensajes debug de consola por logging con niveles configurables.
-- Controlar verbosidad por entorno.
-
 ### Prioridad baja
 
 #### 22) Makefile + scripts de setup automatizado
@@ -250,6 +246,11 @@
 - Router determinista opcional para intenciones críticas vía `KAIROS_DETERMINISTIC_ROUTER`.
 - Cobertura nueva en `tests/test_hooks_router.py` y validación completa de regresión en verde.
 - Documentación de harness actualizada y reubicada en `docs/Harness.md`.
+
+#### 4) Logging de producción (2026-08-15) — REALIZADO
+- Configuración de logging por entorno en runtime: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.
+- Trazas de debug en consola interactiva ahora son opcionales y quedan desactivadas por defecto en producción.
+- Se mantiene salida operativa para usuario final y se centraliza telemetría técnica en logger con formato uniforme.
 
 #### 27) [PROMPTING] Umbral de spike semanal >20% (2026-08-15) — REALIZADO
 - Sensor activo en runtime: alerta cuando la carga semanal actual supera en >20% a la semana anterior, incluso sin cruce de umbral TSB.
