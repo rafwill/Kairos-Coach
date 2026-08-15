@@ -742,6 +742,8 @@ class ToolRouter:
             return "plan_status"
         if _is_week_tss_intent(user_message):
             return "week_tss"
+        if _is_hr_threshold_query_intent(user_message):
+            return "hr_threshold"
         if _is_running_threshold_query_intent(user_message):
             return "running_threshold"
         if _is_mcp_factual_query_intent(user_message):
@@ -3358,7 +3360,7 @@ def _is_week_tss_intent(user_message: str) -> bool:
         return False
     # Consulta explícita de datos/cifras: priorizar respuesta directa.
     data_markers = [
-        "cuanto", "cuánto", "dime", "consulta", "datos", "acumulado", "llevo",
+        "cuanto", "cuánto", "cual", "cuál", "cuales", "cuáles", "dime", "consulta", "datos", "acumulado", "llevo",
     ]
     week_markers = [
         "esta semana", "semana", "semanal", "lunes", "domingo", "acumulado semanal",
@@ -3441,6 +3443,19 @@ def _is_running_threshold_query_intent(user_message: str) -> bool:
     if not text:
         return False
 
+    # Si la consulta habla explícitamente de FC/HR umbral, no es ritmo umbral.
+    hr_markers = (
+        "fc umbral",
+        "umbral fc",
+        "frecuencia cardiaca umbral",
+        "frecuencia cardíaca umbral",
+        "heart rate threshold",
+        "hr threshold",
+        "lthr",
+    )
+    if any(marker in text for marker in hr_markers):
+        return False
+
     markers = (
         "ritmo umbral",
         "umbral running",
@@ -3451,6 +3466,156 @@ def _is_running_threshold_query_intent(user_message: str) -> bool:
         "threshold pace",
     )
     return any(marker in text for marker in markers)
+
+
+def _is_hr_threshold_query_intent(user_message: str) -> bool:
+    """Detecta consultas de FC umbral (LTHR) para ruta determinista rápida."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    markers = (
+        "fc umbral",
+        "umbral fc",
+        "umbral de fc",
+        "umbral de frecuencia cardiaca",
+        "umbral de frecuencia cardíaca",
+        "frecuencia cardiaca umbral",
+        "frecuencia cardíaca umbral",
+        "heart rate threshold",
+        "hr threshold",
+        "lthr",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _resolve_hr_threshold_bpm(profile: dict | None) -> tuple[float | None, str, str]:
+    """Extrae FC umbral desde perfil en distintas convenciones de clave."""
+    profile = profile if isinstance(profile, dict) else {}
+    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+    candidates = (
+        perf.get("hr_threshold_bpm"),
+        perf.get("lthr_bpm"),
+        perf.get("lactate_threshold_hr_bpm"),
+        perf.get("lactate_threshold_heart_rate"),
+        perf.get("threshold_heart_rate"),
+        perf.get("hrAtLactateThreshold"),
+        perf.get("heart_rate_threshold"),
+        profile.get("hr_threshold_bpm"),
+        profile.get("lthr_bpm"),
+    )
+    for raw in candidates:
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if 120 <= v <= 230:
+            date_value = str(
+                perf.get("hr_threshold_date")
+                or perf.get("lthr_date")
+                or perf.get("lactate_threshold_hr_date")
+                or perf.get("performance_params_updated_at")
+                or ""
+            ).strip() or "sin fecha"
+            return round(v, 1), date_value, "perfil persistido"
+    return None, "", ""
+
+
+def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
+    """Busca FC umbral (LTHR) en payloads JSON heterogéneos."""
+    target_keys = {
+        "hr_threshold_bpm",
+        "lthr_bpm",
+        "lactate_threshold_hr_bpm",
+        "lactate_threshold_heart_rate",
+        "threshold_heart_rate",
+        "hratlactatethreshold",
+        "heartratethreshold",
+        "hrthreshold",
+        "lthr",
+    }
+
+    def _walk(node: Any) -> float | None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                k = str(key or "").strip().lower().replace("-", "_")
+                if k in target_keys:
+                    try:
+                        val = float(value)
+                    except (TypeError, ValueError):
+                        val = None
+                    if val is not None and 120 <= val <= 230:
+                        return round(val, 1)
+                nested = _walk(value)
+                if nested is not None:
+                    return nested
+            return None
+        if isinstance(node, list):
+            for item in node:
+                nested = _walk(item)
+                if nested is not None:
+                    return nested
+        return None
+
+    return _walk(payload)
+
+
+async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> str:
+    """Respuesta determinista y rápida de FC umbral (LTHR)."""
+    profile = profile if isinstance(profile, dict) else {}
+    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+
+    bpm, date_value, source = _resolve_hr_threshold_bpm(profile)
+    if bpm is not None:
+        return "\n".join(
+            [
+                "## FC umbral actual (perfil)",
+                "",
+                f"- FC umbral (LTHR): {int(round(bpm))} bpm",
+                f"- Fecha de actualización: {date_value}",
+                f"- Fuente: {source}",
+                "",
+                "_Respuesta determinista: lectura directa del perfil persistido._",
+            ]
+        )
+
+    # Fallback rápido a MCP: una única llamada y timeout corto.
+    try:
+        raw = await asyncio.wait_for(call_tool(mcp_session, "get_user_profile", {}), timeout=2.0)
+        parsed = _try_parse_json(raw)
+        payload = parsed if parsed is not None else raw
+        live_bpm = _extract_hr_threshold_from_payload(payload)
+    except (TimeoutError, asyncio.TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError):
+        live_bpm = None
+
+    if live_bpm is not None:
+        perf["hr_threshold_bpm"] = int(round(live_bpm))
+        perf["hr_threshold_date"] = date.today().isoformat()
+        perf["performance_params_updated_at"] = date.today().isoformat()
+        profile["performance"] = perf
+        try:
+            _save_user_profile(profile)
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            log.debug("No se pudo persistir hr_threshold_bpm en perfil: %s", exc)
+
+        return "\n".join(
+            [
+                "## FC umbral actual",
+                "",
+                f"- FC umbral (LTHR): {int(round(live_bpm))} bpm",
+                "- Fecha de actualización: hoy",
+                "- Fuente: Garmin (MCP rápido)",
+                "",
+                "_Respuesta determinista: dato resuelto sin pasar por LLM._",
+            ]
+        )
+
+    return (
+        "## FC umbral actual\n\n"
+        "- No tengo registrada tu FC umbral (LTHR) en perfil y Garmin no la devolvió en la consulta rápida.\n"
+        "- Si quieres, te ayudo a guardarla manualmente en perfil para respuestas instantáneas.\n\n"
+        "_Respuesta determinista: perfil + fallback MCP rápido (2s máx)._"
+    )
 
 
 def _build_running_threshold_profile_markdown(profile: dict) -> str:
@@ -3605,7 +3770,8 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
     - TSS por día de la semana natural actual.
     - Actividades reales Garmin registradas en ese rango (sin inferencias del LLM).
     """
-    series = ((profile or {}).get("load_metrics") or {}).get("series") or []
+    # Prioriza datos frescos de DB-first para evitar respuestas con snapshots desactualizados.
+    series = _storage.get_load_metrics_series(days=14) or ((profile or {}).get("load_metrics") or {}).get("series") or []
     if not series:
         return (
             "## 📈 Carga semanal (TSS)\n\n"
@@ -3618,6 +3784,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
     week_dates = [week_start + timedelta(days=i) for i in range((today_d - week_start).days + 1)]
 
     tss_by_day: dict[str, float] = {}
+    tss_source_by_day: dict[str, str] = {}
     for row in series:
         d_iso = str(row.get("date") or "")
         if not d_iso:
@@ -3628,8 +3795,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
             continue
         if week_start <= d_obj <= today_d:
             tss_by_day[d_iso] = round(float(row.get("tss") or 0.0), 1)
-
-    current_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
+            tss_source_by_day[d_iso] = "load_metrics_daily"
 
     activities: list[dict] = []
     req_variants = [
@@ -3659,6 +3825,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
             continue
 
     act_rows: list[tuple[date, str, str]] = []
+    activity_tss_by_day: dict[str, float] = {}
     for act in activities:
         if not isinstance(act, dict):
             continue
@@ -3674,7 +3841,26 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
         name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
         act_rows.append((d_obj, sport, name))
+        act_tss = _extract_training_load_tss(act)
+        if act_tss is not None:
+            activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
     act_rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
+
+    # Si falta un día en la serie diaria, intenta completar con training load por actividad.
+    used_activity_fallback = False
+    for d in week_dates:
+        d_iso = d.isoformat()
+        if d_iso in tss_by_day:
+            continue
+        fallback_tss = activity_tss_by_day.get(d_iso)
+        if fallback_tss is None:
+            continue
+        tss_by_day[d_iso] = round(float(fallback_tss), 1)
+        tss_source_by_day[d_iso] = "garmin_activity_load"
+        used_activity_fallback = True
+
+    current_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
+    has_today_load_row = today_d.isoformat() in tss_by_day and tss_source_by_day.get(today_d.isoformat()) == "load_metrics_daily"
 
     weekday_es = {
         0: "lunes",
@@ -3706,6 +3892,11 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
             lines.append(f"  - {d_obj.strftime('%d/%m')}: {sport} — {name}")
     else:
         lines.append("- Actividades fuente (Garmin): sin datos en el rango consultado.")
+
+    if used_activity_fallback:
+        lines.append("- Nota: faltaban cierres en `load_metrics_daily` para algún día; se usó fallback con `trainingLoad` de actividades Garmin.")
+    elif not has_today_load_row and any(x[0] == today_d for x in act_rows):
+        lines.append("- Nota: hay actividad hoy, pero el cierre diario de TSS aún no está persistido en `load_metrics_daily`.")
 
     lines.append("")
     lines.append("_Respuesta determinista: sin inferencias del LLM para nombres/tipos de actividad._")
@@ -8237,6 +8428,53 @@ class TrainerAgent:
         """
         from datetime import date as _date, timedelta
 
+        async def _should_refresh_today_load(existing_rows: list[dict]) -> tuple[bool, str]:
+            """Verifica si hay actividades hoy que aún no están reflejadas en load_metrics_daily."""
+            today_iso_local = _date.today().isoformat()
+
+            db_today_tss = 0.0
+            db_today_count = 0
+            for row in existing_rows or []:
+                if str(row.get("date") or "") != today_iso_local:
+                    continue
+                db_today_tss = max(db_today_tss, float(row.get("tss") or 0.0))
+                db_today_count = max(db_today_count, int(row.get("activities_count") or 0))
+
+            try:
+                today_activities = await _fetch_activities_for_load_calc(
+                    self.mcp_session,
+                    today_iso_local,
+                    today_iso_local,
+                )
+            except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
+                log.debug("compute_load: no se pudo verificar actividades de hoy: %s", exc)
+                return False, "verificación de hoy no disponible"
+
+            today_activities = [
+                a for a in (today_activities or [])
+                if _extract_activity_date_iso(a) == today_iso_local
+            ]
+            if not today_activities:
+                return False, "sin actividades hoy"
+
+            garmin_count = len(today_activities)
+            garmin_load_sum = round(
+                sum(float(_extract_training_load_tss(a) or 0.0) for a in today_activities),
+                2,
+            )
+
+            if garmin_count > db_today_count:
+                return True, (
+                    f"actividades hoy Garmin={garmin_count} > DB={db_today_count}"
+                )
+
+            if db_today_tss <= 0.0 and garmin_load_sum > 0.0:
+                return True, (
+                    f"carga hoy en Garmin={garmin_load_sum:.2f} con TSS DB={db_today_tss:.2f}"
+                )
+
+            return False, "DB ya refleja actividad/carga de hoy"
+
         today = _date.today()
         full_window_days = 120
         full_start = today - timedelta(days=full_window_days)
@@ -8270,9 +8508,18 @@ class TrainerAgent:
                     )
                     fetch_from = full_start.isoformat()
                 else:
-                    log.info("compute_load: ya actualizado (último=%s) — recargando perfil", last_date_str)
-                    self._apply_series_to_profile(existing_series, today)
-                    return
+                    refresh_today, refresh_reason = await _should_refresh_today_load(existing_series)
+                    if refresh_today:
+                        fetch_from = today.isoformat()
+                        log.info(
+                            "compute_load: último=%s pero se detectó actividad nueva hoy (%s) — refrescando día en curso",
+                            last_date_str,
+                            refresh_reason,
+                        )
+                    else:
+                        log.info("compute_load: ya actualizado (último=%s) — recargando perfil", last_date_str)
+                        self._apply_series_to_profile(existing_series, today)
+                        return
             else:
                 # Reprocessar desde el último día guardado (no last+1) para capturar
                 # actividades que llegaron después de la última ejecución del mismo día.
@@ -9025,6 +9272,14 @@ class TrainerAgent:
         if route_key == "week_tss":
             assistant_reply = await _build_current_week_tss_markdown(self.mcp_session, self.user_profile)
             return await self._finalize_chat_reply(user_message, assistant_reply, route="week_tss")
+
+        # Ruta determinista para FC umbral (LTHR): perfil primero y fallback MCP rápido.
+        if route_key == "hr_threshold":
+            latest_profile = _load_user_profile()
+            if isinstance(latest_profile, dict) and latest_profile:
+                self.user_profile = latest_profile
+            assistant_reply = await _build_hr_threshold_profile_markdown(self.mcp_session, self.user_profile)
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="hr_threshold")
 
         # Ruta determinista para ritmo umbral de running.
         # Carga el perfil más reciente para evitar responder con valores obsoletos.
