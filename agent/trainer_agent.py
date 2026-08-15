@@ -11,7 +11,7 @@ import ssl
 import json
 import asyncio
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -626,7 +626,7 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
                         f"ESTIMACIÓN gaussiana (FC_media={int(fcmed)}bpm, FC_max={int(fcmax)}bpm). "
                         "Puede diferir de las zonas reales configuradas en Garmin."
                     )
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 pass
             # Hidratacion estimada
             try:
@@ -635,7 +635,7 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
                     hydration_low  = round(dur_h * 0.5, 1)
                     hydration_high = round(dur_h * 0.8, 1)
                     data["hidratacion_estimada_litros"] = f"{hydration_low}-{hydration_high}L (base; +25% si temp >25C)"
-            except Exception:
+            except (TypeError, ValueError):
                 pass
         if isinstance(data, list):
             data = data[:8]  # máximo 8 elementos de arrays
@@ -740,7 +740,7 @@ def _load_athlete_knowledge_chunks(
 
         try:
             raw = path.read_text(encoding="utf-8")
-        except Exception:
+        except (OSError, UnicodeDecodeError):
             continue
         if not raw.strip():
             continue
@@ -750,7 +750,7 @@ def _load_athlete_knowledge_chunks(
             try:
                 parsed = json.loads(raw)
                 text = _json_to_kb_text(parsed)
-            except Exception:
+            except (TypeError, json.JSONDecodeError):
                 text = raw
 
         text = text.strip()[:_KB_MAX_CHARS_PER_FILE]
@@ -854,7 +854,7 @@ def _try_parse_json(raw: str | None) -> Any:
         return None
     try:
         return json.loads(text)
-    except Exception:
+    except (TypeError, json.JSONDecodeError):
         return None
 
 
@@ -886,7 +886,7 @@ def _extract_cycling_ftp_watts(payload: Any) -> float | None:
     def _to_positive_float(raw: Any) -> float | None:
         try:
             val = float(raw)
-        except Exception:
+        except (TypeError, ValueError):
             return None
         if val <= 0:
             return None
@@ -919,18 +919,18 @@ def _extract_cycling_ftp_watts(payload: Any) -> float | None:
 
 def _is_activity_in_last_48h(activity: dict, now: datetime | None = None) -> bool:
     """Comprueba si una actividad cae en la ventana de últimas 48h."""
-    now_dt = now or datetime.now()
+    now_day = now.date() if now is not None else datetime.now(tz=timezone.utc).date()
     start_local = activity.get("startTimeLocal") or activity.get("startTimeGMT") or ""
     if not isinstance(start_local, str) or "T" not in start_local:
         return False
 
     date_part = start_local.split("T", 1)[0]
     try:
-        act_date = datetime.fromisoformat(date_part)
+        act_date = date.fromisoformat(date_part)
     except ValueError:
         return False
 
-    return (now_dt - act_date) <= timedelta(hours=48)
+    return (now_day - act_date) <= timedelta(days=2)
 
 
 def _pick_day_payload(payload: Any, target_date: str) -> dict | None:
@@ -1054,7 +1054,7 @@ def _format_rhr_day(payload: Any, target_date: str) -> str:
 
     try:
         return f"{int(float(rhr))} bpm"
-    except Exception:
+    except (TypeError, ValueError):
         return f"{rhr}"
 
 
@@ -1076,7 +1076,7 @@ def _to_iso_date(value: Any) -> str | None:
 
     try:
         return date.fromisoformat(text).isoformat()
-    except Exception:
+    except ValueError:
         return None
 
 
@@ -1112,8 +1112,8 @@ def _extract_training_load_points(payload: Any) -> list[dict]:
             try:
                 load_float = max(0.0, float(load_value))
                 points.append({"date": d_iso, "tss": load_float})
-            except Exception:
-                pass
+            except (TypeError, ValueError):
+                log.debug("training_load point inválido para fecha %s: %r", d_iso, load_value)
 
         for value in node.values():
             if isinstance(value, (list, dict)):
@@ -1135,7 +1135,7 @@ def _extract_activity_duration_hours(activity: dict) -> float:
     )
     try:
         return max(0.0, float(duration_seconds) / 3600.0)
-    except Exception:
+    except (TypeError, ValueError):
         return 0.0
 
 
@@ -1154,7 +1154,7 @@ def _extract_activity_distance_km(activity: dict) -> float | None:
             continue
         try:
             val = float(raw)
-        except Exception:
+        except (TypeError, ValueError):
             continue
         if val <= 0:
             continue
@@ -1190,7 +1190,7 @@ def _parse_pace_to_sec_per_km(raw: Any) -> float | None:
         return None
     try:
         v = float(number.group(1).replace(",", "."))
-    except Exception:
+    except (TypeError, ValueError):
         return None
     if v <= 0:
         return None
@@ -1214,7 +1214,7 @@ def _speed_ms_to_pace_sec_per_km(raw_speed: Any) -> float | None:
         return None
     try:
         speed_ms = float(raw_speed)
-    except Exception:
+    except (TypeError, ValueError):
         return None
     if speed_ms <= 0:
         return None
@@ -1289,7 +1289,7 @@ def _extract_training_load_tss(activity: dict) -> float | None:
             continue
         try:
             val = float(raw_load)
-        except Exception:
+        except (TypeError, ValueError):
             continue
         if val > 0:
             return max(0.0, val)
@@ -1333,7 +1333,7 @@ def _estimate_if_from_hr(
         if cycling_formula:
             return max(0.35, min(1.05, hrr))
         return max(0.50, min(1.05, 0.40 + hrr * 0.65))
-    except Exception:
+    except (TypeError, ValueError, ZeroDivisionError):
         return None
 
 
@@ -1369,7 +1369,7 @@ def _estimate_hr_tss_from_zones(
                 continue
             try:
                 zones = _parse_hr_zones_list(json.dumps(raw_z, ensure_ascii=False))
-            except Exception:
+            except (TypeError, ValueError, OverflowError):
                 zones = None
             if zones:
                 break
@@ -1403,7 +1403,7 @@ def _estimate_hr_tss_from_zones(
         if avg_hr is not None:
             hr_max = max(hr_max, avg_hr + 5.0)
             hr_rest = min(hr_rest, avg_hr - 5.0)
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
     dur_s = hours * 3600.0
@@ -1418,7 +1418,7 @@ def _estimate_hr_tss_from_zones(
         secs = 0.0
         try:
             secs = float(z.get("secsInZone") or 0.0)
-        except Exception:
+        except (TypeError, ValueError):
             secs = 0.0
 
         if secs <= 0:
@@ -1426,7 +1426,7 @@ def _estimate_hr_tss_from_zones(
                 pct = z.get("pctDirect")
                 if pct is not None:
                     secs = max(0.0, float(pct) / 100.0 * dur_s)
-            except Exception:
+            except (TypeError, ValueError):
                 secs = 0.0
 
         if secs <= 0:
@@ -1438,12 +1438,12 @@ def _estimate_hr_tss_from_zones(
         try:
             if lo_raw not in (None, "?"):
                 lo = float(lo_raw)
-        except Exception:
+        except (TypeError, ValueError):
             lo = None
         try:
             if hi_raw not in (None, "?"):
                 hi = float(hi_raw)
-        except Exception:
+        except (TypeError, ValueError):
             hi = None
 
         if lo is not None and hi is not None and hi < lo:
@@ -1519,7 +1519,7 @@ def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, floa
                 continue
             try:
                 val = float(raw)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
             if min_v <= val <= max_v:
                 return val
@@ -1635,7 +1635,7 @@ def _estimate_strength_if(activity: dict) -> float | None:
             continue
         try:
             val = float(raw)
-        except Exception:
+        except (TypeError, ValueError):
             continue
         if 0.35 <= val <= 1.10:
             return val
@@ -1748,7 +1748,7 @@ def _estimate_walk_hike_tss(
                 continue
             try:
                 return float(raw)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
         return None
 
@@ -1865,7 +1865,7 @@ def _has_activity_power_data(activity: dict) -> bool:
         try:
             if float(raw) > 0:
                 return True
-        except Exception:
+        except (TypeError, ValueError):
             continue
     return False
 
@@ -1917,7 +1917,7 @@ def _extract_running_session_signals(activity: dict) -> dict[str, Any]:
                 continue
             try:
                 return float(raw)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
         return None
 
@@ -2183,7 +2183,7 @@ def _estimate_if_from_training_effect(activity: dict) -> float | None:
     try:
         effect_norm = max(0.0, min(float(effect) / 5.0, 1.2))
         return max(0.50, min(1.05, 0.50 + (effect_norm * 0.45)))
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
 
@@ -2437,7 +2437,7 @@ def _parse_iso_date_safe(raw: Any) -> date | None:
         return None
     try:
         return date.fromisoformat(text[:10])
-    except Exception:
+    except ValueError:
         return None
 
 
@@ -2558,7 +2558,7 @@ def _resolve_sport_model_cfg(profile: dict | None) -> dict:
         if key in saved_model:
             try:
                 base[key] = float(saved_model[key])
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
     return base
@@ -2584,7 +2584,7 @@ def _compute_load_fatigue_metrics(
             continue
         try:
             d_obj = date.fromisoformat(d_iso)
-        except Exception:
+        except ValueError:
             continue
         if d_obj < start_day or d_obj > today:
             continue
@@ -2603,7 +2603,7 @@ def _compute_load_fatigue_metrics(
             continue
         try:
             d_obj = date.fromisoformat(d_iso)
-        except Exception:
+        except ValueError:
             continue
         if d_obj < start_day or d_obj > today:
             continue
@@ -2643,7 +2643,7 @@ def _compute_load_fatigue_metrics(
             if seed_date < start_day:
                 atl_prev = 0.0
                 ctl_prev = 0.0
-        except Exception:
+        except ValueError:
             pass
 
     alpha_atl = 1.0 / float(tau_atl)
@@ -2808,7 +2808,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             s = datetime.fromisoformat(start_iso).strftime("%d/%m")
             e = datetime.fromisoformat(end_iso).strftime("%d/%m")
             return f"{s}–{e}"
-        except Exception:
+        except (TypeError, ValueError):
             return f"{start_iso}–{end_iso}"
 
     def _fmt_month(iso: str) -> str:
@@ -2939,7 +2939,7 @@ def _format_load_fatigue_summary(load_metrics: dict | None) -> str:
             f"TSB (Forma) {float(latest.get('tsb', 0.0)):.1f} · "
             f"Semana {float(weekly.get('current_tss', 0.0)):.1f} TSS ({action})"
         )
-    except Exception:
+    except (TypeError, ValueError):
         return "sin datos suficientes"
 
 
@@ -2952,7 +2952,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     def _to_ddmmyyyy(value: str) -> str:
         try:
             return datetime.fromisoformat(value).strftime("%d/%m/%Y")
-        except Exception:
+        except (TypeError, ValueError):
             return value
 
     profile_changes = snapshot.get("profile_changes", []) or []
@@ -3229,7 +3229,7 @@ def _resolve_target_date_from_message(user_message: str) -> date:
     if explicit_iso:
         try:
             return date.fromisoformat(explicit_iso)
-        except Exception:
+        except ValueError:
             pass
 
     if "anteayer" in text:
@@ -3398,13 +3398,13 @@ def _format_iso_date_es(value: Any) -> str:
     # Caso ISO date/datetime común
     try:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%d/%m/%Y")
-    except Exception:
+    except (TypeError, ValueError):
         pass
     # Intento conservador con solo la parte de fecha
     if len(text) >= 10:
         try:
             return date.fromisoformat(text[:10]).strftime("%d/%m/%Y")
-        except Exception:
+        except ValueError:
             return text
     return text
 
@@ -3420,7 +3420,7 @@ def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | No
     try:
         act_d = date.fromisoformat(str(activity_date_iso or "")[:10])
         is_recent = (today_ref - act_d).days <= 2
-    except Exception:
+    except ValueError:
         is_recent = False
 
     if is_recent:
@@ -3480,7 +3480,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
             continue
         try:
             d_obj = date.fromisoformat(d_iso)
-        except Exception:
+        except ValueError:
             continue
         if week_start <= d_obj <= today_d:
             tss_by_day[d_iso] = round(float(row.get("tss") or 0.0), 1)
@@ -3510,7 +3510,8 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
             if acts:
                 activities = acts
                 break
-        except Exception:
+        except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
+            log.debug("_build_current_week_tss_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
 
     act_rows: list[tuple[date, str, str]] = []
@@ -3522,7 +3523,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict) -> str:
             continue
         try:
             d_obj = date.fromisoformat(d_iso)
-        except Exception:
+        except ValueError:
             continue
         if not (week_start <= d_obj <= today_d):
             continue
@@ -3575,7 +3576,11 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
     async def _tool_json(tool_name: str, args: dict) -> Any:
         try:
             raw = await call_tool(mcp_session, tool_name, args)
-        except Exception:
+        except (TimeoutError, OSError) as exc:
+            log.debug("_build_mcp_factual_query_markdown: fallo red en %s: %s", tool_name, exc)
+            return None
+        except RuntimeError as exc:
+            log.debug("_build_mcp_factual_query_markdown: fallo runtime en %s: %s", tool_name, exc)
             return None
         parsed_raw = _try_parse_json(raw)
         if parsed_raw is not None:
@@ -3614,7 +3619,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         if str(row.get("date") or "") == target_iso:
             try:
                 tss_day = float(row.get("tss") or 0.0)
-            except Exception:
+            except (TypeError, ValueError):
                 tss_day = None
             break
 
@@ -3626,7 +3631,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
                 try:
                     tss_day = float(row.get("tss") or 0.0)
                     tss_source = "load_metrics(series)"
-                except Exception:
+                except (TypeError, ValueError):
                     tss_day = None
                 break
 
@@ -3636,7 +3641,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             return None
         try:
             return int(round(float(dur) / 60.0))
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
     lines = [
@@ -3936,11 +3941,11 @@ def _get_active_training_plan(profile: dict) -> dict | None:
                     sessions = _storage.list_training_plan_sessions(str(plan_id))
                     if sessions:
                         db_plan["sessions"] = sessions
-                except Exception:
-                    pass
+                except (RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+                    log.debug("No se pudieron cargar sesiones de plan %s: %s", plan_id, exc)
             return db_plan
-    except Exception:
-        pass
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+        log.warning("No se pudo leer plan activo desde DB; usando fallback local: %s", exc)
 
     plan = (profile or {}).get("training_plan")
     if not isinstance(plan, dict):
@@ -3978,7 +3983,7 @@ def _extract_body_battery_level(payload: Any, target_date: str) -> float | None:
     )
     try:
         return float(value) if value is not None else None
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
 
@@ -3993,18 +3998,18 @@ def _extract_sleep_inputs(payload: Any, target_date: str) -> tuple[float | None,
     if sleep_hours is None and sleep_seconds is not None:
         try:
             sleep_hours = float(sleep_seconds) / 3600.0
-        except Exception:
+        except (TypeError, ValueError):
             sleep_hours = None
 
     score = day.get("sleep_score") or day.get("sleepScore")
     try:
         sleep_score = float(score) if score is not None else None
-    except Exception:
+    except (TypeError, ValueError):
         sleep_score = None
 
     try:
         sleep_hours_f = float(sleep_hours) if sleep_hours is not None else None
-    except Exception:
+    except (TypeError, ValueError):
         sleep_hours_f = None
 
     return (sleep_hours_f, sleep_score)
@@ -4027,11 +4032,11 @@ def _extract_hrv_inputs(payload: Any, target_date: str) -> tuple[float | None, f
 
     try:
         avg_f = float(avg) if avg is not None else None
-    except Exception:
+    except (TypeError, ValueError):
         avg_f = None
     try:
         weekly_f = float(weekly) if weekly is not None else None
-    except Exception:
+    except (TypeError, ValueError):
         weekly_f = None
 
     return (avg_f, weekly_f, status)
@@ -4062,7 +4067,7 @@ def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | No
         return None
     try:
         day_index = date.fromisoformat(target_date_iso).isoweekday()  # lunes=1..domingo=7
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
     target_week_index = None
@@ -4075,7 +4080,7 @@ def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | No
             delta_days = (target_d - start_d).days
             if delta_days >= 0:
                 target_week_index = int(delta_days // 7) + 1
-    except Exception:
+    except (TypeError, ValueError):
         target_week_index = None
 
     candidates: list[dict] = []
@@ -4085,7 +4090,7 @@ def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | No
         try:
             if int(session.get("day_index") or 0) == day_index:
                 candidates.append(session)
-        except Exception:
+        except (TypeError, ValueError):
             continue
 
     if not candidates:
@@ -4116,7 +4121,7 @@ def _extract_activity_duration_minutes(activity: dict) -> float:
     )
     try:
         return max(0.0, float(raw) / 60.0)
-    except Exception:
+    except (TypeError, ValueError):
         return 0.0
 
 
@@ -4247,7 +4252,7 @@ def _copy_structured_workout(workout: dict | None) -> dict | None:
         return None
     try:
         return json.loads(json.dumps(workout))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return dict(workout)
 
 
@@ -4505,7 +4510,7 @@ def _compute_plan_execution_feedback(
     for a in executed:
         try:
             tss_val, _ = _estimate_session_tss(a)
-        except Exception:
+        except (TypeError, ValueError, KeyError):
             tss_val = 0.0
         actual_tss_acc += max(0.0, float(tss_val or 0.0))
     actual_tss = round(actual_tss_acc, 1)
@@ -4592,7 +4597,7 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     today_iso = str(dates.get("today") or date.today().isoformat())
     try:
         today_idx = date.fromisoformat(today_iso).isoweekday()
-    except Exception:
+    except (TypeError, ValueError):
         today_idx = date.today().isoweekday()
 
     plan_data = plan.get("plan_data") if isinstance(plan.get("plan_data"), dict) else {}
@@ -4835,7 +4840,7 @@ def _build_goal_plan_fallback(profile: dict) -> str:
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
@@ -4870,7 +4875,7 @@ def _parse_day_indexes(value: Any) -> set[int]:
             continue
         try:
             num = int(float(token))
-        except Exception:
+        except (TypeError, ValueError):
             continue
         if 1 <= num <= 7:
             out.add(num)
@@ -4887,7 +4892,7 @@ def _extract_max_minutes_per_day(value: Any) -> dict[int, int]:
             continue
         try:
             minutes = int(round(float(raw_val)))
-        except Exception:
+        except (TypeError, ValueError):
             continue
         if minutes < 0:
             continue
@@ -4936,7 +4941,7 @@ def _resolve_training_constraints(goals: dict, health: dict, user_message: str =
     max_session = goals.get("max_session_minutes") or availability.get("max_session_minutes")
     try:
         max_session_int = int(round(float(max_session))) if max_session is not None else None
-    except Exception:
+    except (TypeError, ValueError):
         max_session_int = None
     if max_session_int is not None and max_session_int >= 0:
         for d in available_days:
@@ -4954,13 +4959,13 @@ def _resolve_training_constraints(goals: dict, health: dict, user_message: str =
     min_rest = goals.get("min_rest_days") or availability.get("min_rest_days") or 1
     try:
         min_rest_days = max(1, min(4, int(round(float(min_rest)))))
-    except Exception:
+    except (TypeError, ValueError):
         min_rest_days = 1
 
     max_quality = goals.get("max_quality_sessions_per_week") or availability.get("max_quality_sessions_per_week") or 2
     try:
         max_quality_sessions = max(1, min(3, int(round(float(max_quality)))))
-    except Exception:
+    except (TypeError, ValueError):
         max_quality_sessions = 2
 
     health_constraints = health.get("training_constraints") if isinstance(health.get("training_constraints"), dict) else {}
@@ -5145,7 +5150,7 @@ def _generate_structured_plan_payload(
         try:
             days_to_race = (date.fromisoformat(race_date) - date.today()).days
             duration_weeks = min(16, max(4, int(days_to_race / 7)))
-        except Exception:
+        except (TypeError, ValueError):
             duration_weeks = 8
 
     injuries = list((health or {}).get("injuries") or [])
@@ -6334,7 +6339,7 @@ class _GeminiCompletions:
                             parts = err_msg.split("Please retry in")
                             sec_str = parts[1].strip().split("s")[0].strip()
                             current_delay = float(sec_str) + 1.0
-                        except Exception:
+                        except (IndexError, ValueError):
                             pass
                     log.debug(f"Gemini ocupado ({e}). Reintentando en {current_delay:.1f}s...")
                     await asyncio.sleep(current_delay)
@@ -6482,7 +6487,7 @@ async def _build_recovery_fallback_snapshot(
                     else {"date": date_iso}
                 )
                 raw = await call_tool(mcp_session, tool_name, args)
-            except Exception:
+            except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError):
                 continue
 
             if _is_no_data_result(raw):
@@ -6995,7 +7000,7 @@ def _build_activity_analysis_block(
     # ── Parsear actividad ──────────────────────────────────────────────────
     try:
         act = json.loads(activity_raw) if activity_raw else {}
-    except Exception:
+    except (TypeError, json.JSONDecodeError):
         act = {}
 
     name     = act.get("name") or act.get("activityName") or "Actividad"
@@ -7123,7 +7128,7 @@ def _build_activity_analysis_block(
     if not _zones_shown and avg_hr_f and max_hr_f and dur_s:
         lines.append("")
         lines.append("=== ZONAS DE FRECUENCIA CARDIACA (estimacion gaussiana — aproximada) ===")
-        lines.append(f"AVISO: sin datos reales de zonas. Estimación basada en FC media y FCmax, puede diferir de las zonas reales configuradas en Garmin.")
+        lines.append("AVISO: sin datos reales de zonas. Estimación basada en FC media y FCmax, puede diferir de las zonas reales configuradas en Garmin.")
         lines.append(f"FCmax observada: {max_hr_f:.0f} bpm | FC media: {avg_hr_f:.0f} bpm")
         sigma = 0.10 * max_hr_f
         zone_defs = [
@@ -7223,7 +7228,8 @@ def _build_activity_analysis_block(
             if charged is not None and drained is not None:
                 net = int(charged) - int(drained)
                 lines.append(f"Balance neto: {net:+d} puntos {'(deficit esperado en una ultra)' if net < -30 else ''}")
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError, IndexError) as exc:
+            log.debug("No se pudo parsear body battery para analisis de actividad: %s", exc)
             lines.append("")
             lines.append("=== BODY BATTERY (dia de la actividad) ===")
             lines.append(body_battery_raw[:200])
@@ -7265,7 +7271,8 @@ def _build_activity_analysis_block(
                 lines.append(f"Puntuacion Garmin: {score}/100")
             if quality_str:
                 lines.append(f"Calidad: {quality_str}")
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError, IndexError) as exc:
+            log.debug("No se pudo parsear sueno para analisis de actividad: %s", exc)
             lines.append("")
             lines.append("=== SUENO NOCHE PREVIA ===")
             lines.append(sleep_raw[:300])
@@ -7293,7 +7300,8 @@ def _build_activity_analysis_block(
                     lines.append(f"Estado HRV: {status_hrv}")
                 if not avg_hrv:
                     lines.append(f"(raw compact: {hrv_json_str[:150]})")
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError, IndexError) as exc:
+            log.debug("No se pudo parsear HRV para analisis de actividad: %s", exc)
             lines.append("")
             lines.append("=== HRV DIA ACTIVIDAD ===")
             lines.append(hrv_raw[:200])
@@ -7410,7 +7418,7 @@ async def _build_activity_candidates_payload(mcp_session: ClientSession, user_me
             if not has_more:
                 break
             start = next_start_val if next_start_val > start else start + limit
-    except Exception as exc:
+    except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
         payload = {
             "error": "missing_activity_id",
             "message": "No se pudo recuperar listado de actividades para resolver activity_id.",
@@ -7553,7 +7561,8 @@ async def _kairos_weekly_sport_breakdown(mcp_session, weeks_back: int = 4, sport
         try:
             raw = await call_tool(mcp_session, "get_activities", {"start": str(start_idx), "limit": str(limit)})
             activities, has_more, next_start = _parse_activities_response(raw)
-        except Exception:
+        except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
+            log.debug("_kairos_weekly_sport_breakdown: get_activities falló: %s", exc)
             break
         past_window = False
         for act in activities:
@@ -7675,7 +7684,7 @@ async def _fetch_activities_for_load_calc(
     try:
         start_d = _date.fromisoformat(start_date_iso)
         end_d   = _date.fromisoformat(end_date_iso)
-    except Exception:
+    except ValueError:
         return []
 
     result: list[dict] = []
@@ -7706,7 +7715,7 @@ async def _fetch_activities_for_load_calc(
                 continue
             try:
                 d_obj = _date.fromisoformat(d_iso)
-            except Exception:
+            except ValueError:
                 continue
 
             if d_obj > end_d:
@@ -7962,8 +7971,8 @@ class TrainerAgent:
                 perf["performance_params_updated_at"] = today_iso
             try:
                 _save_user_profile(self.user_profile)
-            except Exception:
-                pass
+            except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                log.debug("No se pudo persistir cycling_ftp en perfil: %s", exc)
             return ftp_live
 
         return round(cached_ftp, 1) if cached_ftp else None
@@ -8022,8 +8031,8 @@ class TrainerAgent:
                         result["weight_kg"] = round(w / 1000, 1) if w > 300 else round(w, 1)
                     except (ValueError, TypeError):
                         pass
-        except Exception:
-            pass
+        except (TimeoutError, OSError, RuntimeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            log.debug("fetch_garmin_personal_data: get_user_profile falló: %s", exc)
 
         # --- get_body_composition (peso más reciente si get_user_profile no lo devolvió) ---
         if "weight_kg" not in result:
@@ -8044,8 +8053,8 @@ class TrainerAgent:
                             result["weight_kg"] = round(w / 1000, 1) if w > 300 else round(w, 1)
                         except (ValueError, TypeError):
                             pass
-            except Exception:
-                pass
+            except (TimeoutError, OSError, RuntimeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                log.debug("fetch_garmin_personal_data: get_body_composition falló: %s", exc)
 
         return result
 
@@ -8073,7 +8082,7 @@ class TrainerAgent:
         if not force_full_recalc and last_date_str:
             try:
                 last_d = _date.fromisoformat(last_date_str)
-            except Exception:
+            except ValueError:
                 last_d = None
             if last_d and last_d >= today:
                 # Auto-detectar serie corrupta: si tenemos suficientes días en DB pero
@@ -8124,7 +8133,8 @@ class TrainerAgent:
         cycling_ftp = None
         try:
             cycling_ftp = await self._get_or_refresh_cycling_ftp()
-        except Exception:
+        except (TimeoutError, OSError, RuntimeError) as exc:
+            log.debug("compute_load: no se pudo refrescar FTP ciclismo: %s", exc)
             cycling_ftp = None
         if cycling_ftp:
             log.info("compute_load: FTP ciclismo=%.0f W (usado para TSS por potencia)", cycling_ftp)
@@ -8212,8 +8222,8 @@ class TrainerAgent:
                             ):
                                 if _detail.get(_k) is not None:
                                     _act[_k] = _detail[_k]
-                except Exception:
-                    pass
+                except (TimeoutError, OSError, RuntimeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                    log.debug("compute_load: no se pudo enriquecer actividad %s: %s", _act_id, exc)
 
         # 4. TSS por día para las actividades nuevas
         hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(self.user_profile)
@@ -8247,7 +8257,8 @@ class TrainerAgent:
                                 "get_activity_hr_in_timezones",
                                 {"activity_id": int(act_id)},
                             )
-                        except Exception:
+                        except (TimeoutError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                            log.debug("compute_load: no se pudieron obtener zonas FC de actividad %s: %s", act_id, exc)
                             hr_zones_raw = None
                         _hr_zones_cache[act_id_key] = hr_zones_raw
                 if hr_zones_raw:
@@ -8310,7 +8321,7 @@ class TrainerAgent:
         if running_inference_samples:
             running_inference_samples.sort(key=lambda item: str(item.get("date") or ""), reverse=True)
             self.user_profile["running_session_inference"] = {
-                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "updated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
                 "window_start": fetch_from,
                 "window_end": today.isoformat(),
                 "samples": running_inference_samples[:30],
@@ -8387,12 +8398,12 @@ class TrainerAgent:
             "weekly":          load_fatigue.get("weekly") or {},
             "series":          load_fatigue.get("series") or [],
             "formula_version": _TSS_FORMULA_VERSION,
-            "updated_at":      datetime.now().isoformat(timespec="seconds"),
+            "updated_at":      datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
         }
         try:
             _save_user_profile(self.user_profile)
-        except Exception:
-            pass
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            log.debug("No se pudo persistir cache de load_metrics: %s", exc)
 
     async def collect_startup_snapshot_48h(self) -> dict:
         """Recoge un snapshot operativo de 48h para briefing de arranque."""
@@ -8402,7 +8413,11 @@ class TrainerAgent:
         async def _tool_json(tool_name: str, args: dict) -> Any:
             try:
                 raw = await call_tool(self.mcp_session, tool_name, args)
-            except Exception:
+            except (TimeoutError, OSError) as exc:
+                log.debug("collect_startup_snapshot_48h: fallo red en %s: %s", tool_name, exc)
+                return None
+            except RuntimeError as exc:
+                log.debug("collect_startup_snapshot_48h: fallo runtime en %s: %s", tool_name, exc)
                 return None
             parsed_raw = _try_parse_json(raw)
             if parsed_raw is not None:
@@ -8450,22 +8465,19 @@ class TrainerAgent:
         active_plan = _get_active_training_plan(getattr(self, "user_profile", {}) or {})
         if active_plan:
             yday_activities: list[dict] = []
-            try:
-                yday_raw = await _tool_json(
-                    "get_activities_by_date",
-                    {
-                        "start_date": yesterday_iso,
-                        "end_date": yesterday_iso,
-                        "page": 0,
-                        "page_size": 100,
-                    },
-                )
-                if isinstance(yday_raw, dict):
-                    yday_activities = _extract_activities_list(yday_raw.get("activities") or yday_raw)
-                elif isinstance(yday_raw, list):
-                    yday_activities = _extract_activities_list(yday_raw)
-            except Exception:
-                yday_activities = []
+            yday_raw = await _tool_json(
+                "get_activities_by_date",
+                {
+                    "start_date": yesterday_iso,
+                    "end_date": yesterday_iso,
+                    "page": 0,
+                    "page_size": 100,
+                },
+            )
+            if isinstance(yday_raw, dict):
+                yday_activities = _extract_activities_list(yday_raw.get("activities") or yday_raw)
+            elif isinstance(yday_raw, list):
+                yday_activities = _extract_activities_list(yday_raw)
 
             # Fallback local: filtrar el lote reciente por fecha exacta de ayer.
             if not yday_activities:
@@ -8489,7 +8501,7 @@ class TrainerAgent:
         # 1) Prioridad absoluta: serie persistida en DB (fuente canónica).
         try:
             canonical_series = _storage.get_load_metrics_series(days=120)
-        except Exception as _db_exc:
+        except (RuntimeError, ValueError, TypeError, OSError) as _db_exc:
             canonical_series = []
             _load_debug = f"error leyendo DB canónica: {_db_exc}"
 
@@ -8534,9 +8546,9 @@ class TrainerAgent:
                             activities_for_load.extend(_extract_activities_list(parsed))
                         elif isinstance(parsed, dict):
                             activities_for_load.extend(_extract_activities_list(parsed.get("activities") or parsed))
-                    except Exception:
+                    except json.JSONDecodeError:
                         pass
-            except Exception as _e:
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
                 _load_debug = f"excepcion get_activities_by_date: {_e}"
                 log.warning("collect_startup: get_activities_by_date falló: %s", _e)
 
@@ -8553,7 +8565,7 @@ class TrainerAgent:
                     else:
                         _load_debug = "sin actividades en fallback — usuario nuevo o sin datos en Garmin"
                         log.info("collect_startup: fallback también vacío — usuario nuevo o sin datos")
-                except Exception as _e2:
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e2:
                     _load_debug = f"fallback también falló: {_e2}"
                     log.warning("collect_startup: fallback get_activities falló: %s", _e2)
                     activities_for_load = list(activities_recent)
@@ -8613,12 +8625,12 @@ class TrainerAgent:
                 "ranges": load_fatigue.get("ranges") or {},
                 "weekly": load_fatigue.get("weekly") or {},
                 "series": load_fatigue.get("series") or [],
-                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "updated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
             }
             try:
                 _save_user_profile(self.user_profile)
-            except Exception:
-                pass
+            except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                log.debug("No se pudo persistir load_metrics en startup: %s", exc)
 
         return {
             "window_hours": 48,
@@ -8868,7 +8880,7 @@ class TrainerAgent:
                     previous_plan = _normalize_storage_plan_row(previous_plan_row)
                     if previous_plan and previous_plan.get("id"):
                         previous_sessions = _storage.list_training_plan_sessions(str(previous_plan.get("id")))
-                except Exception:
+                except (RuntimeError, ValueError, TypeError, OSError, KeyError):
                     previous_plan = _get_active_training_plan(self.user_profile)
                     previous_sessions = []
 
@@ -8934,7 +8946,7 @@ class TrainerAgent:
                 _save_history_entry("user", user_message)
                 _save_history_entry("assistant", assistant_reply)
                 return assistant_reply
-            except Exception as exc:
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                 log.warning("structured planning route failed, using goal fallback: %s", exc)
                 assistant_reply = _build_goal_plan_fallback(self.user_profile)
                 self.conversation_history.append({"role": "user", "content": user_message})
@@ -8973,8 +8985,8 @@ class TrainerAgent:
                         _save_history_entry("user", user_message)
                         _save_history_entry("assistant", assistant_reply)
                         return assistant_reply
-            except Exception:
-                pass
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+                log.debug("personal records route falló: %s", exc)
 
         # Pre-fetch proactivo: si el usuario menciona una fecha explícita,
         # resolver y cargar la actividad + contexto completo ANTES del bucle LLM.
@@ -8994,7 +9006,7 @@ class TrainerAgent:
                               or _first.get("activity_id"))
                     if pre_id:
                         pre_id = int(pre_id)
-            except Exception as _e:
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
                 log.debug("pre_fetch get_activities_by_date fallback: %s", _e)
 
             # Intento 2: paginación por fecha si el anterior falló
@@ -9013,7 +9025,7 @@ class TrainerAgent:
                                 or _act_raw_j.get("duration_seconds"))
                     if _dur_raw is not None:
                         _act_dur_s = float(_dur_raw)
-                except Exception:
+                except (TypeError, ValueError, json.JSONDecodeError):
                     pass
                 context_parts = [f"ACTIVIDAD (activityId={pre_id}, fecha={user_date}):\n{pre_data}"]
 
@@ -9029,7 +9041,7 @@ class TrainerAgent:
                     log.info(f"body_battery compact({user_date}): {bb_data[:120] if bb_data else 'None'}")
                     if bb_data and bb_data != "(sin datos)":
                         context_parts.append(f"BODY BATTERY del {user_date}:\n{bb_data}")
-                except Exception as e:
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
                     log.info(f"body_battery error: {e}")
 
                 # Sueño de la noche previa (recuperación pre-actividad)
@@ -9049,7 +9061,7 @@ class TrainerAgent:
                             break
                     if not _sleep_added:
                         log.info("sleep: no se encontraron datos en ninguna fecha")
-                except Exception as e:
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
                     log.info(f"sleep error: {e}")
 
                 # HRV del día de la actividad
@@ -9059,7 +9071,7 @@ class TrainerAgent:
                     log.info(f"hrv({user_date}): {hrv_data[:120] if hrv_data else 'None'}")
                     if hrv_data and hrv_data != "(sin datos)":
                         context_parts.append(f"HRV del {user_date}:\n{hrv_data}")
-                except Exception as e:
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
                     log.debug(f"hrv error: {e}")
 
                 # Carga de entrenamiento — prueba con rango de 4 semanas
@@ -9074,7 +9086,7 @@ class TrainerAgent:
                     log.debug(f"training_load: {tl_data[:80] if tl_data else 'None'}")
                     if tl_data and tl_data != "(sin datos)":
                         context_parts.append(f"CARGA DE ENTRENAMIENTO:\n{tl_data}")
-                except Exception as e:
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
                     log.debug(f"training_load error: {e}")
 
                 # ── Zonas reales de FC ──────────────────────────────────────────────
@@ -9088,7 +9100,7 @@ class TrainerAgent:
                         log.info("hr_zones: encontradas %d zonas en get_activity", len(_zones_in_act))
                     else:
                         log.info("hr_zones: get_activity no contiene datos de zonas (requiere llamada específica)")
-                except Exception:
+                except (TypeError, ValueError, json.JSONDecodeError):
                     pass
 
                 # Estrategia 2: llamar get_activity_hr_zones (herramienta específica)
@@ -9106,7 +9118,7 @@ class TrainerAgent:
                                     raw_hr_zones = _raw
                                     log.info("hr_zones: %d zonas via get_activity_hr_zones(%s)", len(_parsed), list(_param.keys())[0])
                                     break
-                        except Exception as _e:
+                        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
                             log.info("get_activity_hr_zones(%s) error: %s", list(_param.keys())[0], _e)
                             break
 
@@ -9125,7 +9137,7 @@ class TrainerAgent:
                                     raw_hr_zones = _raw
                                     log.info("hr_zones: %d zonas via get_activity_hr_in_timezones", len(_parsed))
                                     break
-                        except Exception:
+                        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError):
                             break
 
                 if raw_hr_zones:
@@ -9159,14 +9171,14 @@ class TrainerAgent:
                             pre_data = json.dumps(_pd, ensure_ascii=False, separators=(",", ":"))
                             context_parts[0] = f"ACTIVIDAD (activityId={pre_id}, fecha={user_date}):\n{pre_data}"
                             log.info("pre_data: zonas_fc_reales_garmin inyectadas (%d zonas)", len(_zones_for_predata))
-                    except Exception as _ze:
+                    except (TypeError, ValueError, json.JSONDecodeError, KeyError) as _ze:
                         log.debug("pre_data zone update error: %s", _ze)
 
                 # Construir bloque de análisis pre-computado en Python
                 cycling_ftp_for_analysis = None
                 try:
                     cycling_ftp_for_analysis = await self._get_or_refresh_cycling_ftp()
-                except Exception:
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError):
                     cycling_ftp_for_analysis = None
 
                 analysis_block = _build_activity_analysis_block(
@@ -9517,8 +9529,8 @@ class TrainerAgent:
                         if records_compact and records_compact != "(sin datos)" and not _is_no_data_result(records_raw):
                             records_sport = _detect_personal_records_sport_intent(user_message, self.conversation_history)
                             assistant_reply = _build_personal_records_markdown(records_compact, preferred_sport=records_sport)
-                except Exception:
-                    pass
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+                    log.debug("records tool route no disponible: %s", exc)
 
             # Fallback anti-respuesta genérica: si ya existe objetivo en perfil,
             # devolver una planificación base en lugar de pedir contexto redundante.
@@ -9568,8 +9580,8 @@ class TrainerAgent:
                             "created_at": date.today().isoformat(),
                         }
                     _save_user_profile(self.user_profile)
-                except Exception:
-                    pass
+                except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                    log.debug("No se pudo persistir plan fallback en perfil: %s", exc)
 
             # Guardar en historial de conversación
             self.conversation_history.append({"role": "user", "content": user_message})
@@ -9610,7 +9622,7 @@ class TrainerAgent:
                 c_toks = getattr(u, "completion_tokens", 0) or 0
                 update_gemini_daily_usage(self._api_key, p_toks + c_toks)
             return (response.choices[0].message.content or "").strip()
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError, AttributeError):
             # Fallback: resumen básico con los temas del usuario
             topics = [
                 msg["content"][:80]
@@ -9662,5 +9674,5 @@ class TrainerAgent:
             return
         try:
             _storage.persist_session_summary_daily(summary)
-        except Exception:
-            pass
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            log.debug("No se pudo persistir checkpoint diario de sesión: %s", exc)

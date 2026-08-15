@@ -183,5 +183,5 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
                     parts.append(block.text)
             return "\n".join(parts)
         return "Sin datos disponibles."
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError) as e:
         return f"Error al llamar a '{tool_name}': {str(e)}"

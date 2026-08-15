@@ -64,7 +64,7 @@ def is_zscaler_network() -> bool:
             )
             body = resp.text or ""
             _zscaler_cache = "zscaler" in body.lower()
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ValueError) as exc:
         err = str(exc).lower()
         _zscaler_cache = (
             "zscaler" in err
@@ -97,7 +97,7 @@ def _supabase():
 
         _sb = create_client(url, key)
         return _sb
-    except Exception as exc:
+    except (ImportError, RuntimeError, ValueError, TypeError, OSError) as exc:
         log.warning("[storage] Supabase no disponible: %s", exc)
         return None
 
@@ -141,9 +141,8 @@ def encrypt_password(plaintext: str) -> str:
 def decrypt_password(encrypted: str) -> str | None:
     """Descifra una contraseña. Devuelve None si falla (clave cambiada o corrupto)."""
     try:
-        from cryptography.fernet import InvalidToken
         return _get_fernet().decrypt(encrypted.encode("utf-8")).decode("utf-8")
-    except Exception:
+    except (ValueError, TypeError, UnicodeDecodeError):
         return None
 
 
@@ -156,7 +155,7 @@ def find_user_by_username(username: str) -> dict | None:
         sb = _require_supabase()
         res = sb.table("app_user").select("id,username,password_hash,credentials").eq("username", uname).limit(1).execute()
         return res.data[0] if res.data else None
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError):
         return None
 
 
@@ -179,7 +178,7 @@ def update_app_user_password(username: str, new_password: str) -> dict:
         if not result.data:
             return {"ok": False, "error": "Usuario no encontrado"}
         return {"ok": True, "error": None}
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         return {"ok": False, "error": str(exc)}
 
 
@@ -197,7 +196,7 @@ def _verify_password(password: str, stored: str) -> bool:
             return False
         candidate = _pbkdf2_hash(password, salt_hex=salt_hex)
         return hmac.compare_digest(candidate, stored)
-    except Exception:
+    except (ValueError, TypeError):
         return False
 
 
@@ -228,7 +227,7 @@ def register_app_user(username: str, password: str, credentials: dict | None = N
             }
         ).execute()
         return {"ok": True, "user_id": user_id, "error": None}
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         return {"ok": False, "user_id": None, "error": str(exc)}
 
 
@@ -254,7 +253,7 @@ def authenticate_app_user(username: str, password: str) -> dict:
             "credentials": row.get("credentials") or {},
             "error": None,
         }
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         return {"ok": False, "user_id": None, "credentials": {}, "error": str(exc)}
 
 
@@ -380,7 +379,7 @@ def _normalize_plan_status(status: str | None, default: str = "draft") -> str:
 def _to_int(value, default: int = 0) -> int:
     try:
         return int(value)
-    except Exception:
+    except (ValueError, TypeError):
         return default
 
 
@@ -725,7 +724,7 @@ def check_supabase_connection() -> dict:
     try:
         sb.table("app_user").select("id").limit(1).execute()
         return {"configured": True, "connected": True, "error": None}
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         return {"configured": True, "connected": False, "error": str(exc)}
 
 
@@ -759,7 +758,7 @@ def get_load_metrics_series(days: int = 120) -> list[dict]:
             }
             for r in (resp.data or [])
         ]
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.warning("get_load_metrics_series: %s", exc)
         return []
 
@@ -781,7 +780,7 @@ def get_load_metrics_last_date() -> str | None:
         )
         rows = resp.data or []
         return str(rows[0]["metric_date"]) if rows else None
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.warning("get_load_metrics_last_date: %s", exc)
         return None
 
@@ -814,5 +813,5 @@ def upsert_load_metrics_series(series: list[dict]) -> None:
                 rows[i:i + 200], on_conflict="app_user_id,metric_date"
             ).execute()
         log.info("upsert_load_metrics_series: %d filas persistidas", len(rows))
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.warning("upsert_load_metrics_series: %s", exc)
