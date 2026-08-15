@@ -31,13 +31,13 @@ if sys.platform == "win32":
 
         ctypes.windll.kernel32.SetConsoleCP(65001)
         ctypes.windll.kernel32.SetConsoleOutputCP(65001)
-    except Exception:
+    except (AttributeError, OSError):
         pass
 
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
+    except (AttributeError, ValueError):
         pass
 
 from dotenv import load_dotenv
@@ -55,7 +55,7 @@ load_dotenv(encoding="utf-8")
 try:
     import truststore
     truststore.inject_into_ssl()
-except Exception:
+except (ImportError, AttributeError, RuntimeError):
     pass
 
 # Añadir el directorio raíz al path para imports
@@ -94,7 +94,8 @@ async def _sync_from_garmin(agent) -> list[str]:
     console.print("[dim]Sincronizando datos personales desde Garmin Connect...[/]")
     try:
         garmin_data = await agent.fetch_garmin_personal_data()
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+        logging.debug("_sync_from_garmin: error leyendo datos MCP: %s", exc)
         garmin_data = {}
 
     if not garmin_data:
@@ -354,7 +355,7 @@ def _build_enriched_athlete_knowledge(profile: dict, enrichment: dict) -> str:
     try:
         raw_preview = json.dumps(enrichment, ensure_ascii=False)[:1200]
         lines.append(f"```json\n{raw_preview}\n```")
-    except Exception:
+    except (TypeError, ValueError):
         lines.append("- No se pudo serializar el resumen MCP")
 
     return "\n".join(lines).strip() + "\n"
@@ -706,7 +707,7 @@ def _show_plan_help() -> None:
 def _show_training_plans() -> None:
     try:
         plans = list_training_plans(include_archived=False)
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         console.print(f"[bold red]Error listando planes:[/] {exc}")
         return
 
@@ -741,7 +742,7 @@ def _show_training_plan(plan_id: str) -> None:
 
     try:
         plan = get_training_plan(plan_id)
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         console.print(f"[bold red]Error cargando plan:[/] {exc}")
         return
 
@@ -752,7 +753,8 @@ def _show_training_plan(plan_id: str) -> None:
     sessions = []
     try:
         sessions = list_training_plan_sessions(plan_id)
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+        logging.debug("_show_training_plan: no se pudieron cargar sesiones de %s: %s", plan_id, exc)
         sessions = []
 
     lines = [
@@ -788,7 +790,7 @@ def _activate_training_plan_cli(plan_id: str, agent: TrainerAgent) -> None:
 
     try:
         activated = activate_training_plan(plan_id, change_reason="activated_from_cli")
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         console.print(f"[bold red]Error activando plan:[/] {exc}")
         return
 
@@ -840,7 +842,7 @@ def _create_training_plan_cli(agent: TrainerAgent) -> None:
         try:
             duration_weeks = max(0, int(duration_weeks_raw))
             break
-        except Exception:
+        except ValueError:
             console.print("[red]✗[/] Introduce un número entero de semanas.")
 
     today_focus = Prompt.ask("Sesión sugerida para hoy (opcional)", default="").strip()
@@ -868,7 +870,7 @@ def _create_training_plan_cli(agent: TrainerAgent) -> None:
             sessions=None,
             change_reason="created_from_cli",
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         console.print(f"[bold red]Error creando plan:[/] {exc}")
         return
 
@@ -1249,7 +1251,8 @@ async def main() -> None:
                     console.print("[bold red]No se pudo actualizar la contraseña. Saliendo.[/]")
                     return
                 app_password = new_pw
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+            logging.debug("Verificación inicial de Garmin falló (no bloqueante): %s", exc)
             pass  # No bloquear el arranque si el test de verificación falla
 
         # Sincronizar datos personales desde Garmin
@@ -1315,14 +1318,14 @@ async def main() -> None:
                 )
             else:
                 console.print("[dim yellow]⚠ Carga/fatiga: sin actividades suficientes para calcular[/]")
-        except Exception as _load_exc:
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _load_exc:
             console.print(f"[dim yellow]⚠ Carga/fatiga no calculada: {_load_exc}[/]")
 
         # Estado proactivo al arranque (especialmente para usuario existente).
         try:
             proactive_status = await agent.build_startup_status_markdown(profile_changes=profile_changes)
             console.print(Markdown(proactive_status))
-        except Exception as status_exc:
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as status_exc:
             console.print(f"[dim yellow]No se pudo generar el estado proactivo inicial: {status_exc}[/]")
 
         console.print("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
@@ -1497,11 +1500,11 @@ async def main() -> None:
             try:
                 with console.status("[bold green]Kairos Coach está analizando tus datos...[/]"):
                     response = await agent.chat(user_input)
-                console.print(f"\n[bold green]Kairos Coach[/]")
+                console.print("\n[bold green]Kairos Coach[/]")
                 console.print(Markdown(_format_coach_markdown(response)))
                 # Checkpoint incremental del resumen para no bloquear el cierre.
                 agent.save_session_summary_checkpoint()
-            except Exception as e:
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
                 console.print(f"\n[bold red]Error en el Agente:[/] {e}")
 
         # Al salir de la sesión, guardar checkpoint ligero sin llamada al LLM.
@@ -1510,14 +1513,14 @@ async def main() -> None:
                 with console.status("[dim]Guardando checkpoint de sesión...[/]"):
                     agent.save_session_summary_checkpoint()
                 console.print("[dim]✓ Sesión guardada en memoria[/]")
-            except Exception:
-                pass
+            except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                logging.debug("No se pudo guardar checkpoint final de sesión: %s", exc)
 
         # Al salir de la sesión, mostrar resumen de tokens gastados
         p_tokens = agent.total_prompt_tokens
         c_tokens = agent.total_completion_tokens
         t_tokens = p_tokens + c_tokens
-        console.print(f"\n[bold dimgray][debug] Fin de la sesión. Resumen de tokens gastados en esta sesión:[/]")
+        console.print("\n[bold dimgray][debug] Fin de la sesión. Resumen de tokens gastados en esta sesión:[/]")
         console.print(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
         console.print(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
         console.print(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")

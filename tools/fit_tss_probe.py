@@ -21,7 +21,7 @@ def _sec_to_mmss(sec: float) -> str:
 def _safe_float(v):
     try:
         return float(v)
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
 

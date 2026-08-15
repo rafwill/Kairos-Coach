@@ -12,8 +12,6 @@ Cubre:
 from datetime import date, timedelta
 from unittest.mock import patch
 
-import pytest
-
 from agent.main import (
     _auto_select_provider,
     _build_enriched_athlete_knowledge,
@@ -364,7 +362,7 @@ class TestEnsureGarminCredentials:
              patch("agent.main.encrypt_password", return_value="ENC"), \
              patch("agent.main.Prompt.ask") as prompt_mock, \
              patch.dict("os.environ", {}, clear=True):
-            out = _ensure_garmin_credentials(creds, app_password="app-secret")
+            _ensure_garmin_credentials(creds, app_password="app-secret")
             # Capturar dentro del contexto donde los env vars están activos
             import os as _os
             captured_env["pw"] = _os.environ.get("GARMIN_PASSWORD")

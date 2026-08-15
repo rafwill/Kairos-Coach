@@ -1483,7 +1483,7 @@ class TestPlanningFallbackAndRanges:
         assert plan["id"] == "plan-db-1"
 
 
-class TestLoadFatigueModel:
+class TestSessionTssEstimation:
     def test_compute_load_fatigue_metrics_returns_latest_and_ranges(self):
         today = date.today()
         activities = []

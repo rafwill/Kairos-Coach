@@ -3,7 +3,7 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 287 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
+- Suite de tests: 310 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 
 ---
@@ -15,13 +15,13 @@
 #### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — PENDIENTE
 - Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
 - Checklist de ejecucion:
-  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (287 passed).
+  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (310 passed).
   - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
   - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
   - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
   - Contrastar muestra de actividades y TSS por sesion contra referencias conocidas.
   - [REALIZADO 2026-08-15] Verificar coherencia dinamica de CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) en el briefing proactivo de arranque (ATL=52.5, CTL=61.4, TSB=8.9, regla aplicada mostrada).
-  - Registrar evidencia (capturas/logs/resumen) en bitacora tecnica.
+  - Registrar evidencia (capturas/logs/resumen) en changelog/documentacion operativa.
 - Criterio de cierre:
   - Marcar este item como **REALIZADO** solo cuando la validacion end-to-end haya sido ejecutada con datos reales y evidencia guardada.
 
