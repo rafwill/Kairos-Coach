@@ -57,7 +57,7 @@ Cada vez que inicias el agente, recibe automáticamente:
 Esto funciona como el briefing que te daría un entrenador de élite antes de que hagas la primera pregunta.
 
 #### 6. Memoria entre sesiones
-Al salir, el agente resume la conversación con el propio LLM. Conserva hasta 10 resúmenes persistidos y, al arrancar la siguiente sesión, inyecta los 3 más recientes como contexto. El coach recuerda que hace tres días hablasteis de la fascitis plantar, o que lleváis dos semanas trabajando el umbral.
+Durante la sesión, el agente guarda checkpoints ligeros del resumen (upsert por día) sin depender de red. Conserva hasta 10 resúmenes persistidos y, al arrancar la siguiente sesión, inyecta los 3 más recientes como contexto. El coach recuerda que hace tres días hablasteis de la fascitis plantar, o que lleváis dos semanas trabajando el umbral.
 
 #### 7. Sistema multiusuario con autenticación
 Varias personas pueden usar la misma instalación. Cada usuario tiene perfil, historial, plan y base de conocimiento separados. La contraseña se almacena cifrada con Fernet AES-128 + HMAC-SHA256. El auto-login evita escribir la contraseña en cada sesión.
@@ -130,7 +130,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
 
 - **`training_plan_session`**
   - Sesiones del plan por semana/día
-  - Tipo de sesión, duración, intensidad, ejercicios y notas
+  - Tipo de sesión, duración, intensidad, ejercicios, notas y `structured_workout` (JSON estructurado)
 
 - **`training_plan_version`**
   - Snapshot versionado de cada cambio del plan
@@ -260,6 +260,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - Reglas generales de salud por impacto funcional (`none/low/moderate/high`) para modular volumen e intensidad sin hardcode por enfermedad.
   - Variación de sesiones de calidad y mezcla multideporte según contexto del atleta.
   - Validación previa de coherencia (duración, sesiones, estructura semanal, carga, disponibilidad y rangos de día) antes de guardar.
+  - Cada sesión persiste también `structured_workout` (contrato `kairos-workout-v1`) con fallback legacy si la columna aún no existe.
   - Resumen de cambios entre versiones (duración, dificultad, sesiones y volumen semanal) visible en la respuesta del coach.
   - Existe una única fuente de verdad de plan activo por usuario (máximo uno activo a la vez).
   - Compatibilidad backward: el perfil mantiene `training_plan` como espejo temporal para rutas legacy.
@@ -303,7 +304,8 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
        - Actividad histórica: **Aprendizajes para futuras sesiones similares** (sin pautas de "mañana" o "en 2-3 días").
 
 * **💾 Memoria persistente entre sesiones:**
-  - Al salir, el agente genera automáticamente un resumen compacto de la sesión con el propio LLM.
+  - Durante la conversación, el agente guarda checkpoints incrementales del resumen sin llamadas al LLM.
+  - Al salir, persiste un checkpoint ligero final (sin bloquear el cierre por timeouts de proveedor).
   - Conserva hasta 10 resúmenes persistidos e inyecta los últimos 3 como contexto al arrancar la siguiente sesión — el agente recuerda lo que habéis hablado.
   - Todo el estado de usuario (perfil, historial, base de conocimiento y cuota de Gemini) se guarda en Supabase por usuario.
   - Si el agente crea una planificación base por fallback, persiste un `training_plan` activo mínimo para distinguirlo del objetivo (`goals`).
@@ -427,7 +429,7 @@ Script disponible para Supabase:
 
 Incluye además el modelo de planificación versionada:
 - `training_plan`: cabecera del plan (título, objetivo, estado, metadatos).
-- `training_plan_session`: sesiones por semana/día (tipo, duración, intensidad, ejercicios).
+- `training_plan_session`: sesiones por semana/día (tipo, duración, intensidad, ejercicios, notas y `structured_workout`).
 - `training_plan_version`: historial de snapshots por edición/activación.
 
 ### 5. Inicio de sesión multiusuario

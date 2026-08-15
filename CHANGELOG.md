@@ -26,5 +26,5 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Suite completa validada en verde.
 
 ### Notes
-- Commit principal de implementación: 55af659.
+- Commits clave del día: 55af659 (base), b9ea941 (cierre rápido de sesión), 367d770 (cierre completo punto 38).
 - Estado de validación local al cierre: 287 tests passed.
