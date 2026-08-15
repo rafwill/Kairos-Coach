@@ -3,7 +3,7 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 310 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
+- Suite de tests: 317 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 
 ---
@@ -49,11 +49,6 @@
 - Deduplicación cross-plataforma: misma fecha + deporte + duración/distancia con 5% tolerancia → Garmin como source of truth.
 - Añadir campo `source_platform` a actividades en Supabase.
 - Inspirado en la arquitectura de providers de FitMCP.
-
-#### 27) [PROMPTING] Umbral de spike semanal >20%
-- Si el volumen o la carga de la semana actual supera en más del 20% la semana anterior, advertir activamente aunque el TSB no haya cruzado el umbral individual.
-- Útil cuando hay pocos datos históricos para calcular percentiles individualizados.
-- Aplicar también en system_prompt_compact.md.
 
 #### 35) [PROMPTING] Contextualización meteorológica en análisis de actividad
 - El coach debe considerar las condiciones del día (temperatura, viento, humedad) como variable explicativa del rendimiento (±10–20% de impacto).
@@ -249,6 +244,18 @@
 - Se elimina la dependencia de un resumen final con LLM en el momento de salir para evitar cierres lentos por timeout/retry del proveedor.
 - Se añade checkpoint incremental de resumen tras cada respuesta de Kairos (resumen ligero local, sin red) y persistencia por día mediante upsert.
 - Resultado operativo: salida de sesión inmediata o casi inmediata, manteniendo memoria de sesión en BBDD.
+
+#### 58) [HARNESS-HOOKS] HookManager + ToolRouter determinista opcional + pruebas (2026-08-15) — REALIZADO
+- Runtime con hooks explícitos en `TrainerAgent.chat()`: `before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`.
+- Router determinista opcional para intenciones críticas vía `KAIROS_DETERMINISTIC_ROUTER`.
+- Cobertura nueva en `tests/test_hooks_router.py` y validación completa de regresión en verde.
+- Documentación de harness actualizada y reubicada a `docs/Harness.md`.
+
+#### 27) [PROMPTING] Umbral de spike semanal >20% (2026-08-15) — REALIZADO
+- Sensor activo en runtime: alerta cuando la carga semanal actual supera en >20% a la semana anterior, incluso sin cruce de umbral TSB.
+- Integrado en `load_fatigue.flags.weekly_spike_alert`, en `weekly.*` (current/previous/delta/threshold) y en recomendación operativa.
+- El motor determinista diario considera `weekly_spike_alert` como señal de riesgo adicional para modular la sesión del día.
+- Regla añadida también al prompt compacto.
 
 #### 38) [PROMPTING] Formato de workout estructurado estándar TP (2026-08-15) — REALIZADO
 - Se define contrato estructurado por sesión (`structured_workout`) en prompts completo y compacto con schema `kairos-workout-v1`.

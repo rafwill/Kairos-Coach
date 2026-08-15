@@ -2764,12 +2764,8 @@ def _compute_load_fatigue_metrics(
         chunk = last_42[idx: idx + 7]
         if chunk:
             weekly_tss_values.append(round(sum(float(x["tss"]) for x in chunk), 1))
-    # Semana actual: lunes de esta semana → hoy (no los últimos 7 días del array)
-    _week_start_iso = (today - timedelta(days=today.weekday())).isoformat()
-    current_week_tss = round(
-        sum(float(x["tss"]) for x in series if (x.get("date") or "") >= _week_start_iso),
-        1,
-    )
+    weekly_spike = _compute_weekly_spike_signal(series, reference_day=today, threshold_ratio=0.20)
+    current_week_tss = float(weekly_spike.get("current_tss") or 0.0)
 
     tsb_low = round(_percentile(tsb_values, float(model_cfg.get("tsb_low_pct") or 0.20), default=-10.0), 1)
     tsb_high = round(_percentile(tsb_values, float(model_cfg.get("tsb_high_pct") or 0.80), default=5.0), 1)
@@ -2798,6 +2794,7 @@ def _compute_load_fatigue_metrics(
     sustained_overload = len(series) >= 7 and all(float(x["tsb"]) <= tsb_low for x in series[-7:])
     fatigue_high = (tsb_now < tsb_low) or (atl_now > atl_high)
     available_for_quality = (tsb_now >= tsb_low) and (tsb_now <= max(tsb_high, tsb_low + 4.0)) and not fatigue_high
+    weekly_spike_alert = bool(weekly_spike.get("spike_alert"))
 
     if abs_overload or sustained_overload or (current_week_tss > weekly_high and tsb_now < tsb_low):
         status = "overload"
@@ -2816,6 +2813,19 @@ def _compute_load_fatigue_metrics(
         action = "carga estable"
         recommendation = "Mantén carga aeróbica controlada y reevalúa mañana con HRV/sueño/estrés."
 
+    if weekly_spike_alert:
+        if status in {"ready", "neutral"}:
+            action = "spike semanal >20%"
+            recommendation = (
+                "⚠️ Spike semanal >20% vs semana previa: reduce 15-25% la carga de los próximos 2-3 días "
+                "y prioriza recuperación para consolidar adaptación."
+            )
+        elif status == "fatigue_high":
+            recommendation = (
+                recommendation
+                + " Además, la carga semanal ya supera en >20% a la semana previa."
+            )
+
     return {
         "model": {
             "name": "tp-inspired-ewma",
@@ -2830,6 +2840,10 @@ def _compute_load_fatigue_metrics(
         "series": series[-120:],
         "weekly": {
             "current_tss": current_week_tss,
+            "previous_tss": float(weekly_spike.get("previous_tss") or 0.0),
+            "spike_delta_pct": weekly_spike.get("delta_pct"),
+            "spike_threshold_pct": float(weekly_spike.get("threshold_pct") or 20.0),
+            "spike_alert": weekly_spike_alert,
             "target_tss": weekly_target,
             "high_tss": weekly_high,
         },
@@ -2848,10 +2862,56 @@ def _compute_load_fatigue_metrics(
             "abs_overload": abs_overload,
             "available_for_quality": available_for_quality,
             "warming_up": warming_up,
+            "weekly_spike_alert": weekly_spike_alert,
         },
         "status": status,
         "action": action,
         "recommendation": recommendation,
+    }
+
+
+def _compute_weekly_spike_signal(
+    series: list[dict],
+    reference_day: date | None = None,
+    threshold_ratio: float = 0.20,
+) -> dict[str, Any]:
+    """Calcula si la semana actual supera en >X% la semana anterior."""
+    ref = reference_day or date.today()
+    week_start = ref - timedelta(days=ref.weekday())
+    prev_start = week_start - timedelta(days=7)
+    prev_end = week_start - timedelta(days=1)
+
+    current_tss = 0.0
+    previous_tss = 0.0
+
+    for row in series or []:
+        if not isinstance(row, dict):
+            continue
+        d_iso = str(row.get("date") or "")
+        try:
+            d_obj = date.fromisoformat(d_iso)
+        except ValueError:
+            continue
+        tss = max(0.0, float(row.get("tss") or 0.0))
+        if week_start <= d_obj <= ref:
+            current_tss += tss
+        elif prev_start <= d_obj <= prev_end:
+            previous_tss += tss
+
+    available = previous_tss > 0.0
+    delta_pct = None
+    spike_alert = False
+    if available:
+        delta_pct = round(((current_tss - previous_tss) / previous_tss) * 100.0, 1)
+        spike_alert = current_tss > (previous_tss * (1.0 + threshold_ratio))
+
+    return {
+        "current_tss": round(current_tss, 1),
+        "previous_tss": round(previous_tss, 1),
+        "delta_pct": delta_pct,
+        "threshold_pct": round(threshold_ratio * 100.0, 1),
+        "available": available,
+        "spike_alert": spike_alert,
     }
 
 
@@ -4746,8 +4806,9 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         _safe_float(weekly.get("high_tss"), 0.0) > 0
         and weekly_tss >= _safe_float(weekly.get("high_tss"), 0.0)
     )
+    weekly_spike_alert = bool((load_fatigue.get("flags") or {}).get("weekly_spike_alert"))
 
-    stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv) + int(high_weekly)
+    stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv) + int(high_weekly) + int(weekly_spike_alert)
 
     # Reglas explícitas por estado.
     if status == "overload":
@@ -7851,13 +7912,9 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
         chunk = last_42[idx:idx + 7]
         if chunk:
             weekly_tss_values.append(round(sum(float(x["tss"]) for x in chunk), 1))
-    # Semana actual: lunes de esta semana → hoy (no los últimos 7 días del array)
     _today_s = date.today()
-    _week_start_iso = (_today_s - timedelta(days=_today_s.weekday())).isoformat()
-    current_week_tss = round(
-        sum(float(x["tss"]) for x in series if (x.get("date") or "") >= _week_start_iso),
-        1,
-    )
+    weekly_spike = _compute_weekly_spike_signal(series, reference_day=_today_s, threshold_ratio=0.20)
+    current_week_tss = float(weekly_spike.get("current_tss") or 0.0)
 
     tsb_low  = round(_percentile(tsb_values, float(model_cfg.get("tsb_low_pct") or 0.20), default=-10.0), 1)
     tsb_high = round(_percentile(tsb_values, float(model_cfg.get("tsb_high_pct") or 0.80), default=5.0), 1)
@@ -7876,6 +7933,7 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
     sustained_overload = len(series) >= 7 and all(float(x["tsb"]) <= tsb_low for x in series[-7:])
     fatigue_high = (tsb_now < tsb_low) or (atl_now > atl_high)
     available_for_quality = (tsb_now >= tsb_low) and (tsb_now <= max(tsb_high, tsb_low + 4.0)) and not fatigue_high
+    weekly_spike_alert = bool(weekly_spike.get("spike_alert"))
 
     if abs_overload or sustained_overload or (current_week_tss > weekly_high and tsb_now < tsb_low):
         status = "overload"; action = "sobrecarga sostenida"
@@ -7890,6 +7948,19 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
         status = "neutral"; action = "carga estable"
         recommendation = "Mantén carga aeróbica controlada y reevalúa mañana con HRV/sueño/estrés."
 
+    if weekly_spike_alert:
+        if status in {"ready", "neutral"}:
+            action = "spike semanal >20%"
+            recommendation = (
+                "⚠️ Spike semanal >20% vs semana previa: reduce 15-25% la carga de los próximos 2-3 días "
+                "y prioriza recuperación para consolidar adaptación."
+            )
+        elif status == "fatigue_high":
+            recommendation = (
+                recommendation
+                + " Además, la carga semanal ya supera en >20% a la semana previa."
+            )
+
     return {
         "model": {
             "name": "tp-inspired-ewma",
@@ -7899,7 +7970,15 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
         },
         "latest": latest,
         "series": series[-120:],
-        "weekly": {"current_tss": current_week_tss, "target_tss": weekly_target, "high_tss": weekly_high},
+        "weekly": {
+            "current_tss": current_week_tss,
+            "previous_tss": float(weekly_spike.get("previous_tss") or 0.0),
+            "spike_delta_pct": weekly_spike.get("delta_pct"),
+            "spike_threshold_pct": float(weekly_spike.get("threshold_pct") or 20.0),
+            "spike_alert": weekly_spike_alert,
+            "target_tss": weekly_target,
+            "high_tss": weekly_high,
+        },
         "ranges": {"tsb_low": tsb_low, "tsb_high": tsb_high, "atl_high": atl_high, "tsb_abs_floor": tsb_abs_floor},
         "warming_up": warming_up,
         "warming_up_days_remaining": max(0, _MIN_DAYS - days_with_load),
@@ -7908,6 +7987,7 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
             "fatigue_high": fatigue_high, "sustained_overload": sustained_overload,
             "abs_overload": abs_overload, "available_for_quality": available_for_quality,
             "warming_up": warming_up,
+            "weekly_spike_alert": weekly_spike_alert,
         },
         "status": status,
         "action": action,

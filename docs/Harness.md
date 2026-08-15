@@ -208,7 +208,6 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 |---|---|---|
 | Git hooks locales | No hay `.githooks/` — no hay validaciones pre-commit | #22 |
 | Logging de producción | Sin niveles configurables, los `print` son ciegos en producción | #4 |
-| Sensor de spike semanal >20% | Regla no implementada como sensor activo en runtime | #27 |
 
 ---
 
@@ -228,7 +227,7 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 │  guardrail read-only        ✓ operativo             │
 │  suite de tests             ✓ operativo             │
 │  CI GitHub Actions          ✓ operativo             │
-│  spike semanal >20%         ✗ pendiente (#27)       │
+│  spike semanal >20%         ✓ operativo             │
 │  logging por niveles        ✗ pendiente (#4)        │
 ├─────────────────────────────────────────────────────┤
 │                   HOOKS                             │

@@ -70,6 +70,7 @@ Reglas de actuación por carga/fatiga (OBLIGATORIO):
 - Si TSB está por debajo del rango individual o ATL está alto: reduce intensidad/volumen y prioriza recuperación.
 - Si TSB está en rango de disponibilidad: permite calidad o progresión controlada.
 - Si hay sobrecarga sostenida (TSB muy negativo varios días + carga semanal alta): activa descarga y prevención de lesión.
+- Si la carga semanal actual supera en >20% la semana previa: advierte y reduce carga 15-25% temporalmente, aunque TSB aún no haya cruzado umbral individual.
 - Siempre explica el porqué del ajuste y relaciónalo con sueño/HRV/estrés cuando existan.
 
 Fuente de verdad TSS/ATL/CTL/TSB (OBLIGATORIO):

@@ -1044,6 +1044,28 @@ class TestStartupProactive:
         assert out["decision"] == "maintain"
         assert out["rule"] == "ready"
 
+    def test_compute_daily_plan_adjustment_ready_with_weekly_spike_reduces(self):
+        snapshot = {
+            "dates": {"today": date.today().isoformat()},
+            "load_fatigue": {
+                "status": "ready",
+                "latest": {"tsb": 4.5, "atl": 52.0},
+                "weekly": {"current_tss": 310.0, "high_tss": 450.0},
+                "ranges": {"atl_high": 70.0},
+                "flags": {"weekly_spike_alert": True},
+            },
+            "body_battery": {"today": {"date": date.today().isoformat(), "body_battery_level": 72}},
+            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 8.0, "sleep_score": 84}},
+            "hrv": {"today": {"date": date.today().isoformat(), "lastNightAvg": 54, "weeklyAvg": 52, "status": "balanced"}},
+        }
+        plan = {"title": "Plan 10K", "today_focus": "Tempo 40'"}
+
+        out = _compute_daily_plan_adjustment(snapshot, plan)
+
+        assert out is not None
+        assert out["rule"] == "ready"
+        assert out["decision"] == "reduce"
+
     def test_compute_plan_execution_feedback_returns_adherence_and_deviation(self):
         yday = (date.today() - timedelta(days=1)).isoformat()
         plan = {
@@ -1525,6 +1547,34 @@ class TestSessionTssEstimation:
 
         assert out is not None
         assert out["flags"]["sustained_overload"] or out["status"] in {"overload", "fatigue_high"}
+
+    def test_compute_load_fatigue_metrics_flags_weekly_spike_over_20_percent(self):
+        today = date.today()
+        activities = []
+        for idx in range(14):
+            d = (today - timedelta(days=idx)).isoformat()
+            # Semana actual (0..6): 35 TSS/día; semana anterior (7..13): 20 TSS/día
+            load = 35 if idx <= 6 else 20
+            activities.append(
+                {
+                    "startTimeLocal": f"{d}T07:00:00.0",
+                    "trainingLoad": load,
+                }
+            )
+
+        out = _compute_load_fatigue_metrics(
+            activities=activities,
+            trend_payload={"load": []},
+            profile={},
+            days_window=28,
+        )
+
+        assert out is not None
+        assert out["flags"]["weekly_spike_alert"] is True
+        assert float(out["weekly"]["previous_tss"]) > 0.0
+        assert float(out["weekly"]["spike_delta_pct"]) > 20.0
+        if out["status"] in {"ready", "neutral"}:
+            assert "Spike semanal >20%" in str(out.get("recommendation") or "")
 
     def test_format_load_fatigue_summary_handles_missing_data(self):
         assert _format_load_fatigue_summary(None) == "sin datos suficientes"

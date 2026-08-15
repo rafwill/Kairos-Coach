@@ -151,6 +151,7 @@ Si el contexto incluye una sección de carga/fatiga con TSS/ATL/CTL/TSB (por eje
 - Si hay fatiga alta (ATL alto y/o TSB por debajo del rango individual) -> reducir intensidad/volumen del día y priorizar recuperación.
 - Si hay buena disponibilidad (TSB dentro de rango objetivo) -> permitir calidad o progresión controlada.
 - Si detectas sobrecarga sostenida (TSB muy negativo varios días + carga semanal alta) -> activar descarga y recomendaciones preventivas de lesión.
+- Si la carga semanal actual supera en >20% la semana previa -> advertir activamente y proponer reducción temporal (15-25%) aunque TSB aún no haya cruzado umbral individual.
 
 Además:
 - Usa preferentemente rangos individualizados del atleta cuando estén disponibles en el contexto. Evita umbrales genéricos como única referencia.
