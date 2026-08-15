@@ -12,18 +12,18 @@
 
 ### Prioridad alta
 
-#### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — PENDIENTE
+#### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — REALIZADO
 - Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
 - Checklist de ejecucion:
   - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (317 passed).
   - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
   - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
   - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
-  - Contrastar muestra de actividades y TSS por sesion contra referencias conocidas.
+  - [REALIZADO 2026-08-15] Contrastar muestra de actividades y TSS por sesion contra referencias conocidas (FIT de muestra: `tools/fit_tss_probe.py`, delta +1.98 TSS entre metodos).
   - [REALIZADO 2026-08-15] Verificar coherencia dinamica de CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) en el briefing proactivo de arranque (ATL=52.5, CTL=61.4, TSB=8.9, regla aplicada mostrada).
-  - Registrar evidencia (capturas/logs/resumen) en changelog/documentacion operativa.
+  - [REALIZADO 2026-08-15] Registrar evidencia (capturas/logs/resumen) en documentacion operativa: `docs/validation-load-fatigue-e2e-2026-08-15.md`.
 - Criterio de cierre:
-  - Marcar este item como **REALIZADO** solo cuando la validacion end-to-end haya sido ejecutada con datos reales y evidencia guardada.
+  - Cumplido: validacion end-to-end ejecutada con datos reales y evidencia guardada.
 
 #### 37) Integración TrainingPeaks MCP (capa de escritura)
 - Añadir `trainingpeaks-mcp` (https://github.com/JamsusMaximus/trainingpeaks-mcp) como servidor MCP secundario junto a `garmin_mcp`.
