@@ -16,6 +16,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Sensor activo de spike semanal >20% (semana actual vs. semana previa) integrado en carga/fatiga y ajuste diario determinista.
 - Nuevos tests dedicados de hooks/router en `tests/test_hooks_router.py`.
 - Evidencia operativa de validacion E2E real de carga/fatiga en `docs/validation-load-fatigue-e2e-2026-08-15.md`.
+- Configuración de logging por entorno: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.
 
 ### Changed
 - Cálculo de carga incremental: preserva histórico previo al último cambio de parámetros y aplica nuevos valores solo desde la fecha efectiva.
@@ -23,6 +24,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Cierre de sesión optimizado: se elimina el resumen final dependiente de LLM en salida y se usa checkpoint ligero local para evitar bloqueos por red/timeouts.
 - Ajuste diario del plan: ahora muta el JSON estructurado (intensityClass/target/rango, duración y reps) y guarda trazabilidad del ajuste.
 - Documento de harness reubicado de `Harness.md` a `docs/Harness.md` y actualizado al estado real de hooks/router/sensores.
+- `agent/main.py` ahora centraliza logging de producción, usa logger por módulo y evita trazas debug en consola salvo opt-in.
 
 ### Tests
 - Nuevas pruebas para fecha efectiva de parámetros.

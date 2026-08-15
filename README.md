@@ -169,6 +169,8 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
 
 * **🪵 Logging y compatibilidad Windows:**
   - El agente escribe logs en `agent.log` con timestamps y nivel de severidad.
+  - Verbosidad y destino configurables por entorno: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`.
+  - Trazas debug en consola interactiva controladas por `KAIROS_DEBUG_CONSOLE` (por defecto: `false`).
   - En Windows, la salida de consola se fuerza a UTF-8 para evitar errores de Unicode.
 
 * **⌚ Herramientas de Garmin Connect:**
