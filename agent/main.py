@@ -1499,15 +1499,16 @@ async def main() -> None:
                     response = await agent.chat(user_input)
                 console.print(f"\n[bold green]Kairos Coach[/]")
                 console.print(Markdown(_format_coach_markdown(response)))
+                # Checkpoint incremental del resumen para no bloquear el cierre.
+                agent.save_session_summary_checkpoint()
             except Exception as e:
                 console.print(f"\n[bold red]Error en el Agente:[/] {e}")
 
-        # Al salir de la sesión, generar y guardar resumen para memoria futura
+        # Al salir de la sesión, guardar checkpoint ligero sin llamada al LLM.
         if agent.conversation_history:
             try:
-                with console.status("[dim]Guardando resumen de sesión...[/]"):
-                    summary = await agent.generate_session_summary()
-                agent.save_session_summary(summary)
+                with console.status("[dim]Guardando checkpoint de sesión...[/]"):
+                    agent.save_session_summary_checkpoint()
                 console.print("[dim]✓ Sesión guardada en memoria[/]")
             except Exception:
                 pass

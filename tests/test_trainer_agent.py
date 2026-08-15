@@ -3249,3 +3249,35 @@ class TestCyclingFtpRefreshDatePolicy:
         perf = agent.user_profile.get("performance") or {}
         assert perf.get("cycling_ftp_date") == "2026-08-10"
         assert perf.get("performance_params_updated_at") == "2026-08-10"
+
+
+class TestSessionSummaryCheckpoint:
+    def test_generate_session_summary_checkpoint_uses_recent_turns(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.conversation_history = [
+            {"role": "user", "content": "Cuánto TSS llevo esta semana?"},
+            {"role": "assistant", "content": "TSS acumulado: 260.4"},
+            {"role": "user", "content": "Cómo está mi HRV hoy?"},
+            {"role": "assistant", "content": "HRV 73 ms, balanced."},
+        ]
+
+        summary = TrainerAgent.generate_session_summary_checkpoint(agent)
+        assert "Temas recientes:" in summary
+        assert "HRV" in summary
+        assert "Última respuesta:" in summary
+
+    def test_save_session_summary_checkpoint_calls_daily_upsert(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.conversation_history = [
+            {"role": "user", "content": "Mi FTP?"},
+            {"role": "assistant", "content": "Tu FTP es 205W."},
+        ]
+
+        with patch("agent.trainer_agent._storage.persist_session_summary_daily") as upsert_mock:
+            TrainerAgent.save_session_summary_checkpoint(agent)
+
+        upsert_mock.assert_called_once()

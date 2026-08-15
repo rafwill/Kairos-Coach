@@ -196,6 +196,9 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
     - `memory/athlete_knowledge.md`
     - `memory/athlete_knowledge.txt`
     - `memory/athlete_knowledge.json`
+  - Memoria de sesión optimizada para cierre rápido:
+    - Tras cada respuesta del coach, se guarda un checkpoint ligero del resumen de sesión (upsert por día en BBDD).
+    - Al salir, no se bloquea el cierre con un resumen final dependiente del LLM.
 
 * **� Cuantificación de carga y fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)):**
   - Al arrancar la sesión, el sistema calcula automáticamente el modelo de carga inspirado en TrainingPeaks:
@@ -232,6 +235,11 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
     - Sin `training_plan` activo: `No tienes plan asignado. ¿Qué quieres hacer hoy?`
     - Con `training_plan` activo: propone adaptar la sesión de hoy al plan.
   - Sirve como punto de partida antes de la primera pregunta del chat.
+
+* **⚡ Cierre de sesión rápido:**
+  - El cierre ya no depende de una llamada final al proveedor LLM para resumir la sesión.
+  - Si el proveedor externo está lento o devuelve timeouts, la salida no queda retenida por ese paso.
+  - La memoria del día ya va quedando persistida durante la conversación mediante checkpoints incrementales.
 
 * **🧭 Estado de plan coherente (sin alucinaciones):**
   - Preguntas tipo "¿tengo plan?", "¿cuál es ese plan?" o "¿sigo con el plan?" se responden por ruta determinista.
