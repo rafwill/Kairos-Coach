@@ -33,7 +33,7 @@
 - Estado proactivo condicionado por training_plan: sin plan muestra aviso; con plan propone adaptar sesion diaria.
 - Ruta determinista para estado del plan en chat: responden desde training_plan real sin depender del LLM.
 - Prompting reforzado: checklist MCP minimo por intencion, formato de fecha DD/MM/AAAA, respuestas maximos/minimos con valor + actividad + fecha.
-- Cuantificacion de carga y fatiga (TSS/ATL/CTL/TSB) con tau ajustados por deporte y percentiles individualizados.
+- Cuantificacion de carga y fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)) con tau ajustados por deporte y percentiles individualizados.
 - Series temporales de carga/fatiga persistidas (hasta 120 dias) en Supabase por atleta.
 
 ### Ítems numerados cerrados
@@ -50,7 +50,7 @@
 #### 12) Naming del producto
 - Nombre final definido: Kairos Coach. Aplicado en toda la base de codigo, prompts, README y documentacion.
 
-#### 13) Cuantificación de carga y fatiga (TSS/ATL/CTL/TSB)
+#### 13) Cuantificación de carga y fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma))
 - Modelo EWMA con tau ajustados por deporte y percentiles individualizados por atleta.
 - Integrado en snapshot proactivo de arranque con resumen operativo y regla aplicada de actuacion.
 - Series temporales persistidas en Supabase.
@@ -59,7 +59,7 @@
 - Instrucciones de instalacion, configuracion, uso basico y ejecucion de tests documentadas.
 
 #### 15) Motor de análisis histórico de métricas
-- `kairos_load_trends`: serie temporal de TSS/ATL/CTL/TSB con granularidad diaria y semanal.
+- `kairos_load_trends`: serie temporal de TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) con granularidad diaria y semanal.
 - `kairos_correlate`: correlación de Pearson entre dos métricas de carga/fatiga (N, r, interpretación).
 - Herramientas internas Python puro, operando sobre load_metrics.series en Supabase.
 
@@ -73,7 +73,7 @@
 - `.github/workflows/tests.yml` ejecuta la suite de tests en cada push y pull request, sin credenciales reales.
 
 #### 45) [VALIDACION] Batería sintética multi-atleta para carga/fatiga (2026-07-30) — REALIZADO
-- Añadidos escenarios ficticios por deporte (running, trail y triatlón) para validar comportamiento específico ATL/CTL/TSB.
+- Añadidos escenarios ficticios por deporte (running, trail y triatlón) para validar comportamiento específico CTL (Estado físico)/ATL (Fatiga)/TSB (Forma).
 - Cobertura de reglas por perfil: tau por deporte, suelo de TSB y detección de fatiga/sobrecarga reciente.
 - Ejecutada validación integral de `tests/test_trainer_agent.py` en verde tras integración.
 
@@ -126,6 +126,13 @@
 - Procedimiento operativo aplicado: borrado de `load_metrics_daily` y limpieza de `load_metrics` en `user_profile` del usuario activo.
 - Resultado esperado documentado: en el siguiente arranque, reconstrucción completa de 120 días con la fórmula vigente.
 - Se documenta además la regla de `formula_version`: si cambia, Kairos fuerza recálculo completo automáticamente.
+
+#### 56) [PARAM-EFFECTIVE-DATE] Congelación histórica por cambio de parámetros (2026-08-15) — REALIZADO
+- Regla aplicada: cuando cambian parámetros que afectan al cálculo (umbral running, FTP ciclismo, perfil de FC), no se recalcula histórico anterior a la fecha de cambio.
+- A partir de la fecha efectiva del cambio, los entrenamientos nuevos se calculan con los parámetros actualizados.
+- Se añade sello global `performance_params_updated_at` para trazar el último cambio operativo de parámetros.
+- Nuevo comando operativo: `/perfil fc <reposo> <max>` para actualizar FC de reposo/máxima con validación de rangos y fecha efectiva.
+- Ajuste anti-falsos cambios: refrescar FTP sin cambio real de valor ya no actualiza la fecha efectiva.
 
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
@@ -186,6 +193,19 @@
 
 ### Prioridad alta
 
+#### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — PENDIENTE
+- Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
+- Checklist de ejecucion:
+  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (270 passed).
+  - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
+  - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
+  - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
+  - Contrastar muestra de actividades y TSS por sesion contra referencias conocidas.
+  - [REALIZADO 2026-08-15] Verificar coherencia dinamica de CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) en el briefing proactivo de arranque (ATL=52.5, CTL=61.4, TSB=8.9, regla aplicada mostrada).
+  - Registrar evidencia (capturas/logs/resumen) en bitacora tecnica.
+- Criterio de cierre:
+  - Marcar este item como **REALIZADO** solo cuando la validacion end-to-end haya sido ejecutada con datos reales y evidencia guardada.
+
 #### 37) Integración TrainingPeaks MCP (capa de escritura)
 - Añadir `trainingpeaks-mcp` (https://github.com/JamsusMaximus/trainingpeaks-mcp) como servidor MCP secundario junto a `garmin_mcp`.
 - Arquitectura resultante: `garmin_mcp` = capa de lectura. `trainingpeaks-mcp` = capa de escritura (calendario, sesiones estructuradas, notas, eventos).
@@ -193,7 +213,7 @@
 - Funcionalidades prioritarias:
   - `tp_create_workout` con estructura de intervalos JSON auto-computando IF/TSS.
   - `tp_pair_workout` — empareja workout planificado con el ejecutado (modelo técnico para #31).
-  - `tp_get_fitness` — CTL/ATL/TSB nativo de TP para contrastar con modelo propio desde Garmin.
+  - `tp_get_fitness` — CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) nativo de TP para contrastar con modelo propio desde Garmin.
   - `tp_add_workout_comment` — el coach deja notas en sesiones del calendario.
   - `tp_get_atp` — Plan de Temporada Anual con TSS targets semanales por periodo.
 - Requiere cuenta TrainingPeaks (no gratuita en todos los planes).

@@ -57,9 +57,11 @@ from agent.trainer_agent import (
     _is_plan_status_intent,
     _is_daily_readiness_intent,
     _is_mcp_factual_query_intent,
+    _is_running_threshold_query_intent,
     _is_week_tss_intent,
     _is_planning_intent,
     _is_write_mcp_tool,
+    _resolve_load_parameters_effective_date,
     _resolve_activity_id_from_query,
     _summarize_plan_changes,
     _is_activity_in_last_48h,
@@ -165,6 +167,29 @@ class TestExtractIsoDateFromText:
 
     def test_extracts_dd_mm_yyyy(self):
         assert _extract_iso_date_from_text("02/07/2026") == "2026-07-02"
+
+
+class TestLoadParametersEffectiveDate:
+    def test_resolve_effective_date_prefers_latest_parameter_change(self):
+        profile = {
+            "performance": {
+                "running_threshold_pace_date": "2026-08-10",
+                "cycling_ftp_date": "2026-08-12",
+                "performance_params_updated_at": "2026-08-15",
+            }
+        }
+        out = _resolve_load_parameters_effective_date(profile)
+        assert out is not None
+        assert out.isoformat() == "2026-08-15"
+
+    def test_resolve_effective_date_ignores_invalid_values(self):
+        profile = {
+            "performance": {
+                "running_threshold_pace_date": "no-date",
+                "cycling_ftp_date": "",
+            }
+        }
+        assert _resolve_load_parameters_effective_date(profile) is None
 
 
 class TestSystemPromptDateFormatRules:
@@ -948,7 +973,7 @@ class TestStartupProactive:
         assert "Estado Proactivo" in out
         assert "Perfil Garmin actualizado" in out
         assert "Trail suave" in out
-        assert "Carga/Fatiga (TSS/ATL/CTL/TSB)" in out
+        assert "Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma))" in out
         assert "No tienes plan asignado" in out
 
     def test_build_proactive_status_markdown_shows_plan_recommendation_when_assigned(self):
@@ -3151,3 +3176,76 @@ class TestMcpFactualDeterministicRoute:
         assert out.startswith("## Consulta factual (MCP)")
         assert "sin inferencias numéricas del LLM" in out
         assert len(agent.conversation_history) == 2
+
+
+class TestRunningThresholdDeterministicRoute:
+    def test_is_running_threshold_query_intent_detects_queries(self):
+        assert _is_running_threshold_query_intent("Cual es mi ritmo umbral?")
+        assert _is_running_threshold_query_intent("Dime el umbral de running")
+        assert _is_running_threshold_query_intent("What is my threshold pace?")
+        assert not _is_running_threshold_query_intent("Cual es mi umbral de lactato en mmol?")
+
+    @pytest.mark.asyncio
+    async def test_chat_running_threshold_uses_latest_persisted_profile(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {
+            "performance": {
+                "running_threshold_pace": "4:54",
+                "running_threshold_pace_sec_per_km": 294.0,
+                "running_threshold_pace_date": "2026-08-10",
+            }
+        }
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        latest_profile = {
+            "performance": {
+                "running_threshold_pace": "4:12",
+                "running_threshold_pace_sec_per_km": 252.0,
+                "running_threshold_pace_date": "2026-08-15",
+            }
+        }
+
+        with patch("agent.trainer_agent._load_user_profile", return_value=latest_profile), patch(
+            "agent.trainer_agent._save_history_entry"
+        ):
+            out = await TrainerAgent.chat(agent, "Cual es mi ritmo umbral actual?")
+
+        assert "4:12 min/km" in out
+        assert "2026-08-15" in out
+        assert "perfil persistido" in out
+        assert len(agent.conversation_history) == 2
+
+
+class TestCyclingFtpRefreshDatePolicy:
+    @pytest.mark.asyncio
+    async def test_refresh_same_ftp_does_not_update_change_date(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {
+            "performance": {
+                "cycling_ftp": 250.0,
+                "cycling_ftp_date": "2026-08-10",
+                "performance_params_updated_at": "2026-08-10",
+            }
+        }
+        agent.mcp_session = MagicMock()
+
+        with patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value='{"functionalThresholdPower": 250}')), patch(
+            "agent.trainer_agent._save_user_profile"
+        ):
+            out = await TrainerAgent._get_or_refresh_cycling_ftp(agent, force_refresh=True)
+
+        assert out == 250.0
+        perf = agent.user_profile.get("performance") or {}
+        assert perf.get("cycling_ftp_date") == "2026-08-10"
+        assert perf.get("performance_params_updated_at") == "2026-08-10"

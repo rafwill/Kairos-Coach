@@ -215,7 +215,34 @@ def _set_running_threshold_pace(profile: dict, pace_raw: str) -> tuple[bool, str
     perf["running_threshold_pace_sec_per_km"] = round(float(pace_sec), 1)
     perf["running_threshold_pace"] = f"{int(pace_sec // 60)}:{int(pace_sec % 60):02d}"
     perf["running_threshold_pace_date"] = date.today().isoformat()
+    perf["performance_params_updated_at"] = date.today().isoformat()
     return True, str(perf["running_threshold_pace"])
+
+
+def _set_hr_profile_values(profile: dict, hr_rest_raw: str, hr_max_raw: str) -> tuple[bool, str]:
+    """Actualiza FC de reposo y FC máxima en el perfil para modelos de carga."""
+    try:
+        hr_rest = int(hr_rest_raw)
+        hr_max = int(hr_max_raw)
+    except (TypeError, ValueError):
+        return False, "Formato no válido. Usa enteros (ej: /perfil fc 48 186)."
+
+    if hr_rest < 30 or hr_rest > 100:
+        return False, "FC reposo fuera de rango (30-100 bpm)."
+    if hr_max < 120 or hr_max > 240:
+        return False, "FC máxima fuera de rango (120-240 bpm)."
+    if hr_max <= hr_rest:
+        return False, "FC máxima debe ser mayor que FC reposo."
+
+    if profile is None:
+        profile = {}
+    perf = profile.setdefault("performance", {})
+    today_iso = date.today().isoformat()
+    perf["hr_rest_bpm"] = hr_rest
+    perf["hr_max_bpm"] = hr_max
+    perf["hr_profile_date"] = today_iso
+    perf["performance_params_updated_at"] = today_iso
+    return True, f"FC reposo={hr_rest} bpm · FC max={hr_max} bpm"
 
 
 def _ensure_running_threshold_pace(profile: dict) -> dict:
@@ -945,11 +972,12 @@ def _show_help() -> None:
         "  [bold cyan]/perfil editar salud[/bold cyan]     Cambiar lesiones y notas de salud\n"
         "  [bold cyan]/perfil editar[/bold cyan]           Editar todo el perfil\n"
         "  [bold cyan]/perfil umbral <mm:ss>[/bold cyan]   Cambiar umbral running (ej: /perfil umbral 4:15)\n"
+        "  [bold cyan]/perfil fc <reposo> <max>[/bold cyan] Configurar FC reposo/máxima (ej: /perfil fc 48 186)\n"
         "  [bold cyan]/plan listar[/bold cyan]             Ver planes de entrenamiento\n"
         "  [bold cyan]/plan ver <id>[/bold cyan]           Ver detalle de un plan\n"
         "  [bold cyan]/plan activar <id>[/bold cyan]       Activar plan por id\n"
         "  [bold cyan]/plan crear[/bold cyan]              Crear y activar plan base\n"
-        "  [bold cyan]/carga[/bold cyan]                   Tabla semanal de carga/fatiga (TSS·ATL·CTL·TSB)\n"
+        "  [bold cyan]/carga[/bold cyan]                   Tabla semanal de carga/fatiga (TSS·CTL (Estado físico)·ATL (Fatiga)·TSB (Forma))\n"
         "  [bold cyan]/carga meses[/bold cyan]             Vista mensual de carga/fatiga\n"
         "  [bold cyan]/modelo[/bold cyan]                  Cambiar el proveedor de modelo de IA activo\n"
         "  [bold cyan]/ayuda[/bold cyan]                   Mostrar esta pantalla\n"
@@ -1271,7 +1299,7 @@ async def main() -> None:
             status_msg = (
                 "[dim]Inicializando histórico de carga desde Garmin (usuario nuevo)...[/]"
                 if is_new_user
-                else "[dim]Calculando métricas de carga/fatiga (TSS·ATL·CTL·TSB)...[/]"
+                else "[dim]Calculando métricas de carga/fatiga (TSS·CTL (Estado físico)·ATL (Fatiga)·TSB (Forma))...[/]"
             )
             with console.status(status_msg):
                 await agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user)
@@ -1280,9 +1308,9 @@ async def main() -> None:
             if last.get("atl") or last.get("ctl"):
                 console.print(
                     f"[green]✓[/] Carga/fatiga: "
-                    f"ATL={float(last.get('atl', 0)):.1f} · "
-                    f"CTL={float(last.get('ctl', 0)):.1f} · "
-                    f"TSB={float(last.get('tsb', 0)):.1f} "
+                    f"CTL (Estado físico)={float(last.get('ctl', 0)):.1f} · "
+                    f"ATL (Fatiga)={float(last.get('atl', 0)):.1f} · "
+                    f"TSB (Forma)={float(last.get('tsb', 0)):.1f} "
                     f"([dim]{len(lm.get('series', []))} días[/dim])"
                 )
             else:
@@ -1427,6 +1455,22 @@ async def main() -> None:
                 _save_user_profile(profile)
                 agent.user_profile = _load_user_profile()
                 console.print(f"[green]✓[/] Umbral running actualizado a [bold]{msg} min/km[/bold].")
+                continue
+
+            if cmd.startswith("/perfil fc"):
+                raw_cmd = user_input.strip()
+                parts = raw_cmd.split()
+                if len(parts) < 4:
+                    console.print("[yellow]Uso:[/] /perfil fc <reposo> <max> (ej: /perfil fc 48 186)")
+                    continue
+                profile = _load_user_profile()
+                ok, msg = _set_hr_profile_values(profile, parts[2].strip(), parts[3].strip())
+                if not ok:
+                    console.print(f"[red]✗[/] {msg}")
+                    continue
+                _save_user_profile(profile)
+                agent.user_profile = _load_user_profile()
+                console.print(f"[green]✓[/] Perfil de FC actualizado: [bold]{msg}[/bold].")
                 continue
 
             if cmd.startswith("/carga"):
