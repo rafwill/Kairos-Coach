@@ -15,7 +15,7 @@
 #### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — PENDIENTE
 - Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
 - Checklist de ejecucion:
-  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (310 passed).
+  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (317 passed).
   - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
   - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
   - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
@@ -249,7 +249,7 @@
 - Runtime con hooks explícitos en `TrainerAgent.chat()`: `before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`.
 - Router determinista opcional para intenciones críticas vía `KAIROS_DETERMINISTIC_ROUTER`.
 - Cobertura nueva en `tests/test_hooks_router.py` y validación completa de regresión en verde.
-- Documentación de harness actualizada y reubicada a `docs/Harness.md`.
+- Documentación de harness actualizada y reubicada en `docs/Harness.md`.
 
 #### 27) [PROMPTING] Umbral de spike semanal >20% (2026-08-15) — REALIZADO
 - Sensor activo en runtime: alerta cuando la carga semanal actual supera en >20% a la semana anterior, incluso sin cruce de umbral TSB.
