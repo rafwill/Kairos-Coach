@@ -53,8 +53,17 @@ Cada vez que inicias el agente, recibe automáticamente:
 - Resumen de carga/fatiga (TSS · CTL (Estado físico) · ATL (Fatiga) · TSB (Forma) · semana + regla aplicada)
 - Entrenamientos de las últimas 48h
 - Si tienes plan activo: propuesta de adaptar la sesión de hoy
+- Señal preventiva de **spike semanal >20%** (semana actual vs. semana previa), incluso si el TSB aún no cruzó umbral
 
 Esto funciona como el briefing que te daría un entrenador de élite antes de que hagas la primera pregunta.
+
+#### 10. Harness explícito en runtime (hooks + router)
+El runtime del agente ya expone capa de harness explícita en `TrainerAgent.chat()`:
+- `HookManager` con eventos `before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`
+- `ToolRouter` determinista opcional para intenciones críticas (`plan_status`, `week_tss`, `running_threshold`, `mcp_factual`, `daily_readiness`, `planning`, `personal_records`)
+- Flag de control: `KAIROS_DETERMINISTIC_ROUTER=true|false`
+
+La documentación de harness se mantiene en `docs/Harness.md`.
 
 #### 6. Memoria entre sesiones
 Durante la sesión, el agente guarda checkpoints ligeros del resumen (upsert por día) sin depender de red. Conserva hasta 10 resúmenes persistidos y, al arrancar la siguiente sesión, inyecta los 3 más recientes como contexto. El coach recuerda que hace tres días hablasteis de la fascitis plantar, o que lleváis dos semanas trabajando el umbral.
@@ -220,6 +229,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
     - 🟠 Fatiga alta (TSB por debajo del rango individual) → reduce intensidad/volumen.
     - 🟢 Buena disponibilidad (TSB en rango) → permite calidad o progresión controlada.
     - 🔴 Sobrecarga sostenida → activa descarga y recomendaciones preventivas de lesión.
+    - ⚠️ Spike semanal >20% vs semana previa → advertencia activa y reducción temporal (15-25%) de carga aunque TSB no haya cruzado umbral.
   - La serie temporal completa (hasta 120 días) se persiste en el perfil del atleta en Supabase para análisis de tendencias.
   - El bloque de carga/fatiga se incluye en el estado proactivo de arranque con resumen operativo (TSS·CTL (Estado físico)·ATL (Fatiga)·TSB (Forma)·semana) y la regla aplicada.
   - Política de inmutabilidad histórica por parámetros:
