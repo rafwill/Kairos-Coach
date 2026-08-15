@@ -134,6 +134,11 @@
 - Nuevo comando operativo: `/perfil fc <reposo> <max>` para actualizar FC de reposo/máxima con validación de rangos y fecha efectiva.
 - Ajuste anti-falsos cambios: refrescar FTP sin cambio real de valor ya no actualiza la fecha efectiva.
 
+#### 57) [SESSION-CLOSE-LATENCY] Checkpoint incremental y cierre rápido (2026-08-15) — REALIZADO
+- Se elimina la dependencia de un resumen final con LLM en el momento de salir para evitar cierres lentos por timeout/retry del proveedor.
+- Se añade checkpoint incremental de resumen tras cada respuesta de Kairos (resumen ligero local, sin red) y persistencia por día mediante upsert.
+- Resultado operativo: salida de sesión inmediata o casi inmediata, manteniendo memoria de sesión en BBDD.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 

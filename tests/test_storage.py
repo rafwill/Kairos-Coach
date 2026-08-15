@@ -114,6 +114,62 @@ def test_register_app_user_never_persists_garmin_password(monkeypatch):
     assert persisted_credentials["garmin_email"] == "runner@example.com"
 
 
+def test_persist_session_summary_daily_updates_existing_date(monkeypatch):
+    state = {
+        "history": [],
+        "session_summaries": [
+            {"date": "2026-08-14", "summary": "old-1"},
+            {"date": "2026-08-15", "summary": "old-today"},
+        ],
+    }
+    saved = {}
+
+    monkeypatch.setattr(storage, "load_session_context", lambda: dict(state))
+    monkeypatch.setattr(storage, "save_session_context", lambda ctx: saved.update(ctx))
+
+    class _FakeDate:
+        @staticmethod
+        def today():
+            class _D:
+                @staticmethod
+                def isoformat():
+                    return "2026-08-15"
+            return _D()
+
+    monkeypatch.setattr(storage, "date", _FakeDate)
+
+    storage.persist_session_summary_daily("new-summary")
+
+    summaries = saved.get("session_summaries") or []
+    today = [s for s in summaries if s.get("date") == "2026-08-15"]
+    assert len(today) == 1
+    assert today[0]["summary"] == "new-summary"
+
+
+def test_persist_session_summary_daily_appends_when_missing(monkeypatch):
+    state = {"history": [], "session_summaries": [{"date": "2026-08-14", "summary": "old"}]}
+    saved = {}
+
+    monkeypatch.setattr(storage, "load_session_context", lambda: dict(state))
+    monkeypatch.setattr(storage, "save_session_context", lambda ctx: saved.update(ctx))
+
+    class _FakeDate:
+        @staticmethod
+        def today():
+            class _D:
+                @staticmethod
+                def isoformat():
+                    return "2026-08-15"
+            return _D()
+
+    monkeypatch.setattr(storage, "date", _FakeDate)
+
+    storage.persist_session_summary_daily("today-summary")
+
+    summaries = saved.get("session_summaries") or []
+    assert any(s.get("date") == "2026-08-15" and s.get("summary") == "today-summary" for s in summaries)
+
+
 class _MemoryResult:
     def __init__(self, data=None):
         self.data = data if data is not None else []

@@ -9003,3 +9003,44 @@ class TrainerAgent:
         """Persiste el resumen de sesión en disco."""
         if summary:
             _persist_session_summary(summary)
+
+    def generate_session_summary_checkpoint(self) -> str:
+        """Genera un resumen local y ligero para checkpoints frecuentes.
+
+        No llama al LLM: evita latencia de red durante la sesión y en el cierre.
+        """
+        if not self.conversation_history:
+            return ""
+
+        user_msgs = [
+            str(msg.get("content") or "").strip()
+            for msg in self.conversation_history
+            if msg.get("role") == "user" and str(msg.get("content") or "").strip()
+        ]
+        assistant_msgs = [
+            str(msg.get("content") or "").strip()
+            for msg in self.conversation_history
+            if msg.get("role") == "assistant" and str(msg.get("content") or "").strip()
+        ]
+
+        if not user_msgs and not assistant_msgs:
+            return ""
+
+        topics = " | ".join(user_msgs[-4:]) if user_msgs else "sin preguntas registradas"
+        last_reply = assistant_msgs[-1] if assistant_msgs else "sin respuesta registrada"
+        last_reply = re.sub(r"\s+", " ", last_reply)[:200]
+
+        return (
+            f"Temas recientes: {topics}. "
+            f"Última respuesta: {last_reply}"
+        )
+
+    def save_session_summary_checkpoint(self) -> None:
+        """Persiste un checkpoint diario del resumen de sesión (upsert por fecha)."""
+        summary = self.generate_session_summary_checkpoint()
+        if not summary:
+            return
+        try:
+            _storage.persist_session_summary_daily(summary)
+        except Exception:
+            pass

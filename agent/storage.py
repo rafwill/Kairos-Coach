@@ -330,6 +330,31 @@ def persist_session_summary(summary: str) -> None:
     save_session_context(ctx)
 
 
+def persist_session_summary_daily(summary: str) -> None:
+    """Guarda/actualiza el resumen del día actual en session_summaries.
+
+    A diferencia de persist_session_summary (append), este método hace upsert
+    por fecha para permitir checkpoints frecuentes sin inflar el historial.
+    """
+    ctx = load_session_context()
+    summaries = list(ctx.get("session_summaries") or [])
+    today_iso = date.today().isoformat()
+    clipped = (summary or "")[:600]
+
+    updated = False
+    for item in reversed(summaries):
+        if isinstance(item, dict) and str(item.get("date") or "") == today_iso:
+            item["summary"] = clipped
+            updated = True
+            break
+
+    if not updated:
+        summaries.append({"date": today_iso, "summary": clipped})
+
+    ctx["session_summaries"] = summaries[-10:]
+    save_session_context(ctx)
+
+
 def load_athlete_knowledge() -> str:
     uid = _require_active_user_id()
     sb = _require_supabase()
