@@ -3270,6 +3270,8 @@ def _is_generic_needs_more_info_reply(text: str) -> bool:
     markers = [
         "no puedo crear una planificación",
         "no puedo analizar",
+        "no tengo suficiente información",
+        "no tengo suficiente informacion",
         "sin más información",
         "proporciona más detalles",
         "por favor, proporciona más",
@@ -3466,6 +3468,116 @@ def _is_running_threshold_query_intent(user_message: str) -> bool:
         "threshold pace",
     )
     return any(marker in text for marker in markers)
+
+
+def _is_tomorrow_workout_intent(user_message: str) -> bool:
+    """Detecta peticiones de propuesta de entrenamiento para mañana."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    planning_commands = (
+        "programa",
+        "planifica",
+        "crea",
+        "diseña",
+        "ajusta",
+        "modifica",
+    )
+    if any(marker in text for marker in planning_commands):
+        return False
+
+    tomorrow_markers = (
+        "mañana",
+        "manana",
+        "tomorrow",
+        "proxima sesion",
+        "próxima sesión",
+    )
+    workout_markers = (
+        "entrenamiento",
+        "sesion",
+        "sesión",
+        "recomiendas",
+        "propones",
+        "que hago",
+        "qué hago",
+    )
+    return any(marker in text for marker in tomorrow_markers) and any(marker in text for marker in workout_markers)
+
+
+def _build_tomorrow_workout_markdown(profile: dict) -> str:
+    """Propone sesión de mañana de forma determinista usando plan o carga/fatiga actual."""
+    profile = profile if isinstance(profile, dict) else {}
+    tomorrow_d = date.today() + timedelta(days=1)
+    tomorrow_iso = tomorrow_d.isoformat()
+    weekday_es = {
+        1: "lunes",
+        2: "martes",
+        3: "miercoles",
+        4: "jueves",
+        5: "viernes",
+        6: "sabado",
+        7: "domingo",
+    }
+    tomorrow_label = f"{weekday_es.get(tomorrow_d.isoweekday(), tomorrow_d.strftime('%A'))} {tomorrow_d.strftime('%d/%m')}"
+
+    active_plan = _get_active_training_plan(profile)
+    if active_plan:
+        planned = _get_planned_session_for_date(active_plan, tomorrow_iso)
+        if planned:
+            stype = str(planned.get("session_type") or "sesión").replace("_", " ").strip()
+            intensity = str(planned.get("intensity") or "RPE 3-5").strip()
+            duration = planned.get("duration_min")
+            duration_text = f"{int(duration)} min" if isinstance(duration, (int, float)) and float(duration) > 0 else "duración flexible"
+            notes = str(planned.get("notes") or "").strip()
+            lines = [
+                "## Propuesta para mañana",
+                "",
+                f"- Fecha: {tomorrow_label}",
+                f"- Sesión sugerida: {stype} · {duration_text} · {intensity}",
+                "- Fuente: plan activo del atleta + ruta determinista.",
+            ]
+            if notes:
+                lines.append(f"- Nota del plan: {notes}")
+            lines.extend([
+                "",
+                "_Respuesta instantánea: no depende del LLM._",
+            ])
+            return "\n".join(lines)
+
+    lm = (profile.get("load_metrics") if isinstance(profile.get("load_metrics"), dict) else {}) or {}
+    last = (lm.get("last") if isinstance(lm.get("last"), dict) else {}) or {}
+    weekly = (lm.get("weekly") if isinstance(lm.get("weekly"), dict) else {}) or {}
+
+    tsb = float(last.get("tsb") or 0.0)
+    atl = float(last.get("atl") or 0.0)
+    ctl = float(last.get("ctl") or 0.0)
+    weekly_spike = bool(weekly.get("spike_alert"))
+
+    session = "Rodaje aeróbico 45-55 min (RPE 3-4) + 6x20'' progresivos"
+    reason = "Estado neutro: se prioriza consistencia sin exceso de fatiga."
+
+    if weekly_spike or tsb <= -10.0 or atl > (ctl + 8.0):
+        session = "Recuperación activa 30-40 min (RPE 2-3) o descanso total"
+        reason = "Carga/fatiga altas: mejor consolidar adaptación y reducir riesgo."
+    elif tsb >= 5.0 and atl <= (ctl + 2.0):
+        session = "Calidad controlada 50-65 min: 15' suave + 3x8' tempo (RPE 6-7) + 10' enfriamiento"
+        reason = "Buena disponibilidad: puedes introducir estímulo de calidad moderada."
+
+    return "\n".join(
+        [
+            "## Propuesta para mañana",
+            "",
+            f"- Fecha: {tomorrow_label}",
+            f"- Sesión sugerida: {session}",
+            f"- Motivo: {reason}",
+            f"- Estado actual: CTL={ctl:.1f} · ATL={atl:.1f} · TSB={tsb:.1f}",
+            "- Fuente: carga/fatiga del perfil (DB-first) + reglas deterministas.",
+            "",
+            "_Respuesta instantánea: no depende del LLM._",
+        ]
+    )
 
 
 def _is_hr_threshold_query_intent(user_message: str) -> bool:
@@ -10049,56 +10161,114 @@ class TrainerAgent:
                         extra={"user_message": user_message},
                     )
 
-            # Fallback anti-respuesta genérica: si ya existe objetivo en perfil,
-            # devolver una planificación base en lugar de pedir contexto redundante.
+            # Fallback anti-respuesta genérica de planificación:
+            # 1) con objetivo -> mantener fallback estructurado legacy;
+            # 2) sin objetivo -> reintento por LLM con snapshot proactivo para
+            #    proponer sesión útil sin pedir más contexto.
             if (
                 _is_generic_needs_more_info_reply(assistant_reply)
-                and _is_planning_intent(user_message, self.conversation_history)
-                and _has_goal_in_profile(self.user_profile)
+                and (
+                    _is_planning_intent(user_message, self.conversation_history)
+                    or _is_tomorrow_workout_intent(user_message)
+                )
             ):
-                assistant_reply = _build_goal_plan_fallback(self.user_profile)
-                # Persistir un plan activo mínimo como fuente de verdad en DB
-                # y mantener compatibilidad hacia atrás en perfil.
-                try:
-                    goals = (self.user_profile or {}).get("goals", {})
-                    target_race = goals.get("target_race") or "objetivo"
-                    target_date = goals.get("target_race_date") or "fecha por definir"
-                    created = _storage.create_training_plan(
-                        {
-                            "title": f"Plan hacia {target_race}",
-                            "description": "Plan inicial autogenerado por fallback desde objetivo del atleta.",
-                            "objective": str(target_race),
-                            "difficulty": "moderate",
-                            "duration_weeks": 0,
-                            "status": "active",
-                            "source": "agent_goal_fallback",
-                            "plan_data": {
+                if _has_goal_in_profile(self.user_profile):
+                    assistant_reply = _build_goal_plan_fallback(self.user_profile)
+                    # Persistir un plan activo mínimo como fuente de verdad en DB
+                    # y mantener compatibilidad hacia atrás en perfil.
+                    try:
+                        goals = (self.user_profile or {}).get("goals", {})
+                        target_race = goals.get("target_race") or "objetivo"
+                        target_date = goals.get("target_race_date") or "fecha por definir"
+                        created = _storage.create_training_plan(
+                            {
+                                "title": f"Plan hacia {target_race}",
+                                "description": "Plan inicial autogenerado por fallback desde objetivo del atleta.",
+                                "objective": str(target_race),
+                                "difficulty": "moderate",
+                                "duration_weeks": 0,
+                                "status": "active",
+                                "source": "agent_goal_fallback",
+                                "plan_data": {
+                                    "target_race": target_race,
+                                    "target_race_date": target_date,
+                                    "created_at": date.today().isoformat(),
+                                },
+                            },
+                            sessions=None,
+                            change_reason="auto_fallback_from_goal",
+                        )
+                        db_plan = _normalize_storage_plan_row(created)
+                        if db_plan:
+                            db_plan.setdefault("target_race", target_race)
+                            db_plan.setdefault("target_race_date", target_date)
+                            self.user_profile["training_plan"] = db_plan
+                        else:
+                            self.user_profile["training_plan"] = {
+                                "active": True,
+                                "status": "active",
+                                "source": "agent_goal_fallback",
+                                "title": f"Plan hacia {target_race}",
                                 "target_race": target_race,
                                 "target_race_date": target_date,
                                 "created_at": date.today().isoformat(),
-                            },
-                        },
-                        sessions=None,
-                        change_reason="auto_fallback_from_goal",
-                    )
-                    db_plan = _normalize_storage_plan_row(created)
-                    if db_plan:
-                        db_plan.setdefault("target_race", target_race)
-                        db_plan.setdefault("target_race_date", target_date)
-                        self.user_profile["training_plan"] = db_plan
-                    else:
-                        self.user_profile["training_plan"] = {
-                            "active": True,
-                            "status": "active",
-                            "source": "agent_goal_fallback",
-                            "title": f"Plan hacia {target_race}",
-                            "target_race": target_race,
-                            "target_race_date": target_date,
-                            "created_at": date.today().isoformat(),
+                            }
+                        _save_user_profile(self.user_profile)
+                    except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                        log.debug("No se pudo persistir plan fallback en perfil: %s", exc)
+                else:
+                    snapshot_ctx: dict[str, Any] = {}
+                    try:
+                        startup = await self.collect_startup_snapshot_48h()
+                        load_summary = _format_load_fatigue_summary(startup.get("load_fatigue") or {})
+                        snapshot_ctx = {
+                            "today": (startup.get("dates") or {}).get("today"),
+                            "body_battery": (startup.get("body_battery") or {}).get("summary"),
+                            "hrv": (startup.get("hrv") or {}).get("summary"),
+                            "sleep": (startup.get("sleep") or {}).get("summary"),
+                            "load": load_summary,
+                            "recent_trainings": (startup.get("trainings") or [])[:3],
                         }
-                    _save_user_profile(self.user_profile)
-                except (RuntimeError, ValueError, TypeError, OSError) as exc:
-                    log.debug("No se pudo persistir plan fallback en perfil: %s", exc)
+                    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+                        log.debug("No se pudo obtener snapshot para fallback LLM de planificación: %s", exc)
+
+                    rescue_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Eres Kairos Coach. El usuario pide una propuesta de entrenamiento para mañana. "
+                                "Debes responder con una sesión concreta aunque falten algunos datos, usando el contexto disponible. "
+                                "No pidas más detalles salvo bloqueo crítico de seguridad. "
+                                "Si faltan datos, usa una propuesta conservadora y explícita tus supuestos en 1 línea."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Solicitud: {user_message}\n"
+                                f"Contexto disponible: {json.dumps(snapshot_ctx, ensure_ascii=False)}\n"
+                                "Devuelve: tipo de sesión, duración, intensidad (RPE o zona), objetivo y una nota de seguridad."
+                            ),
+                        },
+                    ]
+                    try:
+                        rescue_response = await self.client.chat.completions.create(
+                            model=self.model,
+                            messages=rescue_messages,
+                        )
+                        if getattr(rescue_response, "usage", None):
+                            u = rescue_response.usage
+                            p_toks = getattr(u, "prompt_tokens", 0) or 0
+                            c_toks = getattr(u, "completion_tokens", 0) or 0
+                            self.total_prompt_tokens += p_toks
+                            self.total_completion_tokens += c_toks
+                            if getattr(self, "_api_key", None):
+                                update_gemini_daily_usage(self._api_key, p_toks + c_toks)
+                        rescue_text = str((rescue_response.choices[0].message.content or "")).strip()
+                        if rescue_text:
+                            assistant_reply = rescue_text
+                    except Exception as exc:
+                        log.debug("Fallback LLM de planificación no disponible: %s", exc)
 
             return await self._finalize_chat_reply(user_message, assistant_reply, route="llm")
 

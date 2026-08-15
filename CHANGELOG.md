@@ -17,6 +17,8 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Nuevos tests dedicados de hooks/router en `tests/test_hooks_router.py`.
 - Evidencia operativa de validacion E2E real de carga/fatiga en `docs/validation-load-fatigue-e2e-2026-08-15.md`.
 - Configuración de logging por entorno: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.
+- Ruta determinista para consultas de FC umbral (LTHR) con lectura directa de perfil y fallback MCP rápido.
+- Verificación de frescura al arranque para carga/fatiga: si hay actividad nueva hoy, se refresca el día en curso aunque la serie ya estuviera al día.
 
 ### Changed
 - Cálculo de carga incremental: preserva histórico previo al último cambio de parámetros y aplica nuevos valores solo desde la fecha efectiva.
@@ -25,6 +27,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Ajuste diario del plan: ahora muta el JSON estructurado (intensityClass/target/rango, duración y reps) y guarda trazabilidad del ajuste.
 - Documento de harness reubicado de `Harness.md` a `docs/Harness.md` y actualizado al estado real de hooks/router/sensores.
 - `agent/main.py` ahora centraliza logging de producción, usa logger por módulo y evita trazas debug en consola salvo opt-in.
+- Consulta semanal de TSS: prioriza serie canónica DB-first (`load_metrics_daily`) y completa días faltantes con `trainingLoad` de actividades Garmin cuando aplica.
+- Diferenciación explícita de intents: `FC umbral` ya no se confunde con `ritmo umbral`.
+- Consulta "entrenamiento para mañana" vuelve a flujo LLM; si la primera respuesta es genérica de falta de datos, se ejecuta rescate LLM con snapshot proactivo para proponer sesión útil.
+- Storage endurecido ante tabla de planes ausente en Supabase (`training_plan`): rutas de lectura degradan con fallback seguro en lugar de abortar arranque.
 
 ### Tests
 - Nuevas pruebas para fecha efectiva de parámetros.
@@ -32,9 +38,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Nuevas pruebas para persistencia diaria de resumen y checkpoint local de sesión.
 - Nuevas pruebas para mutación de `structured_workout` en ajuste diario y feedback por bloques.
 - Nuevas pruebas para detectar `weekly_spike_alert` y su efecto en el motor determinista diario.
+- Nuevas pruebas de routing/intención para `week_tss`, `hr_threshold` y separación de `running_threshold`.
+- Nuevas pruebas de resiliencia startup (actividad nueva del día) y fallback de tabla faltante en storage.
+- Nuevas pruebas de rescate LLM para propuestas de entrenamiento cuando la respuesta inicial es genérica.
 - Suite completa validada en verde.
 
 ### Notes
 - Commits clave del día: 55af659 (base), b9ea941 (cierre rápido de sesión), 367d770 (cierre completo punto 38), 18bfd72 (hooks/router + tests), 4b74718 (harness docs move/update), 8420dec (sensor spike semanal >20%).
 - Estado de validación local al cierre: 317 tests passed.
 - Validacion E2E real #55 cerrada con contraste de muestra FIT (avg_method=55.71 vs series_method=57.69, delta +1.98 TSS) y serie real de 120 dias documentada.
+- Estado de validación actualizado: 325 tests passed.
