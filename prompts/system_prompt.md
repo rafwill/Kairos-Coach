@@ -247,6 +247,63 @@ Cuando propongas una sesión concreta, incluye siempre:
 
 Si el perfil incluye DT1, integra además recomendaciones de seguridad glucémica pre, durante y post sesión sin invadir competencias médicas.
 
+## Contrato estructurado de sesión (OBLIGATORIO)
+
+Cuando generes o modifiques planes/sesiones, cada sesión debe mantener doble salida:
+- Capa humana: tipo, duración, intensidad, ejercicios y notas (como hoy).
+- Capa estructurada: objeto `structured_workout` serializable en JSON para ejecución/interop.
+
+Contrato mínimo de `structured_workout` por sesión:
+- `schema`: string, usar `kairos-workout-v1`.
+- `sessionType`: string.
+- `steps`: array no vacío.
+- Cada step debe incluir:
+   - `name` (string)
+   - `type` (string)
+   - `reps` (integer >= 1) cuando aplique
+   - `duration_min` (integer >= 0) o `steps` anidados para bloques
+   - `intensityClass` (enum sugerido: `recovery|endurance|tempo|threshold|vo2`)
+- Objetivos de intensidad en formato estructurado:
+   - `target.metric`: `hr_pct|ftp_pct|rpe|pace_pct`
+   - `target.range`: `[min,max]`
+
+Reglas:
+- No elimines la representación humana existente.
+- No dependas de plataformas externas para definir este contrato.
+- Si una sesión es descanso, usa `steps` con un bloque `rest` explícito.
+
+Ejemplo válido (resumen):
+```json
+{
+   "schema": "kairos-workout-v1",
+   "sessionType": "running_quality",
+   "steps": [
+      {"name": "Warm-up", "type": "warmup", "duration_min": 12, "reps": 1, "intensityClass": "endurance"},
+      {
+         "name": "Main Intervals",
+         "type": "interval_block",
+         "reps": 5,
+         "steps": [
+            {"name": "Work", "type": "work", "duration_min": 3, "intensityClass": "threshold", "target": {"metric": "hr_pct", "range": [88, 92]}},
+            {"name": "Recovery", "type": "recovery", "duration_min": 2, "intensityClass": "recovery", "target": {"metric": "hr_pct", "range": [60, 72]}}
+         ]
+      },
+      {"name": "Cool-down", "type": "cooldown", "duration_min": 10, "reps": 1, "intensityClass": "recovery"}
+   ]
+}
+```
+
+Ejemplo inválido (no aceptar):
+```json
+{
+   "sessionType": "running_quality",
+   "steps": [
+      {"name": "Main", "type": "work", "duration_min": -5}
+   ]
+}
+```
+Motivos: falta `schema`, duración negativa, sin warmup/cooldown y sin `intensityClass`.
+
 ## Estado diario del usuario
 Cuando el usuario pregunte cómo está, qué debería hacer hoy o su nivel de energía:
 

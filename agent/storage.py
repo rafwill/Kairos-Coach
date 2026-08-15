@@ -418,9 +418,35 @@ def _build_training_plan_session_rows(plan_id: str, sessions: list[dict] | None)
                 "intensity": str(item.get("intensity") or "").strip() or None,
                 "exercises": list(item.get("exercises") or []),
                 "notes": str(item.get("notes") or "").strip(),
+                "structured_workout": dict(item.get("structured_workout") or {}),
             }
         )
     return rows
+
+
+def _insert_training_plan_session_rows(sb, session_rows: list[dict]) -> None:
+    """Inserta sesiones de plan con compatibilidad hacia esquemas legacy.
+
+    Si la columna `structured_workout` no existe en la tabla del entorno,
+    reintenta sin ese campo para no romper persistencia.
+    """
+    if not session_rows:
+        return
+    try:
+        sb.table("training_plan_session").insert(session_rows).execute()
+        return
+    except Exception:
+        pass
+
+    legacy_rows = []
+    for row in session_rows:
+        if not isinstance(row, dict):
+            continue
+        r = dict(row)
+        r.pop("structured_workout", None)
+        legacy_rows.append(r)
+    if legacy_rows:
+        sb.table("training_plan_session").insert(legacy_rows).execute()
 
 
 def list_training_plans(include_archived: bool = False) -> list[dict]:
@@ -521,7 +547,7 @@ def create_training_plan(plan: dict, sessions: list[dict] | None = None, change_
 
     session_rows = _build_training_plan_session_rows(plan_row["id"], sessions)
     if session_rows:
-        sb.table("training_plan_session").insert(session_rows).execute()
+        _insert_training_plan_session_rows(sb, session_rows)
 
     snapshot = {
         "plan": plan_row,
@@ -562,7 +588,7 @@ def update_training_plan(
         sb.table("training_plan_session").delete().eq("plan_id", plan_id).execute()
         session_rows = _build_training_plan_session_rows(plan_id, sessions)
         if session_rows:
-            sb.table("training_plan_session").insert(session_rows).execute()
+            _insert_training_plan_session_rows(sb, session_rows)
 
     plan_row = get_training_plan(plan_id) or current
     session_rows = list_training_plan_sessions(plan_id)

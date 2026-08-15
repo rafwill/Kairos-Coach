@@ -309,6 +309,22 @@ class _MemorySupabase:
         return _MemoryTable(self, name)
 
 
+class _MemoryTableNoStructured(_MemoryTable):
+    def execute(self):
+        if self.name == "training_plan_session" and self._mode == "insert":
+            payload = self._payload
+            rows = payload if isinstance(payload, list) else [payload]
+            for row in rows:
+                if isinstance(row, dict) and "structured_workout" in row:
+                    raise Exception("column training_plan_session.structured_workout does not exist")
+        return super().execute()
+
+
+class _MemorySupabaseNoStructured(_MemorySupabase):
+    def table(self, name: str):
+        return _MemoryTableNoStructured(self, name)
+
+
 def test_create_training_plan_enforces_single_active_and_versions(monkeypatch):
     fake_sb = _MemorySupabase()
     fake_sb.rows["training_plan"].append(
@@ -353,6 +369,7 @@ def test_create_training_plan_enforces_single_active_and_versions(monkeypatch):
     sessions = fake_sb.rows["training_plan_session"]
     assert len(sessions) == 1
     assert sessions[0]["plan_id"] == created["id"]
+    assert isinstance(sessions[0].get("structured_workout"), dict)
 
     versions = fake_sb.rows["training_plan_version"]
     assert len(versions) == 1
@@ -404,3 +421,36 @@ def test_activate_training_plan_switches_active_plan_and_versions(monkeypatch):
 
     versions = [v for v in fake_sb.rows["training_plan_version"] if v.get("plan_id") == second["id"]]
     assert len(versions) == 2
+
+
+def test_create_training_plan_falls_back_when_structured_workout_column_missing(monkeypatch):
+    fake_sb = _MemorySupabaseNoStructured()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake_sb)
+
+    created = storage.create_training_plan(
+        {
+            "title": "Plan fallback",
+            "status": "active",
+        },
+        sessions=[
+            {
+                "week_index": 1,
+                "day_index": 1,
+                "session_type": "running_z2",
+                "duration_min": 45,
+                "intensity": "RPE 3-4",
+                "structured_workout": {
+                    "schema": "kairos-workout-v1",
+                    "sessionType": "running_z2",
+                    "steps": [{"name": "Main", "type": "steady", "duration_min": 45, "intensityClass": "endurance"}],
+                },
+            }
+        ],
+    )
+
+    assert created["id"]
+    sessions = fake_sb.rows["training_plan_session"]
+    assert len(sessions) == 1
+    assert "structured_workout" not in sessions[0]

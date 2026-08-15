@@ -1054,6 +1054,23 @@ class TestStartupProactive:
                     "session_type": "running_quality",
                     "duration_min": 60,
                     "intensity": "RPE 7-8",
+                    "structured_workout": {
+                        "schema": "kairos-workout-v1",
+                        "sessionType": "running_quality",
+                        "steps": [
+                            {"name": "Warm-up", "type": "warmup", "duration_min": 12, "reps": 1, "intensityClass": "endurance"},
+                            {
+                                "name": "Main Intervals",
+                                "type": "interval_block",
+                                "reps": 6,
+                                "steps": [
+                                    {"name": "Work", "type": "work", "duration_min": 3, "intensityClass": "threshold"},
+                                    {"name": "Recovery", "type": "recovery", "duration_min": 2, "intensityClass": "recovery"},
+                                ],
+                            },
+                            {"name": "Cool-down", "type": "cooldown", "duration_min": 10, "reps": 1, "intensityClass": "recovery"},
+                        ],
+                    },
                 }
             ]
         }
@@ -1071,6 +1088,11 @@ class TestStartupProactive:
         assert out["adherence_score"] >= 0.75
         assert out["planned"]["duration_min"] == 60.0
         assert "load_deviation_pct" in out
+        assert "bloque principal" in str(out["planned"].get("structured_summary") or "")
+        block_feedback = out.get("block_feedback") or {}
+        summary = block_feedback.get("summary") or {}
+        assert int(summary.get("total_blocks") or 0) >= 1
+        assert "time_deviation_pct" in summary
 
     def test_compute_daily_plan_adjustment_degrades_on_high_positive_deviation(self):
         snapshot = {
@@ -1089,11 +1111,76 @@ class TestStartupProactive:
                 "load_deviation_pct": 0.5,
             },
         }
-        plan = {"title": "Plan 10K", "today_focus": "Tempo 45'"}
+        today_idx = date.today().isoweekday()
+        week_start = date.today() - timedelta(days=today_idx - 1)
+        plan = {
+            "title": "Plan 10K",
+            "today_focus": "Tempo 45'",
+            "plan_data": {"start_date": week_start.isoformat()},
+            "sessions": [
+                {
+                    "week_index": 1,
+                    "day_index": today_idx,
+                    "session_type": "running_quality",
+                    "duration_min": 45,
+                    "intensity": "RPE 7-8",
+                    "structured_workout": {
+                        "schema": "kairos-workout-v1",
+                        "sessionType": "running_quality",
+                        "steps": [
+                            {"name": "Warm-up", "type": "warmup", "duration_min": 10, "reps": 1, "intensityClass": "endurance"},
+                            {
+                                "name": "Main Intervals",
+                                "type": "interval_block",
+                                "reps": 5,
+                                "steps": [
+                                    {"name": "Work", "type": "work", "duration_min": 3, "intensityClass": "threshold"},
+                                    {"name": "Recovery", "type": "recovery", "duration_min": 2, "intensityClass": "recovery"},
+                                ],
+                            },
+                            {"name": "Cool-down", "type": "cooldown", "duration_min": 10, "reps": 1, "intensityClass": "recovery"},
+                        ],
+                    },
+                }
+            ],
+        }
         out = _compute_daily_plan_adjustment(snapshot, plan)
         assert out is not None
         assert out["decision"] == "reduce"
         assert out["adherence_adjustment"] == "down"
+        assert "bloque principal" in str(out.get("resulting_session") or "").lower() or "repeticiones" in str(out.get("resulting_session") or "").lower()
+        adjusted = out.get("adjusted_structured_workout") or {}
+        trace = out.get("adjustment_trace") or []
+        assert adjusted.get("schema") == "kairos-workout-v1"
+        assert isinstance(trace, list) and trace
+
+    def test_build_proactive_status_markdown_shows_block_feedback_summary(self):
+        payload = {
+            "plan_assigned": True,
+            "plan_recommendation": "Plan activo",
+            "plan_execution_feedback": {
+                "adherence_score": 0.82,
+                "adherence_label": "adherente",
+                "load_deviation_pct": -0.12,
+                "planned": {"structured_summary": "bloque principal: 5x3' + 2' rec (threshold)"},
+                "block_feedback": {
+                    "summary": {
+                        "completed_blocks": 2,
+                        "partial_blocks": 1,
+                        "missed_blocks": 0,
+                        "total_blocks": 3,
+                        "time_deviation_pct": -0.10,
+                    }
+                },
+            },
+            "body_battery": {"summary": "sin datos"},
+            "hrv": {"summary": "sin datos"},
+            "sleep": {"summary": "sin datos"},
+            "trainings": [],
+        }
+        out = _build_proactive_status_markdown(payload)
+        assert "Bloques:" in out
+        assert "2/3 completos" in out
 
     def test_compute_daily_plan_adjustment_respects_unavailable_day(self):
         today_iso = date.today().isoformat()
@@ -2565,10 +2652,51 @@ class TestTssSourceTagging:
         assert plan["title"].startswith("Plan hacia")
         assert plan["duration_weeks"] >= 4
         assert len(sessions) == plan["duration_weeks"] * 7
+        assert all(isinstance(s.get("structured_workout"), dict) for s in sessions)
 
         week_indexes = sorted({int(s.get("week_index") or 0) for s in sessions})
         assert week_indexes[0] == 1
         assert week_indexes[-1] == plan["duration_weeks"]
+
+    def test_generate_structured_plan_payload_structured_workout_contract(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
+        sample = next((s for s in sessions if str(s.get("session_type")) != "rest"), sessions[0])
+        sw = sample.get("structured_workout") or {}
+
+        assert sw.get("schema") == "kairos-workout-v1"
+        assert sw.get("sessionType") == sample.get("session_type")
+        assert isinstance(sw.get("steps"), list) and sw.get("steps")
+
+        first_step = sw["steps"][0]
+        assert isinstance(first_step.get("name"), str) and first_step.get("name")
+        assert isinstance(first_step.get("type"), str) and first_step.get("type")
+        assert isinstance(first_step.get("intensityClass"), str) and first_step.get("intensityClass")
+
+    def test_generate_structured_plan_payload_rest_sessions_have_rest_step(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+                "availability": {"unavailable_days": ["domingo"]},
+            },
+            "health": {},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "Planifícame")
+        rest = next((s for s in sessions if str(s.get("session_type") or "").lower() == "rest"), None)
+        assert rest is not None
+        sw = rest.get("structured_workout") or {}
+        assert sw.get("schema") == "kairos-workout-v1"
+        assert isinstance(sw.get("steps"), list) and sw.get("steps")
+        assert sw["steps"][0].get("type") == "rest"
 
     def test_generate_structured_plan_payload_has_weekly_progression(self):
         profile = {
@@ -2782,10 +2910,60 @@ class TestTssSourceTagging:
                         "duration_min": dur,
                         "intensity": intensity,
                         "notes": "template",
+                        "structured_workout": {
+                            "schema": "kairos-workout-v1",
+                            "sessionType": stype,
+                            "steps": (
+                                [{"name": "Rest", "type": "rest", "duration_min": 0, "reps": 1, "intensityClass": "recovery"}]
+                                if stype == "rest"
+                                else [
+                                    {"name": "Warm-up", "type": "warmup", "duration_min": max(5, int(dur * 0.2)), "reps": 1, "intensityClass": "endurance"},
+                                    {"name": "Main", "type": "steady", "duration_min": max(1, dur - max(5, int(dur * 0.2)) - max(5, int(dur * 0.2))), "reps": 1, "intensityClass": "tempo" if "quality" in stype else "endurance"},
+                                    {"name": "Cool-down", "type": "cooldown", "duration_min": max(5, int(dur * 0.2)), "reps": 1, "intensityClass": "recovery"},
+                                ]
+                            ),
+                        },
                     }
                 )
         errors = _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 8}})
         assert any("demasiado plano" in e or "repiten" in e for e in errors)
+
+    def test_validate_structured_plan_requires_structured_workout_for_non_rest(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
+        first_active = next((s for s in sessions if str(s.get("session_type") or "") != "rest"), None)
+        assert first_active is not None
+        first_active.pop("structured_workout", None)
+
+        errors = _validate_structured_plan(plan, sessions, profile)
+        assert any("structured_workout" in e for e in errors)
+
+    def test_validate_structured_plan_flags_invalid_structured_order(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
+        first_active = next((s for s in sessions if str(s.get("session_type") or "") != "rest"), None)
+        assert first_active is not None
+        sw = first_active.get("structured_workout") or {}
+        steps = list(sw.get("steps") or [])
+        assert len(steps) >= 3
+        sw["steps"] = [steps[-1]] + steps[1:-1] + [steps[0]]
+
+        errors = _validate_structured_plan(plan, sessions, profile)
+        assert any("warmup" in e.lower() and "cooldown" in e.lower() for e in errors)
 
     def test_summarize_plan_changes_includes_duration_and_volume(self):
         previous_plan = {"duration_weeks": 8, "difficulty": "moderate"}
