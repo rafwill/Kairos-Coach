@@ -3,7 +3,7 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 233 tests (validados localmente a 2026-07-30). CI/CD con GitHub Actions activo.
+- Suite de tests: 287 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 
 ---
@@ -15,7 +15,7 @@
 #### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — PENDIENTE
 - Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
 - Checklist de ejecucion:
-  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (270 passed).
+  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (287 passed).
   - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
   - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
   - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
