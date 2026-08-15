@@ -60,8 +60,12 @@ Esto funciona como el briefing que te daría un entrenador de élite antes de qu
 #### 10. Harness explícito en runtime (hooks + router)
 El runtime del agente ya expone capa de harness explícita en `TrainerAgent.chat()`:
 - `HookManager` con eventos `before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`
-- `ToolRouter` determinista opcional para intenciones críticas (`plan_status`, `week_tss`, `running_threshold`, `mcp_factual`, `daily_readiness`, `planning`, `personal_records`)
+- `ToolRouter` determinista opcional para intenciones críticas (`plan_status`, `week_tss`, `hr_threshold`, `running_threshold`, `mcp_factual`, `daily_readiness`, `planning`, `personal_records`)
 - Flag de control: `KAIROS_DETERMINISTIC_ROUTER=true|false`
+
+Nota de diseño actual:
+- Las consultas de propuesta de entrenamiento para mañana pasan por LLM (no ruta determinista).
+- Si el LLM responde de forma genérica pidiendo más información, Kairos lanza un segundo intento con contexto proactivo (48h) para devolver una propuesta útil y concreta.
 
 La documentación de harness se mantiene en `docs/Harness.md`.
 

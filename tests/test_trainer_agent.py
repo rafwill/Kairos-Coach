@@ -1476,6 +1476,10 @@ class TestPlanningFallbackAndRanges:
         txt = "Lo siento, pero no puedo crear una planificación para tu objetivo sin más información"
         assert _is_generic_needs_more_info_reply(txt)
 
+    def test_generic_needs_more_info_detection_insufficient_info_phrase(self):
+        txt = "Lo siento, pero no tengo suficiente información para proponerte un entrenamiento para mañana."
+        assert _is_generic_needs_more_info_reply(txt)
+
     def test_planning_intent_detection_true(self):
         assert _is_planning_intent("¿puedes crearme una planificación para mi objetivo?")
 
@@ -3471,6 +3475,65 @@ class TestHrThresholdDeterministicRoute:
 
         assert out.startswith("## FC umbral actual")
         assert "174 bpm" in out
+
+
+class TestTomorrowWorkoutViaLlm:
+    @pytest.mark.asyncio
+    async def test_chat_planning_generic_reply_uses_llm_rescue_without_goal(self):
+        from agent.trainer_agent import TrainerAgent
+
+        msg_generic = MagicMock()
+        msg_generic.tool_calls = None
+        msg_generic.content = "Lo siento, pero no tengo suficiente información para proponerte un entrenamiento para mañana."
+        choice_generic = MagicMock()
+        choice_generic.message = msg_generic
+        choice_generic.finish_reason = "stop"
+        response_generic = MagicMock()
+        response_generic.choices = [choice_generic]
+        response_generic.usage = None
+
+        msg_rescue = MagicMock()
+        msg_rescue.tool_calls = None
+        msg_rescue.content = "Para mañana te propongo 45 min aeróbicos suaves (RPE 3-4) + 4 progresivos de 20s."
+        choice_rescue = MagicMock()
+        choice_rescue.message = msg_rescue
+        choice_rescue.finish_reason = "stop"
+        response_rescue = MagicMock()
+        response_rescue.choices = [choice_rescue]
+        response_rescue.usage = None
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.model = "test-model"
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=[response_generic, response_rescue])
+        agent.total_prompt_tokens = 0
+        agent.total_completion_tokens = 0
+        agent._api_key = ""
+
+        with patch("agent.trainer_agent._save_history_entry"), patch.object(
+            TrainerAgent,
+            "collect_startup_snapshot_48h",
+            new=AsyncMock(
+                return_value={
+                    "dates": {"today": "2026-08-15"},
+                    "body_battery": {"summary": "hoy=72 · ayer=65"},
+                    "hrv": {"summary": "hoy=62 ms · ayer=59 ms"},
+                    "sleep": {"summary": "hoy=7h10"},
+                    "load_fatigue": {},
+                    "trainings": [],
+                }
+            ),
+        ):
+            out = await TrainerAgent.chat(agent, "Que entrenamiento me propones para mañana?")
+
+        assert "45 min aeróbicos" in out
 
 
 class TestDailyReadinessDeterministicRoute:

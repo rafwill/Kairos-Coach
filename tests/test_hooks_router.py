@@ -51,6 +51,7 @@ class TestToolRouter:
 
         assert router.route_key("Tengo algun plan?", history, profile) == "plan_status"
         assert router.route_key("Cuanto TSS llevo esta semana?", history, profile) == "week_tss"
+        assert router.route_key("Que entrenamiento me propones para mañana?", history, profile) is None
         assert router.route_key("Cual es mi FC umbral?", history, profile) == "hr_threshold"
         assert router.route_key("Cuales son los TSS de esta semana?", history, profile) == "week_tss"
         assert router.route_key("Cual es mi ritmo umbral actual?", history, profile) == "running_threshold"

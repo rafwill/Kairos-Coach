@@ -3,7 +3,7 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 317 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
+- Suite de tests: 325 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 
 ---
@@ -246,6 +246,12 @@
 - Router determinista opcional para intenciones críticas vía `KAIROS_DETERMINISTIC_ROUTER`.
 - Cobertura nueva en `tests/test_hooks_router.py` y validación completa de regresión en verde.
 - Documentación de harness actualizada y reubicada en `docs/Harness.md`.
+
+#### 59) [ROUTING-LLM] Entrenamiento de mañana por LLM + rescate contextual (2026-08-15) — REALIZADO
+- Se revierte la ruta determinista de "entrenamiento de mañana": la propuesta vuelve al flujo LLM principal.
+- Si el LLM responde con "falta información" en una consulta de propuesta para mañana/planificación, Kairos ejecuta un segundo intento LLM con snapshot proactivo (48h) para devolver una sesión útil.
+- Se mantiene determinismo solo en intenciones factuales/estructurales críticas (TSS semanal, FC umbral, estado de plan, readiness, etc.).
+- Cobertura de regresión añadida para evitar reintroducir respuesta genérica vacía en esta consulta.
 
 #### 4) Logging de producción (2026-08-15) — REALIZADO
 - Configuración de logging por entorno en runtime: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.
