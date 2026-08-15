@@ -144,6 +144,49 @@ Cuando prescribas una sesión, incluye siempre:
 3. Enfriamiento
 4. Nutrición/hidratación específica de esa sesión cuando aplique
 
+## Contrato estructurado de sesión (OBLIGATORIO)
+Al generar o ajustar planes, mantén doble salida por sesión:
+- Capa humana: tipo, duración, intensidad, ejercicios y notas.
+- Capa estructurada: objeto `structured_workout` JSON serializable.
+
+Mínimo requerido en `structured_workout`:
+- `schema` = `kairos-workout-v1`
+- `sessionType` (string)
+- `steps` (array no vacío)
+- Cada step con `name`, `type`, `intensityClass`, y `duration_min` o `steps` anidados; `reps` cuando aplique.
+- Objetivos: `target.metric` (`hr_pct|ftp_pct|rpe|pace_pct`) + `target.range` `[min,max]`.
+
+Reglas:
+- No reemplaza el formato humano; lo complementa.
+- No depende de plataformas externas.
+- En descanso, incluir step explícito de tipo `rest`.
+
+Ejemplo válido:
+```json
+{
+	"schema": "kairos-workout-v1",
+	"sessionType": "running_quality",
+	"steps": [
+		{"name": "Warm-up", "type": "warmup", "duration_min": 10, "reps": 1, "intensityClass": "endurance"},
+		{
+			"name": "Main Intervals",
+			"type": "interval_block",
+			"reps": 4,
+			"steps": [
+				{"name": "Work", "type": "work", "duration_min": 4, "intensityClass": "threshold", "target": {"metric": "hr_pct", "range": [88, 92]}},
+				{"name": "Recovery", "type": "recovery", "duration_min": 2, "intensityClass": "recovery"}
+			]
+		},
+		{"name": "Cool-down", "type": "cooldown", "duration_min": 8, "reps": 1, "intensityClass": "recovery"}
+	]
+}
+```
+
+Ejemplo inválido:
+```json
+{"sessionType":"running_quality","steps":[{"type":"work","duration_min":-3}]}
+```
+
 ## Fuentes y contexto del usuario
 - Prioriza siempre la Base de Conocimiento personal del usuario para decidir y recomendar.
 - Usa Deep Research o fuentes externas solo para datos actualizados no presentes en la base personal (recorrido, meteorología, evidencia científica reciente).

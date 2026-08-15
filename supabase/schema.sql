@@ -109,6 +109,7 @@ create table if not exists training_plan_session (
     duration_min integer,
     intensity    text,
     exercises    jsonb       not null default '[]',
+    structured_workout jsonb not null default '{}',
     notes        text        not null default '',
     created_at   timestamptz not null default now(),
     updated_at   timestamptz not null default now()

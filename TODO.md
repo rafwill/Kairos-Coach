@@ -8,6 +8,114 @@
 
 ---
 
+## ⏳ Pendiente
+
+### Prioridad alta
+
+#### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — PENDIENTE
+- Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
+- Checklist de ejecucion:
+  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (270 passed).
+  - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
+  - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
+  - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
+  - Contrastar muestra de actividades y TSS por sesion contra referencias conocidas.
+  - [REALIZADO 2026-08-15] Verificar coherencia dinamica de CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) en el briefing proactivo de arranque (ATL=52.5, CTL=61.4, TSB=8.9, regla aplicada mostrada).
+  - Registrar evidencia (capturas/logs/resumen) en bitacora tecnica.
+- Criterio de cierre:
+  - Marcar este item como **REALIZADO** solo cuando la validacion end-to-end haya sido ejecutada con datos reales y evidencia guardada.
+
+#### 37) Integración TrainingPeaks MCP (capa de escritura)
+- Añadir `trainingpeaks-mcp` (https://github.com/JamsusMaximus/trainingpeaks-mcp) como servidor MCP secundario junto a `garmin_mcp`.
+- Arquitectura resultante: `garmin_mcp` = capa de lectura. `trainingpeaks-mcp` = capa de escritura (calendario, sesiones estructuradas, notas, eventos).
+- Autenticación via cookie del navegador (sin aprobación de API oficial TP). 78 tools disponibles.
+- Funcionalidades prioritarias:
+  - `tp_create_workout` con estructura de intervalos JSON auto-computando IF/TSS.
+  - `tp_pair_workout` — empareja workout planificado con el ejecutado (modelo técnico para #31).
+  - `tp_get_fitness` — CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) nativo de TP para contrastar con modelo propio desde Garmin.
+  - `tp_add_workout_comment` — el coach deja notas en sesiones del calendario.
+  - `tp_get_atp` — Plan de Temporada Anual con TSS targets semanales por periodo.
+- Requiere cuenta TrainingPeaks (no gratuita en todos los planes).
+- Inspirado en `trainingpeaks-mcp` (111 stars, activo, MIT).
+
+#### 1) Endurecimiento final post-implementación
+- Al terminar implementacion, ejecutar bateria de seguridad: secretos, datos sensibles, configuraciones inseguras, dependencias y transporte.
+- Aplicar remediaciones antes de declarar cierre del proyecto.
+
+### Prioridad media
+
+#### 18) Integración Strava
+- Conectar Strava como fuente secundaria de actividades via OAuth2.
+- Deduplicación cross-plataforma: misma fecha + deporte + duración/distancia con 5% tolerancia → Garmin como source of truth.
+- Añadir campo `source_platform` a actividades en Supabase.
+- Inspirado en la arquitectura de providers de FitMCP.
+
+#### 27) [PROMPTING] Umbral de spike semanal >20%
+- Si el volumen o la carga de la semana actual supera en más del 20% la semana anterior, advertir activamente aunque el TSB no haya cruzado el umbral individual.
+- Útil cuando hay pocos datos históricos para calcular percentiles individualizados.
+- Aplicar también en system_prompt_compact.md.
+
+#### 35) [PROMPTING] Contextualización meteorológica en análisis de actividad
+- El coach debe considerar las condiciones del día (temperatura, viento, humedad) como variable explicativa del rendimiento (±10–20% de impacto).
+- Sección "Condiciones del día" en el análisis si el usuario las reporta, o pedirlas si el rendimiento parece inusualmente alto/bajo.
+- Largo plazo: integración con API meteorológica por fecha y coordenadas GPS.
+- Inspirado en el Feature 03 de FitMCP.
+
+#### 39) Power PRs granulares por duración (ciclismo/triatlón)
+- Power PRs por duración (5s, 1min, 5min, 20min, 60min, 90min) como estándar de rendimiento en ciclismo.
+- Si el usuario tiene TP: usar `tp_get_peaks`. Si solo Garmin: usar `get_cycling_ftp` + sesiones clave.
+- Inspirado en `tp_get_peaks` de `trainingpeaks-mcp`.
+
+#### 2) Refactor por capas
+- Separar claramente presentacion (CLI), negocio (coach) y datos (Garmin/LLM/storage).
+- Reducir acoplamiento entre agent/main.py y agent/trainer_agent.py.
+
+#### 4) Logging de producción
+- Sustituir mensajes debug de consola por logging con niveles configurables.
+- Controlar verbosidad por entorno.
+
+### Prioridad baja
+
+#### 22) Makefile + scripts de setup automatizado
+- `Makefile` con targets: `setup`, `login`, `test`, `serve`, `lint`.
+- `setup.ps1` (Windows) y `setup.sh` (Unix) que creen el venv, instalen dependencias y generen `.env` scaffold.
+- Inspirado en el setup automatizado de FitMCP.
+
+#### 29) [PROMPTING] Regla de composición corporal como tendencia semanal
+- Al analizar peso o composición corporal, no interpretar fluctuaciones diarias como señal.
+- La unidad mínima de análisis es la tendencia semana a semana cruzada con tipo y volumen de entrenamiento.
+- Aplicar también en system_prompt_compact.md.
+
+#### 36) [PROMPTING] Métricas de natación y protocolo de triatlón
+- Métricas de natación: SWOLF, cadencia de brazada, distancia por brazada.
+- Protocolo de triatlón: análisis por disciplina + tiempos de transición T1/T2 + distribución de carga.
+- Inspirado en el Feature 05 de FitMCP.
+
+#### 40) Plan de Temporada Anual (ATP) — periodización a largo plazo
+- Fase 1 (prompting): documentar periodos base/construcción/pico, TSS targets por periodo, A/B/C races.
+- Fase 2 (datos): tabla en Supabase para el ATP del atleta que complementa a `training_plan`.
+- Si el usuario tiene TP: `tp_get_atp` puede ser la fuente de verdad del ATP.
+- Inspirado en `tp_get_atp` de `trainingpeaks-mcp`.
+
+#### 5) Dashboard de métricas
+- Explorar panel web opcional para tendencias (HRV, VO2max, sueño, estrés, carga).
+- Evaluar Streamlit como primer candidato.
+
+#### 6) Resumen diario automatizado
+- Ejecutar resumen diario programado (Windows Task Scheduler).
+- Salida por Telegram o email.
+
+### Backlog abierto
+
+#### 8) Gestión de tokens por proveedor LLM
+- Evaluar tabla dedicada de tokens con campo de proveedor para soportar múltiples LLM de forma ordenada.
+
+#### 9) Congelado del código MCP
+- Evaluar vendorizar/congelar el código MCP en el repo para evitar roturas por cambios upstream.
+- Analizar qué tools usamos y cuáles no para traernos al código solo las que necesitamos.
+
+---
+
 ## ✅ Completado
 
 ### Hitos técnicos base
@@ -68,6 +176,9 @@
 
 #### 19) Desglose semanal y por deporte
 - `kairos_weekly_sport_breakdown`: consulta Garmin MCP, agrupa por deporte y devuelve sesiones, horas y km.
+
+#### 20) Renombrar proyecto en GitHub — REALIZADO
+- Renombrado del repo de `garmin-ai-coach` a `kairos-coach` en GitHub y actualización de la URL de clonación en README.
 
 #### 21) GitHub Actions CI
 - `.github/workflows/tests.yml` ejecuta la suite de tests en cada push y pull request, sin credenciales reales.
@@ -139,6 +250,12 @@
 - Se añade checkpoint incremental de resumen tras cada respuesta de Kairos (resumen ligero local, sin red) y persistencia por día mediante upsert.
 - Resultado operativo: salida de sesión inmediata o casi inmediata, manteniendo memoria de sesión en BBDD.
 
+#### 38) [PROMPTING] Formato de workout estructurado estándar TP (2026-08-15) — REALIZADO
+- Se define contrato estructurado por sesión (`structured_workout`) en prompts completo y compacto con schema `kairos-workout-v1`.
+- El motor de planes genera doble salida (humana + JSON estructurado) y persistencia backward-compatible con fallback legacy.
+- El validador comprueba orden de bloques, coherencia duración/steps, targets/intensityClass y reglas específicas de sesiones de calidad.
+- Ajuste diario y feedback post-sesión ahora usan la estructura: trazabilidad del ajuste aplicado y análisis plan-vs-ejecutado por bloques.
+
 #### 23) Principio "relaciones > valores aislados"
 - Regla en system_prompt y compact: nunca reportar valor aislado cuando se puede cruzar con otra metrica.
 
@@ -194,124 +311,8 @@
 
 ---
 
-## ⏳ Pendiente
-
-### Prioridad alta
-
-#### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — PENDIENTE
-- Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
-- Checklist de ejecucion:
-  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (270 passed).
-  - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
-  - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
-  - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
-  - Contrastar muestra de actividades y TSS por sesion contra referencias conocidas.
-  - [REALIZADO 2026-08-15] Verificar coherencia dinamica de CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) en el briefing proactivo de arranque (ATL=52.5, CTL=61.4, TSB=8.9, regla aplicada mostrada).
-  - Registrar evidencia (capturas/logs/resumen) en bitacora tecnica.
-- Criterio de cierre:
-  - Marcar este item como **REALIZADO** solo cuando la validacion end-to-end haya sido ejecutada con datos reales y evidencia guardada.
-
-#### 37) Integración TrainingPeaks MCP (capa de escritura)
-- Añadir `trainingpeaks-mcp` (https://github.com/JamsusMaximus/trainingpeaks-mcp) como servidor MCP secundario junto a `garmin_mcp`.
-- Arquitectura resultante: `garmin_mcp` = capa de lectura. `trainingpeaks-mcp` = capa de escritura (calendario, sesiones estructuradas, notas, eventos).
-- Autenticación via cookie del navegador (sin aprobación de API oficial TP). 78 tools disponibles.
-- Funcionalidades prioritarias:
-  - `tp_create_workout` con estructura de intervalos JSON auto-computando IF/TSS.
-  - `tp_pair_workout` — empareja workout planificado con el ejecutado (modelo técnico para #31).
-  - `tp_get_fitness` — CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) nativo de TP para contrastar con modelo propio desde Garmin.
-  - `tp_add_workout_comment` — el coach deja notas en sesiones del calendario.
-  - `tp_get_atp` — Plan de Temporada Anual con TSS targets semanales por periodo.
-- Requiere cuenta TrainingPeaks (no gratuita en todos los planes).
-- Inspirado en `trainingpeaks-mcp` (111 stars, activo, MIT).
-
-#### 1) Endurecimiento final post-implementación
-- Al terminar implementacion, ejecutar bateria de seguridad: secretos, datos sensibles, configuraciones inseguras, dependencias y transporte.
-- Aplicar remediaciones antes de declarar cierre del proyecto.
-
-### Prioridad media
-
-#### 18) Integración Strava
-- Conectar Strava como fuente secundaria de actividades via OAuth2.
-- Deduplicación cross-plataforma: misma fecha + deporte + duración/distancia con 5% tolerancia → Garmin como source of truth.
-- Añadir campo `source_platform` a actividades en Supabase.
-- Inspirado en la arquitectura de providers de FitMCP.
-
-#### 27) [PROMPTING] Umbral de spike semanal >20%
-- Si el volumen o la carga de la semana actual supera en más del 20% la semana anterior, advertir activamente aunque el TSB no haya cruzado el umbral individual.
-- Útil cuando hay pocos datos históricos para calcular percentiles individualizados.
-- Aplicar también en system_prompt_compact.md.
-
-#### 35) [PROMPTING] Contextualización meteorológica en análisis de actividad
-- El coach debe considerar las condiciones del día (temperatura, viento, humedad) como variable explicativa del rendimiento (±10–20% de impacto).
-- Sección "Condiciones del día" en el análisis si el usuario las reporta, o pedirlas si el rendimiento parece inusualmente alto/bajo.
-- Largo plazo: integración con API meteorológica por fecha y coordenadas GPS.
-- Inspirado en el Feature 03 de FitMCP.
-
-#### 38) [PROMPTING] Formato de workout estructurado estándar TP
-- Añadir al system_prompt el formato JSON de intervalos de TP (steps, reps, intensityClass, %FTP/%HR).
-- Mejora la precisión de sesiones: actualmente usamos RPE textual, no intensidad cuantificada por zonas.
-- Depende de #37 (integración TP) para ser exportable directamente.
-- Inspirado en la arquitectura de workouts estructurados de `trainingpeaks-mcp`.
-
-#### 39) Power PRs granulares por duración (ciclismo/triatlón)
-- Power PRs por duración (5s, 1min, 5min, 20min, 60min, 90min) como estándar de rendimiento en ciclismo.
-- Si el usuario tiene TP: usar `tp_get_peaks`. Si solo Garmin: usar `get_cycling_ftp` + sesiones clave.
-- Inspirado en `tp_get_peaks` de `trainingpeaks-mcp`.
-
-#### 2) Refactor por capas
-- Separar claramente presentacion (CLI), negocio (coach) y datos (Garmin/LLM/storage).
-- Reducir acoplamiento entre agent/main.py y agent/trainer_agent.py.
-
-#### 4) Logging de producción
-- Sustituir mensajes debug de consola por logging con niveles configurables.
-- Controlar verbosidad por entorno.
-
-### Prioridad baja
-
-#### 22) Makefile + scripts de setup automatizado
-- `Makefile` con targets: `setup`, `login`, `test`, `serve`, `lint`.
-- `setup.ps1` (Windows) y `setup.sh` (Unix) que creen el venv, instalen dependencias y generen `.env` scaffold.
-- Inspirado en el setup automatizado de FitMCP.
-
-#### 29) [PROMPTING] Regla de composición corporal como tendencia semanal
-- Al analizar peso o composición corporal, no interpretar fluctuaciones diarias como señal.
-- La unidad mínima de análisis es la tendencia semana a semana cruzada con tipo y volumen de entrenamiento.
-- Aplicar también en system_prompt_compact.md.
-
-#### 36) [PROMPTING] Métricas de natación y protocolo de triatlón
-- Métricas de natación: SWOLF, cadencia de brazada, distancia por brazada.
-- Protocolo de triatlón: análisis por disciplina + tiempos de transición T1/T2 + distribución de carga.
-- Inspirado en el Feature 05 de FitMCP.
-
-#### 40) Plan de Temporada Anual (ATP) — periodización a largo plazo
-- Fase 1 (prompting): documentar periodos base/construcción/pico, TSS targets por periodo, A/B/C races.
-- Fase 2 (datos): tabla en Supabase para el ATP del atleta que complementa a `training_plan`.
-- Si el usuario tiene TP: `tp_get_atp` puede ser la fuente de verdad del ATP.
-- Inspirado en `tp_get_atp` de `trainingpeaks-mcp`.
-
-#### 5) Dashboard de métricas
-- Explorar panel web opcional para tendencias (HRV, VO2max, sueño, estrés, carga).
-- Evaluar Streamlit como primer candidato.
-
-#### 6) Resumen diario automatizado
-- Ejecutar resumen diario programado (Windows Task Scheduler).
-- Salida por Telegram o email.
-
-### Backlog abierto
-
-#### 8) Gestión de tokens por proveedor LLM
-- Evaluar tabla dedicada de tokens con campo de proveedor para soportar múltiples LLM de forma ordenada.
-
-#### 9) Congelado del código MCP
-- Evaluar vendorizar/congelar el código MCP en el repo para evitar roturas por cambios upstream.
-- Analizar qué tools usamos y cuáles no para traernos al código solo las que necesitamos.
-
----
-
 ## Notas de mantenimiento
 - Mantener TODO sincronizado con decisiones de arquitectura reales.
 - Evitar registrar aqui tareas ya completadas salvo resumen corto de hitos.
 - Regla de equipo: documentar siempre los cambios antes de hacer commit.
 
-## 20) Renombrar proyecto en GitHub
-Pendiente por tu parte en GitHub: renombrar el repo de garmin-ai-coach a kairos-coach desde Settings → General, y actualizar la URL del git clone en el README. Eso no lo puedo hacer desde aquí.

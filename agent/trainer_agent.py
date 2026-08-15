@@ -3064,9 +3064,24 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         label = str(plan_execution_feedback.get("adherence_label") or "n/d")
         dev_pct = _safe_float(plan_execution_feedback.get("load_deviation_pct"), 0.0) * 100.0
         next_adj = str(plan_execution_feedback.get("next_session_adjustment") or "").strip()
+        structured_summary = str(
+            ((plan_execution_feedback.get("planned") or {}).get("structured_summary") or "")
+        ).strip()
         lines.append(
             f"- Plan vs ejecutado (ayer): adherencia {score:.2f} ({label}) · desviacion carga {dev_pct:+.0f}%"
         )
+        if structured_summary:
+            lines.append(f"  - Plan de referencia: {structured_summary}")
+        block_summary = ((plan_execution_feedback.get("block_feedback") or {}).get("summary") or {})
+        if isinstance(block_summary, dict) and block_summary:
+            done = int(block_summary.get("completed_blocks") or 0)
+            partial = int(block_summary.get("partial_blocks") or 0)
+            missed = int(block_summary.get("missed_blocks") or 0)
+            total = int(block_summary.get("total_blocks") or max(1, done + partial + missed))
+            time_dev_pct = _safe_float(block_summary.get("time_deviation_pct"), 0.0) * 100.0
+            lines.append(
+                f"  - Bloques: {done}/{total} completos · parciales {partial} · omitidos {missed} · desviación tiempo {time_dev_pct:+.0f}%"
+            )
         if next_adj:
             lines.append(f"  - Ajuste sugerido por adherencia: {next_adj}")
 
@@ -4155,6 +4170,301 @@ def _extract_rpe_mid(intensity: str | None) -> float:
     return max(1.0, min(10.0, (low + high) / 2.0))
 
 
+def _normalize_intensity_class(value: Any) -> str:
+    txt = str(value or "").strip().lower()
+    aliases = {
+        "z1": "recovery",
+        "z2": "endurance",
+        "z3": "tempo",
+        "z4": "threshold",
+        "z5": "vo2",
+    }
+    return aliases.get(txt, txt)
+
+
+def _structured_workout_duration_minutes(workout: dict) -> float:
+    """Suma duración total de un structured_workout en minutos."""
+    if not isinstance(workout, dict):
+        return 0.0
+
+    def _sum_step(step: dict) -> float:
+        if not isinstance(step, dict):
+            return 0.0
+        reps = max(1, int(_safe_float(step.get("reps"), 1.0)))
+        nested = step.get("steps")
+        if isinstance(nested, list) and nested:
+            nested_total = sum(_sum_step(ch) for ch in nested)
+            return reps * nested_total
+        duration = max(0.0, _safe_float(step.get("duration_min"), 0.0))
+        return reps * duration
+
+    steps = workout.get("steps")
+    if not isinstance(steps, list):
+        return 0.0
+    return round(sum(_sum_step(s) for s in steps), 1)
+
+
+_INTENSITY_CLASS_ORDER = ["recovery", "endurance", "tempo", "threshold", "vo2"]
+
+
+def _downgrade_intensity_class(value: str, levels: int = 1) -> str:
+    current = _normalize_intensity_class(value)
+    if current not in _INTENSITY_CLASS_ORDER:
+        return current
+    idx = _INTENSITY_CLASS_ORDER.index(current)
+    return _INTENSITY_CLASS_ORDER[max(0, idx - max(1, int(levels)))]
+
+
+def _estimate_tss_hour_for_intensity_class(value: str) -> float:
+    ic = _normalize_intensity_class(value)
+    mapping = {
+        "recovery": 35.0,
+        "endurance": 50.0,
+        "tempo": 65.0,
+        "threshold": 82.0,
+        "vo2": 95.0,
+    }
+    return mapping.get(ic, 55.0)
+
+
+def _extract_primary_intensity_class(step: dict) -> str:
+    if not isinstance(step, dict):
+        return "endurance"
+    own = _normalize_intensity_class(step.get("intensityClass") or "")
+    if own:
+        return own
+    nested = step.get("steps")
+    if isinstance(nested, list):
+        for ch in nested:
+            ic = _extract_primary_intensity_class(ch)
+            if ic:
+                return ic
+    return "endurance"
+
+
+def _copy_structured_workout(workout: dict | None) -> dict | None:
+    if not isinstance(workout, dict):
+        return None
+    try:
+        return json.loads(json.dumps(workout))
+    except Exception:
+        return dict(workout)
+
+
+def _apply_structured_workout_adjustment(session: dict | None, decision: str) -> tuple[dict | None, list[str]]:
+    """Ajusta el JSON structured_workout y devuelve trazabilidad del ajuste."""
+    if not isinstance(session, dict):
+        return None, []
+    sw = _copy_structured_workout(session.get("structured_workout"))
+    if not isinstance(sw, dict):
+        return None, []
+
+    decision_key = str(decision or "").strip().lower()
+    if decision_key in {"maintain", "rest"}:
+        return sw, ["sin cambios estructurales"] if decision_key == "maintain" else ["sesión convertida a descanso"]
+
+    volume_factor = 0.70 if decision_key == "easy" else 0.80
+    intensity_levels = 1
+    trace: list[str] = []
+
+    def _is_main_work_step(step_type: str) -> bool:
+        st = str(step_type or "").strip().lower()
+        return st not in {"warmup", "cooldown", "rest", "recovery"}
+
+    def _adjust_step(step: dict, is_top_level: bool = False) -> None:
+        if not isinstance(step, dict):
+            return
+        stype = str(step.get("type") or "").strip().lower()
+
+        if _is_main_work_step(stype):
+            old_ic = _normalize_intensity_class(step.get("intensityClass") or "")
+            if old_ic:
+                new_ic = _downgrade_intensity_class(old_ic, levels=intensity_levels)
+                if new_ic != old_ic:
+                    step["intensityClass"] = new_ic
+                    trace.append(f"intensidad {old_ic}->{new_ic} en {stype}")
+
+            target = step.get("target")
+            if isinstance(target, dict):
+                rng = target.get("range")
+                if isinstance(rng, list) and len(rng) == 2:
+                    a = _safe_float(rng[0], 0.0)
+                    b = _safe_float(rng[1], 0.0)
+                    if a <= b:
+                        new_range = [round(a * volume_factor, 1), round(b * volume_factor, 1)]
+                        step["target"]["range"] = new_range
+                        trace.append(f"target.range ajustado en {stype}")
+
+            if "duration_min" in step:
+                old_dur = max(0.0, _safe_float(step.get("duration_min"), 0.0))
+                if old_dur > 0:
+                    new_dur = max(1.0, round(old_dur * volume_factor, 1))
+                    if new_dur != old_dur:
+                        step["duration_min"] = new_dur
+                        trace.append(f"duración {old_dur}->{new_dur} en {stype}")
+
+        reps = int(_safe_float(step.get("reps"), 1.0))
+        if reps > 1 and (_is_main_work_step(stype) or stype == "interval_block"):
+            new_reps = max(1, int(round(reps * volume_factor)))
+            if new_reps != reps:
+                step["reps"] = new_reps
+                trace.append(f"reps {reps}->{new_reps} en {stype}")
+
+        nested = step.get("steps")
+        if isinstance(nested, list):
+            for ch in nested:
+                _adjust_step(ch, is_top_level=False)
+
+    steps = sw.get("steps")
+    if isinstance(steps, list):
+        for item in steps:
+            _adjust_step(item, is_top_level=True)
+
+    total_after = _structured_workout_duration_minutes(sw)
+    summary = sw.get("summary")
+    if isinstance(summary, dict):
+        summary["duration_min"] = int(round(total_after))
+
+    if not trace:
+        trace.append("sin cambios estructurales")
+    return sw, trace
+
+
+def _compute_structured_block_feedback(planned_session: dict, actual_duration_min: float, actual_tss: float) -> dict:
+    """Compara planificado vs ejecutado por bloques del structured_workout."""
+    sw = (planned_session or {}).get("structured_workout") if isinstance(planned_session, dict) else None
+    if not isinstance(sw, dict):
+        return {}
+
+    steps = sw.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return {}
+
+    blocks: list[dict] = []
+    remaining = max(0.0, float(actual_duration_min or 0.0))
+    actual_tss_per_hour = (float(actual_tss or 0.0) * 60.0 / max(1.0, actual_duration_min)) if actual_duration_min > 0 else 0.0
+
+    for idx, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        planned_block_min = _structured_workout_duration_minutes({"steps": [step]})
+        if planned_block_min <= 0:
+            continue
+        completed_min = min(planned_block_min, remaining)
+        remaining = max(0.0, remaining - planned_block_min)
+        completion_pct = round(completed_min / max(1.0, planned_block_min), 2)
+        if completion_pct >= 0.95:
+            status = "completed"
+        elif completion_pct >= 0.25:
+            status = "partial"
+        else:
+            status = "missed"
+
+        ic = _extract_primary_intensity_class(step)
+        planned_tss_hour = _estimate_tss_hour_for_intensity_class(ic)
+        intensity_deviation = round(actual_tss_per_hour - planned_tss_hour, 1)
+
+        blocks.append(
+            {
+                "index": idx,
+                "name": str(step.get("name") or f"block_{idx}"),
+                "type": str(step.get("type") or "block"),
+                "planned_min": round(planned_block_min, 1),
+                "completed_min": round(completed_min, 1),
+                "completion_pct": completion_pct,
+                "status": status,
+                "planned_intensity_class": ic,
+                "intensity_deviation_tss_h": intensity_deviation,
+            }
+        )
+
+    if not blocks:
+        return {}
+
+    completed_blocks = sum(1 for b in blocks if b.get("status") == "completed")
+    partial_blocks = sum(1 for b in blocks if b.get("status") == "partial")
+    missed_blocks = sum(1 for b in blocks if b.get("status") == "missed")
+    total_planned = sum(float(b.get("planned_min") or 0.0) for b in blocks)
+    total_done = sum(float(b.get("completed_min") or 0.0) for b in blocks)
+    time_deviation_pct = round((total_done - total_planned) / max(1.0, total_planned), 2)
+
+    return {
+        "blocks": blocks,
+        "summary": {
+            "completed_blocks": completed_blocks,
+            "partial_blocks": partial_blocks,
+            "missed_blocks": missed_blocks,
+            "total_blocks": len(blocks),
+            "time_deviation_pct": time_deviation_pct,
+        },
+    }
+
+
+def _structured_workout_summary(session: dict) -> str:
+    """Devuelve un resumen corto del bloque principal para utilidad diaria."""
+    if not isinstance(session, dict):
+        return ""
+    sw = session.get("structured_workout")
+    if not isinstance(sw, dict):
+        return ""
+    steps = sw.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return ""
+
+    main_step = None
+    for step in steps:
+        st = str((step or {}).get("type") or "").strip().lower()
+        if st not in {"warmup", "cooldown", "rest"}:
+            main_step = step
+            break
+    if not isinstance(main_step, dict):
+        return ""
+
+    stype = str(main_step.get("type") or "").strip().lower()
+    intensity = _normalize_intensity_class(main_step.get("intensityClass") or "")
+
+    if stype == "interval_block":
+        reps = max(1, int(_safe_float(main_step.get("reps"), 1.0)))
+        work_min = 0.0
+        rec_min = 0.0
+        for ch in list(main_step.get("steps") or []):
+            ch_type = str((ch or {}).get("type") or "").strip().lower()
+            dur = max(0.0, _safe_float((ch or {}).get("duration_min"), 0.0))
+            if ch_type == "work":
+                work_min = dur
+            elif ch_type == "recovery":
+                rec_min = dur
+        if work_min > 0 and rec_min > 0:
+            return f"bloque principal: {reps}x{int(round(work_min))}' + {int(round(rec_min))}' rec ({intensity})"
+        if work_min > 0:
+            return f"bloque principal: {reps}x{int(round(work_min))}' ({intensity})"
+        return f"bloque principal: intervalos x{reps} ({intensity})"
+
+    dur = max(0.0, _safe_float(main_step.get("duration_min"), 0.0))
+    if dur > 0:
+        return f"bloque principal: {int(round(dur))}' ({intensity})"
+    return ""
+
+
+def _build_adjusted_structured_session_text(planned_session: str, planned_row: dict | None, decision: str) -> str:
+    """Construye mensaje accionable de sesión resultante usando structured_workout."""
+    base = str(planned_session or "sesión planificada").strip() or "sesión planificada"
+    if decision in {"rest", "maintain"} or not isinstance(planned_row, dict):
+        return base
+
+    summary = _structured_workout_summary(planned_row)
+    if not summary:
+        if decision == "easy":
+            return f"{base} → versión suave (Z1-Z2, sin bloques intensos)"
+        return f"{base} → reducir volumen 20-30% y bajar 1 zona de intensidad"
+
+    if decision == "easy":
+        return f"{base} → versión suave: {summary}; bajar 1 nivel de intensidad y priorizar continuidad"
+    if decision == "reduce":
+        return f"{base} → reducir 20-30%: {summary}; recorta repeticiones o minutos de bloque principal"
+    return base
+
+
 def _estimate_planned_session_tss(session: dict) -> float:
     """Estimación determinista de TSS planificado por sesión (cuando no hay potencia/HR real)."""
     if not isinstance(session, dict):
@@ -4244,6 +4554,9 @@ def _compute_plan_execution_feedback(
     else:
         next_adjustment = "mantener siguiente sesión"
 
+    structured_summary = _structured_workout_summary(planned)
+    block_feedback = _compute_structured_block_feedback(planned, actual_duration, actual_tss)
+
     return {
         "date": target_date_iso,
         "planned": {
@@ -4251,12 +4564,14 @@ def _compute_plan_execution_feedback(
             "duration_min": round(planned_duration, 1),
             "intensity": str(planned.get("intensity") or ""),
             "tss_est": planned_tss,
+            "structured_summary": structured_summary,
         },
         "executed": {
             "activities": len(executed),
             "duration_min": actual_duration,
             "tss": actual_tss,
         },
+        "block_feedback": block_feedback,
         "adherence_score": adherence_score,
         "adherence_label": adherence_label,
         "load_deviation_pct": load_deviation_pct,
@@ -4420,14 +4735,34 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         decision = "reduce" if day_cap > 0 else "rest"
         reason = f"{reason}; sesión ajustada por límite diario ({day_cap} min)"
 
+    adjusted_structured_workout = None
+    adjustment_trace: list[str] = []
+    if decision in {"easy", "reduce", "maintain"}:
+        adjusted_structured_workout, adjustment_trace = _apply_structured_workout_adjustment(planned_row, decision)
+    elif decision == "rest":
+        adjusted_structured_workout = {
+            "schema": "kairos-workout-v1",
+            "sessionType": "rest",
+            "steps": [
+                {
+                    "name": "Rest",
+                    "type": "rest",
+                    "duration_min": 0,
+                    "reps": 1,
+                    "intensityClass": "recovery",
+                }
+            ],
+        }
+        adjustment_trace = ["sesión convertida a descanso"]
+
     if decision == "rest":
         resulting_session = "descanso + movilidad ligera (20-30 min)"
     elif decision == "easy":
-        resulting_session = f"{planned_session} → versión suave (Z1-Z2, sin bloques intensos)"
+        resulting_session = _build_adjusted_structured_session_text(planned_session, planned_row, "easy")
     elif decision == "reduce":
-        resulting_session = f"{planned_session} → reducir volumen 20-30% y bajar 1 zona de intensidad"
+        resulting_session = _build_adjusted_structured_session_text(planned_session, planned_row, "reduce")
     else:
-        resulting_session = planned_session
+        resulting_session = _build_adjusted_structured_session_text(planned_session, planned_row, "maintain")
 
     return {
         "rule": rule,
@@ -4436,6 +4771,8 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         "adherence_adjustment": adherence_adjustment,
         "planned_session": planned_session,
         "resulting_session": resulting_session,
+        "adjusted_structured_workout": adjusted_structured_workout,
+        "adjustment_trace": adjustment_trace,
         "inputs": {
             "status": status,
             "tsb": tsb,
@@ -4990,6 +5327,173 @@ def _generate_structured_plan_payload(
             return max(0, int(duration))
         return max(0, min(int(duration), int(cap)))
 
+    def _intensity_class_from_rpe(intensity_text: str) -> str:
+        txt = str(intensity_text or "").lower()
+        m = re.search(r"rpe\s*(\d+)(?:\s*[-–]\s*(\d+))?", txt)
+        if not m:
+            return "endurance"
+        lo = int(m.group(1))
+        hi = int(m.group(2) or lo)
+        rpe_avg = (lo + hi) / 2.0
+        if rpe_avg <= 2.5:
+            return "recovery"
+        if rpe_avg <= 4.5:
+            return "endurance"
+        if rpe_avg <= 6.5:
+            return "tempo"
+        if rpe_avg <= 8.0:
+            return "threshold"
+        return "vo2"
+
+    def _structured_target_for_session(session_type: str, intensity_text: str) -> dict:
+        st = str(session_type or "").lower()
+        intensity_class = _intensity_class_from_rpe(intensity_text)
+
+        # Sin dependencia de TP: usamos %HR/%FTP internos como contrato estable.
+        hr_ranges = {
+            "recovery": [60, 70],
+            "endurance": [70, 80],
+            "tempo": [80, 87],
+            "threshold": [88, 92],
+            "vo2": [93, 97],
+        }
+        ftp_ranges = {
+            "recovery": [45, 55],
+            "endurance": [56, 75],
+            "tempo": [76, 90],
+            "threshold": [91, 105],
+            "vo2": [106, 120],
+        }
+
+        if "cycling" in st or "bike" in st:
+            return {
+                "intensityClass": intensity_class,
+                "primary": {"metric": "ftp_pct", "range": ftp_ranges.get(intensity_class, [56, 75])},
+                "secondary": {"metric": "hr_pct", "range": hr_ranges.get(intensity_class, [70, 80])},
+            }
+        if "strength" in st:
+            return {
+                "intensityClass": intensity_class,
+                "primary": {"metric": "rpe", "range": [4, 6] if intensity_class in {"recovery", "endurance"} else [6, 8]},
+            }
+        return {
+            "intensityClass": intensity_class,
+            "primary": {"metric": "hr_pct", "range": hr_ranges.get(intensity_class, [70, 80])},
+            "secondary": {"metric": "rpe", "range": [3, 5] if intensity_class in {"recovery", "endurance"} else [6, 8]},
+        }
+
+    def _build_structured_workout(session_type: str, duration_min: int, intensity_text: str, notes_text: str) -> dict:
+        dur = max(0, int(duration_min or 0))
+        target = _structured_target_for_session(session_type, intensity_text)
+        intensity_class = str(target.get("intensityClass") or "endurance")
+
+        if str(session_type or "").lower() == "rest" or dur <= 0:
+            return {
+                "schema": "kairos-workout-v1",
+                "sessionType": str(session_type or "rest"),
+                "steps": [
+                    {
+                        "name": "Rest",
+                        "type": "rest",
+                        "duration_min": 0,
+                        "reps": 1,
+                        "intensityClass": "recovery",
+                    }
+                ],
+                "notes": str(notes_text or ""),
+            }
+
+        warmup = max(8, min(20, int(round(dur * 0.18))))
+        cooldown = max(6, min(15, int(round(dur * 0.14))))
+        main_dur = max(5, dur - warmup - cooldown)
+        is_quality = any(k in str(session_type or "").lower() for k in ("quality", "tempo", "hills", "fartlek", "interval"))
+
+        if is_quality and main_dur >= 18:
+            reps = max(3, min(10, int(round(main_dur / 5.0))))
+            work_dur = max(2, int(round((main_dur * 0.65) / reps)))
+            rec_dur = max(1, int(round((main_dur * 0.35) / reps)))
+            main_step = {
+                "name": "Main Intervals",
+                "type": "interval_block",
+                "reps": reps,
+                "steps": [
+                    {
+                        "name": "Work",
+                        "type": "work",
+                        "duration_min": work_dur,
+                        "intensityClass": intensity_class,
+                        "target": target.get("primary"),
+                    },
+                    {
+                        "name": "Recovery",
+                        "type": "recovery",
+                        "duration_min": rec_dur,
+                        "intensityClass": "recovery",
+                        "target": {"metric": "hr_pct", "range": [60, 72]},
+                    },
+                ],
+            }
+        else:
+            main_step = {
+                "name": "Main",
+                "type": "steady",
+                "duration_min": main_dur,
+                "reps": 1,
+                "intensityClass": intensity_class,
+                "target": target.get("primary"),
+            }
+
+        return {
+            "schema": "kairos-workout-v1",
+            "sessionType": str(session_type or "session"),
+            "summary": {
+                "duration_min": dur,
+                "intensityClass": intensity_class,
+            },
+            "targets": target,
+            "steps": [
+                {
+                    "name": "Warm-up",
+                    "type": "warmup",
+                    "duration_min": warmup,
+                    "reps": 1,
+                    "intensityClass": "endurance",
+                    "target": {"metric": "hr_pct", "range": [60, 75]},
+                },
+                main_step,
+                {
+                    "name": "Cool-down",
+                    "type": "cooldown",
+                    "duration_min": cooldown,
+                    "reps": 1,
+                    "intensityClass": "recovery",
+                    "target": {"metric": "hr_pct", "range": [58, 70]},
+                },
+            ],
+            "notes": str(notes_text or ""),
+        }
+
+    def _make_session(
+        week_index: int,
+        day_index: int,
+        session_type: str,
+        duration_min: int,
+        intensity: str,
+        exercises: list[str],
+        notes: str,
+    ) -> dict:
+        duration_int = int(duration_min or 0)
+        return {
+            "week_index": week_index,
+            "day_index": day_index,
+            "session_type": session_type,
+            "duration_min": duration_int,
+            "intensity": intensity,
+            "exercises": exercises,
+            "notes": notes,
+            "structured_workout": _build_structured_workout(session_type, duration_int, intensity, notes),
+        }
+
     sessions: list[dict] = []
     for wi in range(1, duration_weeks + 1):
         phase = _phase_for_week(wi)
@@ -5120,79 +5624,77 @@ def _generate_structured_plan_payload(
         for day_idx in range(1, 8):
             role_name = day_to_role.get(day_idx)
             if day_idx in blocked_days or day_idx in extra_rest or role_name is None:
-                sessions.append(
-                    {
-                        "week_index": wi,
-                        "day_index": day_idx,
-                        "session_type": "rest",
-                        "duration_min": 0,
-                        "intensity": "RPE 1-2",
-                        "exercises": ["descanso activo opcional"],
-                        "notes": "Día de recuperación/descanso según restricciones y disponibilidad.",
-                    }
-                )
+                sessions.append(_make_session(
+                    wi,
+                    day_idx,
+                    "rest",
+                    0,
+                    "RPE 1-2",
+                    ["descanso activo opcional"],
+                    "Día de recuperación/descanso según restricciones y disponibilidad.",
+                ))
                 continue
 
             if role_name == "strength":
-                sessions.append({
-                    "week_index": wi,
-                    "day_index": day_idx,
-                    "session_type": strength_type,
-                    "duration_min": _cap_duration(day_idx, split["strength"]),
-                    "intensity": "RPE 4-5",
-                    "exercises": ["movilidad tobillo/cadera", "fuerza general", "core"],
-                    "notes": strength_notes,
-                })
+                sessions.append(_make_session(
+                    wi,
+                    day_idx,
+                    strength_type,
+                    _cap_duration(day_idx, split["strength"]),
+                    "RPE 4-5",
+                    ["movilidad tobillo/cadera", "fuerza general", "core"],
+                    strength_notes,
+                ))
             elif role_name == "quality_1":
-                sessions.append({
-                    "week_index": wi,
-                    "day_index": day_idx,
-                    "session_type": q1_type,
-                    "duration_min": _cap_duration(day_idx, split["quality_1"]),
-                    "intensity": q1_intensity,
-                    "exercises": q1_ex,
-                    "notes": q1_notes,
-                })
+                sessions.append(_make_session(
+                    wi,
+                    day_idx,
+                    q1_type,
+                    _cap_duration(day_idx, split["quality_1"]),
+                    q1_intensity,
+                    q1_ex,
+                    q1_notes,
+                ))
             elif role_name == "quality_2":
-                sessions.append({
-                    "week_index": wi,
-                    "day_index": day_idx,
-                    "session_type": q2_type,
-                    "duration_min": _cap_duration(day_idx, split["quality_2"]),
-                    "intensity": q2_intensity,
-                    "exercises": q2_ex,
-                    "notes": q2_notes,
-                })
+                sessions.append(_make_session(
+                    wi,
+                    day_idx,
+                    q2_type,
+                    _cap_duration(day_idx, split["quality_2"]),
+                    q2_intensity,
+                    q2_ex,
+                    q2_notes,
+                ))
             elif role_name == "easy":
-                sessions.append({
-                    "week_index": wi,
-                    "day_index": day_idx,
-                    "session_type": easy_type,
-                    "duration_min": _cap_duration(day_idx, split["easy"]),
-                    "intensity": "RPE 3-4",
-                    "exercises": easy_ex,
-                    "notes": easy_notes,
-                })
+                sessions.append(_make_session(
+                    wi,
+                    day_idx,
+                    easy_type,
+                    _cap_duration(day_idx, split["easy"]),
+                    "RPE 3-4",
+                    easy_ex,
+                    easy_notes,
+                ))
             elif role_name == "long":
-                sessions.append({
-                    "week_index": wi,
-                    "day_index": day_idx,
-                    "session_type": long_type,
-                    "duration_min": _cap_duration(day_idx, split["long"]),
-                    "intensity": "RPE 4-5" if not has_injuries else "RPE 3-4",
-                    "exercises": ["tirada larga progresiva", "estrategia de nutrición/hidratación"],
-                    "notes": long_notes,
-                })
+                sessions.append(_make_session(
+                    wi,
+                    day_idx,
+                    long_type,
+                    _cap_duration(day_idx, split["long"]),
+                    "RPE 4-5" if not has_injuries else "RPE 3-4",
+                    ["tirada larga progresiva", "estrategia de nutrición/hidratación"],
+                    long_notes,
+                ))
             else:
-                sessions.append({
-                    "week_index": wi,
-                    "day_index": day_idx,
-                    "session_type": recovery_type,
-                    "duration_min": _cap_duration(day_idx, split["recovery"]),
-                    "intensity": "RPE 2-3",
-                    "exercises": recovery_ex,
-                    "notes": "Recuperación activa y descarga muscular. Prioriza sueño y rehidratación.",
-                })
+                sessions.append(_make_session(
+                    wi,
+                    day_idx,
+                    recovery_type,
+                    _cap_duration(day_idx, split["recovery"]),
+                    "RPE 2-3",
+                    recovery_ex,
+                    "Recuperación activa y descarga muscular. Prioriza sueño y rehidratación.",
+                ))
 
     objective_text = f"Preparación para {race}"
     if target_time:
@@ -5254,6 +5756,120 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
         errors.append("El plan no contiene sesiones.")
 
     by_week: dict[int, list[dict]] = {}
+    allowed_intensity_classes = {"recovery", "endurance", "tempo", "threshold", "vo2"}
+    allowed_target_metrics = {"hr_pct", "ftp_pct", "rpe", "pace_pct"}
+
+    def _validate_structured_workout(session: dict) -> list[str]:
+        local_errors: list[str] = []
+        stype = str(session.get("session_type") or "").strip().lower()
+        duration = max(0.0, _safe_float(session.get("duration_min"), 0.0))
+        sw = session.get("structured_workout")
+
+        if stype != "rest" and not isinstance(sw, dict):
+            return ["Hay sesiones activas sin structured_workout válido."]
+        if stype == "rest":
+            if isinstance(sw, dict):
+                rest_steps = [
+                    s for s in list(sw.get("steps") or [])
+                    if isinstance(s, dict) and str(s.get("type") or "").strip().lower() == "rest"
+                ]
+                if not rest_steps:
+                    local_errors.append("Las sesiones rest deben incluir un step explícito de tipo rest.")
+            return local_errors
+        if not isinstance(sw, dict):
+            return local_errors
+
+        if str(sw.get("schema") or "").strip() != "kairos-workout-v1":
+            local_errors.append("structured_workout.schema debe ser kairos-workout-v1.")
+
+        steps = sw.get("steps")
+        if not isinstance(steps, list) or not steps:
+            local_errors.append("structured_workout debe incluir steps no vacíos.")
+            return local_errors
+
+        types = [str((s or {}).get("type") or "").strip().lower() for s in steps if isinstance(s, dict)]
+        if "warmup" not in types or "cooldown" not in types:
+            local_errors.append("Sesión estructurada inválida: falta warmup o cooldown.")
+        else:
+            warmup_idx = types.index("warmup")
+            cooldown_idx = len(types) - 1 - types[::-1].index("cooldown")
+            if not (warmup_idx == 0 and cooldown_idx == len(types) - 1 and warmup_idx < cooldown_idx):
+                local_errors.append("Sesión estructurada inválida: orden debe ser warmup -> main -> cooldown.")
+
+        def _validate_step(step: dict, parent_type: str = "") -> None:
+            if not isinstance(step, dict):
+                local_errors.append("step inválido en structured_workout.")
+                return
+            name = str(step.get("name") or "").strip()
+            st = str(step.get("type") or "").strip().lower()
+            if not name or not st:
+                local_errors.append("Cada step requiere name y type.")
+                return
+
+            ic = _normalize_intensity_class(step.get("intensityClass") or "")
+            if ic and ic not in allowed_intensity_classes:
+                local_errors.append(f"intensityClass no soportada: {ic}.")
+
+            target = step.get("target")
+            if isinstance(target, dict):
+                metric = str(target.get("metric") or "").strip().lower()
+                rng = target.get("range")
+                if metric and metric not in allowed_target_metrics:
+                    local_errors.append(f"target.metric no soportado: {metric}.")
+                if rng is not None:
+                    if not (isinstance(rng, list) and len(rng) == 2):
+                        local_errors.append("target.range debe tener formato [min,max].")
+                    else:
+                        a = _safe_float(rng[0], float("nan"))
+                        b = _safe_float(rng[1], float("nan"))
+                        if math.isnan(a) or math.isnan(b) or a > b:
+                            local_errors.append("target.range inválido (min/max).")
+
+            nested = step.get("steps")
+            if isinstance(nested, list) and nested:
+                reps = int(_safe_float(step.get("reps"), 1.0))
+                if reps < 1:
+                    local_errors.append("Bloques anidados requieren reps >= 1.")
+                for ch in nested:
+                    _validate_step(ch, parent_type=st)
+                return
+
+            duration_min = _safe_float(step.get("duration_min"), -1.0)
+            if duration_min < 0:
+                local_errors.append("Cada step sin anidación requiere duration_min >= 0.")
+            reps = int(_safe_float(step.get("reps"), 1.0))
+            if reps < 1:
+                local_errors.append("Cada step requiere reps >= 1.")
+
+        for s in steps:
+            _validate_step(s)
+
+        sw_minutes = _structured_workout_duration_minutes(sw)
+        if duration > 0 and sw_minutes > 0:
+            mismatch = abs(sw_minutes - duration) / max(duration, 1.0)
+            if mismatch > 0.45:
+                local_errors.append("Duración de structured_workout desalineada con duration_min de la sesión.")
+
+        if any(k in stype for k in ("quality", "tempo", "hills", "interval")):
+            def _count_hard_steps(nodes: list[dict]) -> int:
+                count = 0
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    ic = _normalize_intensity_class(node.get("intensityClass") or "")
+                    if ic in {"tempo", "threshold", "vo2"}:
+                        count += 1
+                    nested = node.get("steps")
+                    if isinstance(nested, list) and nested:
+                        count += _count_hard_steps(nested)
+                return count
+
+            hard_steps = _count_hard_steps(steps)
+            if hard_steps == 0:
+                local_errors.append("Sesión de calidad sin bloque principal con intensidad tempo/threshold/vo2.")
+
+        return local_errors
+
     for session in sessions:
         week_idx = int(session.get("week_index") or 1)
         by_week.setdefault(week_idx, []).append(session)
@@ -5267,6 +5883,10 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
         session_type = str(session.get("session_type") or "").strip().lower()
         if session_type != "rest" and duration <= 0:
             errors.append("Hay sesiones activas con duración no válida.")
+            break
+        sw_errors = _validate_structured_workout(session)
+        if sw_errors:
+            errors.extend(sw_errors)
             break
     duration_weeks = int(plan.get("duration_weeks") or 0)
     if duration_weeks > 0 and len(by_week) < max(1, duration_weeks - 1):
