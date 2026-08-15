@@ -681,7 +681,7 @@ def check_supabase_connection() -> dict:
 # ─── load_metrics_daily ────────────────────────────────────────────────────────
 
 def get_load_metrics_series(days: int = 120) -> list[dict]:
-    """Carga la serie TSS/ATL/CTL/TSB desde load_metrics_daily (últimos N días)."""
+    """Carga la serie TSS/ATL (Fatiga)/CTL (Estado físico)/TSB (Forma) desde load_metrics_daily (últimos N días)."""
     from datetime import date, timedelta
     sb = _supabase()
     uid = _require_active_user_id()
@@ -736,7 +736,7 @@ def get_load_metrics_last_date() -> str | None:
 
 
 def upsert_load_metrics_series(series: list[dict]) -> None:
-    """Persiste (upsert) filas TSS/ATL/CTL/TSB en load_metrics_daily."""
+    """Persiste (upsert) filas TSS/ATL (Fatiga)/CTL (Estado físico)/TSB (Forma) en load_metrics_daily."""
     sb = _supabase()
     uid = _require_active_user_id()
     if not sb or not series:

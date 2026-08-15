@@ -23,6 +23,7 @@ from agent.main import (
     _is_first_time,
     _parse_running_threshold_pace_to_sec_per_km,
     _parse_plan_command,
+    _set_hr_profile_values,
     _set_running_threshold_pace,
     _validate_date,
     _validate_hours,
@@ -230,6 +231,24 @@ class TestSetRunningThresholdPace:
         assert ok is False
         assert "Formato no válido" in msg
 
+
+    class TestSetHrProfileValues:
+        def test_sets_hr_profile_and_marks_update_date(self):
+            profile = {}
+            ok, msg = _set_hr_profile_values(profile, "48", "186")
+            assert ok
+            assert "FC reposo=48 bpm" in msg
+            perf = profile.get("performance") or {}
+            assert perf.get("hr_rest_bpm") == 48
+            assert perf.get("hr_max_bpm") == 186
+            assert perf.get("hr_profile_date")
+            assert perf.get("performance_params_updated_at")
+
+        def test_rejects_invalid_hr_ranges(self):
+            profile = {}
+            ok, msg = _set_hr_profile_values(profile, "110", "186")
+            assert not ok
+            assert "reposo fuera de rango" in msg.lower()
 
 # ─── _is_first_time ──────────────────────────────────────────────────────────
 

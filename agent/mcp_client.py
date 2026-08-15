@@ -5,6 +5,7 @@ y expone sus herramientas para que el agente las use.
 """
 
 import os
+import site
 import shutil
 import sys
 from contextlib import asynccontextmanager
@@ -19,14 +20,25 @@ def _resolve_command(command_name: str) -> str | None:
     if found:
         return found
 
-    scripts_dir = Path(sys.executable).parent
-    candidates = [scripts_dir / command_name]
-    if os.name == "nt":
-        candidates.append(scripts_dir / f"{command_name}.exe")
+    search_dirs: list[Path] = [Path(sys.executable).parent]
 
-    for candidate in candidates:
-        if candidate.exists() and candidate.is_file():
-            return str(candidate)
+    user_base = site.getuserbase()
+    if user_base:
+        search_dirs.append(Path(user_base) / "Scripts")
+
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            py_tag = f"Python{sys.version_info.major}{sys.version_info.minor}"
+            search_dirs.append(Path(appdata) / "Python" / py_tag / "Scripts")
+
+    for scripts_dir in search_dirs:
+        candidates = [scripts_dir / command_name]
+        if os.name == "nt":
+            candidates.append(scripts_dir / f"{command_name}.exe")
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
     return None
 
 

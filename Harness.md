@@ -81,7 +81,7 @@ Flags activos que el coach debe detectar y reportar:
 - HRV > 15% por debajo de la media de 7 días.
 - Body battery < 30 durante ≥ 2 días.
 
-#### Modelo de carga y fatiga TSS/ATL/CTL/TSB
+#### Modelo de carga y fatiga TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)
 **Función:** series temporales en `load_metrics.series` (Supabase)
 
 Sensor continuo de carga y fatiga con EWMA:
@@ -199,7 +199,7 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 │                   SENSORS                           │
 │  snapshot proactivo 48h     ✓ operativo             │
 │  anomalías biométricas      ✓ en prompting          │
-│  TSS/ATL/CTL/TSB EWMA       ✓ operativo             │
+│  TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) EWMA       ✓ operativo             │
 │  guardrail read-only        ✓ operativo             │
 │  suite de tests             ✓ operativo             │
 │  CI GitHub Actions          ✓ operativo             │

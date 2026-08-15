@@ -208,6 +208,16 @@ def _seconds_to_hhmmss(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+def _seconds_to_mmss_or_hhmmss(seconds: float) -> str:
+    """Convierte segundos a MM:SS (<1h) o HH:MM:SS (>=1h)."""
+    total = int(round(seconds))
+    if total < 3600:
+        m = total // 60
+        s = total % 60
+        return f"{m:02d}:{s:02d}"
+    return _seconds_to_hhmmss(total)
+
+
 def _is_cycling_activity(act_type) -> bool:
     """True para cualquier variante de ciclismo (mountain bike, carretera, indoor, virtual, etc.)."""
     if isinstance(act_type, dict):
@@ -379,7 +389,7 @@ def _compact_personal_records(data: list) -> str:
 
                 v_float = float(raw_value)
                 if unidad == "tiempo":
-                    entry["tiempo"] = _seconds_to_hhmmss(v_float)
+                    entry["tiempo"] = _seconds_to_mmss_or_hhmmss(v_float)
                     entry["valor"] = entry["tiempo"]
                 elif unidad == "distancia_km":
                     entry["distancia"] = f"{v_float / 1000:.2f} km"
@@ -2418,6 +2428,46 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
     return None
 
 
+def _parse_iso_date_safe(raw: Any) -> date | None:
+    """Parsea fechas ISO (YYYY-MM-DD o datetime ISO) de forma tolerante."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except Exception:
+        return None
+
+
+def _resolve_load_parameters_effective_date(profile: dict | None) -> date | None:
+    """Devuelve la fecha más reciente de cambio de parámetros que afectan al TSS.
+
+    Política: no recalcular histórico anterior a esta fecha para evitar
+    alterar resultados ya consolidados con parámetros previos.
+    """
+    if not isinstance(profile, dict):
+        return None
+
+    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+    candidates: list[Any] = [
+        perf.get("performance_params_updated_at"),
+        perf.get("running_threshold_pace_date"),
+        perf.get("cycling_ftp_date"),
+        perf.get("hr_zones_date"),
+        perf.get("heart_rate_zones_date"),
+        perf.get("hr_profile_date"),
+        perf.get("hr_max_date"),
+        perf.get("hr_rest_date"),
+    ]
+
+    parsed = [d for d in (_parse_iso_date_safe(v) for v in candidates) if d is not None]
+    if not parsed:
+        return None
+    return max(parsed)
+
+
 def _percentile(values: list[float], pct: float, default: float = 0.0) -> float:
     """Calcula un percentil simple sin dependencias externas."""
     cleaned = sorted(float(v) for v in values if v is not None)
@@ -2520,7 +2570,7 @@ def _compute_load_fatigue_metrics(
     profile: dict | None = None,
     days_window: int = 56,
 ) -> dict | None:
-    """Calcula TSS/ATL/CTL/TSB y reglas de actuación con rangos individualizados por deporte."""
+    """Calcula TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) y reglas de actuación con rangos individualizados por deporte."""
     today = date.today()
     start_day = today - timedelta(days=max(14, days_window - 1))
     running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
@@ -2742,7 +2792,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
     }
 
     def _row_status(tsb: float, tsb_low: float = -10.0, tsb_high: float = 5.0, atl: float = 0.0, atl_high: float = 9999.0) -> str:
-        """Clasifica el estado de la fila según TSB/ATL."""
+        """Clasifica el estado de la fila según TSB (Forma) y ATL (Fatiga)."""
         fatigue = tsb < tsb_low or atl > atl_high
         available = not fatigue and (tsb_low <= tsb <= tsb_high)
         if fatigue and tsb < tsb_low * 1.5:
@@ -2788,7 +2838,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             return "Sin datos suficientes para vista mensual."
 
         header = (
-            "| Mes | TSS total | ATL fin | CTL fin | TSB fin | Estado |\n"
+            "| Mes | TSS total | CTL fin (Estado físico) | ATL fin (Fatiga) | TSB fin (Forma) | Estado |\n"
             "|---|---:|---:|---:|---:|---|\n"
         )
         rows_md: list[str] = []
@@ -2801,7 +2851,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             tsb = float(last.get("tsb") or 0.0)
             estado = _row_status(tsb, atl=atl)
             rows_md.append(
-                f"| {_fmt_month(mk)} | {tss_total:.1f} | {atl:.1f} | {ctl:.1f} | {tsb:+.1f} | {estado} |"
+                f"| {_fmt_month(mk)} | {tss_total:.1f} | {ctl:.1f} | {atl:.1f} | {tsb:+.1f} | {estado} |"
             )
 
         return (
@@ -2809,7 +2859,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             + header
             + "\n".join(rows_md)
             + "\n\n"
-            + "_TSS: carga de sesión · ATL: fatiga aguda (7d) · CTL: fitness crónico · TSB: forma (CTL−ATL)_"
+            + "_TSS: carga de sesión · CTL (Estado físico): estado físico crónico · ATL (Fatiga): fatiga (7d) · TSB (Forma): forma (CTL−ATL)_"
         )
 
     # Vista semanal: últimas 8 semanas naturales lunes→domingo
@@ -2832,7 +2882,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
         return "Sin datos suficientes para vista semanal."
 
     header = (
-        "| Semana | TSS | ATL | CTL | TSB | Estado |\n"
+        "| Semana | TSS | CTL (Estado físico) | ATL (Fatiga) | TSB (Forma) | Estado |\n"
         "|---|---:|---:|---:|---:|---|\n"
     )
     rows_md = []
@@ -2847,10 +2897,10 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             atl = ctl = tsb = 0.0
         estado = _row_status(tsb, atl=atl)
         rows_md.append(
-            f"| {_fmt_date_range(start_iso, end_iso)} | {tss_sum:.1f} | {atl:.1f} | {ctl:.1f} | {tsb:+.1f} | {estado} |"
+            f"| {_fmt_date_range(start_iso, end_iso)} | {tss_sum:.1f} | {ctl:.1f} | {atl:.1f} | {tsb:+.1f} | {estado} |"
         )
 
-    # Nota de warm-up: si la primera semana con datos tiene CTL < 15, el modelo aún se está calibrando
+    # Nota de warm-up: si la primera semana con datos tiene CTL (Estado físico) < 15, el modelo aún se está calibrando
     first_ctl_values = [
         float(r.get("ctl") or 0.0)
         for (_, _, wr) in weeks
@@ -2858,7 +2908,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
         if float(r.get("ctl") or 0.0) > 0
     ]
     warmup_note = (
-        "\n_⚙️ Las primeras semanas reflejan el arranque del modelo (CTL bajo), no necesariamente una sobrecarga real._"
+        "\n_⚙️ Las primeras semanas reflejan el arranque del modelo (CTL/Estado físico bajo), no necesariamente una sobrecarga real._"
         if first_ctl_values and first_ctl_values[0] < 15.0
         else ""
     )
@@ -2868,7 +2918,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
         + header
         + "\n".join(rows_md)
         + "\n\n"
-        + "_TSS: carga de sesión · ATL: fatiga aguda · CTL: fitness crónico · TSB: forma (CTL−ATL)_\n"
+        + "_TSS: carga de sesión · CTL (Estado físico): estado físico crónico · ATL (Fatiga): fatiga · TSB (Forma): forma (CTL−ATL)_\n"
         + "_🟢 disponible = puedes calidad · 🟠 fatiga alta = reduce carga · 🔴 sobrecarga = descarga obligatoria_"
         + warmup_note
     )
@@ -2884,9 +2934,9 @@ def _format_load_fatigue_summary(load_metrics: dict | None) -> str:
     try:
         return (
             f"TSS hoy {float(latest.get('tss', 0.0)):.1f} · "
-            f"ATL {float(latest.get('atl', 0.0)):.1f} · "
-            f"CTL {float(latest.get('ctl', 0.0)):.1f} · "
-            f"TSB {float(latest.get('tsb', 0.0)):.1f} · "
+            f"CTL (Estado físico) {float(latest.get('ctl', 0.0)):.1f} · "
+            f"ATL (Fatiga) {float(latest.get('atl', 0.0)):.1f} · "
+            f"TSB (Forma) {float(latest.get('tsb', 0.0)):.1f} · "
             f"Semana {float(weekly.get('current_tss', 0.0)):.1f} TSS ({action})"
         )
     except Exception:
@@ -2963,7 +3013,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     lines.append("- Body Battery: " + (body_summary or "sin datos recientes"))
     lines.append("- HRV: " + (hrv_summary or "sin datos recientes"))
     lines.append("- Sueno: " + (sleep_summary or "sin datos recientes"))
-    lines.append("- Carga/Fatiga (TSS/ATL/CTL/TSB): " + _format_load_fatigue_summary(load_fatigue))
+    lines.append("- Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)): " + _format_load_fatigue_summary(load_fatigue))
 
     if load_fatigue and load_fatigue.get("latest"):
         latest = load_fatigue.get("latest") or {}
@@ -2973,10 +3023,11 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         if latest:
             lines.append(
                 "  - Estado: "
-                f"TSB={float(latest.get('tsb', 0.0)):.1f} "
-                f"(objetivo {float(ranges.get('tsb_low', 0.0)):.1f}..{float(ranges.get('tsb_high', 0.0)):.1f}), "
-                f"ATL={float(latest.get('atl', 0.0)):.1f} "
+                f"CTL (Estado físico)={float(latest.get('ctl', 0.0)):.1f}, "
+                f"ATL (Fatiga)={float(latest.get('atl', 0.0)):.1f} "
                 f"(alto>{float(ranges.get('atl_high', 0.0)):.1f}), "
+                f"TSB (Forma)={float(latest.get('tsb', 0.0)):.1f} "
+                f"(objetivo {float(ranges.get('tsb_low', 0.0)):.1f}..{float(ranges.get('tsb_high', 0.0)):.1f}), "
                 f"TSS semanal={float(weekly.get('current_tss', 0.0)):.1f}"
             )
         if recommendation:
@@ -3225,6 +3276,54 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
     return any(marker in text for marker in factual_markers)
 
 
+def _is_running_threshold_query_intent(user_message: str) -> bool:
+    """Detecta consultas sobre ritmo umbral de running guardado en perfil."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    markers = (
+        "ritmo umbral",
+        "umbral running",
+        "umbral de running",
+        "umbral de carrera",
+        "pace umbral",
+        "running threshold",
+        "threshold pace",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _build_running_threshold_profile_markdown(profile: dict) -> str:
+    """Construye respuesta determinista del ritmo umbral actual del perfil."""
+    profile = profile if isinstance(profile, dict) else {}
+    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+
+    pace_sec = _resolve_running_threshold_pace_sec_per_km(profile)
+    if not pace_sec or pace_sec <= 0:
+        return (
+            "## Ritmo umbral actual (perfil)\n\n"
+            "- No tengo un ritmo umbral de running configurado en tu perfil.\n"
+            "- Puedes guardarlo con: /perfil umbral 4:15\n\n"
+            "_Respuesta determinista: lectura directa del perfil persistido._"
+        )
+
+    pace_text = f"{int(pace_sec // 60)}:{int(pace_sec % 60):02d} min/km"
+    pace_date = str(perf.get("running_threshold_pace_date") or "").strip() or "sin fecha"
+    source = "perfil persistido (comando /perfil umbral)"
+
+    lines = [
+        "## Ritmo umbral actual (perfil)",
+        "",
+        f"- Ritmo umbral running: {pace_text}",
+        f"- Fecha de actualización: {pace_date}",
+        f"- Fuente: {source}",
+        "",
+        "_Respuesta determinista: lectura directa del perfil persistido._",
+    ]
+    return "\n".join(lines)
+
+
 def _is_daily_readiness_intent(user_message: str) -> bool:
     """Detecta consultas sobre estado de hoy y recomendación de entrenamiento.
 
@@ -3315,7 +3414,7 @@ def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | No
             "section_name": "## 🔄 Recuperación y próximas sesiones",
             "guidance": (
                 "Escribe 3-5 bullets originales de coach con consejos CONCRETOS usando los valores "
-                "numéricos reales del bloque de datos (TSS, ATL, CTL, TSB, sueño, body battery, HRV). "
+                "numéricos reales del bloque de datos (TSS, ATL [Fatiga], CTL [Estado físico], TSB [Forma], sueño, body battery, HRV). "
                 "NO copies estas instrucciones como bullets. Genera texto original.\n"
                 "Contenido esperado: qué hacer mañana (tipo sesión y duración específica o descanso), "
                 "qué hacer en 2-3 días, señales de alerta a vigilar, y consejo técnico para la próxima "
@@ -4089,6 +4188,9 @@ def _compute_plan_execution_feedback(
 
     executed = [a for a in list(activities_for_day or []) if isinstance(a, dict)]
     actual_duration = round(sum(_extract_activity_duration_minutes(a) for a in executed), 1)
+    if actual_duration <= 0.0 and executed and planned_duration > 0.0:
+        # Algunos payloads omiten duration/duration_seconds; evitamos penalizar adherencia por dato faltante.
+        actual_duration = round(planned_duration, 1)
     actual_tss_acc = 0.0
     for a in executed:
         try:
@@ -4247,7 +4349,7 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     if status == "overload":
         decision = "rest"
         rule = "overload"
-        reason = "TSB/estado en sobrecarga: activar descarga obligatoria"
+        reason = "TSB (Forma)/estado en sobrecarga: activar descarga obligatoria"
     elif status == "fatigue_high":
         if stress_flags >= 2:
             decision = "rest"
@@ -6774,7 +6876,7 @@ def _kairos_load_trends(profile: dict, metric: str, weeks_back: int = 8) -> str:
         "metric": metric, "n_days": len(points), "weeks_back": weeks_back,
         "latest": points[-1] if points else None,
         "daily": points[-14:], "weekly": weekly,
-        "nota": "Fuente: series TSS/ATL/CTL/TSB calculadas desde actividades Garmin y almacenadas en perfil.",
+        "nota": "Fuente: series TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) calculadas desde actividades Garmin y almacenadas en perfil.",
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -6886,16 +6988,16 @@ _KAIROS_INTERNAL_TOOLS: list[dict] = [
         "function": {
             "name": "kairos_load_trends",
             "description": (
-                "Devuelve la serie diaria y semanal de TSS, ATL, CTL o TSB calculados desde el perfil. "
+                "Devuelve la serie diaria y semanal de TSS, CTL (Estado físico), ATL (Fatiga) o TSB (Forma) calculados desde el perfil. "
                 "ÚSALA como PRIMERA opción para CUALQUIER pregunta sobre carga, fatiga o forma: "
-                "'¿cuál fue mi TSS ayer?', '¿cuánto TSS llevo esta semana?', '¿cómo está mi ATL/CTL/TSB?', "
+                "'¿cuál fue mi TSS ayer?', '¿cuánto TSS llevo esta semana?', '¿cómo está mi CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)?', "
                 "'evolución de carga', '¿estoy en sobreentrenamiento?'. "
                 "IMPORTANTE: los endpoints de actividades Garmin NO devuelven TSS — esta tool es la única fuente."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "metric": {"type": "string", "enum": ["tss", "atl", "ctl", "tsb"], "description": "tss=carga sesión, atl=fatiga aguda, ctl=fitness crónico, tsb=forma"},
+                    "metric": {"type": "string", "enum": ["tss", "atl", "ctl", "tsb"], "description": "tss=carga sesión, atl=fatiga (ATL), ctl=estado físico (CTL), tsb=forma (TSB)"},
                     "weeks_back": {"type": "integer", "description": "Semanas hacia atrás (1–52, por defecto 8)"},
                 },
                 "required": ["metric"],
@@ -6906,7 +7008,7 @@ _KAIROS_INTERNAL_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "kairos_correlate",
-            "description": "Calcula la correlación de Pearson entre dos métricas de carga/fatiga (TSS, ATL, CTL, TSB). Úsalo para preguntas como '¿correlaciona mi carga con mi forma?'.",
+            "description": "Calcula la correlación de Pearson entre dos métricas de carga/fatiga (TSS, CTL (Estado físico), ATL (Fatiga), TSB (Forma)). Úsalo para preguntas como '¿correlaciona mi carga con mi forma?'.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -7231,8 +7333,13 @@ class TrainerAgent:
         ftp_live = _extract_cycling_ftp_watts(ftp_payload if ftp_payload is not None else raw_ftp)
 
         if ftp_live:
+            ftp_live = round(float(ftp_live), 1)
+            ftp_changed = (cached_ftp is None) or (abs(float(cached_ftp) - float(ftp_live)) >= 0.1)
             perf["cycling_ftp"] = ftp_live
-            perf["cycling_ftp_date"] = date.today().isoformat()
+            if ftp_changed or not _parse_iso_date_safe(perf.get("cycling_ftp_date")):
+                today_iso = date.today().isoformat()
+                perf["cycling_ftp_date"] = today_iso
+                perf["performance_params_updated_at"] = today_iso
             try:
                 _save_user_profile(self.user_profile)
             except Exception:
@@ -7323,7 +7430,7 @@ class TrainerAgent:
         return result
 
     async def compute_and_persist_load_metrics(self, force_full_recalc: bool = False) -> None:
-        """Calcula TSS/ATL/CTL/TSB de forma incremental y los persiste en load_metrics_daily.
+        """Calcula TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) de forma incremental y los persiste en load_metrics_daily.
 
         Flujo:
         1. Lee la serie existente de DB (últimos 120 días).
@@ -7379,6 +7486,18 @@ class TrainerAgent:
             fetch_from = full_start.isoformat()
             log.info("compute_load: cálculo completo desde %s", fetch_from)
 
+        # Política de inmutabilidad histórica por cambio de parámetros:
+        # si se actualiza umbral/FTP/zonas, no recalcular días anteriores.
+        effective_d = _resolve_load_parameters_effective_date(self.user_profile)
+        if effective_d:
+            effective_iso = effective_d.isoformat()
+            if fetch_from < effective_iso:
+                log.info(
+                    "compute_load: parámetros actualizados el %s — se preserva histórico anterior",
+                    effective_iso,
+                )
+                fetch_from = effective_iso
+
         log.info("compute_load: fetch incremental desde %s", fetch_from)
 
         # 2. FTP de ciclismo: primero perfil/DB; si falta, consultar MCP y persistir.
@@ -7401,7 +7520,8 @@ class TrainerAgent:
             perf = self.user_profile.setdefault("performance", {})
             perf["running_threshold_pace_sec_per_km"] = round(float(running_threshold_pace), 1)
             perf["running_threshold_pace"] = f"{int(running_threshold_pace // 60)}:{int(running_threshold_pace % 60):02d}"
-            perf["running_threshold_pace_date"] = today.isoformat()
+            if not _parse_iso_date_safe(perf.get("running_threshold_pace_date")):
+                perf["running_threshold_pace_date"] = today.isoformat()
             threshold_pace_min_km = f"{int(running_threshold_pace // 60)}:{int(running_threshold_pace % 60):02d} min/km"
             log.info(
                 "compute_load: ritmo umbral running=%s (usado para TSS por ritmo)",
@@ -8068,6 +8188,19 @@ class TrainerAgent:
             _save_history_entry("assistant", assistant_reply)
             return assistant_reply
 
+        # Ruta determinista para ritmo umbral de running.
+        # Carga el perfil más reciente para evitar responder con valores obsoletos.
+        if _is_running_threshold_query_intent(user_message):
+            latest_profile = _load_user_profile()
+            if isinstance(latest_profile, dict) and latest_profile:
+                self.user_profile = latest_profile
+            assistant_reply = _build_running_threshold_profile_markdown(self.user_profile)
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": assistant_reply})
+            _save_history_entry("user", user_message)
+            _save_history_entry("assistant", assistant_reply)
+            return assistant_reply
+
         # Ruta MCP-first para consultas factuales de métricas diarias.
         # Evita pasar por LLM cuando la pregunta se puede responder con
         # datos directos de Garmin Connect.
@@ -8516,7 +8649,7 @@ class TrainerAgent:
                         f"\nPLAN DE ENTRENAMIENTO ACTIVO: {_plan_title}\n"
                         "Usa este plan como contexto para ver la progresión del atleta y las sesiones previstas, "
                         "pero la recomendación de recuperación debe basarse SIEMPRE en los indicadores fisiológicos "
-                        "(TSS/ATL/CTL/TSB, sueño, body battery, HRV). "
+                        "(TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma), sueño, body battery, HRV). "
                         "Si los datos indican que el cuerpo necesita descanso, recomiéndalo aunque haya sesión planificada. "
                         "Si los indicadores están bien, puedes mencionar que el plan prevé X y el atleta está en condiciones de afrontarlo.\n"
                     )
