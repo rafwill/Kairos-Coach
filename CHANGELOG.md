@@ -15,6 +15,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - ToolRouter determinista opcional para intenciones críticas (`KAIROS_DETERMINISTIC_ROUTER`).
 - Sensor activo de spike semanal >20% (semana actual vs. semana previa) integrado en carga/fatiga y ajuste diario determinista.
 - Nuevos tests dedicados de hooks/router en `tests/test_hooks_router.py`.
+- Evidencia operativa de validacion E2E real de carga/fatiga en `docs/validation-load-fatigue-e2e-2026-08-15.md`.
 
 ### Changed
 - Cálculo de carga incremental: preserva histórico previo al último cambio de parámetros y aplica nuevos valores solo desde la fecha efectiva.
@@ -34,3 +35,4 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 ### Notes
 - Commits clave del día: 55af659 (base), b9ea941 (cierre rápido de sesión), 367d770 (cierre completo punto 38), 18bfd72 (hooks/router + tests), 4b74718 (harness docs move/update), 8420dec (sensor spike semanal >20%).
 - Estado de validación local al cierre: 317 tests passed.
+- Validacion E2E real #55 cerrada con contraste de muestra FIT (avg_method=55.71 vs series_method=57.69, delta +1.98 TSS) y serie real de 120 dias documentada.
