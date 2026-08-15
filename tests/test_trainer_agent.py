@@ -56,6 +56,7 @@ from agent.trainer_agent import (
     _is_personal_records_followup_intent,
     _is_plan_status_intent,
     _is_daily_readiness_intent,
+    _is_hr_threshold_query_intent,
     _is_mcp_factual_query_intent,
     _is_running_threshold_query_intent,
     _is_week_tss_intent,
@@ -1400,9 +1401,55 @@ class TestComputeAndPersistLoadMetrics:
              patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
-        fetch_mock.assert_not_called()
+        fetch_mock.assert_awaited_once_with(agent.mcp_session, today.isoformat(), today.isoformat())
         upsert_mock.assert_not_called()
         apply_mock.assert_called_once_with(existing_series, today)
+
+    @pytest.mark.asyncio
+    async def test_existing_user_up_to_date_refreshes_today_when_new_activity_detected(self):
+        import agent.trainer_agent as trainer_mod
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        today_iso = today.isoformat()
+        existing_series = [
+            {
+                "date": today_iso,
+                "tss": 0.0,
+                "atl": 48.0,
+                "ctl": 36.0,
+                "tsb": -12.0,
+                "activities_count": 0,
+            }
+        ]
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {"load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION}}
+
+        async def _fake_fetch(_session, start_date, end_date):
+            if start_date == today_iso and end_date == today_iso:
+                return [{"activityId": 123, "startTimeLocal": f"{today_iso}T07:10:00", "trainingLoad": 82.49, "type": "running"}]
+            return []
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
+
+        assert fetch_mock.await_count >= 2
+        assert any(
+            c.args[1] == today_iso and c.args[2] == today_iso
+            for c in fetch_mock.await_args_list
+        )
+        upsert_mock.assert_called_once()
+        persisted_rows = upsert_mock.call_args[0][0]
+        assert persisted_rows
+        assert persisted_rows[0]["date"] == today_iso
+        apply_mock.assert_called_once()
 
 
 # ─── Fallback de planificacion y rangos trend ─────────────────────────────
@@ -3304,6 +3351,7 @@ class TestMcpReadOnlyPolicy:
 class TestWeekTssDeterministicRoute:
     def test_is_week_tss_intent_detects_weekly_tss_queries(self):
         assert _is_week_tss_intent("Cuanto TSS llevo esta semana?")
+        assert _is_week_tss_intent("Cuales son los TSS de esta semana?")
         assert _is_week_tss_intent("Dame el acumulado semanal de TSS")
         assert not _is_week_tss_intent("Como esta mi HRV hoy?")
 
@@ -3331,6 +3379,98 @@ class TestWeekTssDeterministicRoute:
         assert out.startswith("## Consulta TSS semanal (datos reales)")
         assert "sin inferencias del LLM" in out
         assert len(agent.conversation_history) == 2
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_uses_activity_fallback_when_today_missing(self, monkeypatch):
+        import agent.trainer_agent as ta
+
+        class _FakeDate:
+            @staticmethod
+            def today():
+                from datetime import date as _Date
+
+                return _Date(2026, 8, 15)
+
+            @staticmethod
+            def fromisoformat(value):
+                from datetime import date as _Date
+
+                return _Date.fromisoformat(value)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-08-10", "tss": 33.35},
+                    {"date": "2026-08-11", "tss": 43.44},
+                    {"date": "2026-08-12", "tss": 89.26},
+                    {"date": "2026-08-13", "tss": 61.74},
+                    {"date": "2026-08-14", "tss": 32.59},
+                ]
+            }
+        }
+
+        activities_payload = [
+            {
+                "activityName": "Rodaje sábado",
+                "activityType": "running",
+                "startTimeLocal": "2026-08-15 08:00:00",
+                "trainingLoad": 82.49,
+            }
+        ]
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return activities_payload
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile)
+
+        assert "TSS acumulado: 342.9" in out
+        assert "sabado 15/08: 82.5" in out
+        assert "fallback" in out
+
+
+class TestHrThresholdDeterministicRoute:
+    def test_is_hr_threshold_intent_detects_fc_queries(self):
+        assert _is_hr_threshold_query_intent("Cual es mi FC umbral?")
+        assert _is_hr_threshold_query_intent("Dime mi frecuencia cardiaca umbral")
+        assert not _is_hr_threshold_query_intent("Cual es mi ritmo umbral?")
+
+    def test_running_threshold_intent_excludes_fc_threshold_queries(self):
+        assert not _is_running_threshold_query_intent("Cual es mi FC umbral?")
+
+    @pytest.mark.asyncio
+    async def test_chat_hr_threshold_route_does_not_call_llm(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {
+            "performance": {
+                "hr_threshold_bpm": 174,
+                "hr_threshold_date": "2026-08-10",
+            }
+        }
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.chat = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+            "agent.trainer_agent._save_history_entry"
+        ):
+            out = await TrainerAgent.chat(agent, "Cual es mi FC umbral?")
+
+        assert out.startswith("## FC umbral actual")
+        assert "174 bpm" in out
 
 
 class TestDailyReadinessDeterministicRoute:

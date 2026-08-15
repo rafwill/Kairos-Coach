@@ -109,6 +109,34 @@ def _require_supabase():
     return sb
 
 
+def _is_missing_table_error(exc: Exception, table_name: str) -> bool:
+    """Detecta errores de PostgREST por tabla ausente (schema cache/migration pendiente)."""
+    code = ""
+    message = ""
+    payload = None
+    try:
+        payload = exc.args[0] if getattr(exc, "args", None) else None
+    except (IndexError, TypeError):
+        payload = None
+
+    if isinstance(payload, dict):
+        code = str(payload.get("code") or "")
+        message = str(payload.get("message") or "")
+
+    if not message:
+        message = str(exc)
+
+    msg = message.lower()
+    tbl = str(table_name or "").lower()
+    return bool(
+        code == "PGRST205"
+        or (
+            ("schema cache" in msg or "could not find the table" in msg)
+            and tbl in msg
+        )
+    )
+
+
 def _normalize_username(username: str) -> str:
     return (username or "").strip().lower()
 
@@ -454,7 +482,13 @@ def list_training_plans(include_archived: bool = False) -> list[dict]:
     query = sb.table("training_plan").select("*").eq("app_user_id", uid)
     if not include_archived:
         query = query.neq("status", "archived")
-    res = query.order("created_at", desc=True).execute()
+    try:
+        res = query.order("created_at", desc=True).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "training_plan"):
+            log.warning("[storage] training_plan no existe en Supabase; devolviendo lista vacía")
+            return []
+        raise
     return list(res.data or [])
 
 
@@ -463,28 +497,40 @@ def get_training_plan(plan_id: str) -> dict | None:
     if not plan_id:
         return None
     sb = _require_supabase()
-    res = (
-        sb.table("training_plan")
-        .select("*")
-        .eq("id", plan_id)
-        .eq("app_user_id", uid)
-        .limit(1)
-        .execute()
-    )
+    try:
+        res = (
+            sb.table("training_plan")
+            .select("*")
+            .eq("id", plan_id)
+            .eq("app_user_id", uid)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        if _is_missing_table_error(exc, "training_plan"):
+            log.warning("[storage] training_plan no existe en Supabase; devolviendo None")
+            return None
+        raise
     return res.data[0] if res.data else None
 
 
 def get_active_training_plan() -> dict | None:
     uid = _require_active_user_id()
     sb = _require_supabase()
-    res = (
-        sb.table("training_plan")
-        .select("*")
-        .eq("app_user_id", uid)
-        .eq("status", "active")
-        .limit(1)
-        .execute()
-    )
+    try:
+        res = (
+            sb.table("training_plan")
+            .select("*")
+            .eq("app_user_id", uid)
+            .eq("status", "active")
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        if _is_missing_table_error(exc, "training_plan"):
+            log.warning("[storage] training_plan no existe en Supabase; devolviendo None")
+            return None
+        raise
     return res.data[0] if res.data else None
 
 
@@ -492,14 +538,20 @@ def list_training_plan_sessions(plan_id: str) -> list[dict]:
     if not plan_id:
         return []
     sb = _require_supabase()
-    res = (
-        sb.table("training_plan_session")
-        .select("*")
-        .eq("plan_id", plan_id)
-        .order("week_index")
-        .order("day_index")
-        .execute()
-    )
+    try:
+        res = (
+            sb.table("training_plan_session")
+            .select("*")
+            .eq("plan_id", plan_id)
+            .order("week_index")
+            .order("day_index")
+            .execute()
+        )
+    except Exception as exc:
+        if _is_missing_table_error(exc, "training_plan_session"):
+            log.warning("[storage] training_plan_session no existe en Supabase; devolviendo lista vacía")
+            return []
+        raise
     return list(res.data or [])
 
 

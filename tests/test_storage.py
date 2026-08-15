@@ -325,6 +325,34 @@ class _MemorySupabaseNoStructured(_MemorySupabase):
         return _MemoryTableNoStructured(self, name)
 
 
+class _MissingTableError(Exception):
+    pass
+
+
+class _MissingTrainingPlanTable:
+    def select(self, *_args, **_kwargs):
+        return self
+
+    def eq(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
+    def execute(self):
+        raise _MissingTableError(
+            {
+                "message": "Could not find the table 'public.training_plan' in the schema cache",
+                "code": "PGRST205",
+            }
+        )
+
+
+class _MissingTrainingPlanSupabase:
+    def table(self, _name: str):
+        return _MissingTrainingPlanTable()
+
+
 def test_create_training_plan_enforces_single_active_and_versions(monkeypatch):
     fake_sb = _MemorySupabase()
     fake_sb.rows["training_plan"].append(
@@ -454,3 +482,10 @@ def test_create_training_plan_falls_back_when_structured_workout_column_missing(
     sessions = fake_sb.rows["training_plan_session"]
     assert len(sessions) == 1
     assert "structured_workout" not in sessions[0]
+
+
+def test_get_active_training_plan_returns_none_when_table_missing(monkeypatch):
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_require_supabase", lambda: _MissingTrainingPlanSupabase())
+
+    assert storage.get_active_training_plan() is None
