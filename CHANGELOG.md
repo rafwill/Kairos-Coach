@@ -16,6 +16,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 	- `## 🎯 Próximo paso`
 - Ruta determinista semanal de actividades por fecha (`week_activities`) con semana natural ISO (lunes-domingo).
 - Mensajes de transparencia en arranque cuando hay recálculo por cambio de fórmula (`formula_version`) o refresco incremental de carga.
+- Setup automatizado de proyecto:
+	- `setup.ps1` (Windows) y `setup.sh` (Unix),
+	- `Makefile` con targets `setup`, `setup-win`, `login`, `serve`, `test`, `lint`,
+	- generación automática de `.env` y `ENCRYPTION_KEY` si faltan.
 
 ### Changed
 - `trail_running` mantiene calibración por defecto (`hrTSS zonas * 0.72`) solo cuando no aplica la nueva regla de trail rápido.
