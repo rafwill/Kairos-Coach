@@ -60,6 +60,7 @@ from agent.trainer_agent import (
     _is_hr_threshold_query_intent,
     _is_mcp_factual_query_intent,
     _is_running_threshold_query_intent,
+    _is_config_options_intent,
     _is_week_tss_intent,
     _is_planning_intent,
     _is_write_mcp_tool,
@@ -3619,6 +3620,22 @@ class TestHrThresholdDeterministicRoute:
     def test_running_threshold_intent_excludes_fc_threshold_queries(self):
         assert not _is_running_threshold_query_intent("Cual es mi FC umbral?")
 
+    def test_config_options_intent_detects_configuration_question(self):
+        assert _is_config_options_intent("que opciones puedo cambiar?")
+        assert _is_config_options_intent("que puedo configurar en mi perfil?")
+        assert not _is_config_options_intent("que entrenamiento hago manana?")
+
+    def test_extract_hr_threshold_from_payload_supports_camel_case(self):
+        import agent.trainer_agent as ta
+
+        payload = {
+            "userData": {
+                "lactateThresholdHeartRate": 169,
+            }
+        }
+        out = ta._extract_hr_threshold_from_payload(payload)
+        assert out == 169
+
     @pytest.mark.asyncio
     async def test_chat_hr_threshold_route_does_not_call_llm(self):
         from agent.trainer_agent import TrainerAgent
@@ -3647,6 +3664,88 @@ class TestHrThresholdDeterministicRoute:
 
         assert out.startswith("## FC umbral actual")
         assert "174 bpm" in out
+
+    @pytest.mark.asyncio
+    async def test_hr_threshold_route_reads_garmin_user_profile_camel_case(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.model = "test-model"
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            if tool_name == "get_user_profile":
+                return {"userData": {"lactateThresholdHeartRate": 169}}
+            raise AssertionError(f"Unexpected tool: {tool_name}")
+
+        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+            "agent.trainer_agent._save_history_entry"
+        ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
+            out = await TrainerAgent.chat(agent, "puedes consultar a garmin connect cual es mi FC umbral?")
+
+        assert out.startswith("## FC umbral actual")
+        assert "169 bpm" in out
+
+    @pytest.mark.asyncio
+    async def test_hr_threshold_route_never_calls_lactate_threshold_tool(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.model = "test-model"
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            if tool_name == "get_lactate_threshold":
+                raise AssertionError("FC route must not call get_lactate_threshold")
+            if tool_name == "get_user_profile":
+                return {"userData": {"lactateThresholdHeartRate": 169}}
+            raise AssertionError(f"Unexpected tool: {tool_name}")
+
+        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+            "agent.trainer_agent._save_history_entry"
+        ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
+            out = await TrainerAgent.chat(agent, "cual es mi FC umbral?")
+
+        assert "169 bpm" in out
+
+    @pytest.mark.asyncio
+    async def test_chat_config_options_route_does_not_call_llm(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.model = "test-model"
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        with patch("agent.trainer_agent._save_history_entry"):
+            out = await TrainerAgent.chat(agent, "que opciones puedo cambiar?")
+
+        assert out.startswith("## Opciones que puedes cambiar")
+        assert "/perfil umbral" in out
+        assert "/perfil fc" in out
 
 
 class TestTomorrowWorkoutViaLlm:
