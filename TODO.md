@@ -253,6 +253,12 @@
 - Se mantiene determinismo solo en intenciones factuales/estructurales críticas (TSS semanal, FC umbral, estado de plan, readiness, etc.).
 - Cobertura de regresión añadida para evitar reintroducir respuesta genérica vacía en esta consulta.
 
+#### 60) [TRAIL-TSS-FAST] Excepción trail rápido + transparencia de salida (2026-08-18) — REALIZADO
+- Nueva regla en `trail_running`: si el ritmo final/efectivo es `< 6:00/km`, se usa `hrTSS` bruto por zonas en lugar del factor de calibración 0.72.
+- Para `trail_running` no rápido se mantiene la calibración existente (`hrTSS zonas * 0.72`).
+- Mejora de UX en análisis de actividad: cuando hay zonas FC en trail, Kairos muestra ambos valores (`hrTSS bruto zonas` y `hrTSS Kairos aplicado`) para trazabilidad.
+- Tests de regresión añadidos para la regla `< 6:00/km`, frontera `== 6:00/km` y visualización explícita de ambos valores.
+
 #### 4) Logging de producción (2026-08-15) — REALIZADO
 - Configuración de logging por entorno en runtime: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.
 - Trazas de debug en consola interactiva ahora son opcionales y quedan desactivadas por defecto en producción.

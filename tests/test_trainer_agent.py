@@ -29,6 +29,7 @@ from agent.trainer_agent import (
     _build_athlete_knowledge_context,
     _build_proactive_status_markdown,
     _build_post_activity_section_spec,
+    _build_activity_analysis_block,
     _build_load_trend_table,
     _classify_running_session_with_confidence,
     _estimate_session_tss,
@@ -1600,25 +1601,42 @@ class TestSessionTssEstimation:
         assert out["flags"]["sustained_overload"] or out["status"] in {"overload", "fatigue_high"}
 
     def test_compute_load_fatigue_metrics_flags_weekly_spike_over_20_percent(self):
-        today = date.today()
-        activities = []
-        for idx in range(14):
-            d = (today - timedelta(days=idx)).isoformat()
-            # Semana actual (0..6): 35 TSS/día; semana anterior (7..13): 20 TSS/día
-            load = 35 if idx <= 6 else 20
-            activities.append(
-                {
-                    "startTimeLocal": f"{d}T07:00:00.0",
-                    "trainingLoad": load,
-                }
-            )
+        import agent.trainer_agent as ta
 
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={"load": []},
-            profile={},
-            days_window=28,
-        )
+        class _FakeDate:
+            @staticmethod
+            def today():
+                from datetime import date as _Date
+
+                # Domingo fijo para garantizar semana completa (lunes->domingo)
+                return _Date(2026, 8, 16)
+
+            @staticmethod
+            def fromisoformat(value):
+                from datetime import date as _Date
+
+                return _Date.fromisoformat(value)
+
+        with patch.object(ta, "date", _FakeDate):
+            today = _FakeDate.today()
+            activities = []
+            for idx in range(14):
+                d = (today - timedelta(days=idx)).isoformat()
+                # Semana actual (0..6): 35 TSS/día; semana anterior (7..13): 20 TSS/día
+                load = 35 if idx <= 6 else 20
+                activities.append(
+                    {
+                        "startTimeLocal": f"{d}T07:00:00.0",
+                        "trainingLoad": load,
+                    }
+                )
+
+            out = _compute_load_fatigue_metrics(
+                activities=activities,
+                trend_payload={"load": []},
+                profile={},
+                days_window=28,
+            )
 
         assert out is not None
         assert out["flags"]["weekly_spike_alert"] is True
@@ -2496,6 +2514,160 @@ class TestLoadFatigueModel:
         assert label_hike_zones == "hrTSS"
         # En hike/walk se usa banda específica y blend con zonas (sin factor trail).
         assert 45.0 <= tss_hike_zones <= 60.0
+
+    def test_estimate_tss_trail_fast_pace_uses_raw_hr_zones(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+            "averagePaceSecPerKm": 330,
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 115,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+            ]
+        )
+
+        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
+
+        assert label_zones == "hrTSS"
+        # Base sin calibración: 56.25 TSS (IF=0.75). Para trail rápido se conserva bruto.
+        assert abs(tss_zones - 56.25) < 0.05
+
+    def test_estimate_tss_trail_pace_at_6min_keeps_calibration(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+            "averagePaceSecPerKm": 360,
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 115,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+            ]
+        )
+
+        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
+
+        assert label_zones == "hrTSS"
+        # El criterio es estrictamente menor que 6:00/km; a 6:00/km aplica factor trail.
+        assert abs(tss_zones - 40.5) < 0.05
+
+    def test_activity_analysis_block_trail_shows_raw_and_applied_hrtss(self):
+        activity_raw = json.dumps(
+            {
+                "type": "trail_running",
+                "duration": 3600,
+                "distance": 10000,
+                "averageHR": 170,
+                "maxHR": 180,
+                "name": "Trail test",
+            }
+        )
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 115,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+            ]
+        )
+
+        out = _build_activity_analysis_block(activity_raw=activity_raw, hr_zones_raw=hr_zones_raw)
+
+        assert "hrTSS bruto zonas: 56.2" in out
+        assert "hrTSS Kairos aplicado: 40.5" in out
+
+    def test_activity_analysis_block_trail_fast_shows_raw_rule_note(self):
+        activity_raw = json.dumps(
+            {
+                "type": "trail_running",
+                "duration": 3600,
+                "distance": 10000,
+                "averagePaceSecPerKm": 330,
+                "averageHR": 170,
+                "maxHR": 180,
+                "name": "Trail rapido",
+            }
+        )
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 115,
+                    "maxHeartRateIn": 125,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 126,
+                    "maxHeartRateIn": 138,
+                },
+                {
+                    "zoneNumber": 3,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 139,
+                    "maxHeartRateIn": 151,
+                },
+            ]
+        )
+
+        out = _build_activity_analysis_block(activity_raw=activity_raw, hr_zones_raw=hr_zones_raw)
+
+        assert "hrTSS bruto zonas: 56.2" in out
+        assert "hrTSS Kairos aplicado: 56.2" in out
+        assert "Regla trail rapido activa (<6:00/km)" in out
 
     def test_estimate_tss_walking_easy_band_caps_zones(self):
         act = {
@@ -3534,6 +3706,76 @@ class TestTomorrowWorkoutViaLlm:
             out = await TrainerAgent.chat(agent, "Que entrenamiento me propones para mañana?")
 
         assert "45 min aeróbicos" in out
+
+
+class TestPostActivityGenericRescue:
+    @pytest.mark.asyncio
+    async def test_chat_activity_feedback_generic_reply_uses_llm_rescue(self):
+        from agent.trainer_agent import TrainerAgent
+
+        msg_generic = MagicMock()
+        msg_generic.tool_calls = None
+        msg_generic.content = "Lo siento, pero no tengo suficiente información para evaluar tu entrenamiento de ayer."
+        choice_generic = MagicMock()
+        choice_generic.message = msg_generic
+        choice_generic.finish_reason = "stop"
+        response_generic = MagicMock()
+        response_generic.choices = [choice_generic]
+        response_generic.usage = None
+
+        msg_rescue = MagicMock()
+        msg_rescue.tool_calls = None
+        msg_rescue.content = "Buen trabajo ayer: intensidad controlada y buena base aeróbica; ajusta recuperación hoy."
+        choice_rescue = MagicMock()
+        choice_rescue.message = msg_rescue
+        choice_rescue.finish_reason = "stop"
+        response_rescue = MagicMock()
+        response_rescue.choices = [choice_rescue]
+        response_rescue.usage = None
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.model = "test-model"
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=[response_generic, response_rescue])
+        agent.total_prompt_tokens = 0
+        agent.total_completion_tokens = 0
+        agent._api_key = ""
+
+        async def _fake_call_tool(_session, tool_name, _arguments):
+            if tool_name == "get_activities_by_date":
+                return json.dumps([{"activityId": 123}])
+            if tool_name == "get_activity":
+                return json.dumps({"activityId": 123, "type": "running", "duration": 3600})
+            if tool_name == "get_body_battery":
+                return json.dumps([])
+            if tool_name == "get_sleep_data":
+                return json.dumps([])
+            if tool_name == "get_hrv_data":
+                return json.dumps({})
+            if tool_name == "get_training_load_trend":
+                return json.dumps([])
+            if tool_name == "get_activity_hr_zones":
+                return "Unknown tool: get_activity_hr_zones"
+            if tool_name == "get_activity_hr_in_timezones":
+                return json.dumps([])
+            return json.dumps({})
+
+        with patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=_fake_call_tool)), patch(
+            "agent.trainer_agent._build_activity_analysis_block",
+            return_value="RESUMEN DE ACTIVIDAD PRECOMPUTADO",
+        ), patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=None)), patch(
+            "agent.trainer_agent._save_history_entry"
+        ):
+            out = await TrainerAgent.chat(agent, "¿que opinión tienes de mi entrenamiento de ayer?")
+
+        assert "Buen trabajo ayer" in out
 
 
 class TestDailyReadinessDeterministicRoute:
