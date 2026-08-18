@@ -3623,6 +3623,8 @@ class TestHrThresholdDeterministicRoute:
     def test_config_options_intent_detects_configuration_question(self):
         assert _is_config_options_intent("que opciones puedo cambiar?")
         assert _is_config_options_intent("que puedo configurar en mi perfil?")
+        assert _is_config_options_intent("qué parámetros puedo editar en mi perfil")
+        assert _is_config_options_intent("/menu")
         assert not _is_config_options_intent("que entrenamiento hago manana?")
 
     def test_extract_hr_threshold_from_payload_supports_camel_case(self):
@@ -3743,7 +3745,7 @@ class TestHrThresholdDeterministicRoute:
         with patch("agent.trainer_agent._save_history_entry"):
             out = await TrainerAgent.chat(agent, "que opciones puedo cambiar?")
 
-        assert out.startswith("## Opciones que puedes cambiar")
+        assert out.startswith("## Menú de opciones disponibles")
         assert "/perfil umbral" in out
         assert "/perfil fc" in out
 

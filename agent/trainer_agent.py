@@ -11,6 +11,7 @@ import ssl
 import json
 import asyncio
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -3569,9 +3570,19 @@ def _is_post_activity_feedback_intent(user_message: str) -> bool:
 
 def _is_config_options_intent(user_message: str) -> bool:
     """Detecta preguntas sobre qué parámetros/opciones puede configurar el atleta."""
-    text = (user_message or "").strip().lower()
-    if not text:
+    text_raw = (user_message or "").strip()
+    if not text_raw:
         return False
+
+    text = text_raw.lower()
+    text_ascii = "".join(
+        ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn"
+    )
+    text_clean = re.sub(r"[^a-z0-9/ ]+", " ", text_ascii)
+    text_clean = re.sub(r"\s+", " ", text_clean).strip()
+
+    if text_clean in {"/menu", "menu"}:
+        return True
 
     markers = (
         "que opciones puedo cambiar",
@@ -3588,19 +3599,45 @@ def _is_config_options_intent(user_message: str) -> bool:
         "qué parámetros puedo cambiar",
         "opciones de perfil",
     )
-    return any(marker in text for marker in markers)
+    if any(marker in text for marker in markers):
+        return True
+
+    # Variante robusta: detectar "opciones/parámetros" + verbo de acción.
+    has_subject = any(tok in text_clean for tok in ("opciones", "parametros", "perfil"))
+    has_action = any(tok in text_clean for tok in ("cambiar", "configurar", "editar", "modificar", "ajustar"))
+    has_modal = any(tok in text_clean for tok in ("puedo", "puedes", "podria", "podrias"))
+    return has_subject and (has_action or has_modal)
 
 
 def _build_config_options_markdown() -> str:
     """Devuelve listado determinista de opciones configurables en perfil."""
     return "\n".join(
         [
-            "## Opciones que puedes cambiar",
+            "## Menú de opciones disponibles",
             "",
-            "- `/perfil umbral <mm:ss>`: ritmo umbral de running (ej. `/perfil umbral 4:15`).",
-            "- `/perfil fc <reposo> <max>`: FC de reposo y FC máxima (ej. `/perfil fc 48 190`).",
-            "- `/perfil editar objetivo`: objetivo principal y fecha de carrera.",
-            "- `/perfil ver`: revisar los valores actualmente guardados.",
+            "### Ver datos",
+            "- `/perfil`: ver tu perfil completo.",
+            "- `/plan listar`: listar planes y ver el activo.",
+            "- `/plan ver <id>`: ver detalle de un plan.",
+            "- `/carga`: ver tabla semanal de carga/fatiga.",
+            "- `/carga meses`: ver resumen mensual.",
+            "",
+            "### Editar perfil",
+            "- `/perfil editar objetivo`: deporte, carrera y tiempo objetivo.",
+            "- `/perfil editar salud`: lesiones y notas.",
+            "- `/perfil editar`: edición completa.",
+            "- `/perfil umbral <mm:ss>`: ritmo umbral running (ej: `/perfil umbral 4:15`).",
+            "- `/perfil fc <reposo> <max>`: FC reposo/máxima (ej: `/perfil fc 48 190`).",
+            "",
+            "### Gestionar planes",
+            "- `/plan crear`: crear plan base.",
+            "- `/plan activar <id>`: activar plan por ID.",
+            "",
+            "### Sistema",
+            "- `/menu`: abrir menú resumido.",
+            "- `/ayuda`: ver ayuda completa y ejemplos.",
+            "- `/modelo`: cambiar proveedor/modelo.",
+            "- `salir`: cerrar sesión.",
             "",
             "Si quieres, te guío paso a paso para actualizar uno ahora.",
             "",
