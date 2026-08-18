@@ -471,6 +471,63 @@ make lint       # ruff check agent tests tools
 
 En Windows, si no tienes `make`, usa directamente `setup.ps1` y `.venv\Scripts\python.exe`.
 
+### Windows: error "make no se reconoce"
+
+Si en PowerShell aparece este error:
+
+```powershell
+make : El término 'make' no se reconoce como nombre de un cmdlet...
+```
+
+No es un problema de Kairos: significa que `make` no está instalado en tu Windows.
+
+Tienes dos opciones:
+
+1. Sin instalar `make` (recomendado para empezar rápido):
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+.\.venv\Scripts\python.exe -m agent.main
+```
+
+2. Instalar `make` con Chocolatey (si lo tienes disponible):
+```powershell
+choco install make -y
+make --version
+make login
+```
+
+### Problemas frecuentes (Windows)
+
+1. Error: `running scripts is disabled on this system`
+
+Solución (solo para ejecutar setup una vez):
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+2. Error: `python is not recognized`
+
+Solución:
+- Instala Python 3.10+ desde https://www.python.org/downloads/
+- Marca la opción **Add Python to PATH** durante la instalación
+- Cierra y abre una nueva terminal
+- Verifica con:
+```powershell
+python --version
+```
+
+3. Error: `uvx is not recognized`
+
+Solución:
+```powershell
+pip install uv
+```
+
+Luego verifica:
+```powershell
+uvx --version
+```
+
 ### Configuración de `.env` (detalle)
 
 Si prefieres hacerlo manual:
