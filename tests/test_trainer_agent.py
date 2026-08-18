@@ -59,6 +59,7 @@ from agent.trainer_agent import (
     _is_daily_readiness_intent,
     _is_hr_threshold_query_intent,
     _is_mcp_factual_query_intent,
+    _is_activity_details_query_intent,
     _is_running_threshold_query_intent,
     _is_config_options_intent,
     _is_week_tss_intent,
@@ -955,6 +956,11 @@ class TestStartupProactive:
     def test_is_activity_in_last_48h_true_for_recent_day(self):
         today = date.today().isoformat()
         activity = {"startTimeLocal": f"{today}T08:00:00.0"}
+        assert _is_activity_in_last_48h(activity)
+
+    def test_is_activity_in_last_48h_true_for_recent_day_snake_case(self):
+        today = date.today().isoformat()
+        activity = {"start_time_local": f"{today}T08:00:00.0"}
         assert _is_activity_in_last_48h(activity)
 
     def test_build_proactive_status_markdown_contains_sections(self):
@@ -2426,6 +2432,17 @@ class TestLoadFatigueModel:
         assert label_pace == "TSS"
         assert tss_pace > 0
 
+        act_hike_hr = {
+            "type": "hiking",
+            "duration": 7200,
+            "distance": 14000,
+            "averageHR": 130,
+            "maxHR": 165,
+        }
+        tss_hike_hr, label_hike_hr = _estimate_session_tss(act_hike_hr, running_threshold_pace_sec_per_km=320.0)
+        assert label_hike_hr == "hrTSS"
+        assert tss_hike_hr > 0
+
         act_rpe = {"type": "walking", "duration": 3600, "rpe": 6}
         tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
         assert label_rpe == "TSS"
@@ -3697,6 +3714,40 @@ class TestHrThresholdDeterministicRoute:
         assert "169 bpm" in out
 
     @pytest.mark.asyncio
+    async def test_hr_threshold_route_does_not_update_load_effective_date_marker(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {
+            "performance": {
+                "performance_params_updated_at": "2026-08-10",
+            }
+        }
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.model = "test-model"
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            if tool_name == "get_user_profile":
+                return {"userData": {"lactateThresholdHeartRate": 169}}
+            raise AssertionError(f"Unexpected tool: {tool_name}")
+
+        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+            "agent.trainer_agent._save_history_entry"
+        ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
+            out = await TrainerAgent.chat(agent, "mi frecuencia cardiaca umbral")
+
+        assert "169 bpm" in out
+        perf = (agent.user_profile.get("performance") or {})
+        assert perf.get("performance_params_updated_at") == "2026-08-10"
+
+    @pytest.mark.asyncio
     async def test_hr_threshold_route_never_calls_lactate_threshold_tool(self):
         from agent.trainer_agent import TrainerAgent
 
@@ -3924,7 +3975,13 @@ class TestMcpFactualDeterministicRoute:
         assert _is_mcp_factual_query_intent("¿Cuánto he dormido hoy?")
         assert _is_mcp_factual_query_intent("Dime mi FC en reposo")
         assert _is_mcp_factual_query_intent("¿Qué entrené ayer?")
+        assert _is_mcp_factual_query_intent("¿Cuáles fueron los datos de mi entrenamiento de ayer?")
         assert not _is_mcp_factual_query_intent("Recomiéndame el entrenamiento de hoy")
+
+    def test_is_activity_details_query_intent_detects_detail_requests(self):
+        assert _is_activity_details_query_intent("¿Cuáles fueron los datos de mi entrenamiento de ayer?")
+        assert _is_activity_details_query_intent("Dame el resumen de la actividad de hoy")
+        assert not _is_activity_details_query_intent("¿Qué TSS hice ayer?")
 
     @pytest.mark.asyncio
     async def test_chat_factual_route_does_not_call_llm(self):
