@@ -741,7 +741,7 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 |-------------------|-------------|-------------|-------------|
 | Fuerza / Gimnasio | **hrTSS por zonas FC (si cobertura >=35%)** | **TSS por IF estimado de fuerza** | **TSS por RPE/minuto** |
 | Running (no Trail) | **TSS por ritmo umbral (rTSS interno)** | **hrTSS por FC** | - |
-| Trail running | **hrTSS por zonas FC (calibrado)** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
+| Trail running | **hrTSS por zonas FC (calibrado)**<br/>**Excepción:** si ritmo final `< 6:00/km` usa **hrTSS bruto por zonas** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
 | Senderismo / Hike / Caminar | **TSS por bandas walking/hiking (suave, vivo, carga/cuestas)** | **Blend con hrTSS por zonas (si cobertura >=35%)** | **TSS por banda sin zonas** |
 | Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por zonas FC** | **hrTSS por FC** |
 | Otras modalidades (natación, remo, etc.) | **hrTSS por zonas FC** | **hrTSS por FC** | **Training Effect / IF por defecto** |
@@ -765,12 +765,14 @@ Notas de implementación:
   - Caminata suave / regenerativa: 15-25 TSS/h
   - Caminata ritmo vivo / power walking: 25-40 TSS/h
   - Senderismo con mochila / cuestas largas: 40-60+ TSS/h
-- Importante: esta calibración afecta solo a `walking/hiking`; la lógica de `trail_running` se mantiene sin cambios (hrTSS por zonas + factor de calibración trail).
+- Importante: esta calibración afecta solo a `walking/hiking`.
+- En `trail_running` se aplica calibración por defecto (`hrTSS zonas * 0.72`), salvo regla de trail rápido: si el ritmo final/efectivo es `< 6:00/km`, Kairos usa `hrTSS bruto por zonas`.
+- En análisis de actividad trail con zonas FC disponibles, Kairos muestra explícitamente ambos valores: `hrTSS bruto zonas` y `hrTSS Kairos aplicado`.
 - Si faltan datos clave, el sistema conserva fallbacks defensivos (trainingStressScore/trainingLoad nativo, Training Effect e IF por defecto) para no perder continuidad de la serie CTL (Estado físico)/ATL (Fatiga)/TSB (Forma).
 
 Reglas verificadas por tipología:
 - Running asfalto/pista: `rTSS`.
-- Trail running: `hrTSS` calibrado.
+- Trail running: `hrTSS` calibrado, excepto trail rápido (`< 6:00/km`) donde usa `hrTSS` bruto por zonas.
 - Walking/hiking: `TSS` por bandas (con blend de zonas cuando existe cobertura suficiente).
 - Ciclismo con potencia+FTP: `TSS de potencia`.
 

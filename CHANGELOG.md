@@ -2,6 +2,21 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-08-18
+
+### Added
+- Regla específica para trail rápido: si el ritmo final/efectivo es menor de `6:00/km`, Kairos usa `hrTSS` bruto por zonas (sin factor 0.72).
+- En el análisis de actividad trail con zonas FC disponibles, se muestran ambos valores de forma explícita: `hrTSS bruto zonas` y `hrTSS Kairos aplicado`.
+
+### Changed
+- `trail_running` mantiene calibración por defecto (`hrTSS zonas * 0.72`) solo cuando no aplica la nueva regla de trail rápido.
+
+### Tests
+- Nuevos tests de regresión para validar:
+	- uso de `hrTSS` bruto por zonas en trail rápido (`< 6:00/km`),
+	- comportamiento de frontera en `6:00/km` (mantiene calibración),
+	- presencia de `hrTSS bruto zonas` y `hrTSS Kairos aplicado` en el bloque de análisis.
+
 ## 2026-08-15
 
 ### Added

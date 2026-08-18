@@ -284,6 +284,10 @@ _TSS_FORMULA_VERSION = 13  # v13: calibracion especifica para walking/hiking por
 # Se aplica sobre hrTSS por zonas y preserva valores >500 cuando corresponde.
 _TRAIL_ZONES_HRTSS_CALIBRATION = 0.72
 
+# Para trail rápido (ritmo final < 6:00/km), usar hrTSS bruto por zonas
+# para cuantificar sesiones cortas/explosivas más parecido a asfalto.
+_TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
+
 
 # Metadatos de récords personales de Garmin (mapeado de typeId a categoría y formato)
 _PR_METADATA = {
@@ -1362,6 +1366,33 @@ def _extract_running_effective_pace_sec_per_km(activity: dict) -> float | None:
     return _extract_avg_pace_sec_per_km(activity)
 
 
+def _should_use_raw_hr_tss_for_fast_trail(activity: dict) -> bool:
+    """Activa hrTSS bruto por zonas para trail rápido (< 6:00/km).
+
+    Prioriza un posible ritmo final explícito y, si no existe, usa el ritmo
+    efectivo de running como proxy robusto del comportamiento de la sesión.
+    """
+    if not isinstance(activity, dict):
+        return False
+
+    for key in (
+        "finalPaceSecPerKm",
+        "final_pace_sec_per_km",
+        "lastPaceSecPerKm",
+        "last_pace_sec_per_km",
+        "finalPace",
+        "final_pace",
+    ):
+        pace = _parse_pace_to_sec_per_km(activity.get(key))
+        if pace and pace > 0:
+            return float(pace) < float(_TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM)
+
+    pace_effective = _extract_running_effective_pace_sec_per_km(activity)
+    if not pace_effective or pace_effective <= 0:
+        return False
+    return float(pace_effective) < float(_TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM)
+
+
 def _extract_training_load_tss(activity: dict) -> float | None:
     for key in (
         "trainingStressScore",
@@ -2346,6 +2377,8 @@ def _estimate_session_tss(
                 apply_cap=False,
             )
             if tss_hr_zones is not None:
+                if _should_use_raw_hr_tss_for_fast_trail(activity):
+                    return max(0.0, float(tss_hr_zones)), "hrTSS"
                 tss_cal = max(0.0, float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION)
                 return tss_cal, "hrTSS"
 
@@ -3504,6 +3537,32 @@ def _is_tomorrow_workout_intent(user_message: str) -> bool:
         "qué hago",
     )
     return any(marker in text for marker in tomorrow_markers) and any(marker in text for marker in workout_markers)
+
+
+def _is_post_activity_feedback_intent(user_message: str) -> bool:
+    """Detecta consultas de valoración/análisis de una actividad ya realizada."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+    activity_markers = (
+        "entrenamiento",
+        "actividad",
+        "sesion",
+        "sesión",
+    )
+    feedback_markers = (
+        "opinion",
+        "opinión",
+        "analiza",
+        "análisis",
+        "analisis",
+        "que tal",
+        "qué tal",
+        "como ves",
+        "cómo ves",
+    )
+    has_date = _extract_iso_date_from_text(user_message) is not None
+    return has_date and any(marker in text for marker in activity_markers) and any(marker in text for marker in feedback_markers)
 
 
 def _build_tomorrow_workout_markdown(profile: dict) -> str:
@@ -7523,8 +7582,25 @@ def _build_activity_analysis_block(
         running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
         hr_zones_raw=hr_zones_raw,
     )
+    _trail_raw_hr_tss: float | None = None
+    _is_trail_fast_raw = False
+    if _is_trail_activity(act_type):
+        _trail_raw_hr_tss = _estimate_hr_tss_from_zones(
+            act,
+            hours=_extract_activity_duration_hours(act),
+            hr_zones_raw=hr_zones_raw,
+            apply_cap=False,
+        )
+        _is_trail_fast_raw = _trail_raw_hr_tss is not None and _should_use_raw_hr_tss_for_fast_trail(act)
+
     if _tss_val > 0:
-        lines.append(f"{_tss_lbl}: {_tss_val:.1f}")
+        if _trail_raw_hr_tss is not None:
+            lines.append(f"hrTSS bruto zonas: {_trail_raw_hr_tss:.1f}")
+            lines.append(f"hrTSS Kairos aplicado: {_tss_val:.1f}")
+            if _is_trail_fast_raw:
+                lines.append("Regla trail rapido activa (<6:00/km): Kairos usa hrTSS bruto por zonas.")
+        else:
+            lines.append(f"{_tss_lbl}: {_tss_val:.1f}")
 
     # ── Sección 2: Zonas de FC ─────────────────────────────────────────────
     # Prioridad 1: datos reales del dispositivo (get_activity_hr_zones)
@@ -9561,6 +9637,8 @@ class TrainerAgent:
 
         # Pre-fetch proactivo: si el usuario menciona una fecha explícita,
         # resolver y cargar la actividad + contexto completo ANTES del bucle LLM.
+        analysis_block_for_rescue = ""
+        prefetch_date_for_rescue = ""
         user_date = _extract_iso_date_from_text(user_message)
         if user_date:
             # Intento 1: get_activities_by_date para la fecha exacta (más fiable)
@@ -9762,6 +9840,8 @@ class TrainerAgent:
                     running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(self.user_profile),
                     hr_zones_raw=raw_hr_zones,
                 )
+                analysis_block_for_rescue = analysis_block
+                prefetch_date_for_rescue = user_date
 
                 # Eliminar del array de mensajes cualquier respuesta previa del asistente
                 # que sea un análisis de actividad — evita copiar floats crudos y formato viejo.
@@ -10170,6 +10250,7 @@ class TrainerAgent:
                 and (
                     _is_planning_intent(user_message, self.conversation_history)
                     or _is_tomorrow_workout_intent(user_message)
+                    or _is_post_activity_feedback_intent(user_message)
                 )
             ):
                 if _has_goal_in_profile(self.user_profile):
@@ -10217,40 +10298,63 @@ class TrainerAgent:
                     except (RuntimeError, ValueError, TypeError, OSError) as exc:
                         log.debug("No se pudo persistir plan fallback en perfil: %s", exc)
                 else:
-                    snapshot_ctx: dict[str, Any] = {}
-                    try:
-                        startup = await self.collect_startup_snapshot_48h()
-                        load_summary = _format_load_fatigue_summary(startup.get("load_fatigue") or {})
-                        snapshot_ctx = {
-                            "today": (startup.get("dates") or {}).get("today"),
-                            "body_battery": (startup.get("body_battery") or {}).get("summary"),
-                            "hrv": (startup.get("hrv") or {}).get("summary"),
-                            "sleep": (startup.get("sleep") or {}).get("summary"),
-                            "load": load_summary,
-                            "recent_trainings": (startup.get("trainings") or [])[:3],
-                        }
-                    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
-                        log.debug("No se pudo obtener snapshot para fallback LLM de planificación: %s", exc)
+                    rescue_messages: list[dict[str, str]]
+                    if _is_post_activity_feedback_intent(user_message) and analysis_block_for_rescue:
+                        target_date = prefetch_date_for_rescue or user_date or "fecha consultada"
+                        rescue_messages = [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Eres Kairos Coach. Evalúa el entrenamiento indicado usando EXCLUSIVAMENTE los datos provistos. "
+                                    "Entrega una valoración concreta y accionable (no pidas más información). "
+                                    "Si falta algún dato puntual, dilo en una línea y sigue con la mejor recomendación posible."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Pregunta original: {user_message}\n"
+                                    f"Fecha objetivo: {target_date}\n\n"
+                                    f"Datos precomputados del entrenamiento:\n{analysis_block_for_rescue}\n\n"
+                                    "Responde en español con: 1) resumen ejecutivo breve, 2) qué hiciste bien, 3) qué ajustar, 4) recomendación para próxima sesión."
+                                ),
+                            },
+                        ]
+                    else:
+                        snapshot_ctx: dict[str, Any] = {}
+                        try:
+                            startup = await self.collect_startup_snapshot_48h()
+                            load_summary = _format_load_fatigue_summary(startup.get("load_fatigue") or {})
+                            snapshot_ctx = {
+                                "today": (startup.get("dates") or {}).get("today"),
+                                "body_battery": (startup.get("body_battery") or {}).get("summary"),
+                                "hrv": (startup.get("hrv") or {}).get("summary"),
+                                "sleep": (startup.get("sleep") or {}).get("summary"),
+                                "load": load_summary,
+                                "recent_trainings": (startup.get("trainings") or [])[:3],
+                            }
+                        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+                            log.debug("No se pudo obtener snapshot para fallback LLM de planificación: %s", exc)
 
-                    rescue_messages = [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Eres Kairos Coach. El usuario pide una propuesta de entrenamiento para mañana. "
-                                "Debes responder con una sesión concreta aunque falten algunos datos, usando el contexto disponible. "
-                                "No pidas más detalles salvo bloqueo crítico de seguridad. "
-                                "Si faltan datos, usa una propuesta conservadora y explícita tus supuestos en 1 línea."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Solicitud: {user_message}\n"
-                                f"Contexto disponible: {json.dumps(snapshot_ctx, ensure_ascii=False)}\n"
-                                "Devuelve: tipo de sesión, duración, intensidad (RPE o zona), objetivo y una nota de seguridad."
-                            ),
-                        },
-                    ]
+                        rescue_messages = [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Eres Kairos Coach. El usuario pide una propuesta de entrenamiento para mañana. "
+                                    "Debes responder con una sesión concreta aunque falten algunos datos, usando el contexto disponible. "
+                                    "No pidas más detalles salvo bloqueo crítico de seguridad. "
+                                    "Si faltan datos, usa una propuesta conservadora y explícita tus supuestos en 1 línea."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Solicitud: {user_message}\n"
+                                    f"Contexto disponible: {json.dumps(snapshot_ctx, ensure_ascii=False)}\n"
+                                    "Devuelve: tipo de sesión, duración, intensidad (RPE o zona), objetivo y una nota de seguridad."
+                                ),
+                            },
+                        ]
                     try:
                         rescue_response = await self.client.chat.completions.create(
                             model=self.model,
