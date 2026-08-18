@@ -1404,7 +1404,7 @@ async def main() -> None:
                 f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
             )
 
-        console.print(Rule("[dim]Escribe tu pregunta · [bold]/menu[/bold] · [bold]/perfil[/bold] · [bold]/plan listar[/bold] · [bold]/carga[/bold] · [bold]/modelo[/bold] · [bold]salir[/bold][/]"))
+        console.print(Rule("[dim]Escribe tu pregunta · usa [bold]/menu[/bold] para ver opciones · [bold]salir[/bold] para terminar[/]"))
 
         while True:
             try:

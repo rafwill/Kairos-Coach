@@ -1013,7 +1013,13 @@ def _extract_cycling_ftp_watts(payload: Any) -> float | None:
 def _is_activity_in_last_48h(activity: dict, now: datetime | None = None) -> bool:
     """Comprueba si una actividad cae en la ventana de últimas 48h."""
     now_day = now.date() if now is not None else datetime.now(tz=timezone.utc).date()
-    start_local = activity.get("startTimeLocal") or activity.get("startTimeGMT") or ""
+    start_local = (
+        activity.get("startTimeLocal")
+        or activity.get("startTimeGMT")
+        or activity.get("start_time_local")
+        or activity.get("start_time_gmt")
+        or ""
+    )
     if not isinstance(start_local, str) or "T" not in start_local:
         return False
 
@@ -1937,6 +1943,16 @@ def _estimate_walk_hike_tss(
             tss_h = min(max_h, tss_h)
         tss_h = max(min_h, tss_h)
         return max(0.0, tss_h * hours), "hrTSS"
+
+    # Sin zonas, priorizar carga por FC media/máxima de la propia sesión.
+    if_hr = _estimate_if_from_hr(
+        activity,
+        cycling_formula=False,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+    )
+    if if_hr is not None:
+        return max(0.0, hours * (if_hr ** 2) * 100.0), "hrTSS"
 
     # Sin cobertura fiable de zonas, usar estimación por banda.
     return tss_model, "TSS"
@@ -3433,6 +3449,7 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
     coaching_markers = (
         "recomienda",
         "recomend",
+        "recomiénd",
         "plan",
         "ajusta",
         "ajusta",
@@ -3440,6 +3457,15 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
         "debería entrenar",
         "que hago",
         "qué hago",
+        "opinion",
+        "opinión",
+        "que te parece",
+        "qué te parece",
+        "analiza",
+        "analisis",
+        "análisis",
+        "valoracion",
+        "valoración",
     )
     if any(marker in text for marker in coaching_markers):
         return False
@@ -3471,8 +3497,43 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
         "qué hice ayer",
         "que hice hoy",
         "qué hice hoy",
+        "entrenamiento de ayer",
+        "entrenamiento de hoy",
+        "datos de mi entrenamiento",
+        "datos del entrenamiento",
+        "resumen del entrenamiento",
+        "resumen de mi entrenamiento",
+        "detalles del entrenamiento",
     )
     return any(marker in text for marker in factual_markers)
+
+
+def _is_activity_details_query_intent(user_message: str) -> bool:
+    """Detecta peticiones de detalle/métricas de una sesión concreta (hoy/ayer/fecha)."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    activity_markers = ("entrenamiento", "actividad", "sesion", "sesión")
+    detail_markers = (
+        "datos",
+        "detalle",
+        "detalles",
+        "resumen",
+        "metricas",
+        "métricas",
+        "cuales fueron",
+        "cuáles fueron",
+        "como fue",
+        "cómo fue",
+    )
+    has_day = (
+        "hoy" in text
+        or "ayer" in text
+        or "anteayer" in text
+        or _extract_iso_date_from_text(user_message) is not None
+    )
+    return has_day and any(m in text for m in activity_markers) and any(m in text for m in detail_markers)
 
 
 def _is_running_threshold_query_intent(user_message: str) -> bool:
@@ -3854,7 +3915,6 @@ async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> st
     if live_bpm is not None:
         perf["hr_threshold_bpm"] = int(round(live_bpm))
         perf["hr_threshold_date"] = date.today().isoformat()
-        perf["performance_params_updated_at"] = date.today().isoformat()
         profile["performance"] = perf
         try:
             _save_user_profile(profile)
@@ -4170,12 +4230,16 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
     """Resuelve consultas factuales diarias con MCP como fuente principal."""
     target_d = _resolve_target_date_from_message(user_message)
     target_iso = target_d.isoformat()
+    wants_activity_details = _is_activity_details_query_intent(user_message)
 
     async def _tool_json(tool_name: str, args: dict) -> Any:
         try:
-            raw = await call_tool(mcp_session, tool_name, args)
+            raw = await asyncio.wait_for(call_tool(mcp_session, tool_name, args), timeout=4.0)
         except (TimeoutError, OSError) as exc:
             log.debug("_build_mcp_factual_query_markdown: fallo red en %s: %s", tool_name, exc)
+            return None
+        except asyncio.TimeoutError:
+            log.debug("_build_mcp_factual_query_markdown: timeout en %s", tool_name)
             return None
         except RuntimeError as exc:
             log.debug("_build_mcp_factual_query_markdown: fallo runtime en %s: %s", tool_name, exc)
@@ -4186,11 +4250,6 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         compact = _compact_tool_result(raw, tool_name)
         parsed = _try_parse_json(compact)
         return parsed if parsed is not None else compact
-
-    body_payload = await _tool_json("get_body_battery", {"start_date": target_iso, "end_date": target_iso})
-    hrv_payload = await _tool_json("get_hrv_data", {"date": target_iso})
-    sleep_payload = await _tool_json("get_sleep_summary", {"date": target_iso})
-    rhr_payload = await _tool_json("get_rhr_day", {"date": target_iso})
 
     activities: list[dict] = []
     for args in (
@@ -4203,15 +4262,106 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             activities = acts
             break
 
+    if wants_activity_details:
+        if not activities:
+            return "\n".join([
+                "## Datos de entrenamiento (MCP)",
+                "",
+                f"- Fecha consultada: {target_d.strftime('%d/%m/%Y')}",
+                "- No se encontraron actividades para ese día.",
+                "",
+                "_Respuesta determinista: datos factuales consultados por MCP; sin inferencias numéricas del LLM._",
+            ])
+
+        def _activity_id(act: dict) -> int | None:
+            raw = act.get("id") or act.get("activityId") or act.get("activity_id")
+            try:
+                return int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        def _activity_duration_seconds(act: dict) -> float:
+            raw = act.get("duration") or act.get("duration_seconds") or act.get("movingDuration") or 0
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return 0.0
+
+        primary = max(activities, key=_activity_duration_seconds)
+        primary_id = _activity_id(primary)
+
+        raw_activity = None
+        if primary_id is not None:
+            try:
+                raw_activity = await asyncio.wait_for(
+                    call_tool(mcp_session, "get_activity", {"activity_id": primary_id}),
+                    timeout=5.0,
+                )
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
+                raw_activity = None
+
+        act_payload = _try_parse_json(raw_activity) if raw_activity else None
+        if not isinstance(act_payload, dict):
+            act_payload = dict(primary)
+            raw_activity = json.dumps(act_payload, ensure_ascii=False)
+
+        raw_hr_zones = None
+        embedded = _find_hr_zones_in_json(act_payload)
+        if embedded:
+            raw_hr_zones = json.dumps(embedded, ensure_ascii=False)
+
+        if not raw_hr_zones and primary_id is not None:
+            for tool_name in ("get_activity_hr_in_timezones", "get_activity_hr_zones"):
+                for param in ({"activity_id": primary_id}, {"activityId": primary_id}):
+                    try:
+                        _raw = await asyncio.wait_for(call_tool(mcp_session, tool_name, param), timeout=4.0)
+                    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
+                        continue
+                    if not _raw:
+                        continue
+                    low = _raw.lower()
+                    if "unknown tool" in low:
+                        break
+                    if _parse_hr_zones_list(_raw):
+                        raw_hr_zones = _raw
+                        break
+                if raw_hr_zones:
+                    break
+
+        analysis = _build_activity_analysis_block(
+            activity_raw=raw_activity or "{}",
+            hr_zones_raw=raw_hr_zones,
+            ftp=_extract_cycling_ftp_watts(profile),
+            running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(profile),
+        )
+
+        return "\n".join([
+            "## Datos de entrenamiento (MCP)",
+            "",
+            f"- Fecha consultada: {target_d.strftime('%d/%m/%Y')}",
+            f"- Actividades detectadas: {len(activities)}",
+            "",
+            analysis,
+            "",
+            "_Respuesta determinista: datos factuales consultados por MCP; sin inferencias numéricas del LLM._",
+        ])
+
+    body_payload, hrv_payload, sleep_payload, rhr_payload, trend_payload = await asyncio.gather(
+        _tool_json("get_body_battery", {"start_date": target_iso, "end_date": target_iso}),
+        _tool_json("get_hrv_data", {"date": target_iso}),
+        _tool_json("get_sleep_summary", {"date": target_iso}),
+        _tool_json("get_rhr_day", {"date": target_iso}),
+        _tool_json(
+            "get_training_load_trend",
+            {
+                "start_date": (target_d - timedelta(days=7)).isoformat(),
+                "end_date": target_iso,
+            },
+        ),
+    )
+
     # TSS del día: priorizar tendencia MCP; fallback a serie local calculada desde Garmin.
     tss_day: float | None = None
-    trend_payload = await _tool_json(
-        "get_training_load_trend",
-        {
-            "start_date": (target_d - timedelta(days=7)).isoformat(),
-            "end_date": target_iso,
-        },
-    )
     trend_points = _extract_training_load_points(trend_payload)
     for row in trend_points:
         if str(row.get("date") or "") == target_iso:
@@ -7195,7 +7345,10 @@ def _extract_activity_date_iso(activity: dict) -> str | None:
     if not isinstance(activity, dict):
         return None
 
-    for key in ("startTimeLocal", "startTimeGMT", "startTimeUTC", "startTime", "start_time",
+    for key in (
+                "startTimeLocal", "startTimeGMT", "startTimeUTC",
+                "start_time_local", "start_time_gmt", "start_time_utc",
+                "startTime", "start_time",
                 "calendarDate", "beginTimestamp", "activitySummary"):
         value = activity.get(key)
         if value is None:
