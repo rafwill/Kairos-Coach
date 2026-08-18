@@ -991,7 +991,8 @@ def _show_load_trend_cli(agent: "TrainerAgent", cmd: str = "/carga") -> None:
 
 
 def _show_help() -> None:
-    """Muestra la ayuda del agente: ejemplos de preguntas, comandos y guía de indicadores."""
+    """Muestra ayuda completa: ejemplos, menú de comandos y guía de indicadores."""
+    _show_menu()
     console.print(Panel(
         "[bold]Ejemplos de preguntas:[/]\n"
         "  \u00b7 \u00bfCómo estoy hoy? \u00bfPuedo entrenar fuerte?\n"
@@ -1003,23 +1004,7 @@ def _show_help() -> None:
         "  \u00b7 \u00bfQué ritmo debería llevar en mi próxima carrera?\n"
         "  \u00b7 Analízame mi estado de forma general\n"
         "\n"
-        "[bold]Comandos disponibles:[/]\n"
-        "  [bold cyan]/perfil[/bold cyan]                  Ver tu perfil completo\n"
-        "  [bold cyan]/perfil editar objetivo[/bold cyan]  Cambiar deporte, carrera, tiempo meta\n"
-        "  [bold cyan]/perfil editar salud[/bold cyan]     Cambiar lesiones y notas de salud\n"
-        "  [bold cyan]/perfil editar[/bold cyan]           Editar todo el perfil\n"
-        "  [bold cyan]/perfil umbral <mm:ss>[/bold cyan]   Cambiar umbral running (ej: /perfil umbral 4:15)\n"
-        "  [bold cyan]/perfil fc <reposo> <max>[/bold cyan] Configurar FC reposo/máxima (ej: /perfil fc 48 186)\n"
-        "  [bold cyan]/plan listar[/bold cyan]             Ver planes de entrenamiento\n"
-        "  [bold cyan]/plan ver <id>[/bold cyan]           Ver detalle de un plan\n"
-        "  [bold cyan]/plan activar <id>[/bold cyan]       Activar plan por id\n"
-        "  [bold cyan]/plan crear[/bold cyan]              Crear y activar plan base\n"
-        "  [bold cyan]/carga[/bold cyan]                   Tabla semanal de carga/fatiga (TSS·CTL (Estado físico)·ATL (Fatiga)·TSB (Forma))\n"
-        "  [bold cyan]/carga meses[/bold cyan]             Vista mensual de carga/fatiga\n"
-        "  [bold cyan]/modelo[/bold cyan]                  Cambiar el proveedor de modelo de IA activo\n"
-        "  [bold cyan]/ayuda[/bold cyan]                   Mostrar esta pantalla\n"
-        "  [bold cyan]salir[/bold cyan]                    Terminar la sesión\n"
-        "\n"
+        "[bold]Comandos disponibles:[/] usa [bold cyan]/menu[/bold cyan] para verlos agrupados por categoría.\n\n"
         "[bold]Guía rápida de indicadores Garmin:[/]\n"
         "  [bold]Body Battery[/bold]       90-100 recuperado \u00b7 70-89 bien \u00b7 40-69 moderado \u00b7 <40 descansa\n"
         "  [bold]Training Readiness[/bold] >70 entrena fuerte \u00b7 40-70 suave \u00b7 <40 recuperación activa\n"
@@ -1028,6 +1013,45 @@ def _show_help() -> None:
         title="[bold blue]Kairos Coach — Ayuda[/]",
         border_style="blue",
     ))
+
+
+def _show_menu() -> None:
+    """Muestra un menú claro y agrupado de comandos operativos del CLI."""
+    console.print(Panel.fit(
+        "[bold]Atajos principales[/]\n"
+        "  [bold cyan]/menu[/bold cyan]  [dim](este menú)[/] · "
+        "[bold cyan]/perfil[/bold cyan] · [bold cyan]/plan listar[/bold cyan] · "
+        "[bold cyan]/carga[/bold cyan] · [bold cyan]/modelo[/bold cyan] · [bold cyan]salir[/bold cyan]",
+        title="[bold blue]Kairos Coach — Menú[/]",
+        border_style="blue",
+    ))
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Categoría", style="bold")
+    table.add_column("Comando")
+    table.add_column("Acción")
+
+    table.add_row("Ver", "/perfil", "Ver perfil completo")
+    table.add_row("Ver", "/plan listar", "Listar planes y ver cuál está activo")
+    table.add_row("Ver", "/plan ver <id>", "Ver detalle y sesiones de un plan")
+    table.add_row("Ver", "/carga", "Ver tabla semanal de carga/fatiga")
+    table.add_row("Ver", "/carga meses", "Ver vista mensual de carga/fatiga")
+
+    table.add_row("Editar", "/perfil editar objetivo", "Editar deporte, carrera y tiempo objetivo")
+    table.add_row("Editar", "/perfil editar salud", "Editar lesiones y notas de salud")
+    table.add_row("Editar", "/perfil editar", "Editar perfil completo")
+    table.add_row("Editar", "/perfil umbral <mm:ss>", "Actualizar umbral de running (ej. 4:15)")
+    table.add_row("Editar", "/perfil fc <reposo> <max>", "Actualizar FC reposo/máxima (ej. 48 186)")
+
+    table.add_row("Plan", "/plan crear", "Crear plan base y activarlo")
+    table.add_row("Plan", "/plan activar <id>", "Activar plan por ID")
+
+    table.add_row("Sistema", "/modelo", "Cambiar proveedor/modelo de IA")
+    table.add_row("Sistema", "/ayuda", "Mostrar ayuda extendida")
+    table.add_row("Sistema", "salir", "Cerrar sesión")
+
+    console.print(table)
+    console.print("[dim]Tip: si no recuerdas un comando, escribe /menu.[/]")
 
 
 def _format_coach_markdown(response: str) -> str:
@@ -1380,7 +1404,7 @@ async def main() -> None:
                 f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
             )
 
-        console.print(Rule("[dim]Escribe tu pregunta · [bold]/perfil[/bold] · [bold]/plan listar[/bold] · [bold]/plan crear[/bold] · [bold]/carga[/bold] · [bold]/modelo[/bold] · [bold]salir[/bold][/]"))
+        console.print(Rule("[dim]Escribe tu pregunta · [bold]/menu[/bold] · [bold]/perfil[/bold] · [bold]/plan listar[/bold] · [bold]/carga[/bold] · [bold]/modelo[/bold] · [bold]salir[/bold][/]"))
 
         while True:
             try:
@@ -1448,6 +1472,10 @@ async def main() -> None:
 
             if cmd in {"/perfil", "/profile"}:
                 _show_profile()
+                continue
+
+            if cmd in {"/menu"}:
+                _show_menu()
                 continue
 
             if cmd in {"/ayuda", "/help", "/?"} :

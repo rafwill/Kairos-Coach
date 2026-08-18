@@ -7,15 +7,22 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 ### Added
 - Regla específica para trail rápido: si el ritmo final/efectivo es menor de `6:00/km`, Kairos usa `hrTSS` bruto por zonas (sin factor 0.72).
 - En el análisis de actividad trail con zonas FC disponibles, se muestran ambos valores de forma explícita: `hrTSS bruto zonas` y `hrTSS Kairos aplicado`.
+- Nuevo menú unificado de comandos en CLI (`/menu`) con categorías: ver datos, editar perfil, gestionar planes y sistema.
+- Ruta determinista de opciones/configuración reforzada para preguntas tipo "qué opciones puedo cambiar" y para el alias `/menu`.
 
 ### Changed
 - `trail_running` mantiene calibración por defecto (`hrTSS zonas * 0.72`) solo cuando no aplica la nueva regla de trail rápido.
+- Separación explícita de dominios en FC umbral: la ruta determinista de LTHR ya no consulta herramientas de umbral de lactato.
+- Extracción de FC umbral robustecida para payloads Garmin en `camelCase` (ej. `lactateThresholdHeartRate`).
 
 ### Tests
 - Nuevos tests de regresión para validar:
 	- uso de `hrTSS` bruto por zonas en trail rápido (`< 6:00/km`),
 	- comportamiento de frontera en `6:00/km` (mantiene calibración),
 	- presencia de `hrTSS bruto zonas` y `hrTSS Kairos aplicado` en el bloque de análisis.
+	- detección robusta de intención de opciones/configuración (incluye `/menu`),
+	- ruta de FC umbral sin llamadas a herramientas de lactato,
+	- lectura de LTHR desde claves `camelCase` de Garmin.
 
 ## 2026-08-15
 
