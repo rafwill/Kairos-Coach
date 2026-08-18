@@ -1183,6 +1183,107 @@ def _format_rhr_day(payload: Any, target_date: str) -> str:
         return f"{rhr}"
 
 
+def _format_stress_day(summary_payload: Any, all_day_payload: Any, target_date: str) -> str:
+    """Formatea estrés diario priorizando summary y usando all-day como fallback."""
+    day = _pick_day_payload(summary_payload, target_date)
+    if day:
+        avg = (
+            day.get("average_stress_level")
+            or day.get("avgStressLevel")
+            or day.get("averageStressLevel")
+            or day.get("avgStress")
+        )
+        highest = day.get("max_stress_level") or day.get("maxStressLevel") or day.get("highestStressLevel")
+        restful = day.get("rest_stress_duration") or day.get("restStressDuration")
+        parts: list[str] = []
+        if avg is not None:
+            try:
+                parts.append(f"avg {int(float(avg))}")
+            except (TypeError, ValueError):
+                parts.append(f"avg {avg}")
+        if highest is not None:
+            try:
+                parts.append(f"max {int(float(highest))}")
+            except (TypeError, ValueError):
+                parts.append(f"max {highest}")
+        if restful is not None:
+            parts.append(f"reposo {restful}")
+        if parts:
+            return " · ".join(parts)
+
+    # Fallback: payload crudo all-day stress
+    day_all = _pick_day_payload(all_day_payload, target_date)
+    if day_all:
+        sample_size = None
+        if isinstance(day_all, dict):
+            for key in ("values", "stressValuesArray", "allDayStressValues", "stressValues"):
+                arr = day_all.get(key)
+                if isinstance(arr, list):
+                    sample_size = len(arr)
+                    break
+        if sample_size is not None:
+            return f"datos all-day ({sample_size} muestras)"
+        return "datos all-day disponibles"
+    return "sin datos"
+
+
+def _format_all_day_events(payload: Any, target_date: str) -> str:
+    """Resume cantidad de eventos diarios cuando el endpoint los devuelve."""
+    day = _pick_day_payload(payload, target_date)
+    if not day:
+        return "sin datos"
+    if isinstance(day, list):
+        return f"{len(day)} eventos"
+    if isinstance(day, dict):
+        for key in ("events", "eventList", "dailyEvents", "wellnessEvents"):
+            events = day.get(key)
+            if isinstance(events, list):
+                return f"{len(events)} eventos"
+        return "eventos disponibles"
+    return "sin datos"
+
+
+def _format_training_effect(payload: Any, activity_payload: Any) -> tuple[str, str]:
+    """Formatea Training Effect y devuelve (valor, fuente)."""
+    src = _pick_day_payload(payload, "") if payload is not None else None
+    if not isinstance(src, dict):
+        src = _pick_day_payload(activity_payload, "") if activity_payload is not None else None
+        source = "Garmin get_activity"
+    else:
+        source = "Garmin get_training_effect"
+
+    if not isinstance(src, dict):
+        return "sin datos", "no disponible"
+
+    te = src.get("training_effect") or src.get("trainingEffect") or src.get("aerobic_effect")
+    an = src.get("anaerobic_effect") or src.get("anaerobicTrainingEffect")
+    label = src.get("training_effect_label") or src.get("trainingEffectLabel")
+    recovery_h = src.get("recovery_time_hours") or src.get("recoveryTimeHours")
+
+    parts: list[str] = []
+    if te is not None:
+        try:
+            parts.append(f"aeróbico {float(te):.1f}")
+        except (TypeError, ValueError):
+            parts.append(f"aeróbico {te}")
+    if an is not None:
+        try:
+            parts.append(f"anaeróbico {float(an):.1f}")
+        except (TypeError, ValueError):
+            parts.append(f"anaeróbico {an}")
+    if label:
+        parts.append(str(label))
+    if recovery_h is not None:
+        try:
+            parts.append(f"recuperación {float(recovery_h):.1f} h")
+        except (TypeError, ValueError):
+            parts.append(f"recuperación {recovery_h}")
+
+    if not parts:
+        return "sin datos", source
+    return " · ".join(parts), source
+
+
 def _to_iso_date(value: Any) -> str | None:
     """Normaliza una fecha heterogénea a ISO (YYYY-MM-DD)."""
     if isinstance(value, datetime):
@@ -4661,14 +4762,17 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         return parsed if parsed is not None else compact
 
     activities: list[dict] = []
-    for args in (
-        {"start_date": target_iso, "end_date": target_iso, "page": 0, "page_size": 100},
-        {"startdate": target_iso, "enddate": target_iso},
+    activities_source_tool = "Garmin get_activities_by_date"
+    for tool_name, args in (
+        ("get_activities_fordate", {"date": target_iso}),
+        ("get_activities_by_date", {"start_date": target_iso, "end_date": target_iso, "page": 0, "page_size": 100}),
+        ("get_activities_by_date", {"startdate": target_iso, "enddate": target_iso}),
     ):
-        payload = await _tool_json("get_activities_by_date", args)
+        payload = await _tool_json(tool_name, args)
         acts = _extract_activities_list(payload)
         if acts:
             activities = acts
+            activities_source_tool = f"Garmin {tool_name}"
             break
 
     # Fallback factual del TSS diario basado en actividades del día cuando
@@ -4706,7 +4810,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
                 "| Métrica | Valor | Fuente |",
                 "|---|---|---|",
                 f"| Fecha consultada | {target_d.strftime('%d/%m/%Y')} | consulta factual MCP |",
-                "| Actividades detectadas | 0 | Garmin get_activities_by_date |",
+                f"| Actividades detectadas | 0 | {activities_source_tool} |",
                 "",
                 "## ✅ Recomendación",
                 "- No aplica en esta consulta.",
@@ -4743,10 +4847,23 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
                 raw_activity = None
 
+        raw_training_effect = None
+        if primary_id is not None:
+            try:
+                raw_training_effect = await asyncio.wait_for(
+                    call_tool(mcp_session, "get_training_effect", {"activity_id": primary_id}),
+                    timeout=4.0,
+                )
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
+                raw_training_effect = None
+
         act_payload = _try_parse_json(raw_activity) if raw_activity else None
         if not isinstance(act_payload, dict):
             act_payload = dict(primary)
             raw_activity = json.dumps(act_payload, ensure_ascii=False)
+
+        te_payload = _try_parse_json(raw_training_effect) if raw_training_effect else None
+        te_value, te_source = _format_training_effect(te_payload, act_payload)
 
         raw_hr_zones = None
         embedded = _find_hr_zones_in_json(act_payload)
@@ -4787,7 +4904,8 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             "| Métrica | Valor | Fuente |",
             "|---|---|---|",
             f"| Fecha consultada | {target_d.strftime('%d/%m/%Y')} | consulta factual MCP |",
-            f"| Actividades detectadas | {len(activities)} | Garmin get_activities_by_date |",
+            f"| Actividades detectadas | {len(activities)} | {activities_source_tool} |",
+            f"| Training Effect | {te_value} | {te_source} |",
             "",
             analysis_md,
             "",
@@ -4799,11 +4917,14 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             "- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).",
         ])
 
-    body_payload, hrv_payload, sleep_payload, rhr_payload, trend_payload = await asyncio.gather(
+    body_payload, hrv_payload, sleep_payload, rhr_payload, stress_summary_payload, all_day_stress_payload, all_day_events_payload, trend_payload = await asyncio.gather(
         _tool_json("get_body_battery", {"start_date": target_iso, "end_date": target_iso}),
         _tool_json("get_hrv_data", {"date": target_iso}),
         _tool_json("get_sleep_summary", {"date": target_iso}),
         _tool_json("get_rhr_day", {"date": target_iso}),
+        _tool_json("get_stress_summary", {"date": target_iso}),
+        _tool_json("get_all_day_stress", {"date": target_iso}),
+        _tool_json("get_all_day_events", {"date": target_iso}),
         _tool_json(
             "get_training_load_trend",
             {
@@ -4860,6 +4981,8 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         f"| TSS del día | {f'{tss_day:.1f}' if tss_day is not None else 'sin datos'} | {tss_source if tss_day is not None else 'no disponible'} |",
         f"| FC en reposo | {_format_rhr_day(rhr_payload, target_iso)} | Garmin RHR |",
         f"| Sueño | {_format_sleep_day(sleep_payload, target_iso)} | Garmin sleep |",
+        f"| Estrés | {_format_stress_day(stress_summary_payload, all_day_stress_payload, target_iso)} | Garmin stress_summary/all_day_stress |",
+        f"| Eventos diarios | {_format_all_day_events(all_day_events_payload, target_iso)} | Garmin all_day_events |",
         f"| Body Battery | {_format_body_battery_day(body_payload, target_iso)} | Garmin body_battery |",
         f"| HRV | {_format_hrv_day(hrv_payload, target_iso)} | Garmin HRV |",
     ]
@@ -7722,6 +7845,8 @@ async def _build_recovery_fallback_snapshot(
         "get_hrv_data",
         "get_sleep_summary",
         "get_stress_summary",
+        "get_all_day_stress",
+        "get_all_day_events",
         "get_rhr_day",
     ]
 
@@ -7933,6 +8058,20 @@ def _parse_activities_response(raw: str | None) -> tuple[list[dict], bool, int]:
 
 async def _find_activity_id_by_date(mcp_session: ClientSession, target_date_iso: str) -> int | None:
     """Busca en actividades recientes el activity_id correspondiente a una fecha ISO."""
+    # Intento rápido: endpoint específico de día.
+    try:
+        raw_day = await call_tool(mcp_session, "get_activities_fordate", {"date": target_date_iso})
+        acts_day = _extract_activities_list(raw_day)
+        if acts_day:
+            for activity in acts_day:
+                activity_id = activity.get("activityId") or activity.get("activity_id") or activity.get("id")
+                try:
+                    return int(activity_id)
+                except (TypeError, ValueError):
+                    continue
+    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+        log.debug("_find_activity_id_by_date: get_activities_fordate fallback: %s", exc)
+
     start = 0
     limit = 100
     max_pages = 30  # hasta 3000 actividades para cubrir historiales amplios
@@ -10491,12 +10630,12 @@ class TrainerAgent:
         user_date = _extract_iso_date_from_text(user_message)
         is_week_range_query = bool(re.search(r"\b(semana|week)\b", (user_message or "").lower()))
         if user_date and not is_week_range_query:
-            # Intento 1: get_activities_by_date para la fecha exacta (más fiable)
+            # Intento 1: get_activities_fordate para la fecha exacta
             pre_id = None
             try:
                 _raw_date_acts = await call_tool(
-                    self.mcp_session, "get_activities_by_date",
-                    {"startdate": user_date, "enddate": user_date},
+                    self.mcp_session, "get_activities_fordate",
+                    {"date": user_date},
                 )
                 _acts_day = _extract_activities_list(_raw_date_acts)
                 if _acts_day:
@@ -10506,7 +10645,7 @@ class TrainerAgent:
                     if pre_id:
                         pre_id = int(pre_id)
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
-                log.debug("pre_fetch get_activities_by_date fallback: %s", _e)
+                log.debug("pre_fetch get_activities_fordate fallback: %s", _e)
 
             # Intento 2: paginación por fecha si el anterior falló
             if pre_id is None:

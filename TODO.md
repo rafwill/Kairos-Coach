@@ -3,7 +3,7 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 353 tests (validados localmente a 2026-08-18). CI/CD con GitHub Actions activo.
+- Suite de tests: 360 tests (validados localmente a 2026-08-18). CI/CD con GitHub Actions activo.
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 - Contrato de salida unificado activo (prompt completo + prompt compacto + rutas deterministas clave).
 
@@ -272,6 +272,15 @@
   - `## 📊 Métricas clave`
   - `## ✅ Recomendación`
   - `## 🎯 Próximo paso`
+
+#### 62) [DOCS-ONBOARDING-WIN] README "for dummies" + troubleshooting Windows (2026-08-18) — REALIZADO
+- Reescritura de instalación/configuración en README con flujo desde cero por sistema operativo (Windows y Unix/macOS).
+- Se documenta ruta sin `make` para Windows (`setup.ps1` + `.venv\\Scripts\\python.exe -m agent.main`) y uso opcional de Makefile.
+- Se añade sección de errores frecuentes en Windows con solución directa para:
+  - `make` no reconocido,
+  - bloqueo por `ExecutionPolicy`,
+  - `python` no reconocido,
+  - `uvx` no reconocido.
 
 #### 4) Logging de producción (2026-08-15) — REALIZADO
 - Configuración de logging por entorno en runtime: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.
