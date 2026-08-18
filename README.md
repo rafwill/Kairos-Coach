@@ -375,108 +375,157 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
 
 | Requisito | Versión mínima | Notas |
 |-----------|---------------|-------|
-| **Python** | 3.10+ | Desarrollado con 3.13 |
-| **uv / uvx** | cualquiera | Fallback para arrancar el servidor MCP |
-| **Cuenta Garmin Connect** | — | Credenciales de acceso |
-| **API key** de Mistral, Groq, Gemini o Cerebras | — | Gratuitas (ver `.env.example`) |
+| **Git** | cualquiera | Para clonar el repositorio |
+| **Python** | 3.10+ | Recomendado 3.12 o 3.13 |
+| **Cuenta Garmin Connect** | — | Para consultar datos reales |
+| **Supabase** | — | Obligatorio en arquitectura DB-first |
+| **Una API key LLM** | — | Gemini, Groq, Mistral, Cerebras, NVIDIA o GitHub Models |
+| **uv / uvx** | opcional recomendado | Utilizado para pre-autenticación Garmin y fallback MCP |
 
-### Instalar uv (si aún no lo tienes)
+### Instalar uv (recomendado)
 ```powershell
 pip install uv
 ```
 
 ---
 
-## 🚀 Instalación y Configuración
+## 🚀 Instalación y Configuración (desde cero)
 
-### 1. Clonar y preparar el entorno Python
+### Camino recomendado para principiantes (Windows)
+
+1. Clona el repositorio:
 ```powershell
-git clone https://github.com/rafwill/garmin-ai-coach.git
-cd garmin-ai-coach
-
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-
-pip install -r requirements.txt
+git clone https://github.com/rafwill/Kairos-Coach.git
+cd Kairos-Coach
 ```
 
-### 2. Configurar variables de entorno
+2. Ejecuta setup automático:
 ```powershell
-cp .env.example .env
+./setup.ps1
 ```
-Edita `.env` y rellena al menos:
-- `GARMIN_EMAIL` y `GARMIN_PASSWORD` (solo para pre-autenticación OAuth inicial)
-- La API key del proveedor que uses (`GEMINI_API_KEY`, `GROQ_API_KEY` o `GITHUB_TOKEN`)
-- `SUPABASE_URL` y `SUPABASE_ANON_KEY`
-- `ENCRYPTION_KEY` (genera una vez con el comando de abajo):
 
+Si PowerShell bloquea scripts por políticas de ejecución, usa:
 ```powershell
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-*(Consulta los comentarios en `.env.example` para obtener las URLs de registro de cada proveedor.)*
+3. Abre `.env` y completa:
+- `GARMIN_EMAIL`
+- `GARMIN_PASSWORD`
+- una API key (por ejemplo `GEMINI_API_KEY`)
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 
-### 2.1 (Opcional) Activar base de conocimiento del atleta
-Puedes crear uno o varios ficheros con conocimiento personal (historial, preferencias, estrategia de carrera, limitaciones, nutrición, etc.) y referenciarlos en `.env`:
+4. Ejecuta esquema de Supabase:
+- abre [`supabase/schema.sql`](supabase/schema.sql)
+- pégalo en SQL Editor de Supabase y pulsa Run
 
-```dotenv
-ATHLETE_KB_PATHS=memory/athlete_knowledge.md,memory/pda_strategy.json
-```
-
-Formato recomendado:
-- `.md` / `.txt`: texto libre estructurado por secciones.
-- `.json`: objetos o listas con campos descriptivos (`objetivos`, `lesiones`, `nutricion`, `estrategia_carrera`, etc.).
-
-Si no configuras `ATHLETE_KB_PATHS`, el agente intenta cargar automáticamente los ficheros por defecto en `memory/`.
-
-### 3. Pre-autenticar con Garmin Connect *(una sola vez)*
-Este paso guarda los tokens OAuth en `~/.garminconnect` para que el agente no necesite tu contraseña en cada arranque:
+5. (Opcional recomendado) pre-autentica Garmin una vez:
 ```powershell
 $env:GARMIN_EMAIL="tu@email.com"
 $env:GARMIN_PASSWORD="tu_contraseña"
 uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
 ```
-> Los tokens son válidos aproximadamente **6 meses**. Repite este paso cuando expiren.
 
-### 4. Configurar Supabase (obligatorio)
+6. Arranca Kairos:
+```powershell
+.venv\Scripts\python.exe -m agent.main
+```
 
-El modo actual del agente es **DB-first multiusuario**: requiere Supabase para arrancar.
+### Camino recomendado para Unix/macOS
 
-1. Crea un proyecto gratuito en [supabase.com](https://supabase.com) (500 MB, sin tarjeta).
-2. Ve a **SQL Editor → New query**, pega el contenido de [`supabase/schema.sql`](supabase/schema.sql) y pulsa **Run**.
-3. En **Settings → API** copia tu *Project URL* y *anon public key*.
-4. Añade al `.env`:
-   ```dotenv
-   SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
-   SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-   ```
+```bash
+git clone https://github.com/rafwill/Kairos-Coach.git
+cd Kairos-Coach
+chmod +x setup.sh
+./setup.sh
+```
 
-> Si las variables no están configuradas o Supabase no es accesible, el agente mostrará error y no arrancará.
+Después completa `.env`, configura Supabase con `supabase/schema.sql`, y arranca:
+```bash
+.venv/bin/python -m agent.main
+```
 
-Script disponible para Supabase:
-- [`supabase/schema.sql`](supabase/schema.sql): crea el esquema multiusuario para una instalacion limpia.
+### ¿Qué hace el setup automatizado?
 
-Incluye además el modelo de planificación versionada:
-- `training_plan`: cabecera del plan (título, objetivo, estado, metadatos).
-- `training_plan_session`: sesiones por semana/día (tipo, duración, intensidad, ejercicios, notas y `structured_workout`).
-- `training_plan_version`: historial de snapshots por edición/activación.
+- Crea `.venv`
+- Instala `requirements.txt` y `requirements-dev.txt`
+- Genera `.env` desde `.env.example` si no existe
+- Genera `ENCRYPTION_KEY` automáticamente si falta en `.env`
 
-### 5. Inicio de sesión multiusuario
-Al arrancar `python -m agent.main`:
-- Se pide el **nombre de usuario**.
-- Si el usuario ya existe: **acceso automático** sin contraseña — mensaje *"Usuario encontrado · Accediendo automáticamente"*.
-- Si es nuevo: flujo de registro con explicación de la política de contraseña única (app = Garmin Connect).
-- Si la contraseña de Garmin Connect ha cambiado: el sistema lo detecta y ofrece actualización sin salir.
-- Se precarga el perfil del usuario desde BBDD y se sincroniza Garmin para completar datos personales.
-- En usuarios nuevos, se crea una KB inicial enriquecida (perfil + snapshot MCP de 48h).
-- En usuarios existentes, se muestra un estado proactivo automático de 48h al inicio.
+Modo rápido opcional (sin dependencias dev):
+- Windows: `./setup.ps1 -SkipDev`
+- Unix/macOS: `SKIP_DEV=1 ./setup.sh`
+
+### Uso de Makefile (opcional)
+
+Si tienes `make` instalado:
+
+```bash
+make setup      # Unix/macOS
+make setup-win  # Windows (PowerShell)
+make serve      # arranca Kairos
+make test       # pytest -q
+make lint       # ruff check agent tests tools
+```
+
+En Windows, si no tienes `make`, usa directamente `setup.ps1` y `.venv\Scripts\python.exe`.
+
+### Configuración de `.env` (detalle)
+
+Si prefieres hacerlo manual:
+
+Windows:
+```powershell
+Copy-Item .env.example .env
+```
+
+Unix/macOS:
+```bash
+cp .env.example .env
+```
+
+Campos mínimos obligatorios en `.env`:
+- `GARMIN_EMAIL` y `GARMIN_PASSWORD`
+- una API key LLM (`GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `CEREBRAS_API_KEY`, `NVIDIA_API_KEY` o `GITHUB_TOKEN`)
+- `SUPABASE_URL` y `SUPABASE_ANON_KEY`
+- `ENCRYPTION_KEY` (si no la generó setup)
+
+Generación manual de clave:
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+### Base de conocimiento del atleta (opcional)
+
+Puedes añadir rutas en `.env`:
+
+```dotenv
+ATHLETE_KB_PATHS=memory/athlete_knowledge.md,memory/pda_strategy.json
+```
+
+Si no defines `ATHLETE_KB_PATHS`, Kairos intenta cargar automáticamente los ficheros por defecto en `memory/`.
+
+### Supabase (obligatorio)
+
+El modo actual del agente es DB-first multiusuario: sin Supabase no arranca.
+
+1. Crea proyecto en [supabase.com](https://supabase.com)
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql)
+3. Copia URL y anon key a `.env`
 
 ---
 
 ## 🏃‍♂️ Uso
 
+Windows:
 ```powershell
-python -m agent.main
+.venv\Scripts\python.exe -m agent.main
+```
+
+Unix/macOS:
+```bash
+.venv/bin/python -m agent.main
 ```
 
 El agente iniciará el servidor MCP con `garmin-mcp` local o con `uvx` como fallback. Después aparecerá el menú de proveedores:

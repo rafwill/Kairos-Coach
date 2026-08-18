@@ -68,10 +68,10 @@
 
 ### Prioridad baja
 
-#### 22) Makefile + scripts de setup automatizado
-- `Makefile` con targets: `setup`, `login`, `test`, `serve`, `lint`.
-- `setup.ps1` (Windows) y `setup.sh` (Unix) que creen el venv, instalen dependencias y generen `.env` scaffold.
-- Inspirado en el setup automatizado de FitMCP.
+#### 22) Makefile + scripts de setup automatizado (2026-08-18) — REALIZADO
+- `Makefile` añadido con targets: `setup`, `setup-win`, `login`, `test`, `serve`, `lint`.
+- `setup.ps1` (Windows) y `setup.sh` (Unix) añadidos para crear `.venv`, instalar dependencias y generar `.env` desde `.env.example`.
+- Ambos scripts generan `ENCRYPTION_KEY` automáticamente si no existe en `.env`.
 
 #### 29) [PROMPTING] Regla de composición corporal como tendencia semanal
 - Al analizar peso o composición corporal, no interpretar fluctuaciones diarias como señal.
