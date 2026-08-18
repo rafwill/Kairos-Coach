@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent.trainer_agent import (
+    _build_goal_status_markdown,
     _build_training_plan_status_markdown,
     _build_tools_schema,
     _build_mcp_read_only_block_message,
@@ -58,6 +59,7 @@ from agent.trainer_agent import (
     _is_generic_needs_more_info_reply,
     _is_personal_records_followup_intent,
     _is_plan_status_intent,
+    _is_goal_status_intent,
     _is_daily_readiness_intent,
     _is_hr_threshold_query_intent,
     _is_mcp_factual_query_intent,
@@ -65,6 +67,7 @@ from agent.trainer_agent import (
     _is_running_threshold_query_intent,
     _is_config_options_intent,
     _is_week_tss_intent,
+    _is_week_tss_followup_intent,
     _is_week_activities_intent,
     _is_planning_intent,
     _is_write_mcp_tool,
@@ -1913,6 +1916,12 @@ class TestPlanningFallbackAndRanges:
 
     def test_plan_status_intent_false_for_plan_adjustment_request(self):
         assert not _is_plan_status_intent("Ajusta mi plan de esta semana")
+
+    def test_goal_status_intent_true_for_next_goal_question(self):
+        assert _is_goal_status_intent("¿Cuál es mi próximo objetivo?")
+
+    def test_goal_status_intent_false_for_plan_creation_request(self):
+        assert not _is_goal_status_intent("Planifícame un objetivo para octubre")
 
     def test_has_goal_in_profile(self):
         profile = {"goals": {"target_race": "10k", "target_race_date": "2026-11-22"}}
@@ -3933,6 +3942,75 @@ class TestWeekTssDeterministicRoute:
         assert _is_week_activities_intent("Cuales son mis actividades de la semana del 10 de agosto 2026?")
         assert _is_week_activities_intent("Que entrenamientos hice esta semana?")
         assert not _is_week_activities_intent("Cuanto TSS llevo esta semana?")
+
+    def test_is_week_tss_followup_intent_true_with_weekly_tss_context(self):
+        history = [
+            {
+                "role": "assistant",
+                "content": "## 🧭 Resumen\nConsulta de TSS semanal resuelta con datos reales.\n\n## 📊 Métricas clave\n| Métrica | Valor | Fuente |\n|---|---|---|\n| TSS acumulado | 434.4 | load_metrics_daily/garmin_activity_load |",
+            }
+        ]
+        assert _is_week_tss_followup_intent("Y para la semana del 13 de agosto de 2026?", history)
+
+    def test_is_week_tss_followup_intent_false_without_context(self):
+        history = [{"role": "assistant", "content": "¿Cómo te encuentras hoy?"}]
+        assert not _is_week_tss_followup_intent("Y para la semana del 13 de agosto de 2026?", history)
+
+    def test_tool_router_routes_week_tss_followup_without_tss_word(self):
+        import agent.trainer_agent as ta
+
+        router = ta.ToolRouter(enabled=True)
+        history = [
+            {
+                "role": "assistant",
+                "content": "## 🧭 Resumen\nConsulta de TSS semanal resuelta con datos reales.\n\n## 📊 Métricas clave\n| Métrica | Valor | Fuente |\n|---|---|---|\n| TSS acumulado | 434.4 | load_metrics_daily/garmin_activity_load |",
+            }
+        ]
+        route = router.route_key("Y para la semana del 13 de agosto de 2026?", history, {})
+        assert route == "week_tss"
+
+
+class TestGoalStatusDeterministicRoute:
+    def test_build_goal_status_markdown_with_goal(self):
+        profile = {
+            "goals": {
+                "target_race": "Media maratón A Coruña",
+                "target_race_date": "2026-11-15",
+                "target_time": "1:35:00",
+                "weekly_training_hours": 8,
+                "primary": "running",
+            }
+        }
+        out = _build_goal_status_markdown(profile)
+        assert out.startswith("## 🧭 Resumen")
+        assert "Media maratón A Coruña" in out
+        assert "15/11/2026" in out
+
+    @pytest.mark.asyncio
+    async def test_chat_goal_status_route_does_not_call_llm(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {
+            "goals": {
+                "target_race": "Media maratón A Coruña",
+                "target_race_date": "2026-11-15",
+            }
+        }
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        with patch("agent.trainer_agent._save_history_entry"):
+            out = await TrainerAgent.chat(agent, "¿Cuál es mi próximo objetivo?")
+
+        assert out.startswith("## 🧭 Resumen")
+        assert "Media maratón A Coruña" in out
 
     @pytest.mark.asyncio
     async def test_chat_week_tss_route_does_not_call_llm(self):

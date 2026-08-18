@@ -60,7 +60,7 @@ Esto funciona como el briefing que te daría un entrenador de élite antes de qu
 #### 10. Harness explícito en runtime (hooks + router)
 El runtime del agente ya expone capa de harness explícita en `TrainerAgent.chat()`:
 - `HookManager` con eventos `before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`
-- `ToolRouter` determinista opcional para intenciones críticas (`plan_status`, `week_tss`, `hr_threshold`, `running_threshold`, `mcp_factual`, `daily_readiness`, `planning`, `personal_records`)
+- `ToolRouter` determinista opcional para intenciones críticas (`plan_status`, `week_tss`, `week_activities`, `hr_threshold`, `running_threshold`, `mcp_factual`, `daily_readiness`, `planning`, `personal_records`, `config_options`)
 - Flag de control: `KAIROS_DETERMINISTIC_ROUTER=true|false`
 
 Nota de diseño actual:
@@ -247,6 +247,8 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - Tras seleccionar modelo y conectar herramientas, muestra un briefing automático de últimas 48h.
   - Incluye estado de Body Battery, HRV, sueño y entrenamientos recientes.
   - Muestra fechas analizadas en formato `DD/MM/AAAA`.
+  - Si detecta cambio de fórmula de carga (`formula_version`), informa al usuario de recálculo completo y posible latencia mayor al arranque.
+  - Tras calcular carga, informa si el cálculo fue incremental o recálculo completo.
   - Recomendación inicial condicional:
     - Sin `training_plan` activo: `No tienes plan asignado. ¿Qué quieres hacer hoy?`
     - Con `training_plan` activo: propone adaptar la sesión de hoy al plan.
@@ -264,8 +266,19 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
 
 * **📅 Consultas semanales de carga (deterministas):**
   - Preguntas factuales como "Dime los TSS de esta semana y en qué actividades los he hecho" se resuelven por ruta determinista.
-  - La semana se calcula como semana natural (lunes → día actual).
+  - La semana se calcula como semana natural (lunes → domingo), con corte en hoy si es semana actual.
+  - También soporta semanas históricas explícitas (`semana del 10 de agosto de 2026`).
+  - Soporta fechas cortas de entrada (`dd/mm/yy`, por ejemplo `17/08/26`).
   - El detalle de actividades (tipo/nombre) se toma de Garmin como fuente real y se devuelve sin inferencias del LLM.
+
+* **🧩 Formato de salida unificado (prompt + rutas deterministas):**
+  - Kairos usa una plantilla única de 4 secciones en respuestas de coaching y factuales:
+    - `## 🧭 Resumen`
+    - `## 📊 Métricas clave`
+    - `## ✅ Recomendación`
+    - `## 🎯 Próximo paso`
+  - Si una sección no aplica, se mantiene con `No aplica en esta consulta.`
+  - Las métricas numéricas se muestran en tabla Markdown (`Métrica | Valor | Fuente`) para consistencia en terminal, Telegram y email.
 
 * **🗂️ Planes de entrenamiento versionados (DB-first):**
   - Los planes se guardan en tablas dedicadas de Supabase (`training_plan`, `training_plan_session`, `training_plan_version`).

@@ -146,6 +146,26 @@ def _is_deterministic_router_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def _llm_timeout_seconds() -> float:
+    """Timeout duro de llamadas LLM para evitar bloqueos prolongados."""
+    raw = str(os.environ.get("KAIROS_LLM_TIMEOUT_SECONDS", "25")).strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 25.0
+    return max(5.0, min(120.0, value))
+
+
+def _tool_timeout_seconds() -> float:
+    """Timeout duro de tool-calls en el loop LLM para limitar latencia."""
+    raw = str(os.environ.get("KAIROS_TOOL_TIMEOUT_SECONDS", "8")).strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 8.0
+    return max(2.0, min(60.0, value))
+
+
 def _is_write_mcp_tool(tool_name: str) -> bool:
     """Detecta tools MCP de escritura para bloquearlas en modo read-only."""
     name = str(tool_name or "").strip().lower()
@@ -747,7 +767,11 @@ class ToolRouter:
             return "config_options"
         if _is_plan_status_intent(user_message):
             return "plan_status"
+        if _is_goal_status_intent(user_message):
+            return "goal_status"
         if _is_week_tss_intent(user_message):
+            return "week_tss"
+        if _is_week_tss_followup_intent(user_message, history):
             return "week_tss"
         if _is_week_activities_intent(user_message):
             return "week_activities"
@@ -3411,6 +3435,90 @@ def _is_plan_status_intent(user_message: str) -> bool:
     return any(marker in text for marker in status_markers)
 
 
+def _is_goal_status_intent(user_message: str) -> bool:
+    """Detecta preguntas por objetivo deportivo (sin pedir planificación)."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    objective_markers = (
+        "objetivo",
+        "próximo objetivo",
+        "proximo objetivo",
+        "carrera objetivo",
+        "evento objetivo",
+        "meta",
+    )
+    if not any(marker in text for marker in objective_markers):
+        return False
+
+    planning_markers = (
+        "planifíc",
+        "planifica",
+        "planificación",
+        "planificacion",
+        "crear plan",
+        "preparar plan",
+        "diseña",
+        "disena",
+    )
+    if any(marker in text for marker in planning_markers):
+        return False
+
+    return True
+
+
+def _build_goal_status_markdown(profile: dict) -> str:
+    """Respuesta determinista del objetivo principal del atleta."""
+    goals = (profile or {}).get("goals", {}) if isinstance(profile, dict) else {}
+    race = str(goals.get("target_race") or "").strip()
+    race_date = _format_iso_date_es(goals.get("target_race_date")) or "por definir"
+    target_time = str(goals.get("target_time") or "").strip() or "por definir"
+    weekly_hours = goals.get("weekly_training_hours") or "por definir"
+    primary = str(goals.get("primary") or "").strip() or "por definir"
+
+    if not race and race_date == "por definir" and target_time == "por definir":
+        return "\n".join([
+            "## 🧭 Resumen",
+            "No tengo un objetivo deportivo definido en tu perfil.",
+            "",
+            "## 📊 Métricas clave",
+            "| Métrica | Valor | Fuente |",
+            "|---|---|---|",
+            "| Objetivo principal | No definido | perfil.goals |",
+            f"| Deporte principal | {primary} | perfil.goals |",
+            "",
+            "## ✅ Recomendación",
+            "- Define carrera objetivo, fecha y tiempo para personalizar mejor tu planificación.",
+            "",
+            "## 🎯 Próximo paso",
+            "- Usa `/perfil editar objetivo` para configurarlo ahora.",
+            "- Fuente: respuesta determinista (lectura directa de perfil).",
+        ])
+
+    objective_text = race or "objetivo definido"
+    return "\n".join([
+        "## 🧭 Resumen",
+        f"Tu próximo objetivo es: {objective_text}.",
+        "",
+        "## 📊 Métricas clave",
+        "| Métrica | Valor | Fuente |",
+        "|---|---|---|",
+        f"| Objetivo principal | {objective_text} | perfil.goals |",
+        f"| Fecha objetivo | {race_date} | perfil.goals |",
+        f"| Tiempo objetivo | {target_time} | perfil.goals |",
+        f"| Horas/semana | {weekly_hours} | perfil.goals |",
+        f"| Deporte principal | {primary} | perfil.goals |",
+        "",
+        "## ✅ Recomendación",
+        "- Mantén el foco del bloque actual alineado con este objetivo.",
+        "",
+        "## 🎯 Próximo paso",
+        "- Si quieres, te resumo cómo va tu progreso semanal hacia ese objetivo.",
+        "- Fuente: respuesta determinista (lectura directa de perfil).",
+    ])
+
+
 def _is_week_tss_intent(user_message: str) -> bool:
     """Detecta consultas de TSS semanal para responder por ruta determinista.
 
@@ -3430,6 +3538,46 @@ def _is_week_tss_intent(user_message: str) -> bool:
         "esta semana", "semana", "semanal", "lunes", "domingo", "acumulado semanal",
     ]
     return any(marker in text for marker in week_markers) and any(marker in text for marker in data_markers)
+
+
+def _is_week_tss_followup_intent(user_message: str, history: list[dict] | None = None) -> bool:
+    """Detecta follow-up semanal de TSS cuando el usuario omite la palabra TSS.
+
+    Ejemplo: "Y para la semana del 13 de agosto de 2026?" tras una respuesta
+    previa de TSS semanal.
+    """
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    # Debe ser una consulta semanal explícita.
+    week_markers = ("semana", "esta semana", "semana pasada", "semana del", "week")
+    if not any(marker in text for marker in week_markers):
+        return False
+
+    # Si ya menciona actividades/entrenamientos, lo gestiona la ruta week_activities.
+    activity_markers = ("actividades", "entrenamientos", "que hice", "qué hice", "que entrene", "qué entrené")
+    if any(marker in text for marker in activity_markers):
+        return False
+
+    # Evitar desviar intenciones de planificación semanal.
+    planning_markers = ("plan", "planifica", "planificación", "planificacion", "microciclo", "macro")
+    if any(marker in text for marker in planning_markers):
+        return False
+
+    # Solo aplicar como follow-up si el contexto reciente era claramente TSS semanal.
+    recent_assistant = [
+        (msg.get("content") or "").lower()
+        for msg in (history or [])[-6:]
+        if msg.get("role") == "assistant"
+    ]
+    weekly_tss_markers = (
+        "consulta de tss semanal",
+        "tss acumulado",
+        "| tss acumulado |",
+        "semana natural",
+    )
+    return any(any(marker in content for marker in weekly_tss_markers) for content in recent_assistant)
 
 
 def _is_week_activities_intent(user_message: str) -> bool:
@@ -4265,7 +4413,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     ]
     for args in req_variants:
         try:
-            raw = await call_tool(mcp_session, "get_activities_by_date", args)
+            raw = await asyncio.wait_for(
+                call_tool(mcp_session, "get_activities_by_date", args),
+                timeout=4.0,
+            )
             parsed = _try_parse_json(raw)
             if parsed is None:
                 parsed = raw
@@ -4273,6 +4424,9 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             if acts:
                 activities = acts
                 break
+        except asyncio.TimeoutError:
+            log.debug("_build_current_week_tss_markdown: timeout en get_activities_by_date args=%s", args)
+            continue
         except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
             log.debug("_build_current_week_tss_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
@@ -4402,7 +4556,10 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
     ]
     for args in req_variants:
         try:
-            raw = await call_tool(mcp_session, "get_activities_by_date", args)
+            raw = await asyncio.wait_for(
+                call_tool(mcp_session, "get_activities_by_date", args),
+                timeout=4.0,
+            )
             parsed = _try_parse_json(raw)
             if parsed is None:
                 parsed = raw
@@ -4410,6 +4567,9 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
             if acts:
                 activities = acts
                 break
+        except asyncio.TimeoutError:
+            log.debug("_build_week_activities_markdown: timeout en get_activities_by_date args=%s", args)
+            continue
         except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
             log.debug("_build_week_activities_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
@@ -10134,6 +10294,10 @@ class TrainerAgent:
             assistant_reply = _build_training_plan_status_markdown(self.user_profile)
             return await self._finalize_chat_reply(user_message, assistant_reply, route="plan_status")
 
+        if route_key == "goal_status":
+            assistant_reply = _build_goal_status_markdown(self.user_profile)
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="goal_status")
+
         # Ruta determinista para TSS semanal: evita ambigüedades del LLM
         # y usa semana natural solicitada (o actual) con actividades reales de Garmin.
         if route_key == "week_tss":
@@ -10325,7 +10489,8 @@ class TrainerAgent:
         analysis_block_for_rescue = ""
         prefetch_date_for_rescue = ""
         user_date = _extract_iso_date_from_text(user_message)
-        if user_date:
+        is_week_range_query = bool(re.search(r"\b(semana|week)\b", (user_message or "").lower()))
+        if user_date and not is_week_range_query:
             # Intento 1: get_activities_by_date para la fecha exacta (más fiable)
             pre_id = None
             try:
@@ -10687,12 +10852,29 @@ class TrainerAgent:
                 assistant_reply = "[Lo siento, la consulta requirió demasiadas llamadas a herramientas. Por favor, reformula tu pregunta de forma más concreta.]"
                 return await self._finalize_chat_reply(user_message, assistant_reply, route="max_tool_iterations")
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=self.tools_schema if self.tools_schema else None,
-                    tool_choice="auto" if self.tools_schema else None,
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        tools=self.tools_schema if self.tools_schema else None,
+                        tool_choice="auto" if self.tools_schema else None,
+                    ),
+                    timeout=_llm_timeout_seconds(),
                 )
+            except asyncio.TimeoutError as api_exc:
+                await self._emit_chat_error_hook(
+                    stage="llm_completion_timeout",
+                    error=api_exc,
+                    extra={"user_message": user_message},
+                )
+                timeout_msg = (
+                    "La consulta ha excedido el tiempo máximo de respuesta del modelo.\n\n"
+                    "Prueba una de estas opciones:\n"
+                    "- Reintentar la consulta\n"
+                    "- Hacer una pregunta más concreta\n"
+                    "- Cambiar de modelo con `/modelo`"
+                )
+                return await self._finalize_chat_reply(user_message, timeout_msg, route="llm_timeout")
             except Exception as api_exc:
                 err_str = str(api_exc)
                 await self._emit_chat_error_hook(
@@ -10823,9 +11005,24 @@ class TrainerAgent:
                         elif tool_name.startswith("kairos_"):
                             raw_result = await self._handle_internal_tool(tool_name, arguments)
                         else:
-                            raw_result = await call_tool(
-                                self.mcp_session, tool_name, arguments
+                            raw_result = await asyncio.wait_for(
+                                call_tool(self.mcp_session, tool_name, arguments),
+                                timeout=_tool_timeout_seconds(),
                             )
+                    except asyncio.TimeoutError as tool_exc:
+                        await self._emit_chat_error_hook(
+                            stage="tool_call_timeout",
+                            error=tool_exc,
+                            extra={"tool_name": tool_name, "arguments": arguments},
+                        )
+                        raw_result = json.dumps(
+                            {
+                                "error": "tool_call_timeout",
+                                "tool": tool_name,
+                                "message": "La herramienta excedió el tiempo máximo permitido.",
+                            },
+                            ensure_ascii=False,
+                        )
                     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as tool_exc:
                         await self._emit_chat_error_hook(
                             stage="tool_call",
