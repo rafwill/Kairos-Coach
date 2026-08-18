@@ -74,17 +74,18 @@ def _get_server_params(essential_only: bool = True) -> StdioServerParameters:
         # Perfil personal del usuario
         "get_user_profile,"
         # Actividades
-        "get_activities,get_activity,get_activity_hr_zones,get_activity_hr_in_timezones,get_activities_by_date,"
+        "get_activities,get_activity,get_activity_hr_zones,get_activity_hr_in_timezones,get_activities_by_date,get_activities_fordate,"
         # Salud diaria (versiones ligeras donde existen)
         "get_stats,get_sleep_summary,get_sleep_data,"
         "get_heart_rates_summary,get_stress_summary,get_respiration_summary,"
+        "get_all_day_stress,get_all_day_events,"
         "get_body_battery,get_rhr_day,get_spo2_data,get_hrv_data,"
         "get_daily_steps,get_hydration_data,"
         # Composición corporal
         "get_body_composition,"
         # Preparación y entrenamiento
         "get_training_readiness,get_morning_training_readiness,"
-        "get_training_status,get_training_load_trend,"
+        "get_training_status,get_training_load_trend,get_training_effect,"
         "get_hrv_trend,get_vo2max_trend,"
         # Rendimiento avanzado
         "get_endurance_score,get_fitnessage_data,"
