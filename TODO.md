@@ -3,8 +3,9 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 325 tests (validados localmente a 2026-08-15). CI/CD con GitHub Actions activo.
+- Suite de tests: 353 tests (validados localmente a 2026-08-18). CI/CD con GitHub Actions activo.
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
+- Contrato de salida unificado activo (prompt completo + prompt compacto + rutas deterministas clave).
 
 ---
 
@@ -258,6 +259,19 @@
 - Para `trail_running` no rápido se mantiene la calibración existente (`hrTSS zonas * 0.72`).
 - Mejora de UX en análisis de actividad: cuando hay zonas FC en trail, Kairos muestra ambos valores (`hrTSS bruto zonas` y `hrTSS Kairos aplicado`) para trazabilidad.
 - Tests de regresión añadidos para la regla `< 6:00/km`, frontera `== 6:00/km` y visualización explícita de ambos valores.
+
+#### 61) [CONSISTENCY-ROUTES] Factual/semanal + formato unificado (2026-08-18) — REALIZADO
+- Consultas de semana por fecha explícita (`semana del ...`) resueltas con ventana histórica ISO (lunes-domingo) en lugar de semana actual implícita.
+- Parsing robusto de fechas cortas `dd/mm/yy` (ej. `17/08/26`) para consultas factuales.
+- Fallback factual/semanal de TSS desde actividades Garmin cuando `load_metrics_daily` aún no refleja el cierre diario.
+- Refresco de carga endurecido para actividad reciente (hoy/ayer/anteayer) y paginación sin corte prematuro por orden no estricto.
+- Corrección de recálculo por cambio de fórmula para no quedar bloqueado por clamp histórico de fecha efectiva.
+- Corrección de crash en compactación de tools (`UnboundLocalError` sobre `act_type_raw`).
+- Plantilla única obligatoria activada en prompts y normalizada en rutas deterministas:
+  - `## 🧭 Resumen`
+  - `## 📊 Métricas clave`
+  - `## ✅ Recomendación`
+  - `## 🎯 Próximo paso`
 
 #### 4) Logging de producción (2026-08-15) — REALIZADO
 - Configuración de logging por entorno en runtime: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.

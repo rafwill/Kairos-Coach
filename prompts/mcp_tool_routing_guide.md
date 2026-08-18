@@ -17,6 +17,16 @@ Notas de compatibilidad MCP (actual):
 - `get_body_battery` requiere `start_date` y `end_date`.
 - `get_body_composition` requiere `start_date` y `end_date`.
 
+Contrato de salida unificado (OBLIGATORIO):
+- Independientemente de la intencion, la respuesta final al usuario debe mantener siempre este orden:
+	1. `## 🧭 Resumen`
+	2. `## 📊 Métricas clave`
+	3. `## ✅ Recomendación`
+	4. `## 🎯 Próximo paso`
+- Si una sección no aplica: incluir `- No aplica en esta consulta.`
+- En `## 📊 Métricas clave`, priorizar tabla Markdown con columnas: `Métrica | Valor | Fuente`.
+- En respuestas factuales/deterministas, añadir al final una nota breve de fuente.
+
 ---
 
 ## 1) Estado diario y energia (check-in rapido)
@@ -120,6 +130,23 @@ Secuencia prioritaria:
 4. `get_weekly_steps`
 5. `get_weekly_stress`
 6. `get_race_predictions`
+
+Regla de semana natural:
+- Toda consulta semanal usa semana ISO de lunes a domingo.
+- Si el usuario pide una semana histórica explícita (ej: "semana del 10 de agosto de 2026"), resolver ese rango exacto.
+
+## 7.5) Actividades semanales factuales
+
+Cuando el usuario pida actividades/entrenamientos de una semana (actual o histórica):
+
+Secuencia prioritaria:
+1. Resolver ventana semanal (lunes-domingo) según texto del usuario.
+2. `get_activities_by_date` para ese rango.
+3. Si hay consulta asociada de TSS semanal y falta cierre en serie diaria, usar fallback de carga por actividad.
+
+Salida esperada:
+- Listado por día (`DD/MM`) con tipo y nombre de actividad, una línea por actividad.
+- Sin inferencias del LLM sobre nombres/tipos de actividad.
 
 ## 7.2) Generacion y gestion funcional de planes
 

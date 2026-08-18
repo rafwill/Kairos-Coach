@@ -46,3 +46,9 @@ Resultado relevante:
 - `tmp/tss_load_120d_daily.csv`
 - `tmp/tp-2026-08-13.fit`
 - `tools/fit_tss_probe.py`
+
+## Addendum (2026-08-18)
+- Se aplicaron mejoras de consistencia en rutas deterministas de consulta factual/semanal y en formato de salida.
+- Se activó contrato de plantilla única en prompts (completo y compacto) y se alinearon respuestas deterministas al mismo esquema.
+- Estas mejoras no modifican el criterio de validez del modelo TSS/ATL/CTL/TSB documentado arriba; afectan presentación, robustez de consulta y frescura de datos.
+- Estado de regresión local posterior a estos cambios: `python -m pytest -q` en verde (`353 passed`).

@@ -9,11 +9,30 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - En el análisis de actividad trail con zonas FC disponibles, se muestran ambos valores de forma explícita: `hrTSS bruto zonas` y `hrTSS Kairos aplicado`.
 - Nuevo menú unificado de comandos en CLI (`/menu`) con categorías: ver datos, editar perfil, gestionar planes y sistema.
 - Ruta determinista de opciones/configuración reforzada para preguntas tipo "qué opciones puedo cambiar" y para el alias `/menu`.
+- Plantilla única obligatoria de salida en prompts (completo y compacto):
+	- `## 🧭 Resumen`
+	- `## 📊 Métricas clave`
+	- `## ✅ Recomendación`
+	- `## 🎯 Próximo paso`
+- Ruta determinista semanal de actividades por fecha (`week_activities`) con semana natural ISO (lunes-domingo).
+- Mensajes de transparencia en arranque cuando hay recálculo por cambio de fórmula (`formula_version`) o refresco incremental de carga.
 
 ### Changed
 - `trail_running` mantiene calibración por defecto (`hrTSS zonas * 0.72`) solo cuando no aplica la nueva regla de trail rápido.
 - Separación explícita de dominios en FC umbral: la ruta determinista de LTHR ya no consulta herramientas de umbral de lactato.
 - Extracción de FC umbral robustecida para payloads Garmin en `camelCase` (ej. `lactateThresholdHeartRate`).
+- Endurecimiento de rutas factuales/semanales:
+	- consultas por "semana del <fecha>" resueltas por ventana histórica explícita,
+	- parsing de fechas `dd/mm/yy` (ej. `17/08/26`),
+	- fallback de TSS diario/semanal desde actividades Garmin cuando `load_metrics_daily` aún no cerró el día,
+	- estimación de TSS para sesiones sin `trainingLoad` (incluye fuerza/caminata según reglas activas),
+	- paginación de actividades sin corte prematuro por orden no estricto.
+- Política de recálculo histórico: en migración de fórmula se ignora el clamp de fecha efectiva para forzar recálculo completo coherente.
+- Normalización de formato en rutas deterministas principales para alinear salida con la plantilla única.
+
+### Fixed
+- Corrección de crash en compactación de resultados de tools (`UnboundLocalError` sobre `act_type_raw`).
+- Corrección de side-effect en ruta de FC umbral que podía tocar marcador global de fecha efectiva de parámetros.
 
 ### Tests
 - Nuevos tests de regresión para validar:
@@ -23,6 +42,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 	- detección robusta de intención de opciones/configuración (incluye `/menu`),
 	- ruta de FC umbral sin llamadas a herramientas de lactato,
 	- lectura de LTHR desde claves `camelCase` de Garmin.
+	- ventana semanal histórica explícita, parser `dd/mm/yy`, fallback factual TSS desde actividades,
+	- reemplazo de TSS diario en cero con carga de actividad,
+	- formato unificado en rutas deterministas.
+- Estado de validación local actualizado: `python -m pytest -q` en verde (`353 passed`).
 
 ## 2026-08-15
 

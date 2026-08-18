@@ -46,11 +46,12 @@ Documento central de comportamiento del agente. Define:
 - Protocolos especiales: Diabetes Tipo 1, Race Readiness, revisión post-sesión.
 - Flags de anomalías biométricas (ver sección Sensors).
 - Reglas de prompting: tendencia junto al valor puntual, transparencia de muestra, relaciones > valores aislados.
+- Contrato de formato unificado obligatorio (4 secciones): resumen, métricas clave, recomendación y próximo paso.
 
 ### System Prompt Compacto
 **Archivo:** `prompts/system_prompt_compact.md`
 
-Versión reducida del system prompt para modelos con límite bajo de tokens (GitHub Models en red corporativa con Zscaler). Mantiene las mismas reglas esenciales.
+Versión reducida del system prompt para modelos con límite bajo de tokens (GitHub Models en red corporativa con Zscaler). Mantiene las mismas reglas esenciales, incluyendo la plantilla única de salida.
 
 ---
 
@@ -61,7 +62,7 @@ Mecanismos que observan y miden el estado — tanto del atleta como del propio s
 ### Sensores biométricos (sobre el atleta)
 
 #### Snapshot proactivo de 48h
-**Función:** `TrainerAgent.collect_startup_snapshot_48h()` / `build_startup_status_markdown()`
+**Función:** `TrainerAgent.collect_startup_snapshot_48h()` / `_build_proactive_status_markdown()`
 
 Al arrancar el sistema, se recopilan automáticamente:
 - Body battery (últimas 48h)
@@ -166,7 +167,7 @@ main()
        ├─ [hook: sincronización]     _sync_from_garmin() → profile_changes
        ├─ [hook: primer uso]         _is_first_time() → _run_first_time_setup()
        ├─ [hook: knowledge base]     build_onboarding_mcp_enrichment() (si nuevo)
-       ├─ [hook: snapshot proactivo] build_startup_status_markdown()
+      ├─ [hook: snapshot proactivo] _build_proactive_status_markdown()
        └─ [loop de chat]            while True: agent.chat(user_input)
 ```
 
@@ -187,11 +188,14 @@ Router de intenciones críticas, habilitado por defecto:
 
 - `plan_status`
 - `week_tss`
+- `week_activities`
+- `hr_threshold`
 - `running_threshold`
 - `mcp_factual`
 - `daily_readiness`
 - `planning`
 - `personal_records`
+- `config_options`
 
 Se puede desactivar con `KAIROS_DETERMINISTIC_ROUTER=false` para volver al comportamiento basado solo en lógica existente/LLM.
 
@@ -207,7 +211,6 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 | Gap | Descripción | TODO relacionado |
 |---|---|---|
 | Git hooks locales | No hay `.githooks/` — no hay validaciones pre-commit | #22 |
-| Logging de producción | Sin niveles configurables, los `print` son ciegos en producción | #4 |
 | Sensor de spike semanal >20% | Regla no implementada como sensor activo en runtime | #27 |
 
 ---
@@ -229,7 +232,7 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 │  suite de tests             ✓ operativo             │
 │  CI GitHub Actions          ✓ operativo             │
 │  spike semanal >20%         ✗ pendiente (#27)       │
-│  logging por niveles        ✗ pendiente (#4)        │
+│  logging por niveles        ✓ operativo             │
 ├─────────────────────────────────────────────────────┤
 │                   HOOKS                             │
 │  pipeline arranque          ✓ operativo             │
