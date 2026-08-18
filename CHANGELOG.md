@@ -20,6 +20,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 	- `setup.ps1` (Windows) y `setup.sh` (Unix),
 	- `Makefile` con targets `setup`, `setup-win`, `login`, `serve`, `test`, `lint`,
 	- generación automática de `.env` y `ENCRYPTION_KEY` si faltan.
+- Onboarding "for dummies" en `README.md` con flujo desde cero por SO, comandos de arranque directos sin `make` y resolución guiada de errores comunes en Windows.
 
 ### Changed
 - `trail_running` mantiene calibración por defecto (`hrTSS zonas * 0.72`) solo cuando no aplica la nueva regla de trail rápido.
@@ -49,7 +50,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 	- ventana semanal histórica explícita, parser `dd/mm/yy`, fallback factual TSS desde actividades,
 	- reemplazo de TSS diario en cero con carga de actividad,
 	- formato unificado en rutas deterministas.
-- Estado de validación local actualizado: `python -m pytest -q` en verde (`353 passed`).
+- Estado de validación local actualizado: `python -m pytest -q` en verde (`360 passed`).
 
 ## 2026-08-15
 
