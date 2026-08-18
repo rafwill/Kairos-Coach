@@ -742,6 +742,8 @@ class ToolRouter:
     def route_key(self, user_message: str, history: list[dict], profile: dict) -> str | None:
         if not self.enabled:
             return None
+        if _is_config_options_intent(user_message):
+            return "config_options"
         if _is_plan_status_intent(user_message):
             return "plan_status"
         if _is_week_tss_intent(user_message):
@@ -3565,6 +3567,48 @@ def _is_post_activity_feedback_intent(user_message: str) -> bool:
     return has_date and any(marker in text for marker in activity_markers) and any(marker in text for marker in feedback_markers)
 
 
+def _is_config_options_intent(user_message: str) -> bool:
+    """Detecta preguntas sobre qué parámetros/opciones puede configurar el atleta."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    markers = (
+        "que opciones puedo cambiar",
+        "qué opciones puedo cambiar",
+        "que opciones puedo configurar",
+        "qué opciones puedo configurar",
+        "que puedo cambiar",
+        "qué puedo cambiar",
+        "que puedo configurar",
+        "qué puedo configurar",
+        "que opciones tengo",
+        "qué opciones tengo",
+        "que parametros puedo cambiar",
+        "qué parámetros puedo cambiar",
+        "opciones de perfil",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _build_config_options_markdown() -> str:
+    """Devuelve listado determinista de opciones configurables en perfil."""
+    return "\n".join(
+        [
+            "## Opciones que puedes cambiar",
+            "",
+            "- `/perfil umbral <mm:ss>`: ritmo umbral de running (ej. `/perfil umbral 4:15`).",
+            "- `/perfil fc <reposo> <max>`: FC de reposo y FC máxima (ej. `/perfil fc 48 190`).",
+            "- `/perfil editar objetivo`: objetivo principal y fecha de carrera.",
+            "- `/perfil ver`: revisar los valores actualmente guardados.",
+            "",
+            "Si quieres, te guío paso a paso para actualizar uno ahora.",
+            "",
+            "_Respuesta determinista: listado de opciones configurables en perfil._",
+        ]
+    )
+
+
 def _build_tomorrow_workout_markdown(profile: dict) -> str:
     """Propone sesión de mañana de forma determinista usando plan o carga/fatiga actual."""
     profile = profile if isinstance(profile, dict) else {}
@@ -3704,13 +3748,23 @@ def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
         "heartratethreshold",
         "hrthreshold",
         "lthr",
+        "lactatethresholdheartrate",
+        "lactatethresholdheart_rate",
+        "user_lactate_threshold_heart_rate",
     }
+
+    def _key_candidates(raw_key: Any) -> set[str]:
+        key = str(raw_key or "").strip().lower()
+        if not key:
+            return set()
+        snake = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
+        compact = re.sub(r"[^a-z0-9]", "", key)
+        return {snake, compact}
 
     def _walk(node: Any) -> float | None:
         if isinstance(node, dict):
             for key, value in node.items():
-                k = str(key or "").strip().lower().replace("-", "_")
-                if k in target_keys:
+                if _key_candidates(key) & target_keys:
                     try:
                         val = float(value)
                     except (TypeError, ValueError):
@@ -3750,7 +3804,8 @@ async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> st
             ]
         )
 
-    # Fallback rápido a MCP: una única llamada y timeout corto.
+    # Fallback rápido a MCP: solo perfil de usuario (fuente de FC umbral).
+    # No se mezclan consultas de umbral de lactato/ritmo en esta ruta.
     try:
         raw = await asyncio.wait_for(call_tool(mcp_session, "get_user_profile", {}), timeout=2.0)
         parsed = _try_parse_json(raw)
@@ -9448,6 +9503,12 @@ class TrainerAgent:
             self.conversation_history,
             self.user_profile,
         )
+
+        # Ruta determinista para estado de plan: evita alucinaciones del LLM
+        # cuando la pregunta es "¿tengo plan?" o "¿cuál es mi plan?".
+        if route_key == "config_options":
+            assistant_reply = _build_config_options_markdown()
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="config_options")
 
         # Ruta determinista para estado de plan: evita alucinaciones del LLM
         # cuando la pregunta es "¿tengo plan?" o "¿cuál es mi plan?".
