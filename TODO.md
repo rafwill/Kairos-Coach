@@ -68,11 +68,6 @@
 
 ### Prioridad baja
 
-#### 22) Makefile + scripts de setup automatizado (2026-08-18) — REALIZADO
-- `Makefile` añadido con targets: `setup`, `setup-win`, `login`, `test`, `serve`, `lint`.
-- `setup.ps1` (Windows) y `setup.sh` (Unix) añadidos para crear `.venv`, instalar dependencias y generar `.env` desde `.env.example`.
-- Ambos scripts generan `ENCRYPTION_KEY` automáticamente si no existe en `.env`.
-
 #### 29) [PROMPTING] Regla de composición corporal como tendencia semanal
 - Al analizar peso o composición corporal, no interpretar fluctuaciones diarias como señal.
 - La unidad mínima de análisis es la tendencia semana a semana cruzada con tipo y volumen de entrenamiento.
@@ -174,6 +169,11 @@
 
 #### 21) GitHub Actions CI
 - `.github/workflows/tests.yml` ejecuta la suite de tests en cada push y pull request, sin credenciales reales.
+
+#### 22) Makefile + scripts de setup automatizado (2026-08-18) — REALIZADO
+- `Makefile` añadido con targets: `setup`, `setup-win`, `login`, `test`, `serve`, `lint`.
+- `setup.ps1` (Windows) y `setup.sh` (Unix) añadidos para crear `.venv`, instalar dependencias y generar `.env` desde `.env.example`.
+- Ambos scripts generan `ENCRYPTION_KEY` automáticamente si no existe en `.env`.
 
 #### 45) [VALIDACION] Batería sintética multi-atleta para carga/fatiga (2026-07-30) — REALIZADO
 - Añadidos escenarios ficticios por deporte (running, trail y triatlón) para validar comportamiento específico CTL (Estado físico)/ATL (Fatiga)/TSB (Forma).
