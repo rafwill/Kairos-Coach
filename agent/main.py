@@ -97,7 +97,7 @@ except (ImportError, AttributeError, RuntimeError):
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agent.mcp_client import garmin_mcp_session
-from agent.trainer_agent import TrainerAgent, _load_user_profile, _save_user_profile
+from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile
 from agent.storage import (
     activate_training_plan,
     authenticate_app_user,
@@ -1358,6 +1358,12 @@ async def main() -> None:
         # para poblar DB antes del primer flujo de coaching.
         # Usuario existente: cálculo incremental desde último registro persistido.
         try:
+            saved_formula_v = int(((agent.user_profile or {}).get("load_metrics") or {}).get("formula_version") or 0)
+            if not is_new_user and saved_formula_v and saved_formula_v != _TSS_FORMULA_VERSION:
+                console.print(
+                    "[yellow]ℹ Detecté cambios en el modelo de carga/TSS. "
+                    "Voy a recalcular histórico y este inicio puede tardar un poco más.[/]"
+                )
             status_msg = (
                 "[dim]Inicializando histórico de carga desde Garmin (usuario nuevo)...[/]"
                 if is_new_user
@@ -1365,6 +1371,21 @@ async def main() -> None:
             )
             with console.status(status_msg):
                 await agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user)
+            load_meta = getattr(agent, "_last_load_compute_meta", {}) or {}
+            load_mode = str(load_meta.get("mode") or "")
+            load_reason = str(load_meta.get("reason") or "").strip()
+            if load_mode == "full_recalc":
+                console.print(
+                    "[yellow]ℹ Kairos tardó más porque recalculó el histórico de carga completo"
+                    + (f" ({load_reason})" if load_reason else "")
+                    + ".[/]"
+                )
+            elif load_mode == "incremental_refresh":
+                console.print(
+                    "[dim]ℹ Kairos refrescó días recientes para incorporar actividades nuevas"
+                    + (f" ({load_reason})" if load_reason else "")
+                    + ".[/]"
+                )
             lm = (agent.user_profile or {}).get("load_metrics") or {}
             last = lm.get("last") or {}
             if last.get("atl") or last.get("ctl"):
@@ -1382,7 +1403,8 @@ async def main() -> None:
 
         # Estado proactivo al arranque (especialmente para usuario existente).
         try:
-            proactive_status = await agent.build_startup_status_markdown(profile_changes=profile_changes)
+            with console.status("[dim]Kairos está pensando y preparando tu resumen inicial...[/]"):
+                proactive_status = await agent.build_startup_status_markdown(profile_changes=profile_changes)
             console.print(Markdown(proactive_status))
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as status_exc:
             console.print(f"[dim yellow]No se pudo generar el estado proactivo inicial: {status_exc}[/]")

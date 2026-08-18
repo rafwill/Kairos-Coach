@@ -30,6 +30,7 @@ from agent.trainer_agent import (
     _build_proactive_status_markdown,
     _build_post_activity_section_spec,
     _build_activity_analysis_block,
+    _format_activity_analysis_for_markdown,
     _build_load_trend_table,
     _classify_running_session_with_confidence,
     _estimate_session_tss,
@@ -43,6 +44,7 @@ from agent.trainer_agent import (
     _compact_personal_records,
     _compact_tool_result,
     _extract_activities_list,
+    _fetch_activities_for_load_calc,
     _extract_cycling_ftp_watts,
     _infer_tss_source_tag,
         _extract_threshold_pace_sec_per_km,
@@ -63,8 +65,10 @@ from agent.trainer_agent import (
     _is_running_threshold_query_intent,
     _is_config_options_intent,
     _is_week_tss_intent,
+    _is_week_activities_intent,
     _is_planning_intent,
     _is_write_mcp_tool,
+    _resolve_week_window,
     _resolve_load_parameters_effective_date,
     _resolve_activity_id_from_query,
     _summarize_plan_changes,
@@ -171,6 +175,9 @@ class TestExtractIsoDateFromText:
 
     def test_extracts_dd_mm_yyyy(self):
         assert _extract_iso_date_from_text("02/07/2026") == "2026-07-02"
+
+    def test_extracts_dd_mm_yy_short_year(self):
+        assert _extract_iso_date_from_text("17/08/26") == "2026-08-17"
 
 
 class TestLoadParametersEffectiveDate:
@@ -375,6 +382,18 @@ class TestCompactToolResult:
         assert result_dict["duration_hhmmss"] == "10:10:12"
         assert result_dict["distance_km"] == 54.43
 
+    def test_get_activity_without_distance_does_not_raise_unboundlocal(self):
+        data = {
+            "activityId": 123,
+            "activityType": "running",
+            "duration": 3600,
+            "avgPower": 250,
+            "maxPower": 410,
+        }
+        result = _compact_tool_result(json.dumps(data), tool_name="get_activity")
+        result_dict = json.loads(result)
+        assert result_dict["duration_hhmmss"] == "01:00:00"
+
 
 # ─── Base de conocimiento del atleta (RAG) ──────────────────────────────────
 
@@ -515,7 +534,7 @@ class TestPersonalRecordsMarkdown:
         assert "Ciclismo más largo" not in out
 
     def test_personal_records_followup_intent_true_with_context(self):
-        history = [{"role": "assistant", "content": "## Tus mejores registros personales en running"}]
+        history = [{"role": "assistant", "content": "Estos son tus mejores registros personales en running."}]
         assert _is_personal_records_followup_intent("En que distancias son esas marcas?", history)
 
     def test_build_personal_records_markdown_cycling_does_not_return_running(self):
@@ -536,7 +555,7 @@ class TestPersonalRecordsMarkdown:
         assert _detect_personal_records_sport_intent("Y mis mejores marcas en ciclismo?", []) == "cycling"
 
     def test_detect_personal_records_sport_intent_from_followup_context(self):
-        history = [{"role": "assistant", "content": "## Tus mejores registros personales en ciclismo"}]
+        history = [{"role": "assistant", "content": "Estos son tus mejores registros personales en ciclismo."}]
         assert _detect_personal_records_sport_intent("En que distancias son esas marcas?", history) == "cycling"
 
 
@@ -979,7 +998,7 @@ class TestStartupProactive:
             "trainings": [{"date": "2026-07-06", "name": "Trail suave"}],
         }
         out = _build_proactive_status_markdown(payload)
-        assert "Estado Proactivo" in out
+        assert "Estado proactivo" in out
         assert "Perfil Garmin actualizado" in out
         assert "Trail suave" in out
         assert "Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma))" in out
@@ -1409,7 +1428,11 @@ class TestComputeAndPersistLoadMetrics:
              patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
-        fetch_mock.assert_awaited_once_with(agent.mcp_session, today.isoformat(), today.isoformat())
+        assert fetch_mock.await_count >= 2
+        assert any(
+            c.args[1] == today.isoformat() and c.args[2] == today.isoformat()
+            for c in fetch_mock.await_args_list
+        )
         upsert_mock.assert_not_called()
         apply_mock.assert_called_once_with(existing_series, today)
 
@@ -1458,6 +1481,363 @@ class TestComputeAndPersistLoadMetrics:
         assert persisted_rows
         assert persisted_rows[0]["date"] == today_iso
         apply_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_formula_change_full_recalc_bypasses_effective_date_clamp(self):
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        today_iso = today.isoformat()
+        expected_start = (today - timedelta(days=120)).isoformat()
+        existing_series = [
+            {
+                "date": today_iso,
+                "tss": 10.0,
+                "atl": 20.0,
+                "ctl": 30.0,
+                "tsb": 10.0,
+                "activities_count": 1,
+            }
+        ]
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        # Fuerza formula_changed y además effective_date=today para reproducir el bug.
+        agent.user_profile = {
+            "load_metrics": {"formula_version": 0},
+            "performance": {"performance_params_updated_at": today_iso},
+        }
+
+        captured = {}
+
+        async def _fake_fetch(_session, start_date, end_date):
+            captured["start_date"] = start_date
+            captured["end_date"] = end_date
+            return []
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch.object(TrainerAgent, "_apply_series_to_profile"):
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
+
+        assert captured["start_date"] == expected_start
+        assert captured["end_date"] == today_iso
+        upsert_mock.assert_called_once()
+        persisted_rows = upsert_mock.call_args[0][0]
+        assert persisted_rows
+        assert persisted_rows[0]["date"] == expected_start
+
+    @pytest.mark.asyncio
+    async def test_existing_user_up_to_date_refreshes_from_yesterday_when_missing_activity(self):
+        import agent.trainer_agent as trainer_mod
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        today_iso = today.isoformat()
+        yesterday_iso = (today - timedelta(days=1)).isoformat()
+        existing_series = [
+            {
+                "date": yesterday_iso,
+                "tss": 0.0,
+                "atl": 44.0,
+                "ctl": 34.0,
+                "tsb": -10.0,
+                "activities_count": 0,
+            },
+            {
+                "date": today_iso,
+                "tss": 20.0,
+                "atl": 46.0,
+                "ctl": 35.0,
+                "tsb": -11.0,
+                "activities_count": 1,
+            },
+        ]
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {"load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION}}
+
+        async def _fake_fetch(_session, start_date, end_date):
+            if start_date == today_iso and end_date == today_iso:
+                return []
+            if start_date == yesterday_iso and end_date == yesterday_iso:
+                return [
+                    {
+                        "activityId": 321,
+                        "startTimeLocal": f"{yesterday_iso}T07:10:00",
+                        "trainingLoad": 67.2,
+                        "type": "hiking",
+                        "duration": 5400,
+                        "averageHR": 128,
+                        "maxHR": 162,
+                    }
+                ]
+            if start_date == yesterday_iso and end_date == today_iso:
+                return [
+                    {
+                        "activityId": 321,
+                        "startTimeLocal": f"{yesterday_iso}T07:10:00",
+                        "trainingLoad": 67.2,
+                        "type": "hiking",
+                        "duration": 5400,
+                        "averageHR": 128,
+                        "maxHR": 162,
+                    }
+                ]
+            return []
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
+
+        assert any(
+            c.args[1] == yesterday_iso and c.args[2] == yesterday_iso
+            for c in fetch_mock.await_args_list
+        )
+        assert any(
+            c.args[1] == yesterday_iso and c.args[2] == today_iso
+            for c in fetch_mock.await_args_list
+        )
+        upsert_mock.assert_called_once()
+        persisted_rows = upsert_mock.call_args[0][0]
+        assert persisted_rows
+        assert persisted_rows[0]["date"] == yesterday_iso
+        apply_mock.assert_called_once()
+
+
+class TestActivityAnalysisMarkdownFormatting:
+    def test_format_activity_analysis_for_markdown_adds_sections_and_bullets(self):
+        raw = "\n".join([
+            "=== RESUMEN DE ACTIVIDAD (calculado) ===",
+            "Nombre: Sesion test",
+            "Deporte: Senderismo",
+            "hrTSS: 79.4",
+            "",
+            "=== ZONAS DE FRECUENCIA CARDIACA (datos reales Garmin — Tiempo en Zonas) ===",
+            "Z1 · Calentamiento · >46 bpm 100.0% (~119 min)",
+        ])
+
+        out = _format_activity_analysis_for_markdown(raw)
+
+        assert "### RESUMEN DE ACTIVIDAD (calculado)" in out
+        assert "- Nombre: Sesion test" in out
+        assert "- Deporte: Senderismo" in out
+        assert "- hrTSS: 79.4" in out
+        assert "### ZONAS DE FRECUENCIA CARDIACA (datos reales Garmin — Tiempo en Zonas)" in out
+        assert "- Z1 · Calentamiento · >46 bpm 100.0% (~119 min)" in out
+
+    @pytest.mark.asyncio
+    async def test_recent_refresh_from_yesterday_bypasses_effective_date_clamp(self):
+        import agent.trainer_agent as trainer_mod
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        today_iso = today.isoformat()
+        yesterday_iso = (today - timedelta(days=1)).isoformat()
+        existing_series = [
+            {
+                "date": yesterday_iso,
+                "tss": 0.0,
+                "atl": 44.0,
+                "ctl": 34.0,
+                "tsb": -10.0,
+                "activities_count": 0,
+            },
+            {
+                "date": today_iso,
+                "tss": 10.0,
+                "atl": 46.0,
+                "ctl": 35.0,
+                "tsb": -11.0,
+                "activities_count": 1,
+            },
+        ]
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {
+            "load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION},
+            "performance": {"performance_params_updated_at": today_iso},
+        }
+
+        async def _fake_fetch(_session, start_date, end_date):
+            if start_date == today_iso and end_date == today_iso:
+                return []
+            if start_date == yesterday_iso and end_date == yesterday_iso:
+                return [
+                    {
+                        "activityId": 999,
+                        "startTimeLocal": f"{yesterday_iso}T09:00:00",
+                        "trainingLoad": 58.5,
+                        "type": "running",
+                        "duration": 3600,
+                        "averageHR": 140,
+                        "maxHR": 170,
+                    }
+                ]
+            if start_date == yesterday_iso and end_date == today_iso:
+                return [
+                    {
+                        "activityId": 999,
+                        "startTimeLocal": f"{yesterday_iso}T09:00:00",
+                        "trainingLoad": 58.5,
+                        "type": "running",
+                        "duration": 3600,
+                        "averageHR": 140,
+                        "maxHR": 170,
+                    }
+                ]
+            return []
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch.object(TrainerAgent, "_apply_series_to_profile"):
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
+
+        upsert_mock.assert_called_once()
+        persisted_rows = upsert_mock.call_args[0][0]
+        assert persisted_rows
+        # Debe iniciar en ayer, no en hoy, aunque performance_params_updated_at == hoy.
+        assert persisted_rows[0]["date"] == yesterday_iso
+
+    @pytest.mark.asyncio
+    async def test_existing_user_up_to_date_refreshes_from_two_days_ago_when_missing_activity(self):
+        import agent.trainer_agent as trainer_mod
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        today_iso = today.isoformat()
+        yesterday_iso = (today - timedelta(days=1)).isoformat()
+        two_days_ago_iso = (today - timedelta(days=2)).isoformat()
+        existing_series = [
+            {
+                "date": two_days_ago_iso,
+                "tss": 0.0,
+                "atl": 42.0,
+                "ctl": 33.0,
+                "tsb": -9.0,
+                "activities_count": 0,
+            },
+            {
+                "date": yesterday_iso,
+                "tss": 15.0,
+                "atl": 43.5,
+                "ctl": 33.8,
+                "tsb": -9.7,
+                "activities_count": 1,
+            },
+            {
+                "date": today_iso,
+                "tss": 0.0,
+                "atl": 41.0,
+                "ctl": 33.5,
+                "tsb": -7.5,
+                "activities_count": 0,
+            },
+        ]
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {
+            "load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION},
+            "performance": {"performance_params_updated_at": today_iso},
+        }
+
+        async def _fake_fetch(_session, start_date, end_date):
+            if start_date == today_iso and end_date == today_iso:
+                return []
+            if start_date == yesterday_iso and end_date == yesterday_iso:
+                return []
+            if start_date == two_days_ago_iso and end_date == two_days_ago_iso:
+                return [
+                    {
+                        "activityId": 888,
+                        "startTimeLocal": f"{two_days_ago_iso}T07:10:00",
+                        "trainingLoad": 61.4,
+                        "type": "hiking",
+                        "duration": 5400,
+                        "averageHR": 126,
+                        "maxHR": 160,
+                    }
+                ]
+            if start_date == two_days_ago_iso and end_date == today_iso:
+                return [
+                    {
+                        "activityId": 888,
+                        "startTimeLocal": f"{two_days_ago_iso}T07:10:00",
+                        "trainingLoad": 61.4,
+                        "type": "hiking",
+                        "duration": 5400,
+                        "averageHR": 126,
+                        "maxHR": 160,
+                    }
+                ]
+            return []
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch.object(TrainerAgent, "_apply_series_to_profile"):
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
+
+        assert any(
+            c.args[1] == two_days_ago_iso and c.args[2] == two_days_ago_iso
+            for c in fetch_mock.await_args_list
+        )
+        upsert_mock.assert_called_once()
+        persisted_rows = upsert_mock.call_args[0][0]
+        assert persisted_rows
+        assert persisted_rows[0]["date"] == two_days_ago_iso
+
+
+class TestFetchActivitiesForLoadCalc:
+    @pytest.mark.asyncio
+    async def test_fetch_activities_does_not_stop_when_first_page_is_older(self):
+        from datetime import date as _date
+
+        today = _date.today()
+        today_iso = today.isoformat()
+        yesterday_iso = (today - timedelta(days=1)).isoformat()
+        old_iso = (today - timedelta(days=30)).isoformat()
+
+        first_page = json.dumps(
+            {
+                "activities": [
+                    {"activityId": 1, "startTimeLocal": f"{old_iso}T08:00:00"},
+                ],
+                "has_more": True,
+                "next_start": 100,
+            }
+        )
+        second_page = json.dumps(
+            {
+                "activities": [
+                    {"activityId": 2, "startTimeLocal": f"{yesterday_iso}T07:00:00", "trainingLoad": 42.0},
+                ],
+                "has_more": False,
+                "next_start": 200,
+            }
+        )
+
+        session = MagicMock()
+        with patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=[first_page, second_page])):
+            out = await _fetch_activities_for_load_calc(session, yesterday_iso, today_iso)
+
+        assert len(out) == 1
+        assert int(out[0].get("activityId") or 0) == 2
 
 
 # ─── Fallback de planificacion y rangos trend ─────────────────────────────
@@ -3549,6 +3929,11 @@ class TestWeekTssDeterministicRoute:
         assert _is_week_tss_intent("Dame el acumulado semanal de TSS")
         assert not _is_week_tss_intent("Como esta mi HRV hoy?")
 
+    def test_is_week_activities_intent_detects_weekly_activity_queries(self):
+        assert _is_week_activities_intent("Cuales son mis actividades de la semana del 10 de agosto 2026?")
+        assert _is_week_activities_intent("Que entrenamientos hice esta semana?")
+        assert not _is_week_activities_intent("Cuanto TSS llevo esta semana?")
+
     @pytest.mark.asyncio
     async def test_chat_week_tss_route_does_not_call_llm(self):
         from agent.trainer_agent import TrainerAgent
@@ -3564,13 +3949,38 @@ class TestWeekTssDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._build_current_week_tss_markdown", new=AsyncMock(return_value="## Consulta TSS semanal (datos reales)\n\n- ok\n\n_Respuesta determinista: sin inferencias del LLM para nombres/tipos de actividad._")) as weekly_mock, patch(
+        with patch("agent.trainer_agent._build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cuánto TSS llevo esta semana?")
 
         weekly_mock.assert_awaited_once()
-        assert out.startswith("## Consulta TSS semanal (datos reales)")
+        assert out.startswith("## 🧭 Resumen")
+        assert "sin inferencias del LLM" in out
+        assert len(agent.conversation_history) == 2
+
+    @pytest.mark.asyncio
+    async def test_chat_week_activities_route_does_not_call_llm(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"load_metrics": {"series": []}}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+
+        with patch("agent.trainer_agent._build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
+            "agent.trainer_agent._save_history_entry"
+        ):
+            out = await TrainerAgent.chat(agent, "Cuales son mis actividades de la semana del 10 de agosto 2026?")
+
+        weekly_mock.assert_awaited_once()
+        assert out.startswith("## 🧭 Resumen")
         assert "sin inferencias del LLM" in out
         assert len(agent.conversation_history) == 2
 
@@ -3623,9 +4033,194 @@ class TestWeekTssDeterministicRoute:
 
         out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile)
 
-        assert "TSS acumulado: 342.9" in out
+        assert "| TSS acumulado | 342.9 |" in out
         assert "sabado 15/08: 82.5" in out
         assert "fallback" in out
+
+    def test_resolve_week_window_uses_explicit_historical_date(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 8, 18)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+
+        week_start, week_end = _resolve_week_window("semana del 10 de agosto de 2026", _FakeDate.today())
+        assert week_start.isoformat() == "2026-08-10"
+        assert week_end.isoformat() == "2026-08-16"
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_honors_explicit_week_date(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 8, 18)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-08-10", "tss": 40.0},
+                    {"date": "2026-08-11", "tss": 30.0},
+                    {"date": "2026-08-12", "tss": 20.0},
+                    {"date": "2026-08-13", "tss": 10.0},
+                    {"date": "2026-08-14", "tss": 0.0},
+                    {"date": "2026-08-15", "tss": 5.0},
+                    {"date": "2026-08-16", "tss": 15.0},
+                    {"date": "2026-08-17", "tss": 99.0},
+                ]
+            }
+        }
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return [
+                {
+                    "activityName": "Rodaje lunes",
+                    "activityType": "running",
+                    "startTimeLocal": "2026-08-10 07:00:00",
+                    "trainingLoad": 40.0,
+                },
+                {
+                    "activityName": "Senderismo domingo",
+                    "activityType": "hiking",
+                    "startTimeLocal": "2026-08-16 08:00:00",
+                    "trainingLoad": 15.0,
+                },
+                {
+                    "activityName": "Actividad fuera de semana",
+                    "activityType": "running",
+                    "startTimeLocal": "2026-08-17 08:00:00",
+                    "trainingLoad": 99.0,
+                },
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="Dime los entrenamientos y Tss de la semana del 10 de agosto 2026",
+        )
+
+        assert "| Semana natural | 10/08/2026 → 16/08/2026 |" in out
+        assert "| TSS acumulado | 120.0 |" in out
+        assert "lunes 10/08: 40.0" in out
+        assert "domingo 16/08: 15.0" in out
+        assert "Actividad fuera de semana" not in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_replaces_zero_day_with_activity_load(self, monkeypatch):
+        import agent.trainer_agent as ta
+
+        class _FakeDate:
+            @staticmethod
+            def today():
+                from datetime import date as _Date
+
+                return _Date(2026, 8, 18)
+
+            @staticmethod
+            def fromisoformat(value):
+                from datetime import date as _Date
+
+                return _Date.fromisoformat(value)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-08-17", "tss": 0.0},
+                    {"date": "2026-08-18", "tss": 0.0},
+                ]
+            }
+        }
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return [
+                {
+                    "activityName": "Senderismo",
+                    "activityType": "hiking",
+                    "startTimeLocal": "2026-08-17 08:00:00",
+                    "trainingLoad": 79.4,
+                }
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="Dime los TSSs de esta semana",
+        )
+
+        assert "lunes 17/08: 79.4" in out
+        assert "| TSS acumulado | 79.4 |" in out
+        assert "fallback" in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_estimates_strength_tss_when_training_load_missing(self, monkeypatch):
+        import agent.trainer_agent as ta
+
+        class _FakeDate:
+            @staticmethod
+            def today():
+                from datetime import date as _Date
+
+                return _Date(2026, 8, 18)
+
+            @staticmethod
+            def fromisoformat(value):
+                from datetime import date as _Date
+
+                return _Date.fromisoformat(value)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-08-17", "tss": 0.0},
+                    {"date": "2026-08-18", "tss": 0.0},
+                ]
+            }
+        }
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return [
+                {
+                    "activityName": "Fuerza tren inferior",
+                    "activityType": "strength_training",
+                    "startTimeLocal": "2026-08-17 19:00:00",
+                    "duration": 3600,
+                    "averageHR": 120,
+                    "maxHR": 160,
+                }
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="Dime los TSSs de esta semana",
+        )
+
+        assert "lunes 17/08: 0.0" not in out
+        assert "TSS acumulado: 0.0" not in out
 
 
 class TestHrThresholdDeterministicRoute:
@@ -3681,7 +4276,7 @@ class TestHrThresholdDeterministicRoute:
         ):
             out = await TrainerAgent.chat(agent, "Cual es mi FC umbral?")
 
-        assert out.startswith("## FC umbral actual")
+        assert out.startswith("## 🧭 Resumen")
         assert "174 bpm" in out
 
     @pytest.mark.asyncio
@@ -3710,7 +4305,7 @@ class TestHrThresholdDeterministicRoute:
         ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
             out = await TrainerAgent.chat(agent, "puedes consultar a garmin connect cual es mi FC umbral?")
 
-        assert out.startswith("## FC umbral actual")
+        assert out.startswith("## 🧭 Resumen")
         assert "169 bpm" in out
 
     @pytest.mark.asyncio
@@ -3796,7 +4391,7 @@ class TestHrThresholdDeterministicRoute:
         with patch("agent.trainer_agent._save_history_entry"):
             out = await TrainerAgent.chat(agent, "que opciones puedo cambiar?")
 
-        assert out.startswith("## Menú de opciones disponibles")
+        assert out.startswith("## 🧭 Resumen")
         assert "/perfil umbral" in out
         assert "/perfil fc" in out
 
@@ -3964,7 +4559,7 @@ class TestDailyReadinessDeterministicRoute:
             out = await TrainerAgent.chat(agent, "¿Cómo estoy hoy para entrenar y qué me recomiendas?")
 
         agent.collect_startup_snapshot_48h.assert_awaited_once()
-        assert "Estado Proactivo" in out
+        assert "Estado proactivo" in out
         assert "sin inferencias numéricas del LLM" in out
         assert len(agent.conversation_history) == 2
 
@@ -3998,15 +4593,56 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._build_mcp_factual_query_markdown", new=AsyncMock(return_value="## Consulta factual (MCP)\n- ok\n\n_Respuesta determinista: datos factuales consultados por MCP; sin inferencias numéricas del LLM._")) as factual_mock, patch(
+        with patch("agent.trainer_agent._build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "¿Qué TSS hice ayer?")
 
         factual_mock.assert_awaited_once()
-        assert out.startswith("## Consulta factual (MCP)")
+        assert out.startswith("## 🧭 Resumen")
         assert "sin inferencias numéricas del LLM" in out
         assert len(agent.conversation_history) == 2
+
+    @pytest.mark.asyncio
+    async def test_build_mcp_factual_query_markdown_falls_back_to_activity_tss_when_series_is_zero(self):
+        import agent.trainer_agent as ta
+
+        target_iso = "2026-08-17"
+
+        async def _fake_call_tool(_session, tool_name, args):
+            if tool_name == "get_activities_by_date":
+                return [
+                    {
+                        "activityName": "Senderismo",
+                        "activityType": "hiking",
+                        "startTimeLocal": f"{target_iso} 08:00:00",
+                        "trainingLoad": 79.4,
+                        "duration": 7140,
+                    }
+                ]
+            if tool_name == "get_training_load_trend":
+                return []
+            return {}
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": target_iso, "tss": 0.0},
+                ]
+            }
+        }
+
+        with patch("agent.trainer_agent.call_tool", _fake_call_tool), patch(
+            "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
+        ):
+            out = await ta._build_mcp_factual_query_markdown(
+                mcp_session=object(),
+                profile=profile,
+                user_message="Cuales son los TSS de la actividad del 17/08/26?",
+            )
+
+        assert "| TSS del día | 79.4 |" in out
+        assert "garmin_activities(fallback)" in out
 
 
 class TestRunningThresholdDeterministicRoute:
