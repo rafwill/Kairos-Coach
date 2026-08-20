@@ -2,6 +2,57 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-08-21
+
+### Changed
+- Cierre de arquitectura mixta en rutas deterministas de consulta factual:
+	- `week_tss`, `week_activities`, `load_trend`, `today_load_status`, `daily_readiness`, `activity_details` y `mcp_factual` mantienen bloque factual determinista y aplican capa de coaching por LLM cuando la consulta pide recomendación.
+- Ajuste de intención factual para separar mejor:
+	- consultas mixtas (dato + recomendación),
+	- consultas de recomendación pura (sin base factual), que no deben caer en factual determinista.
+
+### Fixed
+- Transparencia en fallback híbrido: si la fase LLM de coaching falla (timeout/error o respuesta vacía), Kairos ya no vuelve en silencio al bloque factual; ahora informa explícitamente que no fue posible generar la recomendación de coaching en ese intento.
+- Alineación de `today_load_status` con la lógica objetivo: sin recomendación determinista "de relleno" cuando se solicita interpretación; la recomendación pertenece a la fase LLM.
+
+### Tests
+- Nuevas pruebas de regresión para capa híbrida en rutas faltantes:
+	- `week_activities`, `load_trend`, `today_load_status`, `mcp_factual`, `activity_details`.
+- Nueva prueba de resiliencia para `today_load_status` cuando el LLM de coaching entra en timeout, verificando mensaje explícito de indisponibilidad.
+- Validación local actualizada en verde:
+	- `tests/test_trainer_agent.py`: 307 passed.
+
+## 2026-08-20
+
+### Added
+- Plan operativo del punto 9 (MCP propio / congelado Essentials) documentado en `TODO.md`:
+	- fases de ejecucion (descubrimiento, backend dual, adapter, implementacion subset, pruebas, corte controlado),
+	- criterios de cierre (contratos versionados, rutas criticas sin dependencia funcional de terceros, rollback validado, runbook).
+- Nueva prueba de regresion para ventana de verificacion no fija en arranque de carga:
+	- valida que el refresco se ancla al ultimo dia con actividad registrada y no a una ventana corta fija.
+
+### Changed
+- Reglas de deteccion de actividad nueva en arranque (`compute_and_persist_load_metrics`):
+	- se elimina la logica de ventana minima fija de 2-3 dias,
+	- la verificacion MCP ahora se ancla al ultimo dia con actividad en DB (o al ultimo dia de serie como fallback),
+	- se recorre desde la ancla hasta hoy y, si hay desfase, se recalcula desde el primer dia afectado.
+- Actualizacion integral de `README.md` al estado real del proyecto:
+	- estructura de repo vigente,
+	- rutas deterministas incluyendo `activity_details`,
+	- flujo de carga actualizado (full_recalc / incremental_refresh / up_to_date),
+	- ajustes de cifras y comportamiento operativo documentado.
+
+### Fixed
+- Ajustes de cobertura y expectativas en tests de refresco incremental para reflejar el nuevo patron de consulta MCP por rango anclado.
+
+### Tests
+- Validacion focal en verde para regresiones de carga incremental y refresco por actividad nueva:
+	- casos de `up_to_date`,
+	- refresco por actividad nueva del dia,
+	- refresco con actividad faltante en dias previos,
+	- caso de brecha larga (ancla historica),
+	- bypass correcto de clamp por fecha efectiva en refrescos recientes.
+
 ## 2026-08-18
 
 ### Added

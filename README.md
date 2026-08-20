@@ -60,12 +60,14 @@ Esto funciona como el briefing que te daría un entrenador de élite antes de qu
 #### 10. Harness explícito en runtime (hooks + router)
 El runtime del agente ya expone capa de harness explícita en `TrainerAgent.chat()`:
 - `HookManager` con eventos `before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`
-- `ToolRouter` determinista opcional para intenciones críticas (`plan_status`, `week_tss`, `week_activities`, `hr_threshold`, `running_threshold`, `mcp_factual`, `daily_readiness`, `planning`, `personal_records`, `config_options`)
+- `ToolRouter` determinista opcional para intenciones críticas (`plan_status`, `week_tss`, `week_activities`, `hr_threshold`, `running_threshold`, `activity_details`, `mcp_factual`, `daily_readiness`, `planning`, `personal_records`, `config_options`)
 - Flag de control: `KAIROS_DETERMINISTIC_ROUTER=true|false`
 
 Nota de diseño actual:
 - Las consultas de propuesta de entrenamiento para mañana pasan por LLM (no ruta determinista).
+- Las consultas factuales de detalle por día (por ejemplo, "entrenamiento de ayer" o "entrenamiento del martes") se resuelven por ruta determinista MCP-first para evitar latencia innecesaria del LLM.
 - Si el LLM responde de forma genérica pidiendo más información, Kairos lanza un segundo intento con contexto proactivo (48h) para devolver una propuesta útil y concreta.
+- En consultas mixtas (dato + recomendación), Kairos responde en dos fases: bloque factual determinista primero y coaching por LLM después. Si el LLM falla o agota timeout, la salida lo indica explícitamente y no inventa recomendación determinista.
 
 La documentación de harness se mantiene en `docs/Harness.md`.
 
@@ -665,31 +667,49 @@ Si actualizas `garmin-mcp`, revisa estos contratos antes de desplegar cambios en
 
 ```
 kairos-coach/
+├── .github/
+│   └── workflows/
+│       └── tests.yml          # CI de pytest en push/pull request.
 ├── agent/
 │   ├── __init__.py
 │   ├── main.py            # Punto de entrada: menú de proveedor, herramientas, chat e interfaz de usuario.
 │   ├── mcp_client.py      # Cliente MCP asíncrono — lanza garmin-mcp local o uvx (fallback).
 │   ├── storage.py         # Capa de persistencia multiusuario DB-first (Supabase).
 │   └── trainer_agent.py   # Agente: tool-calling, adaptadores LLM, lógica de conversación.
+├── docs/
+│   ├── Harness.md
+│   ├── mcp-tools-completo-vs-essentials.md
+│   └── validation-load-fatigue-e2e-2026-08-15.md
 ├── memory/                # Base de conocimiento local opcional (RAG).
-│   └── .gitkeep
+│   └── users/
 ├── prompts/
 │   ├── system_prompt.md            # Prompt principal: personalidad, protocolos y uso de MCP por intención.
 │   ├── system_prompt_compact.md    # Versión compacta del prompt para reducir tokens manteniendo reglas críticas.
 │   └── mcp_tool_routing_guide.md   # Guía operativa de enrutado de tools MCP por intención.
 ├── supabase/
-│   └── schema.sql         # DDL para crear las tablas en Supabase (ejecutar en SQL Editor).
+│   ├── schema.sql         # DDL para crear las tablas en Supabase (ejecutar en SQL Editor).
+│   └── migrations/        # Migraciones incrementales de esquema.
 ├── tests/
 │   ├── __init__.py
 │   ├── test_trainer_agent.py  # Tests de funciones puras + mock de Gemini.
 │   ├── test_main.py           # Tests de validaciones de input + flujo principal.
 │   ├── test_storage.py        # Tests de persistencia DB-first y seguridad de credenciales.
+│   ├── test_hooks_router.py   # Tests de HookManager y ToolRouter.
 │   └── test_fit_tss_probe.py  # Tests sintéticos de detección de patrones de intervalos.
+├── tools/
+│   └── fit_tss_probe.py   # Utilidad local de soporte para análisis TSS.
+├── tmp/                   # Scripts utilitarios de catálogo/render de tools MCP.
+│   ├── build_mcp_catalog.py
+│   ├── mcp_tools_dump.py
+│   └── render_mcp_catalog.py
 ├── .env                   # Credenciales locales (no subir a git).
 ├── .env.example           # Plantilla de configuración con comentarios.
 ├── agent.log              # Log de ejecución del agente (local, no versionar).
 ├── requirements.txt       # Dependencias de producción.
 ├── requirements-dev.txt   # Dependencias de desarrollo: pytest, pytest-asyncio.
+├── setup.ps1              # Setup automático para Windows.
+├── setup.sh               # Setup automático para Unix/macOS.
+├── Makefile               # Atajos de tareas de desarrollo.
 ├── pytest.ini             # Configuración de pytest.
 ├── TODO.md                # Roadmap y mejoras futuras planificadas.
 └── README.md
@@ -706,7 +726,7 @@ kairos-coach/
 | Sistema multiusuario cloud | ✅ Supabase | ❌ single-user local |
 | Protocolo médico DT1 | ✅ | ❌ |
 | Especialización trail running | ✅ | ❌ |
-| Memoria persistente entre sesiones | ✅ (5 resúmenes) | ❌ |
+| Memoria persistente entre sesiones | ✅ (hasta 10 resúmenes persistidos) | ❌ |
 | Pre-cómputo en Python (zonas FC, ritmo, hidratación) | ✅ | ❌ |
 | Rutas deterministas para plan y PRs | ✅ | ❌ |
 | Escritura en calendario externo (TP, Garmin) | ❌ | ✅ TP |
@@ -726,21 +746,18 @@ Esta sección describe qué ocurre dentro del código en cada operación clave. 
 main.py → asyncio.run(run_agent())
   └─ TrainerAgent.initialize()
        └─ list_available_tools(mcp_session)   → filtra tools de escritura si MCP_READ_ONLY=true
+  └─ TrainerAgent.compute_and_persist_load_metrics()
+    ├─ modo incremental (normal): recalcula desde último cierre en DB
+    ├─ modo incremental_refresh: refresca días recientes si entraron actividades nuevas
+    └─ modo full_recalc (casos puntuales): usuario nuevo/cambio fórmula/serie inválida
   └─ TrainerAgent.build_startup_status_markdown()
-       └─ collect_startup_snapshot_48h()
-            ├─ call_tool("get_body_battery", start_date, end_date)
-            ├─ call_tool("get_hrv_data", date)
-            ├─ call_tool("get_sleep_summary", date)
-            ├─ call_tool("get_training_load_trend", 56 días)
-            ├─ call_tool("get_activities", limit=12)
-            └─ _compute_load_fatigue_metrics(activities, trend_payload, profile)
-                 └─ persiste en profile["load_metrics"] → _save_user_profile() → Supabase
-       └─ _build_proactive_status_markdown(snapshot)  → briefing visible al usuario
+    └─ collect_startup_snapshot_48h() + serie canónica DB
+      └─ _build_proactive_status_markdown(snapshot)  → briefing visible al usuario
 ```
 
 ### Cálculo del modelo TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)
 
-> **Overhaul completo (2026-07-23):** La serie se calcula de forma incremental (solo procesa días nuevos desde el último registro en DB). Migración automática de fórmulas legacy (v0→v4). Los 14 últimos días se re-enriquecen con detalle de actividad (`trainingStressScore` y potencia) en cada arranque para corregir estimaciones.
+> **Estado actual (v14):** La serie se calcula de forma incremental (solo procesa días necesarios desde el último registro en DB). Migración automática de fórmulas legacy (`formula_version`) y refresco de días recientes para capturar actividad nueva no reflejada aún en DB.
 
 ### Reset one-shot del precálculo (cuando cambia la fórmula)
 
@@ -755,7 +772,7 @@ En el siguiente arranque, al no existir serie previa, Kairos recalcula la ventan
 Comportamiento normal de arranque:
 
 - Si `formula_version` guardada en perfil es distinta de la versión del código, fuerza recálculo completo automático.
-- Si la versión coincide y la serie está al día, reutiliza DB y hace cálculo incremental.
+- Si la versión coincide y la serie está al día, reutiliza DB y puede hacer `up_to_date` o `incremental_refresh` según actividad reciente.
 
 ```
 _compute_load_fatigue_metrics(activities, trend_payload, profile, days_window)
@@ -798,14 +815,19 @@ TrainerAgent.chat(user_message)
   ├─ Ruta 3 — Récords personales (determinista)
   │    └─ _is_personal_records_intent(msg) → call_tool("get_personal_record") → tabla
   │
-  ├─ Ruta 4 — Análisis de actividad por fecha (pre-fetch)
-  │    └─ _extract_iso_date_from_text(msg) → _find_activity_id_by_date()
-│         ├─ Pre-carga: actividad + body battery (compact) + sueño (user_date + fallback) + HRV + carga
-│         ├─ Zonas FC: cascada get_activity_hr_in_timezones → zones en activity JSON → estimación gaussiana
-│         └─ _build_activity_analysis_block() → 6 secciones pre-computadas para el LLM
-│              resumen · zonas FC reales · efecto · hidratación · estado pre-carrera (BB+sueño+HRV) · recuperación
+  ├─ Ruta 4 — Detalle factual de actividad por día (determinista)
+  │    └─ `activity_details` / `mcp_factual`
+  │         ├─ Resuelve fecha objetivo (hoy/ayer/anteayer/ISO/día de semana)
+  │         ├─ Consulta Garmin MCP (actividades + métricas diarias)
+  │         └─ Devuelve markdown estructurado sin pasar por LLM
   │
-  └─ Ruta 5 — LLM con tool-calling (resto de intenciones)
+  ├─ Ruta 5 — Análisis profundo por fecha (pre-fetch + LLM)
+  │    └─ _extract_iso_date_from_text(msg) → _find_activity_id_by_date()
+  │         ├─ Pre-carga: actividad + body battery + sueño + HRV + carga
+  │         ├─ Zonas FC reales con cascada get_activity_hr_in_timezones
+  │         └─ _build_activity_analysis_block() inyectado al LLM
+  │
+  └─ Ruta 6 — LLM con tool-calling (resto de intenciones)
        └─ Bucle hasta 15 iteraciones:
             ├─ LLM decide qué tools llamar
             ├─ call_tool() → resultado → _compact_tool_result() → max 3000 chars
@@ -935,7 +957,7 @@ En recálculo completo (`force_full_recalc=True`), Kairos enriquece ciclismo y r
 
 ## 🧪 Tests
 
-El proyecto incluye una suite activa de tests unitarios (233 validados en local a fecha 2026-07-30) que cubre las funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM.
+El proyecto incluye una suite activa de tests unitarios (colección en crecimiento continuo) que cubre funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM. Como referencia reciente, `tests/test_trainer_agent.py` valida actualmente 307 tests en verde.
 
 ### Instalar dependencias de desarrollo
 ```powershell
