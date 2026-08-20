@@ -4,6 +4,7 @@
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
 - Suite de tests: 360 tests (validados localmente a 2026-08-18). CI/CD con GitHub Actions activo.
+- Validacion reciente de regresion focal (2026-08-21): `tests/test_trainer_agent.py` en verde (307 passed).
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 - Contrato de salida unificado activo (prompt completo + prompt compacto + rutas deterministas clave).
 
@@ -100,6 +101,30 @@
 #### 9) Congelado del código MCP
 - Evaluar vendorizar/congelar el código MCP en el repo para evitar roturas por cambios upstream.
 - Analizar qué tools usamos y cuáles no para traernos al código solo las que necesitamos.
+- Plan de ejecución propuesto (MCP propio basado en Essentials):
+  - Fase 1 — Descubrimiento y baseline de uso real:
+    - Inventariar tools MCP usadas en runtime, prompts y tests (frecuencia + criticidad).
+    - Entregable: catálogo único de tools esenciales y contratos esperados (input/output).
+  - Fase 2 — Estrategia de transición sin ruptura:
+    - Adoptar backend dual con flag (`MCP_BACKEND=frozen|upstream`) para rollback inmediato.
+    - Mantener upstream como fallback temporal mientras se estabiliza el MCP propio.
+  - Fase 3 — Capa de adaptación estable en Kairos:
+    - Implementar adapter interno para desacoplar `trainer_agent`/`mcp_client` de payloads volátiles.
+    - Versionar contratos de tools esenciales para bloquear cambios no compatibles.
+  - Fase 4 — Construcción del MCP propio (subset Essentials):
+    - Implementar solo las tools críticas usadas por Kairos (no clonar todo el servidor externo).
+    - Priorizar rutas deterministas y métricas de arranque (actividad, carga, HRV, sueño, body battery, PRs).
+  - Fase 5 — Pruebas y hardening:
+    - Añadir tests de contratos MCP (schema + campos mínimos) y regresión funcional E2E.
+    - Añadir chequeo CI de drift entre catálogo esperado y tools realmente expuestas.
+  - Fase 6 — Corte controlado de dependencia externa:
+    - Promover `frozen` como backend por defecto al cumplir criterios de estabilidad.
+    - Mantener `upstream` solo para contingencia durante una ventana de observación.
+- Criterios de cierre del punto 9:
+  - Contratos de tools esenciales versionados y testeados en CI.
+  - Rutas críticas operativas sin dependencia funcional del MCP de terceros.
+  - Rollback operativo validado mediante flag de backend.
+  - Documentación técnica y runbook de mantenimiento del MCP propio publicados.
 
 ---
 
@@ -281,6 +306,12 @@
   - bloqueo por `ExecutionPolicy`,
   - `python` no reconocido,
   - `uvx` no reconocido.
+
+#### 63) [HYBRID-COACHING] Cierre de arquitectura mixta + fallback transparente (2026-08-21) — REALIZADO
+- Rutas factuales clave en modo mixto: bloque determinista de datos + fase LLM de interpretación cuando la consulta pide recomendación (`week_tss`, `week_activities`, `load_trend`, `today_load_status`, `daily_readiness`, `activity_details`, `mcp_factual`).
+- Si el LLM falla/timeout o devuelve vacío en la fase de coaching, Kairos informa explícitamente la indisponibilidad y mantiene únicamente el bloque factual como fuente de verdad (sin recomendación determinista de relleno).
+- Cobertura de regresión ampliada para rutas mixtas y escenario de timeout en `today_load_status`.
+- Validación local: `tests/test_trainer_agent.py` en verde (307 passed).
 
 #### 4) Logging de producción (2026-08-15) — REALIZADO
 - Configuración de logging por entorno en runtime: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.

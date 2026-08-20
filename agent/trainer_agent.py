@@ -538,6 +538,7 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
             distance = data.get("distance") or data.get("distance_meters")
             avg_hr   = data.get("avgHr") or data.get("avg_hr_bpm") or data.get("averageHR")
             max_hr   = data.get("maxHr") or data.get("max_hr_bpm") or data.get("maxHR")
+            dur_s = None
             try:
                 if duration is not None:
                     dur_s = float(duration)
@@ -775,10 +776,16 @@ class ToolRouter:
             return "week_tss"
         if _is_week_activities_intent(user_message):
             return "week_activities"
+        if _is_load_trend_intent(user_message):
+            return "load_trend"
         if _is_hr_threshold_query_intent(user_message):
             return "hr_threshold"
         if _is_running_threshold_query_intent(user_message):
             return "running_threshold"
+        if _is_today_load_status_intent(user_message):
+            return "today_load_status"
+        if _is_activity_details_query_intent(user_message):
+            return "activity_details"
         if _is_mcp_factual_query_intent(user_message):
             return "mcp_factual"
         if _is_daily_readiness_intent(user_message):
@@ -3412,7 +3419,19 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         if next_adj:
             lines.append(f"  - Ajuste sugerido por adherencia: {next_adj}")
 
-    if plan_assigned:
+    decision_for_user = ""
+    decision = str((daily_plan_decision or {}).get("decision") or "").strip().lower()
+    if decision:
+        decision_for_user = {
+            "maintain": "calidad",
+            "reduce": "rodaje suave",
+            "easy": "rodaje suave",
+            "rest": "descanso",
+        }.get(decision, "rodaje suave")
+
+    if decision_for_user:
+        initial_recommendation = f"Elección recomendada hoy: {decision_for_user}."
+    elif plan_assigned:
         initial_recommendation = (
             plan_recommendation
             or "Tienes un plan activo. ¿Quieres que adapte la sesion de hoy a ese plan?"
@@ -3428,9 +3447,9 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     if isinstance(daily_plan_decision, dict) and daily_plan_decision.get("decision"):
         decision = str(daily_plan_decision.get("decision") or "").strip().lower()
         decision_label = {
-            "maintain": "mantener",
-            "reduce": "reducir",
-            "easy": "suave",
+            "maintain": "calidad",
+            "reduce": "rodaje suave",
+            "easy": "rodaje suave",
             "rest": "descanso",
         }.get(decision, decision or "n/d")
         reason = str(daily_plan_decision.get("reason") or "").strip()
@@ -3631,9 +3650,13 @@ def _is_week_tss_intent(user_message: str) -> bool:
         return False
     if "tss" not in text:
         return False
-    # Consulta explícita de datos/cifras: priorizar respuesta directa.
+    # Consulta explícita de datos/cifras/comparativa semanal: priorizar respuesta directa.
     data_markers = [
         "cuanto", "cuánto", "cual", "cuál", "cuales", "cuáles", "dime", "consulta", "datos", "acumulado", "llevo",
+        "compara", "comparame", "compárame", "comparativa", "diferencia", "porcentaje", "porcentual", "vs",
+        "spike", "semana pasada", "anterior",
+        "contribuye", "contribuido", "contribucion", "contribución",
+        "actividad", "actividades", "sesion", "sesión", "estimado por sesion", "estimado por sesión",
     ]
     week_markers = [
         "esta semana", "semana", "semanal", "lunes", "domingo", "acumulado semanal",
@@ -3704,6 +3727,119 @@ def _is_week_activities_intent(user_message: str) -> bool:
     return any(m in text for m in activity_markers) and (any(w in text for w in week_markers) or has_date)
 
 
+def _is_load_trend_intent(user_message: str) -> bool:
+    """Detecta consultas de tendencia de carga/fatiga para ruta determinista."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    trend_markers = (
+        "tendencia",
+        "evolucion",
+        "evolución",
+        "ultimos",
+        "últimos",
+        "dias",
+        "días",
+        "semanas",
+    )
+    metric_markers = (
+        "atl",
+        "ctl",
+        "tsb",
+        "fatiga",
+        "disponibilidad",
+        "forma",
+        "carga",
+    )
+    return any(m in text for m in trend_markers) and any(m in text for m in metric_markers)
+
+
+def _build_load_trend_markdown(profile: dict, user_message: str) -> str:
+    """Construye respuesta determinista de tendencia ATL/CTL/TSB sin LLM."""
+    text = (user_message or "").strip().lower()
+    days_back = 14
+    m = re.search(r"(\d{1,3})\s*d[ií]as", text)
+    if m:
+        try:
+            days_back = int(m.group(1))
+        except ValueError:
+            days_back = 14
+    days_back = max(7, min(days_back, 120))
+
+    load_metrics = (profile or {}).get("load_metrics") or {}
+    series = load_metrics.get("series") or _storage.get_load_metrics_series(days=120) or []
+    if not series:
+        return "\n".join([
+            "## 🧭 Resumen",
+            "No hay serie de carga/fatiga disponible todavía.",
+            "",
+            "## 📊 Métricas clave",
+            "No aplica en esta consulta.",
+            "",
+            "## ✅ Recomendación",
+            "- Reinicia la sesión o consulta `/carga` para generar/mostrar la serie persistida.",
+            "",
+            "## 🎯 Próximo paso",
+            "- Si quieres, comparo semana actual vs semana previa con TSS y spike.",
+        ])
+
+    tail = series[-days_back:]
+    first = tail[0]
+    last = tail[-1]
+
+    def _delta(a: float, b: float) -> tuple[float, str]:
+        d = round(b - a, 1)
+        if d > 0.2:
+            return d, "↗"
+        if d < -0.2:
+            return d, "↘"
+        return d, "→"
+
+    atl0, atl1 = float(first.get("atl") or 0.0), float(last.get("atl") or 0.0)
+    ctl0, ctl1 = float(first.get("ctl") or 0.0), float(last.get("ctl") or 0.0)
+    tsb0, tsb1 = float(first.get("tsb") or 0.0), float(last.get("tsb") or 0.0)
+
+    d_atl, a_atl = _delta(atl0, atl1)
+    d_ctl, a_ctl = _delta(ctl0, ctl1)
+    d_tsb, a_tsb = _delta(tsb0, tsb1)
+
+    ranges = load_metrics.get("ranges") or {}
+    tsb_low = float(ranges.get("tsb_low") or -10.0)
+    tsb_high = float(ranges.get("tsb_high") or 5.0)
+    atl_high = float(ranges.get("atl_high") or 9999.0)
+
+    going_to_fatigue = tsb1 < tsb_low or atl1 > atl_high
+    status_text = "fatiga" if going_to_fatigue else "disponibilidad"
+
+    recommendation = (
+        "- Señal de fatiga: prioriza descarga/rodaje suave y reevalúa mañana."
+        if going_to_fatigue
+        else "- Señal de disponibilidad: puedes sostener carga aeróbica o calidad controlada."
+    )
+
+    return "\n".join([
+        "## 🧭 Resumen",
+        f"Tendencia de los últimos {days_back} días: vas hacia **{status_text}**.",
+        "",
+        "## 📊 Métricas clave",
+        "| Métrica | Inicio | Actual | Delta | Tendencia |",
+        "|---|---:|---:|---:|:---:|",
+        f"| ATL (Fatiga) | {atl0:.1f} | {atl1:.1f} | {d_atl:+.1f} | {a_atl} |",
+        f"| CTL (Estado físico) | {ctl0:.1f} | {ctl1:.1f} | {d_ctl:+.1f} | {a_ctl} |",
+        f"| TSB (Forma) | {tsb0:.1f} | {tsb1:.1f} | {d_tsb:+.1f} | {a_tsb} |",
+        f"| Umbral TSB objetivo | {tsb_low:.1f}..{tsb_high:.1f} | - | - | perfil.load_metrics.ranges |",
+        f"| Umbral ATL alto | > {atl_high:.1f} | - | - | perfil.load_metrics.ranges |",
+        "",
+        "## ✅ Recomendación",
+        recommendation,
+        "",
+        "## 🎯 Próximo paso",
+        "- Si quieres, te propongo la sesión de hoy según esta tendencia.",
+        "- Fuente: respuesta determinista (serie load_metrics persistida, sin LLM).",
+    ])
+
+
 def _resolve_target_date_from_message(user_message: str) -> date:
     """Resuelve la fecha objetivo (hoy/ayer/anteayer/ISO) para consultas factuales."""
     text = (user_message or "").strip().lower()
@@ -3716,9 +3852,38 @@ def _resolve_target_date_from_message(user_message: str) -> date:
 
     if "anteayer" in text:
         return date.today() - timedelta(days=2)
+    if "hoy" in text:
+        return date.today()
+    weekday_idx = _extract_weekday_index_from_text(text)
+    if weekday_idx is not None:
+        today_idx = date.today().isoweekday()
+        # Devuelve el día de semana más reciente (incluye hoy si coincide).
+        delta_days = (today_idx - weekday_idx) % 7
+        return date.today() - timedelta(days=delta_days)
     if "ayer" in text:
         return date.today() - timedelta(days=1)
     return date.today()
+
+
+def _extract_weekday_index_from_text(value: str) -> int | None:
+    """Extrae día de semana desde lenguaje natural y devuelve ISO weekday (1=lunes..7=domingo)."""
+    text = (value or "").strip().lower()
+    if not text:
+        return None
+
+    patterns: list[tuple[str, int]] = [
+        (r"\b(lunes|lun|monday|mon)\b", 1),
+        (r"\b(martes|mar|tuesday|tue)\b", 2),
+        (r"\b(mi[eé]rcoles|mie|mi[eé]|wednesday|wed)\b", 3),
+        (r"\b(jueves|jue|thursday|thu)\b", 4),
+        (r"\b(viernes|vie|friday|fri)\b", 5),
+        (r"\b(s[áa]bado|sab|saturday|sat)\b", 6),
+        (r"\b(domingo|dom|sunday|sun)\b", 7),
+    ]
+    for pattern, idx in patterns:
+        if re.search(pattern, text):
+            return idx
+    return None
 
 
 def _is_mcp_factual_query_intent(user_message: str) -> bool:
@@ -3729,16 +3894,16 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
 
     # Exclusiones: aquí no entran preguntas de planificación/coaching.
     coaching_markers = (
-        "recomienda",
-        "recomend",
-        "recomiénd",
+        "recomiendame el entrenamiento",
+        "recomiéndame el entrenamiento",
+        "recomiendame una sesion",
+        "recomiéndame una sesión",
+        "recomiendame una sesión",
         "plan",
         "ajusta",
         "ajusta",
         "deberia entrenar",
         "debería entrenar",
-        "que hago",
-        "qué hago",
         "opinion",
         "opinión",
         "que te parece",
@@ -3790,6 +3955,138 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
     return any(marker in text for marker in factual_markers)
 
 
+def _is_today_load_status_intent(user_message: str) -> bool:
+    """Detecta consultas de estado TSS/ATL/CTL/TSB con regla aplicada para hoy."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    today_markers = (" hoy", "hoy ", "de hoy", "today")
+    load_markers = (
+        "carga",
+        "fatiga",
+        "tss",
+        "atl",
+        "ctl",
+        "tsb",
+        "estado de carga",
+        "estado carga",
+    )
+    rule_markers = (
+        "regla aplicada",
+        "regla",
+        "criterio",
+        "rule",
+    )
+
+    has_today = any(m in text for m in today_markers)
+    has_load = any(m in text for m in load_markers)
+    has_rule = any(m in text for m in rule_markers)
+    return has_today and has_load and has_rule
+
+
+def _is_coaching_recommendation_intent(user_message: str) -> bool:
+    """Detecta si el usuario pide interpretación/recomendación sobre datos.
+
+    Esta señal activa la capa híbrida: primero datos deterministas, luego
+    interpretación de coaching por LLM sobre esos datos.
+    """
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    markers = (
+        "recomienda",
+        "recomiendas",
+        "recomend",
+        "recomiendame",
+        "recomiéndame",
+        "me recomiendas",
+        "que hago",
+        "qué hago",
+        "que me recomiendas",
+        "qué me recomiendas",
+        "conviene",
+        "calidad",
+        "rodaje suave",
+        "descanso",
+        "justifica",
+        "interpret",
+        "opinion",
+        "opinión",
+    )
+    return any(m in text for m in markers)
+
+
+def _build_today_load_status_markdown(profile: dict) -> str:
+    """Construye estado determinista de hoy con TSS/ATL/CTL/TSB y regla aplicada."""
+    load_metrics = (profile or {}).get("load_metrics") or {}
+    series = load_metrics.get("series") or _storage.get_load_metrics_series(days=120) or []
+
+    if not series:
+        return "\n".join([
+            "## 🧭 Resumen",
+            "No hay serie de carga/fatiga disponible todavía.",
+            "",
+            "## 📊 Métricas clave",
+            "No aplica en esta consulta.",
+            "",
+            "## ✅ Recomendación",
+            "- Reinicia la sesión para generar la serie o consulta `/carga` para verificar disponibilidad.",
+            "",
+            "## 🎯 Próximo paso",
+            "- Si quieres, comparo semana actual vs anterior y detector de spike >20%.",
+        ])
+
+    model_cfg = _resolve_sport_model_cfg(profile or {})
+    load_fatigue = _build_load_fatigue_dict_from_series(series, model_cfg) or {}
+
+    latest = (load_fatigue.get("latest") or series[-1] or {})
+    latest_date = str(latest.get("date") or "")
+    weekly = load_fatigue.get("weekly") or {}
+    action = str(load_fatigue.get("action") or "carga estable")
+    status = str(load_fatigue.get("status") or "neutral")
+
+    try:
+        tss = float(latest.get("tss") or 0.0)
+        atl = float(latest.get("atl") or 0.0)
+        ctl = float(latest.get("ctl") or 0.0)
+        tsb = float(latest.get("tsb") or 0.0)
+        week_tss = float(weekly.get("current_tss") or 0.0)
+    except (TypeError, ValueError):
+        tss = atl = ctl = tsb = week_tss = 0.0
+
+    try:
+        date_label = datetime.fromisoformat(latest_date).strftime("%d/%m/%Y") if latest_date else "sin fecha"
+    except ValueError:
+        date_label = latest_date or "sin fecha"
+
+    rule_text = f"{status} ({action})"
+
+    return "\n".join([
+        "## 🧭 Resumen",
+        "Estado de carga/fatiga de hoy resuelto desde serie persistida y regla del modelo.",
+        "",
+        "## 📊 Métricas clave",
+        "| Métrica | Valor | Fuente |",
+        "|---|---:|---|",
+        f"| Fecha de referencia | {date_label} | load_metrics_daily/series |",
+        f"| TSS del día | {tss:.1f} | load_metrics(series) |",
+        f"| ATL (Fatiga) | {atl:.1f} | modelo EWMA |",
+        f"| CTL (Estado físico) | {ctl:.1f} | modelo EWMA |",
+        f"| TSB (Forma) | {tsb:.1f} | CTL-ATL |",
+        f"| TSS semanal actual | {week_tss:.1f} | weekly.current_tss |",
+        f"| Regla aplicada | {rule_text} | load_fatigue.status/action |",
+        "",
+        "## ✅ Recomendación",
+        f"- Regla vigente hoy: **{action}**.",
+        "",
+        "## 🎯 Próximo paso",
+        "- Si quieres, traduzco esta regla a una propuesta concreta: calidad, rodaje suave o descanso.",
+        "- Fuente: respuesta determinista (serie de carga y reglas del modelo, sin inferencias del LLM).",
+    ])
+
+
 def _is_activity_details_query_intent(user_message: str) -> bool:
     """Detecta peticiones de detalle/métricas de una sesión concreta (hoy/ayer/fecha)."""
     text = (user_message or "").strip().lower()
@@ -3802,6 +4099,14 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         "detalle",
         "detalles",
         "resumen",
+        "examina",
+        "examina",
+        "examinar",
+        "revisa",
+        "revisar",
+        "analiza",
+        "analisis",
+        "análisis",
         "metricas",
         "métricas",
         "cuales fueron",
@@ -3814,6 +4119,7 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         or "ayer" in text
         or "anteayer" in text
         or _extract_iso_date_from_text(user_message) is not None
+        or _extract_weekday_index_from_text(user_message) is not None
     )
     return has_day and any(m in text for m in activity_markers) and any(m in text for m in detail_markers)
 
@@ -4464,7 +4770,8 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     - Actividades reales Garmin registradas en ese rango (sin inferencias del LLM).
     """
     # Prioriza datos frescos de DB-first para evitar respuestas con snapshots desactualizados.
-    series = _storage.get_load_metrics_series(days=14) or ((profile or {}).get("load_metrics") or {}).get("series") or []
+    # Usamos una ventana amplia para poder comparar semana actual vs previa.
+    series = _storage.get_load_metrics_series(days=120) or ((profile or {}).get("load_metrics") or {}).get("series") or []
     if not series:
         return (
             "## 🧭 Resumen\n"
@@ -4481,7 +4788,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
 
     today_d = date.today()
     week_start, week_end = _resolve_week_window(user_message, today_d)
+    prev_week_start = week_start - timedelta(days=7)
+    prev_week_end = week_end - timedelta(days=7)
     week_dates = [week_start + timedelta(days=i) for i in range((week_end - week_start).days + 1)]
+    prev_week_dates = [prev_week_start + timedelta(days=i) for i in range((prev_week_end - prev_week_start).days + 1)]
     running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
     hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
 
@@ -4495,20 +4805,20 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             d_obj = date.fromisoformat(d_iso)
         except ValueError:
             continue
-        if week_start <= d_obj <= week_end:
+        if prev_week_start <= d_obj <= week_end:
             tss_by_day[d_iso] = round(float(row.get("tss") or 0.0), 1)
             tss_source_by_day[d_iso] = "load_metrics_daily"
 
     activities: list[dict] = []
     req_variants = [
         {
-            "start_date": week_start.isoformat(),
+            "start_date": prev_week_start.isoformat(),
             "end_date": week_end.isoformat(),
             "page": 0,
             "page_size": 200,
         },
         {
-            "startdate": week_start.isoformat(),
+            "startdate": prev_week_start.isoformat(),
             "enddate": week_end.isoformat(),
         },
     ]
@@ -4532,7 +4842,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             log.debug("_build_current_week_tss_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
 
-    act_rows: list[tuple[date, str, str]] = []
+    act_rows: list[tuple[date, str, str, float | None, str]] = []
     activity_tss_by_day: dict[str, float] = {}
     for act in activities:
         if not isinstance(act, dict):
@@ -4544,11 +4854,11 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             d_obj = date.fromisoformat(d_iso)
         except ValueError:
             continue
-        if not (week_start <= d_obj <= week_end):
+        if not (prev_week_start <= d_obj <= week_end):
             continue
         name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
-        act_rows.append((d_obj, sport, name))
+        tss_source = "sin datos"
         act_tss = _extract_training_load_tss(act)
         if act_tss is None:
             est_tss, _ = _estimate_session_tss(
@@ -4561,6 +4871,11 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             )
             if est_tss > 0:
                 act_tss = float(est_tss)
+                tss_source = "estimado"
+        else:
+            tss_source = "trainingLoad Garmin"
+        if week_start <= d_obj <= week_end:
+            act_rows.append((d_obj, sport, name, round(float(act_tss), 1) if act_tss is not None else None, tss_source))
         if act_tss is not None:
             activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
     act_rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
@@ -4568,7 +4883,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     # Si falta un día en la serie diaria, o existe con TSS=0 sin cierre real,
     # intenta completar con training load por actividad.
     used_activity_fallback = False
-    for d in week_dates:
+    for d in (prev_week_dates + week_dates):
         d_iso = d.isoformat()
         fallback_tss = activity_tss_by_day.get(d_iso)
         if fallback_tss is None:
@@ -4581,6 +4896,12 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         used_activity_fallback = True
 
     current_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
+    previous_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in prev_week_dates), 1)
+    if previous_week_tss > 0.0:
+        delta_pct = round(((current_week_tss - previous_week_tss) / previous_week_tss) * 100.0, 1)
+    else:
+        delta_pct = None
+    spike_alert = bool(previous_week_tss > 0.0 and current_week_tss > (previous_week_tss * 1.2))
     has_week_end_load_row = week_end.isoformat() in tss_by_day and tss_source_by_day.get(week_end.isoformat()) == "load_metrics_daily"
     is_current_week = week_end == today_d
 
@@ -4603,6 +4924,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         "|---|---|---|",
         f"| Semana natural | {week_start.strftime('%d/%m/%Y')} → {week_end.strftime('%d/%m/%Y')} | calendario ISO |",
         f"| TSS acumulado | {current_week_tss:.1f} | load_metrics_daily/garmin_activity_load |",
+        f"| Semana previa | {prev_week_start.strftime('%d/%m/%Y')} → {prev_week_end.strftime('%d/%m/%Y')} | calendario ISO |",
+        f"| TSS semana previa | {previous_week_tss:.1f} | load_metrics_daily/garmin_activity_load |",
+        f"| Diferencia porcentual | {f'{delta_pct:+.1f}%' if delta_pct is not None else 'N/A (sin base previa)'} | cálculo determinista |",
+        f"| Spike >20% | {'SI' if spike_alert else 'NO'} | regla current > previous*1.20 |",
         "| TSS por día | Ver desglose debajo | serie semanal |",
         "",
         "Desglose diario:",
@@ -4614,16 +4939,22 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             f"  - {weekday_es.get(d.weekday(), d.strftime('%A'))} {d.strftime('%d/%m')}: {tss_by_day.get(d_iso, 0.0):.1f}"
         )
 
+    lines.append("")
     if act_rows:
         lines.append("Actividades fuente (Garmin):")
-        for d_obj, sport, name in act_rows:
-            lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name}")
+        for d_obj, sport, name, tss_val, tss_src in act_rows:
+            if tss_val is not None:
+                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS {tss_val:.1f} ({tss_src})")
+            else:
+                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS sin datos")
     else:
         lines.append("- Actividades fuente (Garmin): sin datos en el rango consultado.")
 
     lines.append("")
     lines.append("## ✅ Recomendación")
-    if used_activity_fallback:
+    if spike_alert:
+        lines.append("- ⚠️ Spike semanal >20% detectado vs semana previa: reduce 15-25% la carga en próximos 2-3 días.")
+    elif used_activity_fallback:
         lines.append("- Nota: faltaban cierres en `load_metrics_daily` para algún día; se usó fallback con `trainingLoad` de actividades Garmin.")
     elif is_current_week and (not has_week_end_load_row) and any(x[0] == today_d for x in act_rows):
         lines.append("- Nota: hay actividad hoy, pero el cierre diario de TSS aún no está persistido en `load_metrics_daily`.")
@@ -5954,8 +6285,9 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     Entrada: TSB, ATL, TSS semanal, sueño, HRV, body battery y sesión planificada.
     Salida: maintain, reduce, easy o rest.
     """
-    if not isinstance(plan, dict):
-        return None
+    has_plan = isinstance(plan, dict)
+    if not has_plan:
+        plan = {}
 
     dates = snapshot.get("dates") or {}
     today_iso = str(dates.get("today") or date.today().isoformat())
@@ -5973,8 +6305,8 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         if 1 <= int(k) <= 7 and int(v) >= 0
     }
 
-    planned_session = _resolve_today_plan_session(plan)
-    planned_row = _get_planned_session_for_date(plan, today_iso)
+    planned_session = _resolve_today_plan_session(plan) if has_plan else "sin plan activo"
+    planned_row = _get_planned_session_for_date(plan, today_iso) if has_plan else None
     planned_duration_min = int((planned_row or {}).get("duration_min") or 0)
 
     if today_idx in unavailable_days:
@@ -6107,32 +6439,45 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
 
     adjusted_structured_workout = None
     adjustment_trace: list[str] = []
-    if decision in {"easy", "reduce", "maintain"}:
-        adjusted_structured_workout, adjustment_trace = _apply_structured_workout_adjustment(planned_row, decision)
-    elif decision == "rest":
-        adjusted_structured_workout = {
-            "schema": "kairos-workout-v1",
-            "sessionType": "rest",
-            "steps": [
-                {
-                    "name": "Rest",
-                    "type": "rest",
-                    "duration_min": 0,
-                    "reps": 1,
-                    "intensityClass": "recovery",
-                }
-            ],
-        }
-        adjustment_trace = ["sesión convertida a descanso"]
+    if has_plan:
+        if decision in {"easy", "reduce", "maintain"}:
+            adjusted_structured_workout, adjustment_trace = _apply_structured_workout_adjustment(planned_row, decision)
+        elif decision == "rest":
+            adjusted_structured_workout = {
+                "schema": "kairos-workout-v1",
+                "sessionType": "rest",
+                "steps": [
+                    {
+                        "name": "Rest",
+                        "type": "rest",
+                        "duration_min": 0,
+                        "reps": 1,
+                        "intensityClass": "recovery",
+                    }
+                ],
+            }
+            adjustment_trace = ["sesión convertida a descanso"]
 
     if decision == "rest":
         resulting_session = "descanso + movilidad ligera (20-30 min)"
     elif decision == "easy":
-        resulting_session = _build_adjusted_structured_session_text(planned_session, planned_row, "easy")
+        resulting_session = (
+            _build_adjusted_structured_session_text(planned_session, planned_row, "easy")
+            if has_plan
+            else "rodaje suave 30-50 min en Z1-Z2 + movilidad"
+        )
     elif decision == "reduce":
-        resulting_session = _build_adjusted_structured_session_text(planned_session, planned_row, "reduce")
+        resulting_session = (
+            _build_adjusted_structured_session_text(planned_session, planned_row, "reduce")
+            if has_plan
+            else "rodaje controlado 40-60 min (sin bloques intensos)"
+        )
     else:
-        resulting_session = _build_adjusted_structured_session_text(planned_session, planned_row, "maintain")
+        resulting_session = (
+            _build_adjusted_structured_session_text(planned_session, planned_row, "maintain")
+            if has_plan
+            else "sesión de calidad controlada (siempre con calentamiento y enfriamiento)"
+        )
 
     return {
         "rule": rule,
@@ -9547,58 +9892,103 @@ class TrainerAgent:
         from datetime import date as _date, timedelta
 
         async def _should_refresh_recent_load(existing_rows: list[dict]) -> tuple[bool, str, str | None]:
-            """Verifica últimos 3 días para detectar actividad aún no reflejada en load_metrics_daily."""
-            today_local = _date.today()
-            recent_dates = [
-                today_local,
-                today_local - timedelta(days=1),
-                today_local - timedelta(days=2),
-            ]
+            """Verifica actividad reciente/no reflejada desde una fecha ancla dinámica.
 
-            for day_obj in recent_dates:
-                day_iso = day_obj.isoformat()
-                db_day_tss = 0.0
-                db_day_count = 0
-                for row in existing_rows or []:
-                    if str(row.get("date") or "") != day_iso:
+            Regla de ancla:
+            - Si existe un último día con entrenamiento guardado (activities_count>0 o tss>0),
+              se usa ese día.
+                        - Si no existe actividad registrada, usa el último día disponible en la serie DB.
+            """
+            def _resolve_last_trained_day(rows: list[dict]) -> str | None:
+                trained_days: list[str] = []
+                for row in rows or []:
+                    d_iso = str(row.get("date") or "")
+                    if not d_iso:
                         continue
-                    db_day_tss = max(db_day_tss, float(row.get("tss") or 0.0))
-                    db_day_count = max(db_day_count, int(row.get("activities_count") or 0))
+                    db_day_count = int(row.get("activities_count") or 0)
+                    db_day_tss = float(row.get("tss") or 0.0)
+                    if db_day_count > 0 or db_day_tss > 0.0:
+                        trained_days.append(d_iso)
+                return max(trained_days) if trained_days else None
 
-                try:
-                    day_activities = await _fetch_activities_for_load_calc(
-                        self.mcp_session,
-                        day_iso,
-                        day_iso,
-                    )
-                except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
-                    log.debug("compute_load: no se pudo verificar actividades del %s: %s", day_iso, exc)
-                    continue
-
-                day_activities = [
-                    a for a in (day_activities or [])
-                    if _extract_activity_date_iso(a) == day_iso
+            def _resolve_last_series_day(rows: list[dict]) -> str | None:
+                days = [
+                    str(row.get("date") or "")
+                    for row in (rows or [])
+                    if str(row.get("date") or "")
                 ]
-                if not day_activities:
-                    continue
+                return max(days) if days else None
 
-                garmin_count = len(day_activities)
-                garmin_load_sum = round(
-                    sum(float(_extract_training_load_tss(a) or 0.0) for a in day_activities),
-                    2,
+            today_local = _date.today()
+            floor_window_day = today_local - timedelta(days=full_window_days)
+            last_trained_iso = _resolve_last_trained_day(existing_rows)
+            last_series_iso = _resolve_last_series_day(existing_rows)
+            try:
+                anchor_iso_seed = last_trained_iso or last_series_iso or today_local.isoformat()
+                anchor_day = _date.fromisoformat(anchor_iso_seed)
+            except ValueError:
+                anchor_day = today_local
+            if anchor_day > today_local:
+                anchor_day = today_local
+            if anchor_day < floor_window_day:
+                anchor_day = floor_window_day
+            anchor_iso = anchor_day.isoformat()
+
+            db_by_day: dict[str, tuple[float, int]] = {}
+            for row in existing_rows or []:
+                d_iso = str(row.get("date") or "")
+                if not d_iso:
+                    continue
+                prev_tss, prev_count = db_by_day.get(d_iso, (0.0, 0))
+                db_by_day[d_iso] = (
+                    max(prev_tss, float(row.get("tss") or 0.0)),
+                    max(prev_count, int(row.get("activities_count") or 0)),
                 )
 
-                if garmin_count > db_day_count:
+            try:
+                window_activities = await _fetch_activities_for_load_calc(
+                    self.mcp_session,
+                    anchor_iso,
+                    today_local.isoformat(),
+                )
+            except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
+                log.debug(
+                    "compute_load: no se pudo verificar actividades desde %s: %s",
+                    anchor_iso,
+                    exc,
+                )
+                return False, "falló verificación incremental", None
+
+            garmin_by_day: dict[str, tuple[float, int]] = {}
+            for act in window_activities or []:
+                d_iso = _extract_activity_date_iso(act)
+                if not d_iso or d_iso < anchor_iso:
+                    continue
+                prev_load, prev_count = garmin_by_day.get(d_iso, (0.0, 0))
+                garmin_by_day[d_iso] = (
+                    prev_load + float(_extract_training_load_tss(act) or 0.0),
+                    prev_count + 1,
+                )
+
+            day_cursor = anchor_day
+            while day_cursor <= today_local:
+                day_iso = day_cursor.isoformat()
+                db_day_tss, db_day_count = db_by_day.get(day_iso, (0.0, 0))
+                garmin_day_load, garmin_day_count = garmin_by_day.get(day_iso, (0.0, 0))
+
+                if garmin_day_count > db_day_count:
                     return True, (
-                        f"actividades {day_iso} Garmin={garmin_count} > DB={db_day_count}"
+                        f"actividades {day_iso} Garmin={garmin_day_count} > DB={db_day_count}"
                     ), day_iso
 
-                if db_day_tss <= 0.0 and garmin_load_sum > 0.0:
+                if db_day_tss <= 0.0 and garmin_day_load > 0.0:
                     return True, (
-                        f"carga {day_iso} en Garmin={garmin_load_sum:.2f} con TSS DB={db_day_tss:.2f}"
+                        f"carga {day_iso} en Garmin={garmin_day_load:.2f} con TSS DB={db_day_tss:.2f}"
                     ), day_iso
 
-            return False, "DB ya refleja actividad/carga reciente", None
+                day_cursor += timedelta(days=1)
+
+            return False, f"DB ya refleja actividad/carga desde {anchor_iso}", None
 
         today = _date.today()
         full_window_days = 120
@@ -10189,6 +10579,9 @@ class TrainerAgent:
                     log.info("collect_startup: cargadas métricas cacheadas (%d días)", len(cached_series))
 
         if isinstance(getattr(self, "user_profile", None), dict) and load_fatigue:
+            existing_formula_v = int(
+                ((self.user_profile.get("load_metrics") or {}).get("formula_version") or 0)
+            ) if isinstance(self.user_profile, dict) else 0
             self.user_profile["load_metrics"] = {
                 "model": load_fatigue.get("model") or {},
                 "last": {
@@ -10198,6 +10591,7 @@ class TrainerAgent:
                 "ranges": load_fatigue.get("ranges") or {},
                 "weekly": load_fatigue.get("weekly") or {},
                 "series": load_fatigue.get("series") or [],
+                "formula_version": existing_formula_v or _TSS_FORMULA_VERSION,
                 "updated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
             }
             try:
@@ -10398,6 +10792,83 @@ class TrainerAgent:
             payload.update(extra)
         await self.hook_manager.on_error(payload)
 
+    async def _augment_with_llm_coaching_if_needed(
+        self,
+        user_message: str,
+        deterministic_reply: str,
+        route: str,
+    ) -> str:
+        """Añade una interpretación de coaching por LLM cuando el usuario la pide.
+
+        Mantiene el bloque determinista como fuente de verdad y limita el LLM
+        a interpretar/recomendar usando SOLO esos datos.
+        """
+        if not _is_coaching_recommendation_intent(user_message):
+            return deterministic_reply
+
+        try:
+            coaching_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Eres Kairos Coach. Debes interpretar SOLO los datos factuales recibidos. "
+                        "No inventes métricas ni fechas. Si falta un dato, dilo explícitamente. "
+                        "Responde en español con máximo 5 bullets accionables."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Pregunta del usuario: {user_message}\n"
+                        f"Ruta factual: {route}\n\n"
+                        "Datos deterministas (fuente de verdad):\n"
+                        f"{deterministic_reply}\n\n"
+                        "Tarea: da recomendación de coaching práctica basada en esos datos."
+                    ),
+                },
+            ]
+
+            coaching_response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=coaching_messages,
+                ),
+                timeout=min(12.0, _llm_timeout_seconds()),
+            )
+
+            if getattr(coaching_response, "usage", None):
+                u = coaching_response.usage
+                p_toks = getattr(u, "prompt_tokens", 0) or 0
+                c_toks = getattr(u, "completion_tokens", 0) or 0
+                self.total_prompt_tokens += p_toks
+                self.total_completion_tokens += c_toks
+                if getattr(self, "_api_key", None):
+                    update_gemini_daily_usage(self._api_key, p_toks + c_toks)
+
+            coaching_text = str((coaching_response.choices[0].message.content or "")).strip()
+            if not coaching_text:
+                return (
+                    deterministic_reply
+                    + "\n\n## 🧠 Interpretación de coaching\n"
+                    + "- No pude generar una recomendación de coaching en este intento (respuesta vacía del modelo)."
+                    + "\n\n_Fase coaching por LLM solicitada; sin resultado utilizable en esta ejecución._"
+                )
+
+            return (
+                deterministic_reply
+                + "\n\n## 🧠 Interpretación de coaching\n"
+                + coaching_text
+                + "\n\n_Fase coaching por LLM sobre datos deterministas (sin recalcular métricas)._"
+            )
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError) as exc:
+            log.debug("No se pudo completar capa LLM de coaching (route=%s): %s", route, exc)
+            return (
+                deterministic_reply
+                + "\n\n## 🧠 Interpretación de coaching\n"
+                + "- No pude generar una recomendación de coaching en este intento (timeout/error del modelo)."
+                + "\n\n_Fase coaching por LLM solicitada; mantengo solo el bloque factual como fuente de verdad._"
+            )
+
     async def chat(self, user_message: str) -> str:
         """
         Procesa un mensaje del usuario y devuelve la respuesta del agente.
@@ -10441,13 +10912,22 @@ class TrainerAgent:
         # y usa semana natural solicitada (o actual) con actividades reales de Garmin.
         if route_key == "week_tss":
             assistant_reply = await _build_current_week_tss_markdown(self.mcp_session, self.user_profile, user_message)
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="week_tss")
             return await self._finalize_chat_reply(user_message, assistant_reply, route="week_tss")
 
         # Ruta determinista para actividades semanales: evita formatos inconsistentes
         # y fuerza salida homogénea user-friendly.
         if route_key == "week_activities":
             assistant_reply = await _build_week_activities_markdown(self.mcp_session, user_message)
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="week_activities")
             return await self._finalize_chat_reply(user_message, assistant_reply, route="week_activities")
+
+        # Ruta determinista para tendencia de carga/fatiga (ATL/CTL/TSB).
+        # Evita timeouts del LLM en consultas de tendencia histórica.
+        if route_key == "load_trend":
+            assistant_reply = _build_load_trend_markdown(self.user_profile, user_message)
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="load_trend")
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="load_trend")
 
         # Ruta determinista para FC umbral (LTHR): perfil primero y fallback MCP rápido.
         if route_key == "hr_threshold":
@@ -10466,6 +10946,24 @@ class TrainerAgent:
             assistant_reply = _build_running_threshold_profile_markdown(self.user_profile)
             return await self._finalize_chat_reply(user_message, assistant_reply, route="running_threshold")
 
+        # Ruta determinista para estado de carga/fatiga de hoy con regla aplicada.
+        # Evita que consultas de TSS/ATL/CTL/TSB caigan en factual diario genérico.
+        if route_key == "today_load_status":
+            assistant_reply = _build_today_load_status_markdown(self.user_profile)
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="today_load_status")
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="today_load_status")
+
+        # Ruta determinista para detalle de entrenamiento por día/fecha.
+        # Evita timeouts del LLM en preguntas factuales como "entrenamiento del martes".
+        if route_key == "activity_details":
+            assistant_reply = await _build_mcp_factual_query_markdown(
+                self.mcp_session,
+                self.user_profile,
+                user_message,
+            )
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="activity_details")
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="activity_details")
+
         # Ruta MCP-first para consultas factuales de métricas diarias.
         # Evita pasar por LLM cuando la pregunta se puede responder con
         # datos directos de Garmin Connect.
@@ -10475,6 +10973,7 @@ class TrainerAgent:
                 self.user_profile,
                 user_message,
             )
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="mcp_factual")
             return await self._finalize_chat_reply(user_message, assistant_reply, route="mcp_factual")
 
         # Ruta determinista para readiness diario: evita respuestas del LLM
@@ -10484,13 +10983,14 @@ class TrainerAgent:
             snapshot["profile_changes"] = []
             active_plan = _get_active_training_plan(self.user_profile)
             snapshot["plan_assigned"] = bool(active_plan)
+            snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
             if active_plan:
                 snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
-                snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
             assistant_reply = (
                 _build_proactive_status_markdown(snapshot)
                 + "\n\n_Respuesta determinista: valores tomados del snapshot real de Garmin y modelo de carga; sin inferencias numéricas del LLM._"
             )
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="daily_readiness")
             return await self._finalize_chat_reply(user_message, assistant_reply, route="daily_readiness")
 
         # Ruta funcional de planificación: generación/actualización estructurada,
