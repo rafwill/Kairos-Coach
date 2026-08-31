@@ -2,6 +2,36 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-09-01
+
+### Added
+- Ruta determinista `db_count`: consultas "¿cuántas actividades tienes en la DB?" resueltas desde `load_metrics_daily` sin llamar a Garmin.
+- Pre-fetch con filtro de deporte: "última actividad de trail/running/cycling" busca en Garmin las últimas 20 actividades y filtra por `typeKey`, obteniendo el ID exacto antes de llamar a `get_activity` para datos precisos.
+- `docs/proximos_pasos.md`: documento de continuidad con estado de la batería de validación y plan de trabajo.
+
+### Changed
+- `_is_daily_readiness_intent`: ampliados markers con "puedo entrenar mañana", "puedo entrenar fuerte", "necesito recuperar", "necesito descansar".
+- `_build_current_week_tss_markdown` (ruta `week_tss`): tabla principal ahora tiene columnas CTL/ATL/TSB/Estado igual que `/carga`; valores leídos de serie DB; comparación correcta (semana consultada vs semana actual, no vs semana anterior a la consultada); etiquetas dinámicas ("Semana pasada", "Hace N semanas", "Esta semana").
+- `_build_load_trend_markdown` (ruta `load_trend`): vista semana-a-semana con cierre real de cada semana (último día con datos en DB, buscando desde domingo hacia atrás); fechas reales en columnas; sin "perfil.load_metrics.ranges" visible.
+- `_augment_with_llm_coaching_if_needed`: `daily_readiness` siempre ejecuta LLM coaching (sin chequeo de intención); prompt enriquecido genera 4 secciones (⚡ Efecto de entrenamiento, 💧 Hidratación, 🛌 Estado pre-carrera, 🔄 Recuperación).
+- `_prefetch_cache` inicializado al inicio de `chat()` (fix `UnboundLocalError` cuando `daily_readiness` se evaluaba antes del bloque de pre-fetch).
+- Timeout LLM: default 300s, cap 300s; eliminado cap de 12s en `_augment_with_llm_coaching_if_needed`.
+- Trazas timing `[STARTUP]`/`[SNAPSHOT]` en `build_startup_status_markdown` y `collect_startup_snapshot_48h`.
+- `enable_thinking: False` para Nemotron en ambos puntos de llamada LLM (evita que el modelo devuelva razonamiento interno como respuesta).
+- Arranque: spinner reemplazado por contador de segundos visible durante verificación Garmin.
+- `_is_daily_readiness_intent`: marcadores ampliados para "forma física", "ctl", "atl", "tsb", "estado de forma", "mañana", "necesito recuperar/descansar".
+- `_resolve_week_window`: detecta "semana pasada/anterior/previa", "hace N semanas", "N semanas atrás".
+- `week_tss`/`week_activities`: display semana natural completa (Lun→Dom) con nota "(datos hasta DD/MM)".
+- `prev_week_end` corregido a `week_start - 1` (era `week_end - 7`, mostraba lunes en lugar de domingo).
+- Essential Tools: 37→40 (añadidas `get_activity_splits`, `get_activity_exercise_sets`, `get_activity_power_in_timezones`; eliminada `get_activity_hr_zones` fantasma).
+- Menú de selección de tools eliminado del arranque (`essential_only=True` hardcodeado).
+
+### Fixed
+- `decrypt_password`: capturaba `ValueError/TypeError/UnicodeDecodeError` pero no `cryptography.fernet.InvalidToken` → crash al arrancar con clave de cifrado cambiada.
+- `_build_load_trend_markdown`: "4 semanas" ignorado (usaba 14 días por defecto) por no detectar "semanas" en el regex.
+- `week_tss`: semana natural mostraba solo el día de inicio (ej. 31/08→31/08) por clamp incorrecto a `today_d` cuando hoy es lunes.
+- Modelo NVIDIA NIM: `llama-3.1-70b` (EOL 2026-08-26) → `llama-3.3-70b` → `nemotron-3.5-lightning-30b-a3b`; manejo de error 410 EOL con mensaje amigable.
+
 ## 2026-08-31
 
 ### Added

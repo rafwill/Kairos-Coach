@@ -82,22 +82,25 @@ Fase coaching por LLM sobre datos deterministas (sin recalcular métricas).
 - [x] **`¿Cuál es mi tendencia de carga de las últimas 4 semanas?`**  
   → Debe devolver tabla o resumen con progresión CTL/ATL por semana, ruta `load_trend`.  
   Resultado: ✅ Ruta `load_trend` correcta. Muestra ATL 68.7→65.3, CTL 65.5→64.0, TSB -3.2→-1.4 con tendencia ↘/↗. Formato con tabla y secciones correctas.
+  
   Kairos Coach
 🧭 Resumen                                                                                         
 
-Tendencia de los últimos 14 días: vas hacia disponibilidad.                                        
+Evolución semana a semana — valores al cierre de cada semana (domingo) vs hoy: disponibilidad.     
 
 📊 Métricas clave                                                                                  
 
-                                                                           
- Métrica                 Inicio  Actual  Delta          Tendencia          
- ───────────────────────────────────────────────────────────────────────── 
- ATL (Fatiga)              68.7    65.3   -3.3              ↘              
- CTL (Estado físico)       65.5    64.0   -1.5              ↘              
- TSB (Forma)               -3.2    -1.4   +1.8              ↗              
- Umbral TSB objetivo  -3.4..6.2       -      -  perfil.load_metrics.ranges 
- Umbral ATL alto         > 68.7       -      -  perfil.load_metrics.ranges 
-                                                                           
+                                                                          
+ Período      Cierre sem.  ATL (Fatiga)  CTL (Estado físico)  TSB (Forma) 
+ ──────────────────────────────────────────────────────────────────────── 
+ Hace 4 sem.     09/08             71.4                 65.7         -5.7 
+ Hace 3 sem.     16/08             68.2                 65.2         -3.0 
+ Hace 2 sem.     23/08             55.9                 62.8         +6.9 
+ Sem. pasada     30/08             68.9                 64.5         -4.4 
+ Hoy             31/08             65.3                 64.0         -1.4 
+                                                                          
+
+Rangos de referencia: TSB objetivo -3.4..6.2 · ATL alto > 68.7                                     
 
 ✅ Recomendación                                                                                   
 
@@ -106,7 +109,7 @@ Tendencia de los últimos 14 días: vas hacia disponibilidad.
 🎯 Próximo paso                                                                                    
 
  • Si quieres, te propongo la sesión de hoy según esta tendencia.                                  
- • Fuente: respuesta determinista (serie load_metrics persistida, sin LLM).   
+ • Fuente: respuesta determinista (serie load_metrics persistida, sin LLM).  
 
 ---
 
@@ -130,26 +133,41 @@ Consulta de TSS semanal resuelta con datos reales.
                                                                                          
  Métrica                Valor                    Fuente                                  
  ─────────────────────────────────────────────────────────────────────────────────────── 
- Semana natural         31/08/2026 → 31/08/2026  calendario ISO                          
- TSS acumulado          40.4                     load_metrics_daily/garmin_activity_load 
- Semana previa          24/08/2026 → 24/08/2026  calendario ISO                          
- TSS semana previa      53.0                     load_metrics_daily/garmin_activity_load 
- Diferencia porcentual  -23.8%                   cálculo determinista                    
- Spike >20%             NO                       regla current > previous*1.20           
+ Semana natural         24/08/2026 → 30/08/2026  calendario ISO                          
+ TSS acumulado          512.5                    load_metrics_daily/garmin_activity_load 
+ Semana previa          17/08/2026 → 23/08/2026  calendario ISO                          
+ TSS semana previa      348.7                    load_metrics_daily/garmin_activity_load 
+ Diferencia porcentual  +47.0%                   cálculo determinista                    
+ Spike >20%             SI                       regla current > previous*1.20           
  TSS por día            Ver desglose debajo      serie semanal                           
                                                                                          
 
 Desglose diario:                                                                                   
 
- • lunes 31/08: 40.4                                                                               
+ • lunes 24/08: 53.0                                                                               
+ • martes 25/08: 102.1                                                                             
+ • miercoles 26/08: 0.0                                                                            
+ • jueves 27/08: 118.4                                                                             
+ • viernes 28/08: 80.3                                                                             
+ • sabado 29/08: 0.0                                                                               
+ • domingo 30/08: 158.7                                                                            
 
 Actividades fuente (Garmin):                                                                       
 
- • 31/08: Entrenamiento de Fuerza — Fuerza · TSS 35.8 (estimado)                                   
+ • 24/08: Entrenamiento de Fuerza — Gimnasio. Trabajo Neuromuscular Trail Sesión 1 · TSS 48.7      
+   (estimado)                                                                                      
+ • 25/08: Trail Running — Trail. Puerto de La Morcuera - Hoya de San Blas i/v · TSS 260.3          
+   (estimado)                                                                                      
+ • 27/08: Entrenamiento de Fuerza — Gimnasio. Tobillos, cadera y core · TSS 34.0 (estimado)        
+ • 27/08: Running — Series. 4x1000. Empezamos temporada · TSS 69.7 (estimado)                      
+ • 28/08: Trail Running — Trail. Navacerrada - Maliciosa - Bola - Puerto de Navacerrada  (Nocturna 
+   · TSS 194.8 (estimado)                                                                          
+ • 30/08: Trail Running — Trail. Puerto de Navacerrada - Bola - Cotos  - Peñalara i/v · TSS 344.9  
+   (estimado)                                                                                      
 
 ✅ Recomendación                                                                                   
 
- • Mantén esta referencia como control de carga semanal real.                                      
+ • ⚠️ Spike semanal >20% detectado vs semana previa: reduce 15-25% la carga en próximos 2-3 días.  
 
 🎯 Próximo paso                                                                                    
 
