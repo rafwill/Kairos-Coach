@@ -3759,14 +3759,8 @@ def _is_load_trend_intent(user_message: str) -> bool:
 def _build_load_trend_markdown(profile: dict, user_message: str) -> str:
     """Construye respuesta determinista de tendencia ATL/CTL/TSB sin LLM."""
     text = (user_message or "").strip().lower()
-    days_back = 14
-    m = re.search(r"(\d{1,3})\s*d[ií]as", text)
-    if m:
-        try:
-            days_back = int(m.group(1))
-        except ValueError:
-            days_back = 14
-    days_back = max(7, min(days_back, 120))
+    m_semanas = re.search(r"(\d{1,3})\s*semanas?", text)
+    m_dias = re.search(r"(\d{1,3})\s*d[ií]as", text)
 
     load_metrics = (profile or {}).get("load_metrics") or {}
     series = load_metrics.get("series") or _storage.get_load_metrics_series(days=120) or []
@@ -3785,52 +3779,136 @@ def _build_load_trend_markdown(profile: dict, user_message: str) -> str:
             "- Si quieres, comparo semana actual vs semana previa con TSS y spike.",
         ])
 
-    tail = series[-days_back:]
-    first = tail[0]
-    last = tail[-1]
-
-    def _delta(a: float, b: float) -> tuple[float, str]:
-        d = round(b - a, 1)
-        if d > 0.2:
-            return d, "↗"
-        if d < -0.2:
-            return d, "↘"
-        return d, "→"
-
-    atl0, atl1 = float(first.get("atl") or 0.0), float(last.get("atl") or 0.0)
-    ctl0, ctl1 = float(first.get("ctl") or 0.0), float(last.get("ctl") or 0.0)
-    tsb0, tsb1 = float(first.get("tsb") or 0.0), float(last.get("tsb") or 0.0)
-
-    d_atl, a_atl = _delta(atl0, atl1)
-    d_ctl, a_ctl = _delta(ctl0, ctl1)
-    d_tsb, a_tsb = _delta(tsb0, tsb1)
-
     ranges = load_metrics.get("ranges") or {}
     tsb_low = float(ranges.get("tsb_low") or -10.0)
     tsb_high = float(ranges.get("tsb_high") or 5.0)
     atl_high = float(ranges.get("atl_high") or 9999.0)
 
-    going_to_fatigue = tsb1 < tsb_low or atl1 > atl_high
-    status_text = "fatiga" if going_to_fatigue else "disponibilidad"
+    # Índice por fecha para búsqueda rápida
+    day_lookup: dict[str, dict] = {}
+    for row in series:
+        d_iso = str(row.get("date") or "")
+        if d_iso:
+            day_lookup[d_iso] = row
 
+    today_d = date.today()
+    today_row = day_lookup.get(today_d.isoformat()) or series[-1]
+    today_atl = float(today_row.get("atl") or 0.0)
+    today_ctl = float(today_row.get("ctl") or 0.0)
+    today_tsb = float(today_row.get("tsb") or 0.0)
+    going_to_fatigue = today_tsb < tsb_low or today_atl > atl_high
+    status_text = "fatiga" if going_to_fatigue else "disponibilidad"
     recommendation = (
         "- Señal de fatiga: prioriza descarga/rodaje suave y reevalúa mañana."
         if going_to_fatigue
         else "- Señal de disponibilidad: puedes sostener carga aeróbica o calidad controlada."
     )
 
+    if m_semanas:
+        # Vista semana a semana: valores al cierre (domingo) de cada semana
+        n_weeks = max(1, min(int(m_semanas.group(1)), 16))
+        current_week_mon = today_d - timedelta(days=today_d.weekday())
+
+        table_rows: list[tuple[str, str, float, float, float]] = []
+        for w in range(n_weeks, 0, -1):
+            week_mon = current_week_mon - timedelta(weeks=w)
+            week_sun = week_mon + timedelta(days=6)
+            # Buscar el último día con datos en esa semana (domingo → lunes)
+            week_row = None
+            actual_date = None
+            for offset in range(7):
+                candidate = week_sun - timedelta(days=offset)
+                if candidate < week_mon:
+                    break
+                r = day_lookup.get(candidate.isoformat())
+                if r:
+                    week_row = r
+                    actual_date = candidate
+                    break
+            if not week_row:
+                continue
+            label = "Sem. pasada" if w == 1 else f"Hace {w} sem."
+            date_str = actual_date.strftime("%d/%m") if actual_date else week_sun.strftime("%d/%m")
+            table_rows.append((
+                label,
+                date_str,
+                float(week_row.get("atl") or 0.0),
+                float(week_row.get("ctl") or 0.0),
+                float(week_row.get("tsb") or 0.0),
+            ))
+
+        # Añadir fila de hoy
+        table_rows.append((
+            "**Hoy**",
+            today_d.strftime("%d/%m"),
+            today_atl, today_ctl, today_tsb,
+        ))
+
+        lines = [
+            "## 🧭 Resumen",
+            f"Evolución semana a semana — valores al cierre de cada semana (domingo) vs hoy: **{status_text}**.",
+            "",
+            "## 📊 Métricas clave",
+            "| Período | Cierre sem. | ATL (Fatiga) | CTL (Estado físico) | TSB (Forma) |",
+            "|---|:---:|---:|---:|---:|",
+        ]
+        for label, date_str, atl, ctl, tsb in table_rows:
+            lines.append(f"| {label} | {date_str} | {atl:.1f} | {ctl:.1f} | {tsb:+.1f} |")
+
+        lines += [
+            "",
+            f"_Rangos de referencia: TSB objetivo {tsb_low:.1f}..{tsb_high:.1f} · ATL alto > {atl_high:.1f}_",
+            "",
+            "## ✅ Recomendación",
+            recommendation,
+            "",
+            "## 🎯 Próximo paso",
+            "- Si quieres, te propongo la sesión de hoy según esta tendencia.",
+            "- Fuente: respuesta determinista (serie load_metrics persistida, sin LLM).",
+        ]
+        return "\n".join(lines)
+
+    # Vista por días: comparación primer día vs hoy
+    days_back = 14
+    if m_dias:
+        try:
+            days_back = int(m_dias.group(1))
+        except ValueError:
+            days_back = 14
+    days_back = max(7, min(days_back, 120))
+
+    tail = series[-days_back:]
+    first = tail[0]
+    first_date = str(first.get("date") or "")
+    try:
+        first_label = date.fromisoformat(first_date).strftime("%d/%m")
+    except ValueError:
+        first_label = "Inicio"
+    last_label = today_d.strftime("%d/%m")
+
+    def _delta(a: float, b: float) -> tuple[float, str]:
+        d = round(b - a, 1)
+        return (d, "↗") if d > 0.2 else (d, "↘") if d < -0.2 else (d, "→")
+
+    atl0 = float(first.get("atl") or 0.0)
+    ctl0 = float(first.get("ctl") or 0.0)
+    tsb0 = float(first.get("tsb") or 0.0)
+    d_atl, a_atl = _delta(atl0, today_atl)
+    d_ctl, a_ctl = _delta(ctl0, today_ctl)
+    d_tsb, a_tsb = _delta(tsb0, today_tsb)
+
     return "\n".join([
         "## 🧭 Resumen",
         f"Tendencia de los últimos {days_back} días: vas hacia **{status_text}**.",
         "",
         "## 📊 Métricas clave",
-        "| Métrica | Inicio | Actual | Delta | Tendencia |",
+        f"| Métrica | {first_label} | {last_label} | Delta | Tendencia |",
         "|---|---:|---:|---:|:---:|",
-        f"| ATL (Fatiga) | {atl0:.1f} | {atl1:.1f} | {d_atl:+.1f} | {a_atl} |",
-        f"| CTL (Estado físico) | {ctl0:.1f} | {ctl1:.1f} | {d_ctl:+.1f} | {a_ctl} |",
-        f"| TSB (Forma) | {tsb0:.1f} | {tsb1:.1f} | {d_tsb:+.1f} | {a_tsb} |",
-        f"| Umbral TSB objetivo | {tsb_low:.1f}..{tsb_high:.1f} | - | - | perfil.load_metrics.ranges |",
-        f"| Umbral ATL alto | > {atl_high:.1f} | - | - | perfil.load_metrics.ranges |",
+        f"| ATL (Fatiga) | {atl0:.1f} | {today_atl:.1f} | {d_atl:+.1f} | {a_atl} |",
+        f"| CTL (Estado físico) | {ctl0:.1f} | {today_ctl:.1f} | {d_ctl:+.1f} | {a_ctl} |",
+        f"| TSB (Forma) | {tsb0:.1f} | {today_tsb:.1f} | {d_tsb:+.1f} | {a_tsb} |",
+        "",
+        f"_Rangos de referencia: TSB objetivo {tsb_low:.1f}..{tsb_high:.1f} · ATL alto > {atl_high:.1f}_",
         "",
         "## ✅ Recomendación",
         recommendation,
@@ -4643,6 +4721,14 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         "estoy para entrenar hoy",
         "training readiness",
         "readiness hoy",
+        "forma fisica",
+        "forma física",
+        "estado de forma",
+        "como estoy de forma",
+        "cómo estoy de forma",
+        "ctl",
+        "atl",
+        "tsb",
     ]
     if any(marker in text for marker in explicit_markers):
         return True
@@ -4738,11 +4824,22 @@ def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | No
 def _resolve_week_window(user_message: str | None, today_d: date) -> tuple[date, date]:
     """Resuelve ventana semanal natural (lunes→domingo) desde el mensaje.
 
-    - Si el usuario menciona una fecha, usa la semana de esa fecha.
-    - Si no, usa semana actual (lunes→hoy).
+    - "semana pasada" / "semana anterior" / "semana previa" → semana anterior.
+    - "hace N semanas" / "N semanas atrás" → N semanas hacia atrás.
+    - Fecha explícita → semana que contiene esa fecha.
+    - Sin referencia → semana actual (lunes→hoy).
     """
     target_d = today_d
-    if isinstance(user_message, str) and user_message.strip():
+    msg_lower = (user_message or "").lower() if isinstance(user_message, str) else ""
+
+    # Semana pasada / anterior / previa
+    if re.search(r'\bsemana\s+(pasada|anterior|previa)\b', msg_lower):
+        target_d = today_d - timedelta(days=7)
+    # Hace N semanas / N semanas atrás
+    elif m_n := re.search(r'hace\s+(\d+)\s+semanas?|(\d+)\s+semanas?\s+atr[aá]s', msg_lower):
+        n = int(next(g for g in m_n.groups() if g is not None))
+        target_d = today_d - timedelta(days=7 * n)
+    elif msg_lower:
         target_iso = _extract_iso_date_from_text(user_message)
         if target_iso:
             try:
@@ -4790,7 +4887,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     today_d = date.today()
     week_start, week_end = _resolve_week_window(user_message, today_d)
     prev_week_start = week_start - timedelta(days=7)
-    prev_week_end = week_end - timedelta(days=7)
+    prev_week_end = week_start - timedelta(days=1)  # siempre el domingo anterior al inicio de semana actual
     week_dates = [week_start + timedelta(days=i) for i in range((week_end - week_start).days + 1)]
     prev_week_dates = [prev_week_start + timedelta(days=i) for i in range((prev_week_end - prev_week_start).days + 1)]
     running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
@@ -4923,7 +5020,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         "## 📊 Métricas clave",
         "| Métrica | Valor | Fuente |",
         "|---|---|---|",
-        f"| Semana natural | {week_start.strftime('%d/%m/%Y')} → {week_end.strftime('%d/%m/%Y')} | calendario ISO |",
+        f"| Semana natural | {week_start.strftime('%d/%m/%Y')} → {(week_start + timedelta(days=6)).strftime('%d/%m/%Y')}{' (datos hasta ' + week_end.strftime('%d/%m') + ')' if week_end < week_start + timedelta(days=6) else ''} | calendario ISO |",
         f"| TSS acumulado | {current_week_tss:.1f} | load_metrics_daily/garmin_activity_load |",
         f"| Semana previa | {prev_week_start.strftime('%d/%m/%Y')} → {prev_week_end.strftime('%d/%m/%Y')} | calendario ISO |",
         f"| TSS semana previa | {previous_week_tss:.1f} | load_metrics_daily/garmin_activity_load |",
@@ -5040,7 +5137,7 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
         "## 📊 Métricas clave",
         "| Métrica | Valor | Fuente |",
         "|---|---|---|",
-        f"| Semana natural | {week_start.strftime('%d/%m/%Y')} → {week_end.strftime('%d/%m/%Y')} | calendario ISO |",
+        f"| Semana natural | {week_start.strftime('%d/%m/%Y')} → {(week_start + timedelta(days=6)).strftime('%d/%m/%Y')}{' (datos hasta ' + week_end.strftime('%d/%m') + ')' if week_end < week_start + timedelta(days=6) else ''} | calendario ISO |",
         f"| Actividades detectadas | {len(rows)} | Garmin get_activities_by_date |",
         "",
         "Actividades de Garmin:",
@@ -10818,17 +10915,28 @@ class TrainerAgent:
         Mantiene el bloque determinista como fuente de verdad y limita el LLM
         a interpretar/recomendar usando SOLO esos datos.
         """
-        if not _is_coaching_recommendation_intent(user_message):
+        if not _is_coaching_recommendation_intent(user_message) and route != "daily_readiness":
             return deterministic_reply
 
         try:
+            is_readiness = route == "daily_readiness"
             coaching_messages = [
                 {
                     "role": "system",
                     "content": (
                         "Eres Kairos Coach. Debes interpretar SOLO los datos factuales recibidos. "
                         "No inventes métricas ni fechas. Si falta un dato, dilo explícitamente. "
-                        "Responde en español con máximo 5 bullets accionables."
+                        "Responde en español."
+                        + (
+                            " Genera las siguientes secciones con sus emojis:\n"
+                            "\u26a1 Efecto de entrenamiento y carga\n"
+                            "\U0001f4a7 Hidratación recomendada\n"
+                            "\U0001f6cc Estado pre-carrera (body battery, sueño y HRV)\n"
+                            "\U0001f504 Recuperación y próximas sesiones\n"
+                            "Cada sección con 2-4 bullets concisos. Usa los datos reales proporcionados."
+                            if is_readiness else
+                            " Máximo 5 bullets accionables."
+                        )
                     ),
                 },
                 {
@@ -10849,6 +10957,9 @@ class TrainerAgent:
                 self.client.chat.completions.create(
                     model=self.model,
                     messages=coaching_messages,
+                    **({
+                        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+                    } if getattr(self, "provider", "") == "nvidia" else {}),
                 ),
                 timeout=_llm_timeout_seconds(),
             )
@@ -10904,6 +11015,7 @@ class TrainerAgent:
             }
         )
         messages = self._build_messages(user_message)
+        _prefetch_cache: dict = {}  # poblado por el pre-fetch si user_date == hoy
         route_key = self.tool_router.route_key(
             user_message,
             self.conversation_history,
@@ -11145,7 +11257,6 @@ class TrainerAgent:
         # resolver y cargar la actividad + contexto completo ANTES del bucle LLM.
         analysis_block_for_rescue = ""
         prefetch_date_for_rescue = ""
-        _prefetch_cache: dict = {}  # reutilizado por collect_startup_snapshot_48h si user_date == hoy
         user_date = _extract_iso_date_from_text(user_message)
         is_week_range_query = bool(re.search(r"\b(semana|week)\b", (user_message or "").lower()))
         if user_date and not is_week_range_query:
@@ -11500,6 +11611,9 @@ class TrainerAgent:
                         messages=messages,
                         tools=self.tools_schema if self.tools_schema else None,
                         tool_choice="auto" if self.tools_schema else None,
+                        **({
+                            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+                        } if getattr(self, "provider", "") == "nvidia" else {}),
                     ),
                     timeout=_llm_timeout_seconds(),
                 )

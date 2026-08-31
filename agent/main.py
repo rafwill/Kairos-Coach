@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import date
 from pathlib import Path
 import logging
@@ -1333,10 +1334,24 @@ async def main() -> None:
             status_msg = (
                 "[dim]Inicializando histórico de carga desde Garmin (usuario nuevo)...[/]"
                 if is_new_user
-                else "[dim]Calculando métricas de carga/fatiga (TSS·CTL (Estado físico)·ATL (Fatiga)·TSB (Forma))...[/]"
+                else "[dim]Verificando actividades recientes en Garmin y calculando carga/fatiga...[/]"
             )
-            with console.status(status_msg):
-                await agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user)
+            _load_start = time.time()
+
+            async def _compute_with_counter() -> None:
+                task = asyncio.create_task(
+                    agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user)
+                )
+                while not task.done():
+                    elapsed = int(time.time() - _load_start)
+                    console.print(
+                        f"\r[dim]⏳ Consultando Garmin... {elapsed}s[/]",
+                        end="",
+                    )
+                    await asyncio.sleep(1)
+                await task
+
+            await _compute_with_counter()
             load_meta = getattr(agent, "_last_load_compute_meta", {}) or {}
             load_mode = str(load_meta.get("mode") or "")
             load_reason = str(load_meta.get("reason") or "").strip()
