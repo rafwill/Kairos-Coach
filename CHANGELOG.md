@@ -2,6 +2,28 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-08-31
+
+### Added
+- Trazas de timing en llamadas LLM: logs `[LLM] ▶` (inicio) y `[LLM] ⏱` (elapsed/timeout) para depurar latencia.
+- Trazas de timing en startup: `[STARTUP]` y `[SNAPSHOT]` con elapsed por fase.
+- Nuevo documento de validación: `docs/testing-bateria-punto55.md` con checklist de 10 preguntas E2E para cerrar punto 55.
+
+### Changed
+- Modelo NVIDIA NIM actualizado: `meta/llama-3.1-70b-instruct` (EOL 2026-08-26) → `nvidia/nemotron-3.5-lightning-30b-a3b`.
+- Manejo de error 410 (modelo EOL) en loop LLM: mensaje amigable en lugar de crash de sesión.
+- `decrypt_password` ahora captura `cryptography.fernet.InvalidToken` correctamente (antes crasheaba al arrancar con clave de cifrado cambiada).
+- Paralelización de `collect_startup_snapshot_48h`: 7 llamadas MCP secuenciales → `asyncio.gather` (~8-10s en lugar de ~35s).
+- Paralelización del pre-fetch de actividad: body_battery, sleep×2, hrv, training_load → `asyncio.gather` simultáneo.
+- Caché de pre-fetch (`_prefetch_cache`): evita re-fetch de body_battery y hrv del día actual cuando `daily_readiness` llama a `collect_startup_snapshot_48h`.
+- Timeout LLM default elevado: 25s → 300s (configurable vía `KAIROS_LLM_TIMEOUT_SECONDS`).
+- Cap de timeout LLM elevado: 120s → 300s.
+- Eliminado cap de 12s en `_augment_with_llm_coaching_if_needed`; ahora usa `_llm_timeout_seconds()` completo.
+- Menú de selección de herramientas eliminado del arranque: Kairos siempre usa Essential Tools (`essential_only=True` hardcodeado).
+- Essential Tools actualizado: eliminada `get_activity_hr_zones` (tool fantasma — servidor no la expone); añadidas `get_activity_splits`, `get_activity_exercise_sets`, `get_activity_power_in_timezones`. Total: 37 → 40 tools.
+- Eliminado bloque muerto de estrategia 2 (`get_activity_hr_zones`) del pre-fetch de zonas FC; estrategia 3 renombrada a estrategia 2.
+- `docs/mcp-tools-completo-vs-essentials.md` actualizado: count 37 → 40, 4 tools modificadas.
+
 ## 2026-08-21
 
 ### Changed

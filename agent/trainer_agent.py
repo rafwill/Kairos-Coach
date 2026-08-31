@@ -5,6 +5,7 @@ de Garmin Connect a través del servidor MCP.
 """
 
 import os
+import time
 import logging
 import math
 import ssl
@@ -148,12 +149,12 @@ def _is_deterministic_router_enabled() -> bool:
 
 def _llm_timeout_seconds() -> float:
     """Timeout duro de llamadas LLM para evitar bloqueos prolongados."""
-    raw = str(os.environ.get("KAIROS_LLM_TIMEOUT_SECONDS", "25")).strip()
+    raw = str(os.environ.get("KAIROS_LLM_TIMEOUT_SECONDS", "300")).strip()
     try:
         value = float(raw)
     except (TypeError, ValueError):
         value = 25.0
-    return max(5.0, min(120.0, value))
+    return max(5.0, min(300.0, value))
 
 
 def _tool_timeout_seconds() -> float:
@@ -5202,7 +5203,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             raw_hr_zones = json.dumps(embedded, ensure_ascii=False)
 
         if not raw_hr_zones and primary_id is not None:
-            for tool_name in ("get_activity_hr_in_timezones", "get_activity_hr_zones"):
+            for tool_name in ("get_activity_hr_in_timezones",):
                 for param in ({"activity_id": primary_id}, {"activityId": primary_id}):
                     try:
                         _raw = await asyncio.wait_for(call_tool(mcp_session, tool_name, param), timeout=4.0)
@@ -9735,7 +9736,7 @@ class TrainerAgent:
                 base_url="https://integrate.api.nvidia.com/v1",
                 api_key=os.environ["NVIDIA_API_KEY"],
             )
-            self.model = os.environ.get("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
+            self.model = os.environ.get("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
             self._api_key = os.environ["NVIDIA_API_KEY"]
         else:
             raise ValueError(f"Proveedor desconocido: '{provider}'. Opciones válidas: 'vpn', 'groq', 'gemini', 'mistral', 'cerebras', 'nvidia'.")
@@ -10368,10 +10369,12 @@ class TrainerAgent:
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
             log.debug("No se pudo persistir cache de load_metrics: %s", exc)
 
-    async def collect_startup_snapshot_48h(self) -> dict:
+    async def collect_startup_snapshot_48h(self, prefetch_today: dict | None = None) -> dict:
         """Recoge un snapshot operativo de 48h para briefing de arranque."""
         today_iso = date.today().isoformat()
         yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
+        _pf = prefetch_today or {}
+        _t_snap = time.perf_counter()
 
         async def _tool_json(tool_name: str, args: dict) -> Any:
             try:
@@ -10389,25 +10392,32 @@ class TrainerAgent:
             parsed = _try_parse_json(compact)
             return parsed if parsed is not None else compact
 
-        body_today = await _tool_json(
-            "get_body_battery",
-            {"start_date": today_iso, "end_date": today_iso},
-        )
-        body_yday = await _tool_json(
-            "get_body_battery",
-            {"start_date": yesterday_iso, "end_date": yesterday_iso},
-        )
-        hrv_today = await _tool_json("get_hrv_data", {"date": today_iso})
-        hrv_yday = await _tool_json("get_hrv_data", {"date": yesterday_iso})
-        sleep_today = await _tool_json("get_sleep_summary", {"date": today_iso})
-        sleep_yday = await _tool_json("get_sleep_summary", {"date": yesterday_iso})
-        # Fuente canónica de carga/fatiga: serie persistida en DB.
-        # Solo si no existe, intentamos recálculo en vivo como fallback.
-        load_trend = None
+        async def _cached_or_fetch(cache_key: str, tool_name: str, args: dict) -> Any:
+            if cache_key in _pf:
+                raw = _pf[cache_key]
+                if raw is None:
+                    return None
+                parsed = _try_parse_json(raw)
+                if parsed is not None:
+                    return parsed
+                compact = _compact_tool_result(raw, tool_name)
+                return _try_parse_json(compact) or compact
+            return await _tool_json(tool_name, args)
 
-        # ── Actividades recientes (48h) para el briefing proactivo ─────────────
-        # Solo necesitamos las últimas actividades para saber qué entrenó ayer/hoy.
-        activities_raw = await _tool_json("get_activities", {"start": "0", "limit": "12"})
+        body_today, body_yday, hrv_today, hrv_yday, sleep_today, sleep_yday, activities_raw = (
+            await asyncio.gather(
+                _cached_or_fetch("body_today", "get_body_battery", {"start_date": today_iso, "end_date": today_iso}),
+                _tool_json("get_body_battery", {"start_date": yesterday_iso, "end_date": yesterday_iso}),
+                _cached_or_fetch("hrv_today", "get_hrv_data", {"date": today_iso}),
+                _tool_json("get_hrv_data", {"date": yesterday_iso}),
+                _tool_json("get_sleep_summary", {"date": today_iso}),
+                _tool_json("get_sleep_summary", {"date": yesterday_iso}),
+                _tool_json("get_activities", {"start": "0", "limit": "12"}),
+            )
+        )
+        log.info("[SNAPSHOT] ⏱ gather_7_calls=%.1fs (cached: body=%s hrv=%s)",
+                 time.perf_counter() - _t_snap,
+                 "body_today" in _pf, "hrv_today" in _pf)
         activities_recent = _extract_activities_list(activities_raw)
         recent_trainings: list[dict] = []
         for activity in activities_recent:
@@ -10613,14 +10623,19 @@ class TrainerAgent:
 
     async def build_startup_status_markdown(self, profile_changes: list[str] | None = None) -> str:
         """Construye el mensaje proactivo mostrado al arrancar la sesion."""
+        _t0 = time.perf_counter()
+        log.info("[STARTUP] ▶ build_startup_status_markdown inicio")
         snapshot = await self.collect_startup_snapshot_48h()
+        log.info("[STARTUP] ⏱ collect_snapshot=%.1fs", time.perf_counter() - _t0)
         snapshot["profile_changes"] = profile_changes or []
         active_plan = _get_active_training_plan(self.user_profile)
         snapshot["plan_assigned"] = bool(active_plan)
         if active_plan:
             snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
             snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
-        return _build_proactive_status_markdown(snapshot)
+        md = _build_proactive_status_markdown(snapshot)
+        log.info("[STARTUP] ✓ total=%.1fs", time.perf_counter() - _t0)
+        return md
 
     async def build_onboarding_mcp_enrichment(self) -> dict:
         """Obtiene datos MCP utiles para enriquecer la base inicial del atleta."""
@@ -10828,13 +10843,16 @@ class TrainerAgent:
                 },
             ]
 
+            _t0_coaching = time.perf_counter()
+            log.info("[LLM] ▶ llamada route=%s modelo=%s tipo=coaching", route, self.model)
             coaching_response = await asyncio.wait_for(
                 self.client.chat.completions.create(
                     model=self.model,
                     messages=coaching_messages,
                 ),
-                timeout=min(12.0, _llm_timeout_seconds()),
+                timeout=_llm_timeout_seconds(),
             )
+            log.info("[LLM] ⏱ coaching elapsed=%.1fs", time.perf_counter() - _t0_coaching)
 
             if getattr(coaching_response, "usage", None):
                 u = coaching_response.usage
@@ -10979,7 +10997,7 @@ class TrainerAgent:
         # Ruta determinista para readiness diario: evita respuestas del LLM
         # con métricas inventadas y fuerza snapshot real de Garmin.
         if route_key == "daily_readiness":
-            snapshot = await self.collect_startup_snapshot_48h()
+            snapshot = await self.collect_startup_snapshot_48h(prefetch_today=_prefetch_cache)
             snapshot["profile_changes"] = []
             active_plan = _get_active_training_plan(self.user_profile)
             snapshot["plan_assigned"] = bool(active_plan)
@@ -11127,6 +11145,7 @@ class TrainerAgent:
         # resolver y cargar la actividad + contexto completo ANTES del bucle LLM.
         analysis_block_for_rescue = ""
         prefetch_date_for_rescue = ""
+        _prefetch_cache: dict = {}  # reutilizado por collect_startup_snapshot_48h si user_date == hoy
         user_date = _extract_iso_date_from_text(user_message)
         is_week_range_query = bool(re.search(r"\b(semana|week)\b", (user_message or "").lower()))
         if user_date and not is_week_range_query:
@@ -11167,65 +11186,65 @@ class TrainerAgent:
                     pass
                 context_parts = [f"ACTIVIDAD (activityId={pre_id}, fecha={user_date}):\n{pre_data}"]
 
-                # Body battery del día de la actividad (requiere start_date + end_date)
-                try:
-                    raw_bb = await call_tool(self.mcp_session, "get_body_battery", {
-                        "start_date": user_date,
-                        "end_date": user_date,
-                    })
-                    # Log raw para diagnóstico (primeros 200 chars del raw antes de compactar)
+                # Fetch paralelo: body_battery, sleep (2 fechas), hrv, training_load
+                _night_before = (date.fromisoformat(user_date) - timedelta(days=1)).isoformat()
+                _tl_end = date.today().isoformat()
+                _tl_start = (date.today() - timedelta(weeks=4)).isoformat()
+
+                async def _safe_prefetch(tool_name: str, args: dict) -> str | None:
+                    try:
+                        return await call_tool(self.mcp_session, tool_name, args)
+                    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError):
+                        return None
+
+                raw_bb, raw_sleep, raw_sleep_nb, raw_hrv, raw_tl = await asyncio.gather(
+                    _safe_prefetch("get_body_battery", {"start_date": user_date, "end_date": user_date}),
+                    _safe_prefetch("get_sleep_data", {"date": user_date}),
+                    _safe_prefetch("get_sleep_data", {"date": _night_before}),
+                    _safe_prefetch("get_hrv_data", {"date": user_date}),
+                    _safe_prefetch("get_training_load_trend", {"start_date": _tl_start, "end_date": _tl_end}),
+                )
+
+                # body_battery
+                if raw_bb is not None:
                     log.info(f"body_battery raw({user_date}): {(raw_bb or '')[:200]}")
                     bb_data = _compact_tool_result(raw_bb, "get_body_battery")
                     log.info(f"body_battery compact({user_date}): {bb_data[:120] if bb_data else 'None'}")
                     if bb_data and bb_data != "(sin datos)":
                         context_parts.append(f"BODY BATTERY del {user_date}:\n{bb_data}")
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
-                    log.info(f"body_battery error: {e}")
 
-                # Sueño de la noche previa (recuperación pre-actividad)
-                # Garmin almacena el sueño bajo la fecha de DESPERTAR (user_date),
-                # no bajo la fecha en que te acostaste (user_date - 1).
-                try:
-                    night_before = (date.fromisoformat(user_date) - timedelta(days=1)).isoformat()
-                    # Intentar con user_date primero (= fecha de despertar, que es como Garmin indexa)
-                    _sleep_added = False
-                    for _sleep_date in (user_date, night_before):
-                        _raw_s = await call_tool(self.mcp_session, "get_sleep_data", {"date": _sleep_date})
-                        _sd = _compact_tool_result(_raw_s, "get_sleep_data")
-                        log.info(f"sleep({_sleep_date}): {_sd[:120] if _sd else 'None'}")
-                        if _sd and _sd != "(sin datos)":
-                            context_parts.append(f"SUENO noche previa ({_sleep_date}):\n{_sd}")
-                            _sleep_added = True
-                            break
-                    if not _sleep_added:
-                        log.info("sleep: no se encontraron datos en ninguna fecha")
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
-                    log.info(f"sleep error: {e}")
+                # sleep: preferir user_date, fallback night_before (ambas ya disponibles)
+                _sleep_added = False
+                for _sleep_date, _raw_s in ((user_date, raw_sleep), (_night_before, raw_sleep_nb)):
+                    if _raw_s is None:
+                        continue
+                    _sd = _compact_tool_result(_raw_s, "get_sleep_data")
+                    log.info(f"sleep({_sleep_date}): {_sd[:120] if _sd else 'None'}")
+                    if _sd and _sd != "(sin datos)":
+                        context_parts.append(f"SUENO noche previa ({_sleep_date}):\n{_sd}")
+                        _sleep_added = True
+                        break
+                if not _sleep_added:
+                    log.info("sleep: no se encontraron datos en ninguna fecha")
 
-                # HRV del día de la actividad
-                try:
-                    raw_hrv = await call_tool(self.mcp_session, "get_hrv_data", {"date": user_date})
+                # hrv
+                if raw_hrv is not None:
                     hrv_data = _compact_tool_result(raw_hrv, "get_hrv_data")
                     log.info(f"hrv({user_date}): {hrv_data[:120] if hrv_data else 'None'}")
                     if hrv_data and hrv_data != "(sin datos)":
                         context_parts.append(f"HRV del {user_date}:\n{hrv_data}")
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
-                    log.debug(f"hrv error: {e}")
 
-                # Carga de entrenamiento — prueba con rango de 4 semanas
-                try:
-                    tl_end   = date.today().isoformat()
-                    tl_start = (date.today() - timedelta(weeks=4)).isoformat()
-                    raw_tl = await call_tool(self.mcp_session, "get_training_load_trend", {
-                        "start_date": tl_start,
-                        "end_date": tl_end,
-                    })
+                # training_load
+                if raw_tl is not None:
                     tl_data = _compact_tool_result(raw_tl, "get_training_load_trend")
                     log.debug(f"training_load: {tl_data[:80] if tl_data else 'None'}")
                     if tl_data and tl_data != "(sin datos)":
                         context_parts.append(f"CARGA DE ENTRENAMIENTO:\n{tl_data}")
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
-                    log.debug(f"training_load error: {e}")
+
+                # Guardar en caché para collect_startup_snapshot_48h (evita re-fetch si es hoy)
+                if user_date == date.today().isoformat():
+                    _prefetch_cache["body_today"] = raw_bb
+                    _prefetch_cache["hrv_today"] = raw_hrv
 
                 # ── Zonas reales de FC ──────────────────────────────────────────────
                 # Estrategia 1: buscar en el raw de get_activity (ya disponible, sin llamada extra)
@@ -11241,26 +11260,7 @@ class TrainerAgent:
                 except (TypeError, ValueError, json.JSONDecodeError):
                     pass
 
-                # Estrategia 2: llamar get_activity_hr_zones (herramienta específica)
-                if not raw_hr_zones:
-                    for _param in ({"activity_id": pre_id}, {"activityId": pre_id}, {"id": pre_id}):
-                        try:
-                            _raw = await call_tool(self.mcp_session, "get_activity_hr_zones", _param)
-                            log.info("get_activity_hr_zones(%s): %s", _param, (_raw or "")[:200])
-                            if not _raw or "Unknown tool" in _raw or "unknown tool" in _raw.lower():
-                                log.info("hr_zones: get_activity_hr_zones no disponible en este servidor MCP")
-                                break  # no reintentar con otros params si la herramienta no existe
-                            if _raw.strip() not in ("null", "[]", "{}", "(sin datos)", ""):
-                                _parsed = _parse_hr_zones_list(_raw)
-                                if _parsed:
-                                    raw_hr_zones = _raw
-                                    log.info("hr_zones: %d zonas via get_activity_hr_zones(%s)", len(_parsed), list(_param.keys())[0])
-                                    break
-                        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
-                            log.info("get_activity_hr_zones(%s) error: %s", list(_param.keys())[0], _e)
-                            break
-
-                # Estrategia 3: get_activity_hr_in_timezones (nombre real en garminconnect / garmin-mcp)
+                # Estrategia 2: get_activity_hr_in_timezones (nombre real en garminconnect / garmin-mcp)
                 if not raw_hr_zones:
                     for _param in ({"activity_id": pre_id}, {"activityId": pre_id}):
                         try:
@@ -11491,6 +11491,9 @@ class TrainerAgent:
                 assistant_reply = "[Lo siento, la consulta requirió demasiadas llamadas a herramientas. Por favor, reformula tu pregunta de forma más concreta.]"
                 return await self._finalize_chat_reply(user_message, assistant_reply, route="max_tool_iterations")
             try:
+                _t0 = time.perf_counter()
+                log.info("[LLM] ▶ llamada iter=%d modelo=%s route=chat msgs=%d",
+                         iteration, self.model, len(messages))
                 response = await asyncio.wait_for(
                     self.client.chat.completions.create(
                         model=self.model,
@@ -11500,7 +11503,10 @@ class TrainerAgent:
                     ),
                     timeout=_llm_timeout_seconds(),
                 )
+                log.info("[LLM] ⏱ iter=%d elapsed=%.1fs", iteration, time.perf_counter() - _t0)
             except asyncio.TimeoutError as api_exc:
+                log.warning("[LLM] ⏱ iter=%d TIMEOUT elapsed=%.1fs (límite=%.0fs)",
+                            iteration, time.perf_counter() - _t0, _llm_timeout_seconds())
                 await self._emit_chat_error_hook(
                     stage="llm_completion_timeout",
                     error=api_exc,
@@ -11542,6 +11548,12 @@ class TrainerAgent:
                         "- Si no estás en red corporativa, reinicia el agente o usa /modelo para cambiar a un modelo con contexto más grande (como Gemini)"
                     )
                     return await self._finalize_chat_reply(user_message, msg, route="llm_request_too_large")
+                if "410" in err_str or "end of life" in err_str.lower() or "no longer available" in err_str.lower():
+                    msg = (
+                        f"El modelo `{self.model}` ha llegado a su fin de vida y ya no está disponible.\n\n"
+                        "Reinicia Kairos y elige otro modelo con `/modelo`, o actualiza `NVIDIA_MODEL` en tu `.env`."
+                    )
+                    return await self._finalize_chat_reply(user_message, msg, route="llm_model_eol")
                 raise
 
             # Track and log token usage

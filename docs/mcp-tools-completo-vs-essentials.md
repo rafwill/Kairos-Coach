@@ -1,7 +1,7 @@
 # MCP Garmin: Completo vs Essentials
 
 - Total tools (completo): 126
-- Tools en essentials: 37
+- Tools en essentials: 40
 
 ## Tabla completa
 
@@ -28,13 +28,13 @@
 | get_activities_by_date | Get activities between specified dates with pagination support. | activity_management | SI |
 | get_activities_fordate | Get activities for a specific date | activity_management | SI |
 | get_activity | Get detailed information for a single activity. | activity_management | SI |
-| get_activity_exercise_sets | Get exercise sets for strength training activities | activity_management | NO |
+| get_activity_exercise_sets | Get exercise sets for strength training activities | activity_management | SI |
 | get_activity_fit_data | Download and parse FIT file for an activity to expose advanced cycling data. | activity_analysis | NO |
 | get_activity_gear | Get gear data used for an activity | activity_management | NO |
 | get_activity_hr_in_timezones | Get heart rate data in different time zones for an activity | activity_management | SI |
-| get_activity_power_in_timezones | Get power distribution across training zones for an activity. | activity_management | NO |
+| get_activity_power_in_timezones | Get power distribution across training zones for an activity. | activity_management | SI |
 | get_activity_split_summaries | Get split summaries for an activity | activity_management | NO |
-| get_activity_splits | Get splits for an activity | activity_management | NO |
+| get_activity_splits | Get splits for an activity | activity_management | SI |
 | get_activity_typed_splits | Get typed splits for an activity | activity_management | NO |
 | get_activity_types | Get all available activity types | activity_management | NO |
 | get_activity_weather | Get weather data for an activity | activity_management | NO |
