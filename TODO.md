@@ -7,6 +7,8 @@
 - Validacion reciente de regresion focal (2026-08-21): `tests/test_trainer_agent.py` en verde (307 passed).
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 - Contrato de salida unificado activo (prompt completo + prompt compacto + rutas deterministas clave).
+- Essential Tools: 40 tools activas (2026-08-31); menú de selección eliminado del arranque.
+- Modelo NVIDIA NIM activo: `nvidia/nemotron-3.5-lightning-30b-a3b` (sustituye llama-3.x EOL).
 
 ---
 

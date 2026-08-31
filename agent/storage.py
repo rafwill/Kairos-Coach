@@ -170,7 +170,7 @@ def decrypt_password(encrypted: str) -> str | None:
     """Descifra una contraseña. Devuelve None si falla (clave cambiada o corrupto)."""
     try:
         return _get_fernet().decrypt(encrypted.encode("utf-8")).decode("utf-8")
-    except (ValueError, TypeError, UnicodeDecodeError):
+    except Exception:
         return None
 
 

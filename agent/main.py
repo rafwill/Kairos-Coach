@@ -1086,7 +1086,7 @@ _PROVIDER_INFO = {
     "gemini":   ("GEMINI_API_KEY",   "Google Gemini (gemini-2.0-flash)",    "~1M tokens/día gratis"),
     "mistral":  ("MISTRAL_API_KEY",  "Mistral (mistral-small-latest)",      "capa gratuita · console.mistral.ai"),
     "cerebras": ("CEREBRAS_API_KEY", "Cerebras (llama-3.3-70b)",            "ultrarrápido · gratis · cloud.cerebras.ai"),
-    "nvidia":   ("NVIDIA_API_KEY",   "NVIDIA NIM (llama3-70b-instruct)",    "API compatible OpenAI · build.nvidia.com"),
+    "nvidia":   ("NVIDIA_API_KEY",   "NVIDIA NIM (nemotron-3.5-lightning-30b)",  "API compatible OpenAI · build.nvidia.com"),
 }
 
 
@@ -1213,39 +1213,6 @@ def _auto_select_provider() -> str:
     return provider
 
 
-def _ask_tool_mode(provider: str) -> bool:
-    """Pregunta al usuario si quiere usar Essential Tools o todas las herramientas (126).
-
-    Con GitHub Models (vpn) se fuerza Essential Tools: los schemas de 126 herramientas
-    ya superan el límite de 8k tokens antes de enviar ninguna pregunta.
-    """
-    if provider == "vpn":
-        console.print(Panel.fit(
-            "[yellow]GitHub Models[/yellow] tiene un límite de 8 000 tokens por request.\n"
-            "Con 126 herramientas los schemas solos superan ese límite, por lo que\n"
-            "se usa automáticamente [bold]Essential Tools (subset reducido)[/bold].\n"
-            "[dim]Para usar todas las herramientas, sal de la VPN y reinicia (usará Gemini).[/dim]",
-            title="[bold blue]Kairos Coach — Herramientas[/]",
-            border_style="blue",
-        ))
-        return True  # essential_only=True
-
-    console.print(Panel.fit(
-        "[bold]Selecciona el modo de herramientas:[/]\n\n"
-        "  [green]1[/green] · Essential Tools [dim](subset reducido)[/dim]   — más rápido · menor consumo de tokens  [bold]← recomendado[/bold]\n"
-        "  [yellow]2[/yellow] · Todas          [dim](126 tools)[/dim]  — acceso completo · más tokens por petición",
-        title="[bold blue]Kairos Coach — Herramientas[/]",
-        border_style="blue",
-    ))
-    choice = Prompt.ask(
-        "  Tu elección",
-        choices=["1", "2"],
-        default="1",
-        case_sensitive=False,
-    )
-    return choice == "1"
-
-
 def _check_and_migrate_supabase() -> None:
     """Comprueba conectividad con Supabase y exige DB activa (modo DB-first)."""
     status = check_supabase_connection()
@@ -1274,7 +1241,6 @@ async def main() -> None:
 
     provider = _auto_select_provider()
     _check_env(provider)
-    essential_only = _ask_tool_mode(provider)
 
     _, label, note = _PROVIDER_INFO[provider]
     console.print(Panel.fit(
@@ -1284,7 +1250,7 @@ async def main() -> None:
         border_style="green",
     ))
 
-    async with garmin_mcp_session(essential_only=essential_only) as session:
+    async with garmin_mcp_session(essential_only=True) as session:
         agent = TrainerAgent(mcp_session=session, provider=provider)
 
         console.print("[dim]Cargando herramientas de Garmin...[/]")

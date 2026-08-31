@@ -68,13 +68,14 @@ def _get_server_params(essential_only: bool = True) -> StdioServerParameters:
         use_uvx = True
 
     # Herramientas esenciales para un agente entrenador personal.
-    # Reduce el contexto de ~31k tokens (126 tools) a ~5k tokens (~31 tools).
+    # Reduce el contexto de ~31k tokens (126 tools) a ~5k tokens (~40 tools).
     # Se puede sobreescribir con la variable GARMIN_ENABLED_TOOLS en .env.
     _DEFAULT_TOOLS = (
         # Perfil personal del usuario
         "get_user_profile,"
         # Actividades
-        "get_activities,get_activity,get_activity_hr_zones,get_activity_hr_in_timezones,get_activities_by_date,get_activities_fordate,"
+        "get_activities,get_activity,get_activity_hr_in_timezones,get_activities_by_date,get_activities_fordate,"
+        "get_activity_splits,get_activity_exercise_sets,get_activity_power_in_timezones,"
         # Salud diaria (versiones ligeras donde existen)
         "get_stats,get_sleep_summary,get_sleep_data,"
         "get_heart_rates_summary,get_stress_summary,get_respiration_summary,"
