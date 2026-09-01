@@ -232,6 +232,30 @@ class TestExtractIsoDateRangeFromText:
     def test_extracts_entre_y_iso(self):
         assert _extract_iso_date_range_from_text("entre 2026-07-27 y 2026-08-02") == ("2026-07-27", "2026-08-02")
 
+    def test_extracts_entre_el_y_el_without_year(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        assert _extract_iso_date_range_from_text("entre el 25/08 y el 30/08") == ("2026-08-25", "2026-08-30")
+
+    def test_extracts_desde_hasta_without_year(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        assert _extract_iso_date_range_from_text("desde 25/08 hasta 30/08") == ("2026-08-25", "2026-08-30")
+
     def test_extracts_cross_year_without_year(self, monkeypatch):
         import agent.trainer_agent as ta
         from datetime import date as _Date
@@ -5402,7 +5426,139 @@ class TestMcpFactualDeterministicRoute:
         assert _is_activity_details_query_intent("¿Cuáles fueron los datos de mi entrenamiento de ayer?")
         assert _is_activity_details_query_intent("Dame el resumen de la actividad de hoy")
         assert _is_activity_details_query_intent("Examina mi entrenamiento del martes")
+        assert _is_activity_details_query_intent("Analiza mi ultima actividad")
+        assert _is_activity_details_query_intent("Analiza mi ultima actividad de trail")
         assert not _is_activity_details_query_intent("¿Qué TSS hice ayer?")
+
+    def test_is_daily_readiness_intent_detects_me_toca_hoy_queries(self):
+        assert _is_daily_readiness_intent("y que me toca hoy?")
+        assert _is_daily_readiness_intent("que me toca hoy")
+
+    @pytest.mark.asyncio
+    async def test_build_mcp_factual_query_markdown_resolves_last_trail_activity_without_explicit_date(self):
+        import agent.trainer_agent as ta
+
+        async def _fake_call_tool(_session, tool_name, args):
+            if tool_name == "get_activities":
+                return [
+                    {
+                        "activityId": 123,
+                        "activityTypeDTO": {"typeKey": "trail_running"},
+                        "startTimeLocal": "2026-08-30 07:00:00",
+                    }
+                ]
+            if tool_name == "get_activities_fordate":
+                if args.get("date") == "2026-08-30":
+                    return [
+                        {
+                            "activityId": 123,
+                            "activityName": "Trail largo",
+                            "activityType": "trail_running",
+                            "startTimeLocal": "2026-08-30 07:00:00",
+                            "duration": 3600,
+                            "trainingLoad": 120.0,
+                        }
+                    ]
+                return []
+            if tool_name == "get_activities_by_date":
+                return []
+            if tool_name == "get_activity":
+                return {
+                    "activityId": 123,
+                    "activityName": "Trail largo",
+                    "activityType": "trail_running",
+                    "startTimeLocal": "2026-08-30 07:00:00",
+                    "duration": 3600,
+                    "trainingLoad": 120.0,
+                }
+            if tool_name == "get_training_effect":
+                return {
+                    "aerobicTrainingEffect": 4.0,
+                    "anaerobicTrainingEffect": 0.3,
+                }
+            if tool_name == "get_activity_hr_in_timezones":
+                return []
+            return {}
+
+        with patch("agent.trainer_agent.call_tool", _fake_call_tool):
+            out = await ta._build_mcp_factual_query_markdown(
+                mcp_session=object(),
+                profile={"load_metrics": {"series": []}},
+                user_message="Analiza mi ultima actividad de trail",
+            )
+
+        assert "| Fecha consultada | 30/08/2026 |" in out
+        assert "Trail Running" in out
+        assert "TSS: 120.0" in out
+
+    @pytest.mark.asyncio
+    async def test_chat_returns_controlled_message_on_llm_forbidden(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"load_metrics": {"series": []}}
+        agent.model = "test-model"
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=Exception("403 Forbidden from provider (Zscaler)"))
+
+        with patch("agent.trainer_agent._save_history_entry"):
+            out = await TrainerAgent.chat(agent, "Que tipo de sesion me recomiendas esta semana?")
+
+        assert "403/Forbidden" in out
+        assert "Cambiar de modelo con `/modelo`" in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_includes_type_breakdown_for_queried_week(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-08-31", "tss": 40.4, "ctl": 69.1, "atl": 67.6, "tsb": 1.5},
+                    {"date": "2026-09-01", "tss": 0.0, "ctl": 69.1, "atl": 67.6, "tsb": 1.5},
+                ]
+            }
+        }
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return [
+                {
+                    "activityName": "Gimnasio",
+                    "activityType": "strength_training",
+                    "startTimeLocal": "2026-08-31 08:00:00",
+                    "trainingLoad": 37.1,
+                    "duration": 4105,
+                }
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="cuanto tss hice esta semana?",
+        )
+
+        assert "Desglose por tipo de TSS:" in out
+        assert "rTSS: 37.1" in out
+        assert "hrTSS: 0.0" in out
+        assert "sTSS: 0.0" in out
 
     @pytest.mark.asyncio
     async def test_chat_factual_route_does_not_call_llm(self):

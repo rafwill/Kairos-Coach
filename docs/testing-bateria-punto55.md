@@ -150,9 +150,9 @@ Rangos de referencia: TSB objetivo -3.4..6.2 · ATL alto > 68.7
 
 > Objetivo: confirmar cálculo de TSS por tipo y conteo de actividades.
 
-- [ ] **`¿Cuánto TSS hice esta semana?`**  
+- [x] **`¿Cuánto TSS hice esta semana?`**  
   → Debe desglosar por tipo (rTSS, hrTSS, sTSS) y mostrar total semanal, ruta `week_tss`.  
-  Resultado: ⚠️ Ruta `week_tss` activa, TSS 40.4 correcto. Bug detectado y corregido: semana natural mostraba solo el día de inicio (31/08→31/08) en lugar de la semana completa (31/08→06/09). Semana previa también mal calculada (24/08→24/08 en lugar de 24/08→30/08). Fix aplicado en `_resolve_week_window`.
+  Resultado: ✅ Ruta `week_tss` activa y validada. TSS semanal correcto y, tras ajuste, ya incluye desglose explícito por tipo (`rTSS`, `hrTSS`, `sTSS`) limitado a la semana consultada.
 
   Tú: ¿Cuánto TSS hice esta semana?
 
@@ -207,9 +207,9 @@ Actividades fuente (Garmin):
  • Revisa este acumulado antes de definir intensidad de la próxima sesión.                         
  • Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).
 
-- [ ] **`¿Qué actividades hice esta semana?`**  
+- [x] **`¿Qué actividades hice esta semana?`**  
   → Lista de sesiones con fecha, tipo, distancia/duración, ruta `week_activities`.  
-  Resultado:
+  Resultado: ✅ Correcto. Ruta `week_activities` devuelve semana natural, conteo y listado factual de sesiones con fecha/tipo/duración.
 
 ---
 
@@ -217,9 +217,9 @@ Actividades fuente (Garmin):
 
 > Objetivo: validar que `activity_details` calcula TSS correctamente para una sesión real.
 
-- [ ] **`Analiza mi última actividad`**  
+- [x] **`Analiza mi última actividad`**  
   → Debe mostrar distancia, duración, HR, TSS calculado y el método usado (rTSS/hrTSS/sTSS).  
-  Resultado:
+  Resultado: ✅ Corregido y validado. Antes podía caer en fecha de hoy sin actividad; ahora resuelve la última actividad real y entrega detalle factual con método/carga.
 
   Kairos Coach
 🧭 Resumen                                                                                                                                
@@ -283,9 +283,9 @@ Teniendo en cuenta que es 21 días antes del evento, hoy es momento de calidad c
 Fuente: datos reales Garmin extractados tras consulta de actividad + perfil atleta (DT1, objetivo 10k, perfil fisiológico). Las zonas FC  
 presentadas son las reales del reloj, no estimadas.
 
-- [ ] **`¿Cómo fue mi actividad del 30 de agosto?`**  
+- [x] **`¿Cómo fue mi actividad del 30 de agosto?`**  
   → Prueba de resolución de fecha natural + desglose de FC por zonas si disponible.  
-  Resultado:
+  Resultado: ✅ Correcto. Resuelve `30/08/2026`, muestra métricas completas y zonas FC reales.
 
   Kairos Coach
 🧭 Resumen                                                                                                                                
@@ -344,9 +344,9 @@ RECUPERACION RECOMENDADA
  • Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).                                               
 
 
-- [ ] **`Analiza mi ultima actividad de trail`**  
+- [x] **`Analiza mi ultima actividad de trail`**  
   → Debe mostrar distancia, duración, HR, TSS calculado y el método usado (rTSS/hrTSS/sTSS).  
-  Resultado:
+  Resultado: ✅ Corregido y validado. Ahora identifica la última actividad de trail sin fecha explícita y devuelve análisis factual coherente.
 
 ---
 
@@ -354,9 +354,9 @@ RECUPERACION RECOMENDADA
 
 > Objetivo: confirmar que la capa de coaching LLM funciona sobre la base factual determinista.
 
-- [ ] **`¿Puedo entrenar fuerte mañana o necesito recuperar?`**  
+- [x] **`¿Puedo entrenar fuerte mañana o necesito recuperar?`**  
   → Ruta `daily_readiness` + capa LLM coaching. Debe citar TSB y dar recomendación con justificación.  
-  Resultado:
+  Resultado: ✅ Correcto. Ruta `daily_readiness` con CTL/ATL/TSB y recomendación consistente; capa coaching LLM añadida sobre base determinista.
 
   Kairos Coach
 🧭 Resumen                                                                                                                                
@@ -417,9 +417,9 @@ Respuesta determinista: valores tomados del snapshot real de Garmin y modelo de 
 
 Fase coaching por LLM sobre datos deterministas (sin recalcular métricas).  
 
-- [ ] **`¿Qué tipo de sesión me recomiendas para esta semana dado mi estado?`**  
+- [x] **`¿Qué tipo de sesión me recomiendas para esta semana dado mi estado?`**  
   → Consulta de recomendación pura — coaching LLM con contexto de carga, sin caer solo en determinista.  
-  Resultado:
+  Resultado: ✅ Correcto. Entrega recomendación semanal estructurada y justificada con estado de carga real.
 
 ---
 
@@ -427,13 +427,13 @@ Fase coaching por LLM sobre datos deterministas (sin recalcular métricas).
 
 > Objetivo: verificar mensajes de estado del sistema.
 
-- [ ] **`/menu`**  
+- [x] **`/menu`**  
   → Debe mostrar el menú unificado con todas las categorías.  
-  Resultado:
+  Resultado: ✅ Correcto. Menú unificado mostrado con categorías Ver/Editar/Plan/Sistema y comandos esperados.
 
-- [ ] **`¿Cuántas actividades tienes registradas en tu base de datos?`**  
+- [x] **`¿Cuántas actividades tienes registradas en tu base de datos?`**  
   → Prueba de consulta factual directa a DB.  
-  Resultado:
+  Resultado: ✅ Correcto. Consulta determinista a serie persistida con total, días con entrenamiento y rango cubierto.
 
   Kairos Coach
 🧭 Resumen                                                                                           
@@ -463,6 +463,84 @@ Tengo registradas 109 actividades en la base de datos de Kairos.
 
 ---
 
+## Batería complementaria (nuevos casos no cubiertos) — 2026-09-01
+
+Objetivo: ampliar cobertura E2E con preguntas no validadas en la batería inicial, ejecutadas en terminal contra `rafwill1@hotmail.com`, revisando coherencia pregunta-respuesta y corrigiendo en caliente cuando hizo falta.
+
+Modelo usado: `nvidia/nemotron-3.5-lightning-30b-a3b` (evita bloqueo 403 de Gemini en red corporativa).
+
+### N1) Rango histórico explícito en TSS semanal
+- Pregunta: `¿Cuánto TSS hice en la semana del 27/07 al 02/08?`
+- Resultado: ⚠️ Detectado bug de coherencia comparativa. El bloque comparaba contra semana actual y podía disparar `spike` artificial para semanas históricas.
+- Corrección aplicada: comparación semanal en `week_tss` cambiada para usar siempre la semana inmediatamente anterior a la consultada.
+- Revalidación: ✅ Correcto. Mostró `27/07→02/08` comparado contra `20/07→26/07`, sin artefacto de comparación con semana actual.
+
+### N2) Rango natural con "entre ... y ..." en actividades
+- Pregunta: `¿Qué actividades hice entre 25/08 y 30/08?`
+- Resultado: ⚠️ Detectado bug de presentación. El cálculo usaba el rango correcto, pero la cabecera mostraba "semana natural" expandida.
+- Corrección aplicada: en `week_activities`, el campo de cabecera pasa a `Rango consultado` con `inicio→fin` exactos.
+- Revalidación: ✅ Correcto. Cabecera final: `25/08/2026 → 30/08/2026`.
+
+### N3) Follow-up contextual semanal
+- Preguntas encadenadas:
+  - `¿Cuánto TSS hice esta semana?`
+  - `¿Y para la semana del 17/08/2026?`
+- Resultado: ✅ Correcto. Follow-up resuelto por ruta `week_tss` sin perder contexto.
+- Corrección: No requerida.
+
+### N4) Fecha corta sin año en detalle de actividad
+- Pregunta: `¿Cómo fue mi actividad del 30/08?`
+- Resultado: ✅ Correcto. Resolución a `30/08/2026` con desglose completo y zonas FC reales.
+- Corrección: No requerida.
+
+### N5) Consulta de ritmo umbral
+- Pregunta: `¿Cuál es mi ritmo umbral?`
+- Resultado: ✅ Correcto. Ruta determinista `running_threshold` y lectura de perfil persistido (`4:12 min/km`).
+- Corrección: No requerida.
+
+### N6) Consulta de FC umbral
+- Pregunta: `¿Cuál es mi FC umbral?`
+- Resultado: ✅ Correcto. Ruta determinista `hr_threshold` (`169 bpm`) con fecha de actualización.
+- Corrección: No requerida.
+
+### N7) Estado de plan activo
+- Pregunta: `¿Tengo plan activo?`
+- Resultado: ✅ Correcto. Ruta `plan_status`: no hay plan activo, mostrando objetivo/fecha/tiempo/horas semana desde perfil.
+- Corrección: No requerida.
+
+### N8) Follow-up "qué me toca hoy"
+- Preguntas encadenadas:
+  - `¿Tengo plan activo?`
+  - `¿Y qué me toca hoy?`
+- Resultado: ⚠️ Detectado riesgo de alucinación. El follow-up podía caer en ruta LLM genérica con métricas no alineadas al snapshot real.
+- Corrección aplicada: ampliado `daily_readiness intent` para capturar `que me toca hoy / qué me toca hoy / me toca hoy` y forzar base determinista.
+- Revalidación: ✅ Correcto. Respuesta anclada a snapshot factual + capa coaching sobre datos deterministas.
+
+### N9) Récords personales de running
+- Pregunta: `¿Cuáles son mis récords personales running?`
+- Resultado: ✅ Correcto. Ruta determinista `personal_records` con tabla de marcas (1K, 5K, 10K, MM, maratón, larga).
+- Corrección: No requerida.
+
+### N10) Objetivo principal
+- Pregunta: `¿Cuál es mi objetivo principal ahora?`
+- Resultado: ✅ Correcto. Ruta determinista `goal_status` con objetivo, fecha, tiempo y horas/semana.
+- Corrección: No requerida.
+
+### Cambios de código derivados de la batería complementaria
+- `agent/trainer_agent.py`
+  - Manejo robusto de `403 Forbidden` del proveedor LLM con salida controlada (sin crash).
+  - Detección de `última actividad`/`última actividad de trail` en intent y resolución factual robusta.
+  - `week_tss`: desglose por tipo (`rTSS/hrTSS/sTSS`) y comparación histórica coherente (semana previa real).
+  - `week_activities`: cabecera con rango exacto consultado.
+  - `daily_readiness`: cobertura explícita de `qué me toca hoy`.
+- `tests/test_trainer_agent.py`
+  - Nuevas regresiones para intents y rutas corregidas.
+  - Validación focal en verde durante esta sesión.
+
+Estado de la batería complementaria: 10/10 puntos revisados, 10/10 cerrados tras correcciones.
+
+---
+
 ## Criterios de éxito por respuesta
 
 | Criterio | Señal de éxito |
@@ -480,3 +558,14 @@ Tengo registradas 109 actividades en la base de datos de Kairos.
 Cuando los 10 ítems estén marcados sin errores ni "sin datos" falsos:
 1. Marcar el punto 55 como cerrado en `TODO.md`
 2. Anotar fecha y modelo usado en este documento
+
+Estado final de esta sesión:
+1. Batería base cerrada.
+2. Batería complementaria (N1..N10) cerrada.
+3. Hardening adicional de parser de fechas aplicado y validado con caso real:
+  - `que actividades hice entre el 25/08 y el 30/08?`
+  - Resultado esperado y obtenido: `Rango consultado 25/08/2026 → 30/08/2026`.
+
+Punto de continuación para la próxima sesión:
+1. Empezar con smoke corto de regresión (fechas/intents) y confirmar que sigue estable.
+2. Después, pasar a planificación del punto 9 del TODO (MCP propio basado en Essentials de Garmin MCP).
