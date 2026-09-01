@@ -4190,7 +4190,19 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         or _extract_iso_date_from_text(user_message) is not None
         or _extract_weekday_index_from_text(user_message) is not None
     )
-    return has_day and any(m in text for m in activity_markers) and any(m in text for m in detail_markers)
+    has_last_marker = any(
+        m in text
+        for m in (
+            "ultima actividad",
+            "última actividad",
+            "ultima sesion",
+            "última sesión",
+            "ultimo entrenamiento",
+            "último entrenamiento",
+        )
+    )
+    has_temporal_reference = has_day or has_last_marker
+    return has_temporal_reference and any(m in text for m in activity_markers) and any(m in text for m in detail_markers)
 
 
 def _is_running_threshold_query_intent(user_message: str) -> bool:
@@ -4703,6 +4715,9 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         "cómo estoy hoy para entrenar",
         "como estoy",
         "cómo estoy",
+        "que me toca hoy",
+        "qué me toca hoy",
+        "me toca hoy",
         "que me recomiendas hoy",
         "qué me recomiendas hoy",
         "que hago hoy",
@@ -4904,15 +4919,11 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     else:
         week_label = f"Hace {weeks_ago} semanas ({week_start.strftime('%d/%m')} → {(week_start + timedelta(days=6)).strftime('%d/%m')})"
 
-    # Semana de comparación: si se consulta semana pasada o anterior → comparar con semana actual
-    if weeks_ago > 0:
-        comp_start = current_week_start
-        comp_end = today_d
-        comp_label = f"Esta semana (hasta {today_d.strftime('%d/%m')})"
-    else:
-        comp_start = week_start - timedelta(days=7)
-        comp_end = week_start - timedelta(days=1)
-        comp_label = f"Semana anterior ({comp_start.strftime('%d/%m')} → {comp_end.strftime('%d/%m')})"
+    # Semana de comparación: usar siempre la semana inmediatamente anterior
+    # al rango consultado para mantener coherencia histórica.
+    comp_start = week_start - timedelta(days=7)
+    comp_end = week_start - timedelta(days=1)
+    comp_label = f"Semana anterior ({comp_start.strftime('%d/%m')} → {comp_end.strftime('%d/%m')})"
 
     week_dates = [week_start + timedelta(days=i) for i in range((week_end - week_start).days + 1)]
     comp_dates = [comp_start + timedelta(days=i) for i in range((comp_end - comp_start).days + 1)]
@@ -4974,8 +4985,9 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             log.debug("_build_current_week_tss_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
 
-    act_rows: list[tuple[date, str, str, float | None, str]] = []
+    act_rows: list[tuple[date, str, str, float | None, str, str | None]] = []
     activity_tss_by_day: dict[str, float] = {}
+    tss_breakdown = {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0}
     for act in activities:
         if not isinstance(act, dict):
             continue
@@ -4991,9 +5003,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
         tss_source = "sin datos"
+        tss_label: str | None = None
         act_tss = _extract_training_load_tss(act)
         if act_tss is None:
-            est_tss, _ = _estimate_session_tss(
+            est_tss, est_label = _estimate_session_tss(
                 act,
                 ftp=_extract_cycling_ftp_watts(profile),
                 running_threshold_pace_sec_per_km=running_threshold_pace,
@@ -5003,13 +5016,40 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             )
             if est_tss > 0:
                 act_tss = float(est_tss)
+                tss_label = str(est_label or "")
                 tss_source = "estimado"
         else:
             tss_source = "trainingLoad Garmin"
+            est_tss, est_label = _estimate_session_tss(
+                act,
+                ftp=_extract_cycling_ftp_watts(profile),
+                running_threshold_pace_sec_per_km=running_threshold_pace,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+                hr_zones_raw=None,
+            )
+            if est_tss > 0:
+                tss_label = str(est_label or "")
         if week_start <= d_obj <= week_end:
-            act_rows.append((d_obj, sport, name, round(float(act_tss), 1) if act_tss is not None else None, tss_source))
+            act_rows.append((
+                d_obj,
+                sport,
+                name,
+                round(float(act_tss), 1) if act_tss is not None else None,
+                tss_source,
+                tss_label,
+            ))
         if act_tss is not None:
             activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
+            if week_start <= d_obj <= week_end:
+                act_type_l = str(act.get("type") or act.get("activityType") or "").lower()
+                if "swim" in act_type_l or "nat" in act_type_l:
+                    bucket = "sTSS"
+                elif str(tss_label or "").lower() == "hrtss":
+                    bucket = "hrTSS"
+                else:
+                    bucket = "rTSS"
+                tss_breakdown[bucket] = round(tss_breakdown.get(bucket, 0.0) + float(act_tss), 1)
     act_rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
 
     # Si falta un día en la serie diaria, o existe con TSS=0 sin cierre real,
@@ -5073,6 +5113,11 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         f"| {week_label} | {current_week_tss:.1f} | {w_ctl:.1f} | {w_atl:.1f} | {w_tsb:+.1f} | {_wstatus(w_tsb, w_atl)} |",
         f"| {comp_label} | {comp_tss_str} | {c_ctl:.1f} | {c_atl:.1f} | {c_tsb:+.1f} | {_wstatus(c_tsb, c_atl)} |",
         "",
+        "Desglose por tipo de TSS:",
+        f"  - rTSS: {tss_breakdown['rTSS']:.1f}",
+        f"  - hrTSS: {tss_breakdown['hrTSS']:.1f}",
+        f"  - sTSS: {tss_breakdown['sTSS']:.1f}",
+        "",
         "Desglose diario:",
     ]
 
@@ -5085,7 +5130,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     lines.append("")
     if act_rows:
         lines.append("Actividades:")
-        for d_obj, sport, name, tss_val, _tss_src in act_rows:
+        for d_obj, sport, name, tss_val, _tss_src, _tss_label in act_rows:
             if tss_val is not None:
                 lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS {tss_val:.1f}")
             else:
@@ -5182,7 +5227,7 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
         "## 📊 Métricas clave",
         "| Métrica | Valor | Fuente |",
         "|---|---|---|",
-        f"| Semana natural | {week_start.strftime('%d/%m/%Y')} → {(week_start + timedelta(days=6)).strftime('%d/%m/%Y')}{' (datos hasta ' + week_end.strftime('%d/%m') + ')' if week_end < week_start + timedelta(days=6) else ''} | calendario ISO |",
+        f"| Rango consultado | {week_start.strftime('%d/%m/%Y')} → {week_end.strftime('%d/%m/%Y')} | calendario ISO |",
         f"| Actividades detectadas | {len(rows)} | Garmin get_activities_by_date |",
         "",
         "Actividades de Garmin:",
@@ -5213,6 +5258,51 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
 async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_message: str) -> str:
     """Resuelve consultas factuales diarias con MCP como fuente principal."""
     target_d = _resolve_target_date_from_message(user_message)
+    msg_low = (user_message or "").lower()
+    has_explicit_date = _extract_iso_date_from_text(user_message) is not None
+    is_last_activity_query = bool(re.search(
+        r"\b(última|ultima|último|ultimo|reciente|mas reciente|más reciente)\s*(actividad|entreno|entrenamiento|salida|sesión|sesion|trail|carrera|running|bici)\b",
+        msg_low,
+    ))
+    sport_filter: str | None = None
+    if is_last_activity_query:
+        if re.search(r"\btrail\b", msg_low):
+            sport_filter = "trail"
+        elif re.search(r"\brunning\b|\bcarrera\b", msg_low):
+            sport_filter = "running"
+        elif re.search(r"\bbici\b|\bciclismo\b|\bcycling\b", msg_low):
+            sport_filter = "cycling"
+
+    # Si el usuario pide "última actividad" sin fecha explícita,
+    # resolvemos la fecha real desde el listado reciente de Garmin.
+    if is_last_activity_query and not has_explicit_date:
+        try:
+            raw_recent = await asyncio.wait_for(
+                call_tool(mcp_session, "get_activities", {"start": "0", "limit": "30"}),
+                timeout=4.0,
+            )
+            recent_acts = _extract_activities_list(_try_parse_json(raw_recent) or raw_recent)
+            for act in recent_acts:
+                if not isinstance(act, dict):
+                    continue
+                type_key = str(
+                    (act.get("activityTypeDTO") or {}).get("typeKey", "")
+                    or (act.get("activityType") or {}).get("typeKey", "")
+                    or act.get("type", "")
+                ).lower()
+                if sport_filter == "trail" and "trail" not in type_key:
+                    continue
+                if sport_filter == "running" and ("running" not in type_key or "trail" in type_key):
+                    continue
+                if sport_filter == "cycling" and "cycl" not in type_key and "bike" not in type_key:
+                    continue
+                iso = _extract_activity_date_iso(act)
+                if iso:
+                    target_d = date.fromisoformat(iso)
+                    break
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
+            pass
+
     target_iso = target_d.isoformat()
     wants_activity_details = _is_activity_details_query_intent(user_message)
 
@@ -8500,9 +8590,17 @@ def _extract_iso_date_range_from_text(value: str, today_d: date | None = None) -
         except ValueError:
             return None
 
-    m = re.search(rf"\b(?:semana\s+)?del\s+({token_re})\s+al\s+({token_re})\b", text)
-    if not m:
-        m = re.search(rf"\bentre\s+({token_re})\s+y\s+({token_re})\b", text)
+    patterns = [
+        rf"\b(?:semana\s+)?del\s+({token_re})\s+al\s+({token_re})\b",
+        rf"\b(?:semana\s+)?del\s+({token_re})\s+a\s+({token_re})\b",
+        rf"\bentre\s+(?:el\s+)?({token_re})\s+y\s+(?:el\s+)?({token_re})\b",
+        rf"\bdesde\s+(?:el\s+)?({token_re})\s+hasta\s+(?:el\s+)?({token_re})\b",
+    ]
+    m = None
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            break
     if not m:
         return None
 
@@ -11461,12 +11559,26 @@ class TrainerAgent:
                 except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
                     log.debug("pre_fetch sport-filter %s falló: %s", _sport_filter, _e)
             else:
-                _series = (self.user_profile.get("load_metrics") or {}).get("series") or []
-                for _row in reversed(_series):
-                    if float(_row.get("tss") or 0) > 0 or int(_row.get("activities_count") or 0) > 0:
-                        user_date = str(_row.get("date") or "")
-                        log.info("pre_fetch: última actividad detectada en DB → user_date=%s", user_date)
-                        break
+                try:
+                    _raw_acts = await call_tool(self.mcp_session, "get_activities", {"start": "0", "limit": "20"})
+                    _acts = _extract_activities_list(_raw_acts)
+                    if _acts:
+                        _first = _acts[0]
+                        user_date = _extract_activity_date_iso(_first)
+                        _act_id = _first.get("activityId") or _first.get("id") or _first.get("activity_id")
+                        if _act_id:
+                            _prefetch_sport_id = int(_act_id)
+                        log.info("pre_fetch: última actividad detectada en Garmin recientes → user_date=%s", user_date)
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
+                    log.debug("pre_fetch recent activities falló: %s", _e)
+
+                if not user_date:
+                    _series = (self.user_profile.get("load_metrics") or {}).get("series") or []
+                    for _row in reversed(_series):
+                        if float(_row.get("tss") or 0) > 0 or int(_row.get("activities_count") or 0) > 0:
+                            user_date = str(_row.get("date") or "")
+                            log.info("pre_fetch: última actividad detectada en DB → user_date=%s", user_date)
+                            break
             if not user_date:
                 user_date = date.today().isoformat()
 
@@ -11883,6 +11995,20 @@ class TrainerAgent:
                         "Reinicia Kairos y elige otro modelo con `/modelo`, o actualiza `NVIDIA_MODEL` en tu `.env`."
                     )
                     return await self._finalize_chat_reply(user_message, msg, route="llm_model_eol")
+                if (
+                    "403" in err_str
+                    or "forbidden" in err_str.lower()
+                    or "zscaler" in err_str.lower()
+                    or "access denied" in err_str.lower()
+                ):
+                    msg = (
+                        "El proveedor del modelo rechazó la petición (403/Forbidden), probablemente por red corporativa o política del proxy.\n\n"
+                        "Prueba una de estas opciones:\n"
+                        "- Cambiar de modelo con `/modelo` (por ejemplo, NVIDIA o Groq)\n"
+                        "- Reintentar desde una red sin bloqueo del proveedor actual\n"
+                        "- Hacer una consulta factual de ruta determinista mientras tanto"
+                    )
+                    return await self._finalize_chat_reply(user_message, msg, route="llm_forbidden")
                 raise
 
             # Track and log token usage
