@@ -300,14 +300,9 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 14  # v14: recálculo histórico robusto para reglas trail rápidas y fallback semanal/factual
+_TSS_FORMULA_VERSION = 16  # v16: trail aplica hrTSS directo por zonas (sin ponderación)
 
-# Calibración empírica para trail running al usar hrTSS por tiempo en zonas.
-# Se aplica sobre hrTSS por zonas y preserva valores >500 cuando corresponde.
-_TRAIL_ZONES_HRTSS_CALIBRATION = 0.72
-
-# Para trail rápido (ritmo final < 6:00/km), usar hrTSS bruto por zonas
-# para cuantificar sesiones cortas/explosivas más parecido a asfalto.
+# Regla especial: en trail rápido (< 6:00/km) se explicita uso de hrTSS bruto.
 _TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
 
 
@@ -1511,11 +1506,7 @@ def _extract_running_effective_pace_sec_per_km(activity: dict) -> float | None:
 
 
 def _should_use_raw_hr_tss_for_fast_trail(activity: dict) -> bool:
-    """Activa hrTSS bruto por zonas para trail rápido (< 6:00/km).
-
-    Prioriza un posible ritmo final explícito y, si no existe, usa el ritmo
-    efectivo de running como proxy robusto del comportamiento de la sesión.
-    """
+    """Activa la regla especial de trail rápido (< 6:00/km)."""
     if not isinstance(activity, dict):
         return False
 
@@ -2533,8 +2524,7 @@ def _estimate_session_tss(
             if tss_hr_zones is not None:
                 if _should_use_raw_hr_tss_for_fast_trail(activity):
                     return max(0.0, float(tss_hr_zones)), "hrTSS"
-                tss_cal = max(0.0, float(tss_hr_zones) * _TRAIL_ZONES_HRTSS_CALIBRATION)
-                return tss_cal, "hrTSS"
+                return max(0.0, float(tss_hr_zones)), "hrTSS"
 
         if is_hike_walk:
             tss_walk, lbl_walk = _estimate_walk_hike_tss(
