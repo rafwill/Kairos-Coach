@@ -10,6 +10,7 @@
 - Essential Tools: 40 tools activas (2026-08-31); menú de selección eliminado del arranque.
 - Modelo NVIDIA NIM activo: `nvidia/nemotron-3.5-lightning-30b-a3b` (sustituye llama-3.x EOL).
 - Batería E2E punto 55: 2/10 confirmados (31/08), 8 pendientes de confirmar con nueva versión (01/09).
+- Bloque cálculo hrTSS trail (sin ponderado + regla trail rápido) validado contra TP: REALIZADO (2026-09-01).
 
 ---
 

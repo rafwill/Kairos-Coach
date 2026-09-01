@@ -3020,7 +3020,7 @@ class TestLoadFatigueModel:
         assert tss_zones > 0
         assert tss_zones < tss_avg
 
-    def test_estimate_tss_trail_hr_zones_applies_calibration_factor(self):
+    def test_estimate_tss_trail_hr_zones_uses_raw_without_calibration(self):
         act = {
             "type": "trail_running",
             "duration": 3600,
@@ -3053,8 +3053,8 @@ class TestLoadFatigueModel:
         tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
         assert label_zones == "hrTSS"
-        # Base sin calibración: 56.25 TSS (IF=0.75). Con factor 0.72 => 40.50
-        assert abs(tss_zones - 40.5) < 0.05
+        # 1h íntegra en Z1 (115-125) -> hrTSS bruto por zonas sin ponderación trail.
+        assert abs(tss_zones - 56.25) < 0.05
 
         hike_act = {
             "type": "hiking",
@@ -3067,7 +3067,7 @@ class TestLoadFatigueModel:
         # En hike/walk se usa banda específica y blend con zonas (sin factor trail).
         assert 45.0 <= tss_hike_zones <= 60.0
 
-    def test_estimate_tss_trail_fast_pace_uses_raw_hr_zones(self):
+    def test_estimate_tss_trail_fast_pace_keeps_raw_hr_zones(self):
         act = {
             "type": "trail_running",
             "duration": 3600,
@@ -3101,10 +3101,10 @@ class TestLoadFatigueModel:
         tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
         assert label_zones == "hrTSS"
-        # Base sin calibración: 56.25 TSS (IF=0.75). Para trail rápido se conserva bruto.
+        # Sin ponderación trail, siempre se conserva el valor bruto por zonas.
         assert abs(tss_zones - 56.25) < 0.05
 
-    def test_estimate_tss_trail_pace_at_6min_keeps_calibration(self):
+    def test_estimate_tss_trail_pace_at_6min_keeps_raw_hr_zones(self):
         act = {
             "type": "trail_running",
             "duration": 3600,
@@ -3138,8 +3138,44 @@ class TestLoadFatigueModel:
         tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
         assert label_zones == "hrTSS"
-        # El criterio es estrictamente menor que 6:00/km; a 6:00/km aplica factor trail.
-        assert abs(tss_zones - 40.5) < 0.05
+        # Sin ponderación trail, el ritmo no altera el hrTSS de zonas.
+        assert abs(tss_zones - 56.25) < 0.05
+
+    def test_estimate_tss_trail_low_zone_floor_keeps_raw_hr_zones(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 170,
+            "maxHR": 180,
+            "averagePaceSecPerKm": 480,
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {
+                    "zoneNumber": 1,
+                    "secsInZone": 3600,
+                    "minHeartRateIn": 46,
+                    "maxHeartRateIn": 141,
+                },
+                {
+                    "zoneNumber": 2,
+                    "secsInZone": 0,
+                    "minHeartRateIn": 142,
+                    "maxHeartRateIn": 152,
+                },
+            ]
+        )
+
+        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
+
+        act_fast = dict(act)
+        act_fast["averagePaceSecPerKm"] = 330
+        tss_raw_fast, label_raw_fast = _estimate_session_tss(act_fast, hr_zones_raw=hr_zones_raw)
+
+        assert label_zones == "hrTSS"
+        assert label_raw_fast == "hrTSS"
+        # El umbral de zonas ya define el resultado: no hay calibración adicional.
+        assert abs(tss_zones - tss_raw_fast) < 0.05
 
     def test_activity_analysis_block_trail_shows_raw_and_applied_hrtss(self):
         activity_raw = json.dumps(
@@ -3178,9 +3214,10 @@ class TestLoadFatigueModel:
         out = _build_activity_analysis_block(activity_raw=activity_raw, hr_zones_raw=hr_zones_raw)
 
         assert "hrTSS bruto zonas: 56.2" in out
-        assert "hrTSS Kairos aplicado: 40.5" in out
+        assert "hrTSS Kairos aplicado: 56.2" in out
+        assert "Factor calibracion trail aplicado" not in out
 
-    def test_activity_analysis_block_trail_fast_shows_raw_rule_note(self):
+    def test_activity_analysis_block_trail_fast_shows_special_rule_note(self):
         activity_raw = json.dumps(
             {
                 "type": "trail_running",
