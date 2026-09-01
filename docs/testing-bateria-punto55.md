@@ -31,6 +31,13 @@ Métricas globales del ajuste:
 - MAE = 9.88 hrTSS
 - Bias medio (Kairos - TP) = +3.69 hrTSS
 
+Actualización (2026-09-01): ✅ hardening proactivo de fechas REALIZADO.
+- Parser de rangos explícitos activado en código (`del ... al ...`, `entre ... y ...`) con prioridad sobre referencias relativas.
+- Normalización de fechas para tools endurecida: acepta `DD/MM`, `DD/MM/AA`, `DD/MM/AAAA` y `YYYY-MM-DD`.
+- Corrección de ventana invertida en consultas tipo "semana pasada" para evitar TSS 0.0 falsos por rango inválido.
+- Prompts completo y compacto actualizados con regla explícita de interpretación de rangos.
+- Validación focal de regresión en verde (23 tests de fechas/rangos/prompt).
+
 ---
 
 ## Bloque 1 — Estado de carga actual (ATL/CTL/TSB)

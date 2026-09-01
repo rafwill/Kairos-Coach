@@ -317,6 +317,14 @@
 - Cobertura de regresión ampliada para rutas mixtas y escenario de timeout en `today_load_status`.
 - Validación local: `tests/test_trainer_agent.py` en verde (307 passed).
 
+#### 64) [DATE-HARDENING] Interpretación robusta y proactiva de fechas (2026-09-01) — REALIZADO
+- Parser central de rangos naturales añadido: `del ... al ...` y `entre ... y ...` con formatos `DD/MM`, `DD/MM/AA`, `DD/MM/AAAA` y `YYYY-MM-DD`.
+- Prioridad explícita al rango literal del usuario frente a interpretaciones relativas (`esta semana`, `semana pasada`).
+- Normalización de argumentos de fecha en tools MCP para convertir literales a ISO de forma consistente.
+- Corrección de fallback semanal para evitar rangos invertidos en consultas históricas (evita respuestas vacías/TSS=0.0 falsos).
+- Prompting reforzado en `system_prompt.md` y `system_prompt_compact.md` con regla obligatoria de rangos explícitos.
+- Cobertura de regresión añadida para parseo de fechas, rangos y cruce anual; validación focal en verde (23 tests).
+
 #### 4) Logging de producción (2026-08-15) — REALIZADO
 - Configuración de logging por entorno en runtime: `KAIROS_LOG_LEVEL`, `KAIROS_LOG_FILE`, `KAIROS_LOG_STDOUT`, `KAIROS_DEBUG_CONSOLE`.
 - Trazas de debug en consola interactiva ahora son opcionales y quedan desactivadas por defecto en producción.
