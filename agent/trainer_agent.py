@@ -4827,6 +4827,18 @@ def _resolve_week_window(user_message: str | None, today_d: date) -> tuple[date,
     target_d = today_d
     msg_lower = (user_message or "").lower() if isinstance(user_message, str) else ""
 
+    # Rango explícito: priorizar siempre el intervalo literal pedido por usuario.
+    if isinstance(user_message, str) and user_message.strip():
+        date_range = _extract_iso_date_range_from_text(user_message, today_d=today_d)
+        if date_range:
+            start_iso, end_iso = date_range
+            try:
+                start_d = date.fromisoformat(start_iso)
+                end_d = date.fromisoformat(end_iso)
+                return start_d, min(end_d, today_d)
+            except ValueError:
+                pass
+
     # Semana pasada / anterior / previa
     if re.search(r'\bsemana\s+(pasada|anterior|previa)\b', msg_lower):
         target_d = today_d - timedelta(days=7)
@@ -4904,6 +4916,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
 
     week_dates = [week_start + timedelta(days=i) for i in range((week_end - week_start).days + 1)]
     comp_dates = [comp_start + timedelta(days=i) for i in range((comp_end - comp_start).days + 1)]
+    # Ventana unificada para leer serie/fetch Garmin sin invertir fechas cuando
+    # se consulta una semana histórica (p. ej. "semana pasada").
+    range_start = min(week_start, comp_start)
+    range_end = max(week_end, comp_end)
     # mantener prev_week_start/end para compatibilidad con resto del código
     prev_week_start = comp_start
     prev_week_end = comp_end
@@ -4921,21 +4937,21 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             d_obj = date.fromisoformat(d_iso)
         except ValueError:
             continue
-        if prev_week_start <= d_obj <= week_end:
+        if range_start <= d_obj <= range_end:
             tss_by_day[d_iso] = round(float(row.get("tss") or 0.0), 1)
             tss_source_by_day[d_iso] = "load_metrics_daily"
 
     activities: list[dict] = []
     req_variants = [
         {
-            "start_date": prev_week_start.isoformat(),
-            "end_date": week_end.isoformat(),
+            "start_date": range_start.isoformat(),
+            "end_date": range_end.isoformat(),
             "page": 0,
             "page_size": 200,
         },
         {
-            "startdate": prev_week_start.isoformat(),
-            "enddate": week_end.isoformat(),
+            "startdate": range_start.isoformat(),
+            "enddate": range_end.isoformat(),
         },
     ]
     for args in req_variants:
@@ -4970,7 +4986,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             d_obj = date.fromisoformat(d_iso)
         except ValueError:
             continue
-        if not (prev_week_start <= d_obj <= week_end):
+        if not (range_start <= d_obj <= range_end):
             continue
         name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
@@ -8277,7 +8293,8 @@ def _normalize_date_args(arguments: dict) -> dict:
             elif v_lower in _YESTERDAY_KEYWORDS:
                 result[key] = yesterday.isoformat()
             else:
-                result[key] = value
+                parsed_iso = _extract_iso_date_from_text(value)
+                result[key] = parsed_iso if parsed_iso else value
         else:
             result[key] = value
     return result
@@ -8416,6 +8433,17 @@ def _extract_iso_date_from_text(value: str) -> str | None:
         except ValueError:
             pass
 
+    # dd/mm o dd-mm (sin año): asumir año actual
+    m_day_month = re.search(r"\b(\d{1,2})[/-](\d{1,2})\b", text)
+    if m_day_month:
+        d = int(m_day_month.group(1))
+        mth = int(m_day_month.group(2))
+        y = date.today().year
+        try:
+            return date(y, mth, d).isoformat()
+        except ValueError:
+            pass
+
     # 2 de julio de 2026 / 2 julio 2026 / 2 de julio
     m_month = re.search(
         r"\b(\d{1,2})\s*(?:de\s+)?([a-záéíóúñ]+)\s*(?:de\s*)?(\d{4})?\b",
@@ -8441,6 +8469,69 @@ def _extract_iso_date_from_text(value: str) -> str | None:
                 return None
 
     return None
+
+
+def _extract_iso_date_range_from_text(value: str, today_d: date | None = None) -> tuple[str, str] | None:
+    """Extrae un rango ISO (inicio, fin) desde texto natural.
+
+    Soporta: "del 27/07 al 02/08", "entre 2026-07-27 y 2026-08-02",
+    con o sin año explícito.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+
+    ref_year = (today_d or date.today()).year
+    token_re = r"\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}-\d{2}-\d{2}"
+
+    def _parse_token(token: str) -> date | None:
+        tok = (token or "").strip()
+        if not tok:
+            return None
+        if re.fullmatch(r"\d{1,2}[/-]\d{1,2}", tok):
+            tok = f"{tok}/{ref_year}"
+        iso = _extract_iso_date_from_text(tok)
+        if not iso:
+            return None
+        try:
+            return date.fromisoformat(iso)
+        except ValueError:
+            return None
+
+    m = re.search(rf"\b(?:semana\s+)?del\s+({token_re})\s+al\s+({token_re})\b", text)
+    if not m:
+        m = re.search(rf"\bentre\s+({token_re})\s+y\s+({token_re})\b", text)
+    if not m:
+        return None
+
+    start_raw = m.group(1)
+    end_raw = m.group(2)
+    start_d = _parse_token(start_raw)
+    end_d = _parse_token(end_raw)
+    if not start_d or not end_d:
+        return None
+
+    def _has_explicit_year(token: str) -> bool:
+        tok = (token or "").strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", tok):
+            return True
+        parts = re.split(r"[/-]", tok)
+        return len(parts) == 3
+
+    start_has_year = _has_explicit_year(start_raw)
+    end_has_year = _has_explicit_year(end_raw)
+    if end_d < start_d and not start_has_year and not end_has_year:
+        try:
+            end_d = date(start_d.year + 1, end_d.month, end_d.day)
+        except ValueError:
+            return None
+
+    if end_d < start_d:
+        return None
+
+    return start_d.isoformat(), end_d.isoformat()
 
 
 def _extract_activity_date_iso(activity: dict) -> str | None:

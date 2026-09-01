@@ -50,6 +50,7 @@ from agent.trainer_agent import (
     _infer_tss_source_tag,
         _extract_threshold_pace_sec_per_km,
     _extract_iso_date_from_text,
+    _extract_iso_date_range_from_text,
     _generate_structured_plan_payload,
     _GeminiCompletions,
     _get_active_training_plan,
@@ -143,6 +144,24 @@ class TestNormalizeDateArgs:
         result = _normalize_date_args({"date": "2026-06-01"})
         assert result["date"] == "2026-06-01"
 
+    def test_dd_mm_yyyy_converted_to_iso(self):
+        result = _normalize_date_args({"start_date": "27/07/2026", "end_date": "02/08/2026"})
+        assert result["start_date"] == "2026-07-27"
+        assert result["end_date"] == "2026-08-02"
+
+    def test_dd_mm_without_year_converted_to_iso(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        result = _normalize_date_args({"date": "27/07"})
+        assert result["date"] == "2026-07-27"
+
     def test_non_date_field_never_replaced(self):
         # "activityId" no está en DATE_FIELDS → aunque el valor sea "hoy" no se toca
         result = _normalize_date_args({"activityId": "hoy"})
@@ -184,6 +203,47 @@ class TestExtractIsoDateFromText:
     def test_extracts_dd_mm_yy_short_year(self):
         assert _extract_iso_date_from_text("17/08/26") == "2026-08-17"
 
+    def test_extracts_dd_mm_without_year(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        assert _extract_iso_date_from_text("27/07") == "2026-07-27"
+
+
+class TestExtractIsoDateRangeFromText:
+    def test_extracts_del_al_without_year(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        assert _extract_iso_date_range_from_text("semana del 27/07 al 02/08") == ("2026-07-27", "2026-08-02")
+
+    def test_extracts_entre_y_iso(self):
+        assert _extract_iso_date_range_from_text("entre 2026-07-27 y 2026-08-02") == ("2026-07-27", "2026-08-02")
+
+    def test_extracts_cross_year_without_year(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 12, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        assert _extract_iso_date_range_from_text("del 27/12 al 03/01") == ("2026-12-27", "2027-01-03")
+
 
 class TestLoadParametersEffectiveDate:
     def test_resolve_effective_date_prefers_latest_parameter_change(self):
@@ -213,12 +273,14 @@ class TestSystemPromptDateFormatRules:
         prompt = _load_system_prompt(compact=False)
         assert "Formato de fecha obligatorio (España)" in prompt
         assert "Regla global de fechas (OBLIGATORIA)" in prompt
+        assert "Regla de rangos explícitos (OBLIGATORIA)" in prompt
         assert "DD/MM/AAAA" in prompt
         assert "YYYY-MM-DD" in prompt
 
     def test_compact_prompt_requires_global_spanish_date_format(self):
         prompt = _load_system_prompt(compact=True)
         assert "Regla global de fechas (España)" in prompt
+        assert "Interpretación de rangos (OBLIGATORIA)" in prompt
         assert "DD/MM/AAAA" in prompt
         assert "YYYY-MM-DD" in prompt
 
@@ -4483,6 +4545,24 @@ class TestGoalStatusDeterministicRoute:
         assert week_start.isoformat() == "2026-08-10"
         assert week_end.isoformat() == "2026-08-16"
 
+    def test_resolve_week_window_uses_explicit_range_without_year(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+
+        week_start, week_end = _resolve_week_window(
+            "Cuales fueron las actividades y TSS de la semana del 27/07 al 02/08 ?",
+            _FakeDate.today(),
+        )
+        assert week_start.isoformat() == "2026-07-27"
+        assert week_end.isoformat() == "2026-08-02"
+
     @pytest.mark.asyncio
     async def test_build_current_week_tss_markdown_honors_explicit_week_date(self, monkeypatch):
         import agent.trainer_agent as ta
@@ -4649,6 +4729,79 @@ class TestGoalStatusDeterministicRoute:
         assert "| TSS semana previa | 100.0 |" in out
         assert "| Diferencia porcentual | +76.9% |" in out
         assert "| Spike >20% | SI |" in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_semana_pasada_uses_non_inverted_activity_window(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                # Martes: semana actual empieza 31/08, semana pasada es 24/08-30/08
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    # Semana pasada (consulta): sin cierres útiles en serie diaria
+                    {"date": "2026-08-24", "tss": 0.0},
+                    {"date": "2026-08-25", "tss": 0.0},
+                    {"date": "2026-08-26", "tss": 0.0},
+                    {"date": "2026-08-27", "tss": 0.0},
+                    {"date": "2026-08-28", "tss": 0.0},
+                    {"date": "2026-08-29", "tss": 0.0},
+                    {"date": "2026-08-30", "tss": 0.0},
+                    # Semana actual (comparación)
+                    {"date": "2026-08-31", "tss": 10.0},
+                    {"date": "2026-09-01", "tss": 20.0},
+                ]
+            }
+        }
+
+        captured_args = []
+
+        async def _fake_call_tool(_session, tool_name, args):
+            assert tool_name == "get_activities_by_date"
+            captured_args.append(dict(args))
+            return [
+                {
+                    "activityName": "Trail largo domingo",
+                    "activityType": "trail_running",
+                    "startTimeLocal": "2026-08-30 07:30:00",
+                    "trainingLoad": 220.4,
+                },
+                {
+                    "activityName": "Rodaje martes actual",
+                    "activityType": "running",
+                    "startTimeLocal": "2026-09-01 18:00:00",
+                    "trainingLoad": 20.0,
+                },
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="cuales fueron mis actividades y TSS de la semana pasada?",
+        )
+
+        # Verifica que no se invierte el rango (start <= end) en la llamada a Garmin.
+        assert captured_args, "Se esperaba al menos una llamada a get_activities_by_date"
+        first_args = captured_args[0]
+        start_key = "start_date" if "start_date" in first_args else "startdate"
+        end_key = "end_date" if "end_date" in first_args else "enddate"
+        assert first_args[start_key] <= first_args[end_key]
+
+        # Semana pasada debe rellenarse con fallback por actividad real.
+        assert "domingo 30/08: 220.4" in out
+        assert "Semana pasada (24/08 → 30/08)" in out
+        assert "| Semana pasada (24/08 → 30/08) | 220.4" in out
+        assert "Trail largo domingo" in out
 
     @pytest.mark.asyncio
     async def test_build_current_week_tss_markdown_estimates_strength_tss_when_training_load_missing(self, monkeypatch):

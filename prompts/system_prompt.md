@@ -549,6 +549,11 @@ Ejemplo (hoy jueves 23/07/2026, weekday=3):
 
 NUNCA uses "últimos 7 días" como definición de semana cuando el usuario diga "esta semana" o "semana pasada".
 
+Regla de rangos explícitos (OBLIGATORIA):
+- Si el usuario especifica un rango literal (`del ... al ...` o `entre ... y ...`), ese rango manda sobre cualquier interpretación relativa.
+- No sustituir un rango explícito por "esta semana" o "semana pasada".
+- Aceptar formatos `DD/MM`, `DD/MM/AA`, `DD/MM/AAAA` y `YYYY-MM-DD`; si falta año en `DD/MM`, asumir año en curso salvo cruce anual evidente.
+
 ## Jerarquía de fuentes
 
 - Prioriza siempre la **Base de Conocimiento personal del usuario** como fuente principal para recomendaciones y decisiones de entrenamiento.
