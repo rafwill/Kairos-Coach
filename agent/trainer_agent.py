@@ -24,6 +24,7 @@ from mcp import ClientSession
 
 from agent.mcp_client import list_available_tools, call_tool
 from agent import storage as _storage
+from agent import load_metrics as _load_metrics
 
 log = logging.getLogger(__name__)
 
@@ -300,7 +301,7 @@ def _is_running_non_trail_activity(act_type) -> bool:
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = 16  # v16: trail aplica hrTSS directo por zonas (sin ponderación)
+_TSS_FORMULA_VERSION = _load_metrics.TSS_FORMULA_VERSION
 
 # Regla especial: en trail rápido (< 6:00/km) se explicita uso de hrTSS bruto.
 _TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
@@ -1734,50 +1735,8 @@ def _estimate_hr_tss_from_zones(
 
 
 def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, float | None]:
-    """Extrae FC de reposo y FC maxima desde perfil cacheado si existen."""
-    if not isinstance(profile, dict):
-        return None, None
-
-    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
-    health = profile.get("health") if isinstance(profile.get("health"), dict) else {}
-
-    hr_rest_candidates = [
-        perf.get("resting_hr"),
-        perf.get("restingHeartRate"),
-        perf.get("resting_heart_rate"),
-        health.get("resting_hr"),
-        health.get("restingHeartRate"),
-        health.get("resting_heart_rate"),
-        profile.get("resting_hr"),
-        profile.get("restingHeartRate"),
-        profile.get("resting_heart_rate"),
-        profile.get("rhr"),
-    ]
-    hr_max_candidates = [
-        perf.get("max_hr"),
-        perf.get("maxHeartRate"),
-        perf.get("max_heart_rate"),
-        health.get("max_hr"),
-        health.get("maxHeartRate"),
-        health.get("max_heart_rate"),
-        profile.get("max_hr"),
-        profile.get("maxHeartRate"),
-        profile.get("max_heart_rate"),
-    ]
-
-    def _pick(candidates: list[Any], min_v: float, max_v: float) -> float | None:
-        for raw in candidates:
-            if raw is None:
-                continue
-            try:
-                val = float(raw)
-            except (TypeError, ValueError):
-                continue
-            if min_v <= val <= max_v:
-                return val
-        return None
-
-    return _pick(hr_rest_candidates, 30.0, 100.0), _pick(hr_max_candidates, 120.0, 240.0)
+    """Extrae FC de reposo y FC máxima desde perfil cacheado si existen."""
+    return _load_metrics._resolve_hr_profile_values(profile)
 
 
 def _extract_threshold_pace_sec_per_km(activity: dict, running_threshold_pace_sec_per_km: float | None = None) -> float | None:
@@ -2458,166 +2417,14 @@ def _estimate_session_tss(
     hr_zones_raw: str | None = None,
 ) -> tuple[float, str]:
     """Estima carga de sesión con prioridades explícitas por tipo de actividad."""
-    if not isinstance(activity, dict):
-        return 0.0, "hrTSS"
-
-    act_type = activity.get("type") or activity.get("activityType") or ""
-    is_cycling = _is_cycling_activity(act_type)
-    is_strength = _is_strength_activity(act_type)
-    is_trail_hike_walk = _is_trail_hike_walk_activity(act_type)
-    is_trail = _is_trail_activity(act_type)
-    is_hike_walk = _is_hike_walk_activity(act_type)
-    is_running_non_trail = _is_running_non_trail_activity(act_type)
-    tss_native = _extract_training_load_tss(activity)
-
-    hours = _extract_activity_duration_hours(activity)
-    if hours <= 0:
-        if tss_native is not None:
-            return tss_native, "TSS"
-        return 0.0, "hrTSS"
-
-    if is_cycling:
-        tss_pow = _estimate_tss_from_power_ftp(activity, ftp=ftp, hours=hours)
-        if tss_pow is not None:
-            return tss_pow, "TSS"
-
-        tss_hr_zones = _estimate_hr_tss_from_zones(
-            activity,
-            hours=hours,
-            hr_zones_raw=hr_zones_raw,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-        )
-        if tss_hr_zones is not None:
-            return tss_hr_zones, "hrTSS"
-
-        if_hr = _estimate_if_from_hr(
-            activity,
-            cycling_formula=True,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-        )
-        if if_hr is not None:
-            return max(0.0, hours * (if_hr ** 2) * 100.0), "hrTSS"
-
-    elif is_running_non_trail:
-        tss_running = _estimate_running_tss_examined(
-            activity,
-            hours=hours,
-            running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-        )
-        if tss_running is not None:
-            return tss_running, "TSS"
-
-    elif is_trail_hike_walk:
-        if is_trail:
-            tss_hr_zones = _estimate_hr_tss_from_zones(
-                activity,
-                hours=hours,
-                hr_zones_raw=hr_zones_raw,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                apply_cap=False,
-            )
-            if tss_hr_zones is not None:
-                if _should_use_raw_hr_tss_for_fast_trail(activity):
-                    return max(0.0, float(tss_hr_zones)), "hrTSS"
-                return max(0.0, float(tss_hr_zones)), "hrTSS"
-
-        if is_hike_walk:
-            tss_walk, lbl_walk = _estimate_walk_hike_tss(
-                activity,
-                hours=hours,
-                hr_zones_raw=hr_zones_raw,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-            )
-            if tss_walk is not None:
-                return max(0.0, float(tss_walk)), str(lbl_walk or "TSS")
-
-        if_hr = _estimate_if_from_hr(
-            activity,
-            cycling_formula=False,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-        )
-        if if_hr is not None:
-            return max(0.0, hours * (if_hr ** 2) * 100.0), "hrTSS"
-        tss_pace = _estimate_tss_from_threshold_pace(
-            activity,
-            hours=hours,
-            running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-        )
-        if tss_pace is not None:
-            return tss_pace, "TSS"
-        if_rpe = _estimate_if_from_rpe(activity)
-        if if_rpe is not None:
-            return max(0.0, hours * (if_rpe ** 2) * 100.0), "hrTSS"
-
-    elif is_strength:
-        tss_hr_zones = _estimate_hr_tss_from_zones(
-            activity,
-            hours=hours,
-            hr_zones_raw=hr_zones_raw,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            min_coverage_ratio=0.35,
-        )
-        if tss_hr_zones is not None:
-            return tss_hr_zones, "hrTSS"
-
-        if_strength = _estimate_strength_if(activity)
-        if if_strength is not None:
-            return max(0.0, hours * (if_strength ** 2) * 100.0), "TSS"
-
-        tss_rpe_minutes = _estimate_strength_tss_from_rpe_minutes(activity, hours)
-        if tss_rpe_minutes is not None:
-            return tss_rpe_minutes, "TSS"
-
-        if_hr = _estimate_if_from_hr(
-            activity,
-            cycling_formula=False,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-        )
-        if if_hr is not None:
-            return max(0.0, hours * (if_hr ** 2) * 100.0), "hrTSS"
-        if_rpe = _estimate_if_from_rpe(activity)
-        if if_rpe is not None:
-            return max(0.0, hours * (if_rpe ** 2) * 100.0), "hrTSS"
-
-    if tss_native is not None:
-        return tss_native, "TSS"
-
-    # Para modalidades sin fórmula específica (p. ej. natación, remo, cardio indoor),
-    # priorizamos hrTSS por tiempo en zonas si hay payload de zonas disponible.
-    tss_hr_zones_generic = _estimate_hr_tss_from_zones(
+    return _load_metrics._estimate_session_tss(
         activity,
-        hours=hours,
+        ftp=ftp,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
         hr_zones_raw=hr_zones_raw,
-        hr_rest_bpm=hr_rest_bpm,
-        hr_max_bpm=hr_max_bpm,
     )
-    if tss_hr_zones_generic is not None:
-        return tss_hr_zones_generic, "hrTSS"
-
-    if_hr_fallback = _estimate_if_from_hr(
-        activity,
-        cycling_formula=is_cycling,
-        hr_rest_bpm=hr_rest_bpm,
-        hr_max_bpm=hr_max_bpm,
-    )
-    if if_hr_fallback is not None:
-        return max(0.0, hours * (if_hr_fallback ** 2) * 100.0), "hrTSS"
-
-    if_te = _estimate_if_from_training_effect(activity)
-    if if_te is not None:
-        return max(0.0, hours * (if_te ** 2) * 100.0), "hrTSS"
-
-    if_default = 0.60 if is_cycling else 0.68
-    return max(0.0, hours * (if_default ** 2) * 100.0), "hrTSS"
 
 
 def _infer_tss_source_tag(
@@ -2627,68 +2434,17 @@ def _infer_tss_source_tag(
     hr_zones_raw: str | None,
 ) -> str:
     """Etiqueta la fuente principal del TSS para trazabilidad operativa."""
-    if not isinstance(activity, dict):
-        return "unknown"
-
-    act_type = activity.get("type") or activity.get("activityType") or ""
-    is_cycling = _is_cycling_activity(act_type)
-
-    if is_cycling:
-        if tss_label == "TSS" and ftp and ftp > 0 and _has_activity_power_data(activity):
-            return "power_ftp"
-        if tss_label == "hrTSS" and hr_zones_raw:
-            return "hr_zones"
-        if tss_label == "hrTSS":
-            return "hr_avg"
-        native_tss = _extract_training_load_tss(activity)
-        if native_tss is not None:
-            return "native_tss"
-        return "cycling_fallback"
-
-    if tss_label == "TSS":
-        native_tss = _extract_training_load_tss(activity)
-        if native_tss is not None:
-            return "native_tss"
-        return "pace_or_model"
-    if tss_label == "hrTSS" and hr_zones_raw:
-        return "hr_zones"
-    if tss_label == "hrTSS":
-        return "hr_avg_or_rpe"
-    return "unknown"
+    return _load_metrics._infer_tss_source_tag(
+        activity,
+        tss_label=tss_label,
+        ftp=ftp,
+        hr_zones_raw=hr_zones_raw,
+    )
 
 
 def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
-    """Extrae ritmo umbral (unidad interna min/km) desde perfil cacheado en cualquier forma razonable."""
-    if not isinstance(profile, dict):
-        return None
-
-    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
-    candidates: list[Any] = [
-        perf.get("running_threshold_pace_sec_per_km"),
-        perf.get("running_threshold_pace"),
-        perf.get("lactate_threshold_pace_sec_per_km"),
-        perf.get("lactate_threshold_pace"),
-        perf.get("pace_at_lactate_threshold"),
-        perf.get("threshold_pace"),
-        profile.get("running_threshold_pace_sec_per_km"),
-        profile.get("running_threshold_pace"),
-    ]
-    for raw in candidates:
-        pace = _parse_pace_to_sec_per_km(raw)
-        if pace and pace > 0:
-            return pace
-
-    speed_candidates = [
-        perf.get("lactate_threshold_speed_mps"),
-        perf.get("lactate_threshold_speed"),
-        perf.get("running_threshold_speed"),
-    ]
-    for raw_speed in speed_candidates:
-        pace = _speed_ms_to_pace_sec_per_km(raw_speed)
-        if pace and pace > 0:
-            return pace
-
-    return None
+    """Extrae ritmo umbral (unidad interna min/km) desde perfil cacheado."""
+    return _load_metrics._resolve_running_threshold_pace_sec_per_km(profile)
 
 
 def _parse_iso_date_safe(raw: Any) -> date | None:
@@ -2808,23 +2564,8 @@ _SPORT_MODEL_DEFAULTS["triatlon"] = _SPORT_MODEL_DEFAULTS["triatlón"]  # alias:
 
 
 def _resolve_sport_model_cfg(profile: dict | None) -> dict:
-    """Devuelve la configuración base para el deporte principal del perfil,
-    aplicando después cualquier override manual que el usuario haya guardado
-    en profile.load_metrics.model."""
-    p = profile or {}
-    sport_raw = str((p.get("goals") or {}).get("primary") or "running").strip().lower()
-    base = dict(_SPORT_MODEL_DEFAULTS.get(sport_raw) or _SPORT_MODEL_DEFAULTS["running"])
-
-    saved_model = (p.get("load_metrics") or {}).get("model") or {}
-    for key in ("atl_tau_days", "ctl_tau_days", "tsb_low_pct", "tsb_high_pct",
-                "atl_high_pct", "weekly_target_pct", "weekly_high_pct"):
-        if key in saved_model:
-            try:
-                base[key] = float(saved_model[key])
-            except (TypeError, ValueError):
-                pass
-
-    return base
+    """Devuelve configuración de modelo de carga según deporte + overrides."""
+    return _load_metrics._resolve_sport_model_cfg(profile)
 
 
 def _compute_load_fatigue_metrics(
@@ -2833,220 +2574,14 @@ def _compute_load_fatigue_metrics(
     profile: dict | None = None,
     days_window: int = 56,
 ) -> dict | None:
-    """Calcula TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) y reglas de actuación con rangos individualizados por deporte."""
-    today = date.today()
-    start_day = today - timedelta(days=max(14, days_window - 1))
-    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
-
-    tss_by_day: dict[str, float] = {}
-
-    for item in _extract_training_load_points(trend_payload):
-        d_iso = item.get("date")
-        if not d_iso:
-            continue
-        try:
-            d_obj = date.fromisoformat(d_iso)
-        except ValueError:
-            continue
-        if d_obj < start_day or d_obj > today:
-            continue
-        tss_by_day[d_iso] = max(tss_by_day.get(d_iso, 0.0), float(item.get("tss") or 0.0))
-
-    for act in list(activities or []):
-        if not isinstance(act, dict):
-            continue
-        d_iso = _to_iso_date(
-            act.get("startTimeLocal")
-            or act.get("startTimeGMT")
-            or act.get("date")
-            or act.get("calendarDate")
-        )
-        if not d_iso:
-            continue
-        try:
-            d_obj = date.fromisoformat(d_iso)
-        except ValueError:
-            continue
-        if d_obj < start_day or d_obj > today:
-            continue
-        tss, _ = _estimate_session_tss(
-            act,
-            running_threshold_pace_sec_per_km=running_threshold_pace,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            hr_zones_raw=(
-                act.get("_hr_zones_raw")
-                or act.get("hr_zones_raw")
-                or act.get("hrZonesRaw")
-            ),
-        )
-        if tss > 0:
-            tss_by_day[d_iso] = tss_by_day.get(d_iso, 0.0) + tss
-
-    if not tss_by_day:
-        return None
-
-    # ── Configuración de tau y percentiles por deporte (con override por perfil) ──
-    model_cfg = _resolve_sport_model_cfg(profile)
-    tau_atl = int(round(float(model_cfg.get("atl_tau_days") or 7)))
-    tau_ctl = int(round(float(model_cfg.get("ctl_tau_days") or 42)))
-    tau_atl = max(3, min(tau_atl, 14))
-    tau_ctl = max(21, min(tau_ctl, 90))
-
-    sport_raw = str(((profile or {}).get("goals") or {}).get("primary") or "running").strip().lower()
-
-    saved_last = ((profile or {}).get("load_metrics") or {}).get("last") or {}
-    atl_prev = max(0.0, float(saved_last.get("atl") or 0.0))
-    ctl_prev = max(0.0, float(saved_last.get("ctl") or 0.0))
-    seed_date_iso = _to_iso_date(saved_last.get("date"))
-    if seed_date_iso:
-        try:
-            seed_date = date.fromisoformat(seed_date_iso)
-            if seed_date < start_day:
-                atl_prev = 0.0
-                ctl_prev = 0.0
-        except ValueError:
-            pass
-
-    alpha_atl = 1.0 / float(tau_atl)
-    alpha_ctl = 1.0 / float(tau_ctl)
-
-    series: list[dict] = []
-    day_cursor = start_day
-    while day_cursor <= today:
-        d_iso = day_cursor.isoformat()
-        tss = max(0.0, float(tss_by_day.get(d_iso, 0.0)))
-        atl = atl_prev + (tss - atl_prev) * alpha_atl
-        ctl = ctl_prev + (tss - ctl_prev) * alpha_ctl
-        tsb = ctl - atl
-        row = {
-            "date": d_iso,
-            "tss": round(tss, 1),
-            "atl": round(atl, 1),
-            "ctl": round(ctl, 1),
-            "tsb": round(tsb, 1),
-        }
-        series.append(row)
-        atl_prev = atl
-        ctl_prev = ctl
-        day_cursor += timedelta(days=1)
-
-    latest = series[-1]
-    last_28 = series[-28:] if len(series) >= 28 else series[:]
-    last_42 = series[-42:] if len(series) >= 42 else series[:]
-    atl_values = [float(x["atl"]) for x in last_28]
-    tsb_values = [float(x["tsb"]) for x in last_28]
-
-    weekly_tss_values: list[float] = []
-    for idx in range(0, len(last_42), 7):
-        chunk = last_42[idx: idx + 7]
-        if chunk:
-            weekly_tss_values.append(round(sum(float(x["tss"]) for x in chunk), 1))
-    weekly_spike = _compute_weekly_spike_signal(series, reference_day=today, threshold_ratio=0.20)
-    current_week_tss = float(weekly_spike.get("current_tss") or 0.0)
-
-    tsb_low = round(_percentile(tsb_values, float(model_cfg.get("tsb_low_pct") or 0.20), default=-10.0), 1)
-    tsb_high = round(_percentile(tsb_values, float(model_cfg.get("tsb_high_pct") or 0.80), default=5.0), 1)
-    atl_high = round(_percentile(atl_values, float(model_cfg.get("atl_high_pct") or 0.80), default=max(50.0, float(latest["atl"]))), 1)
-    weekly_target = round(_percentile(weekly_tss_values, float(model_cfg.get("weekly_target_pct") or 0.55), default=current_week_tss), 1)
-    weekly_high = round(_percentile(weekly_tss_values, float(model_cfg.get("weekly_high_pct") or 0.85), default=max(current_week_tss, weekly_target * 1.15)), 1)
-
-    # ── Flag de calibración del modelo ────────────────────────────────────────
-    # El modelo EWMA arranca desde ATL=0/CTL=0 y necesita ~3 semanas de datos
-    # reales para que los percentiles sean fiables. Durante ese período los
-    # colores pueden ser más negativos de lo que corresponde a la carga real.
-    days_with_load = sum(1 for x in series if float(x.get("tss") or 0.0) > 0)
-    _MIN_DAYS_FOR_RELIABLE_RANGES = 21
-    warming_up = days_with_load < _MIN_DAYS_FOR_RELIABLE_RANGES
-    warming_up_days_remaining = max(0, _MIN_DAYS_FOR_RELIABLE_RANGES - days_with_load)
-
-    tsb_now = float(latest["tsb"])
-    atl_now = float(latest["atl"])
-    tsb_abs_floor = float(model_cfg.get("tsb_abs_floor") or -30.0)
-    # OVERLOAD absoluto: TSB por debajo del suelo del deporte, independientemente de percentiles.
-    # Cubre el caso donde el atleta es crónicamente sobreentrenado y sus percentiles
-    # se han adaptado a valores muy negativos (el p15 puede coincidir con el valor actual).
-    abs_overload = tsb_now <= tsb_abs_floor
-    # Bug fix: usar <= en lugar de < para cubrir el caso límite donde tsb_now == tsb_low
-    # (percentil p15 coincide exactamente con el valor actual del último día).
-    sustained_overload = len(series) >= 7 and all(float(x["tsb"]) <= tsb_low for x in series[-7:])
-    fatigue_high = (tsb_now < tsb_low) or (atl_now > atl_high)
-    available_for_quality = (tsb_now >= tsb_low) and (tsb_now <= max(tsb_high, tsb_low + 4.0)) and not fatigue_high
-    weekly_spike_alert = bool(weekly_spike.get("spike_alert"))
-
-    if abs_overload or sustained_overload or (current_week_tss > weekly_high and tsb_now < tsb_low):
-        status = "overload"
-        action = "sobrecarga sostenida"
-        recommendation = "Activa semana de descarga (−30% a −40% de volumen) y elimina calidad intensa 3-5 dias."
-    elif fatigue_high:
-        status = "fatigue_high"
-        action = "fatiga alta"
-        recommendation = "Reduce intensidad/volumen hoy y prioriza recuperación activa, sueño e hidratación."
-    elif available_for_quality:
-        status = "ready"
-        action = "buena disponibilidad"
-        recommendation = "Puedes mantener sesión de calidad o progresión controlada según plan."
-    else:
-        status = "neutral"
-        action = "carga estable"
-        recommendation = "Mantén carga aeróbica controlada y reevalúa mañana con HRV/sueño/estrés."
-
-    if weekly_spike_alert:
-        if status in {"ready", "neutral"}:
-            action = "spike semanal >20%"
-            recommendation = (
-                "⚠️ Spike semanal >20% vs semana previa: reduce 15-25% la carga de los próximos 2-3 días "
-                "y prioriza recuperación para consolidar adaptación."
-            )
-        elif status == "fatigue_high":
-            recommendation = (
-                recommendation
-                + " Además, la carga semanal ya supera en >20% a la semana previa."
-            )
-
-    return {
-        "model": {
-            "name": "tp-inspired-ewma",
-            "sport": sport_raw,
-            "atl_tau_days": tau_atl,
-            "ctl_tau_days": tau_ctl,
-            "tsb_low_pct": model_cfg.get("tsb_low_pct") or 0.20,
-            "tsb_high_pct": model_cfg.get("tsb_high_pct") or 0.80,
-            "atl_high_pct": model_cfg.get("atl_high_pct") or 0.80,
-        },
-        "latest": latest,
-        "series": series[-120:],
-        "weekly": {
-            "current_tss": current_week_tss,
-            "previous_tss": float(weekly_spike.get("previous_tss") or 0.0),
-            "spike_delta_pct": weekly_spike.get("delta_pct"),
-            "spike_threshold_pct": float(weekly_spike.get("threshold_pct") or 20.0),
-            "spike_alert": weekly_spike_alert,
-            "target_tss": weekly_target,
-            "high_tss": weekly_high,
-        },
-        "ranges": {
-            "tsb_low": tsb_low,
-            "tsb_high": tsb_high,
-            "atl_high": atl_high,
-            "tsb_abs_floor": tsb_abs_floor,
-        },
-        "warming_up": warming_up,
-        "warming_up_days_remaining": warming_up_days_remaining,
-        "days_with_load": days_with_load,
-        "flags": {
-            "fatigue_high": fatigue_high,
-            "sustained_overload": sustained_overload,
-            "abs_overload": abs_overload,
-            "available_for_quality": available_for_quality,
-            "warming_up": warming_up,
-            "weekly_spike_alert": weekly_spike_alert,
-        },
-        "status": status,
-        "action": action,
-        "recommendation": recommendation,
-    }
+    """Calcula TSS/CTL/ATL/TSB y reglas de actuación con rangos por deporte."""
+    return _load_metrics._compute_load_fatigue_metrics(
+        activities=activities,
+        trend_payload=trend_payload,
+        profile=profile,
+        days_window=days_window,
+        reference_day=date.today(),
+    )
 
 
 def _compute_weekly_spike_signal(
@@ -3055,43 +2590,11 @@ def _compute_weekly_spike_signal(
     threshold_ratio: float = 0.20,
 ) -> dict[str, Any]:
     """Calcula si la semana actual supera en >X% la semana anterior."""
-    ref = reference_day or date.today()
-    week_start = ref - timedelta(days=ref.weekday())
-    prev_start = week_start - timedelta(days=7)
-    prev_end = week_start - timedelta(days=1)
-
-    current_tss = 0.0
-    previous_tss = 0.0
-
-    for row in series or []:
-        if not isinstance(row, dict):
-            continue
-        d_iso = str(row.get("date") or "")
-        try:
-            d_obj = date.fromisoformat(d_iso)
-        except ValueError:
-            continue
-        tss = max(0.0, float(row.get("tss") or 0.0))
-        if week_start <= d_obj <= ref:
-            current_tss += tss
-        elif prev_start <= d_obj <= prev_end:
-            previous_tss += tss
-
-    available = previous_tss > 0.0
-    delta_pct = None
-    spike_alert = False
-    if available:
-        delta_pct = round(((current_tss - previous_tss) / previous_tss) * 100.0, 1)
-        spike_alert = current_tss > (previous_tss * (1.0 + threshold_ratio))
-
-    return {
-        "current_tss": round(current_tss, 1),
-        "previous_tss": round(previous_tss, 1),
-        "delta_pct": delta_pct,
-        "threshold_pct": round(threshold_ratio * 100.0, 1),
-        "available": available,
-        "spike_alert": spike_alert,
-    }
+    return _load_metrics._compute_weekly_spike_signal(
+        series=series,
+        reference_day=reference_day,
+        threshold_ratio=threshold_ratio,
+    )
 
 
 def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
@@ -3663,6 +3166,10 @@ def _is_week_tss_followup_intent(user_message: str, history: list[dict] | None =
     """
     text = (user_message or "").strip().lower()
     if not text:
+        return False
+
+    # No capturar consultas explícitas de tendencia de carga/fatiga.
+    if _is_load_trend_intent(user_message):
         return False
 
     # Debe ser una consulta semanal explícita.

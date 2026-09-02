@@ -51,6 +51,24 @@ Actualización (2026-09-02): ✅ E2E final de PR running REALIZADO.
   - Maratón `3:00:01`
   - Carrera más larga `65.05 km`
 
+Actualización (2026-09-02): ✅ refactor módulo de cálculo REALIZADO (fase 1).
+- Se extrajo el núcleo reusable a `agent/load_metrics.py` (estimación TSS + cálculo ATL/CTL/TSB + reglas de carga).
+- `agent/trainer_agent.py` mantiene API de funciones y ahora delega internamente en el nuevo módulo.
+- Regresión detectada durante E2E de batería: la consulta
+  `¿Cuál es mi tendencia de carga de las últimas 4 semanas?`
+  cayó por error en `week_tss` por heurística de follow-up semanal demasiado amplia.
+- Fix aplicado: `_is_week_tss_followup_intent` ahora excluye explícitamente consultas de tendencia (`_is_load_trend_intent`).
+- Validaciones realizadas:
+  - Unit/regresión focal: `pytest -q tests/test_trainer_agent.py -k "compute_load_fatigue_metrics or estimate_session_tss or infer_tss_source_tag or resolve_sport_model_cfg or weekly_spike"` ✅
+  - Suite completa `test_trainer_agent.py`: ✅
+  - Suite completa repo `pytest -q`: ✅ (401 passed)
+  - E2E real (usuario `rafwill1@hotmail.com`, NVIDIA NIM):
+    - `¿Cuánto TSS hice esta semana?` ✅
+    - `¿Qué actividades hice esta semana?` ✅
+    - `¿Puedo entrenar fuerte mañana o necesito recuperar?` ✅
+    - `¿Cuáles son mis récords personales running?` ✅
+    - `¿Cuál es mi tendencia de carga de las últimas 4 semanas?` ✅ (tras fix)
+
 ---
 
 ## Bloque 1 — Estado de carga actual (ATL/CTL/TSB)
