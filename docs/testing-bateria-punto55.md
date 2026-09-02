@@ -38,6 +38,19 @@ Actualización (2026-09-01): ✅ hardening proactivo de fechas REALIZADO.
 - Prompts completo y compacto actualizados con regla explícita de interpretación de rangos.
 - Validación focal de regresión en verde (23 tests de fechas/rangos/prompt).
 
+Actualización (2026-09-02): ✅ E2E final de PR running REALIZADO.
+- Caso validado en runtime real tras fix de routing: `¿Cuáles son mis récords personales running?`
+- Causa raíz previa: la consulta podía degradarse por acentos/encoding y caer en `route=chat` (valores incorrectos).
+- Fix aplicado en código y publicado: robustez de `_is_personal_records_intent` + forzado de ruta determinista `personal_records` (commit `2007716`).
+- Revalidación E2E en sesión interactiva (usuario `rafwill1@hotmail.com`, modelo NVIDIA NIM) con salida factual correcta:
+  - 1K `3:11`
+  - 1 Milla `5:18`
+  - 5K `17:48`
+  - 10K `35:53`
+  - Medio Maratón `1:23:51`
+  - Maratón `3:00:01`
+  - Carrera más larga `65.05 km`
+
 ---
 
 ## Bloque 1 — Estado de carga actual (ATL/CTL/TSB)
@@ -518,8 +531,10 @@ Modelo usado: `nvidia/nemotron-3.5-lightning-30b-a3b` (evita bloqueo 403 de Gemi
 
 ### N9) Récords personales de running
 - Pregunta: `¿Cuáles son mis récords personales running?`
-- Resultado: ✅ Correcto. Ruta determinista `personal_records` con tabla de marcas (1K, 5K, 10K, MM, maratón, larga).
-- Corrección: No requerida.
+- Resultado inicial: ⚠️ Se detectó fallo en una corrida previa: la consulta cayó en `route=chat` y devolvió marcas incorrectas.
+- Causa raíz: fragilidad del detector de intent con variantes acentuadas/plural y degradación de encoding.
+- Corrección aplicada: hardening de `_is_personal_records_intent` para variantes acentuadas/no acentuadas/mojibake y enrutado determinista a `personal_records`.
+- Revalidación final (2026-09-02): ✅ Correcto en E2E real con tabla factual exacta (1K 3:11, 1 Milla 5:18, 5K 17:48, 10K 35:53, MM 1:23:51, Maratón 3:00:01, Larga 65.05 km).
 
 ### N10) Objetivo principal
 - Pregunta: `¿Cuál es mi objetivo principal ahora?`
