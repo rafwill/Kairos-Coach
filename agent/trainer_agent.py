@@ -4854,8 +4854,17 @@ def _resolve_week_window(user_message: str | None, today_d: date) -> tuple[date,
             except ValueError:
                 pass
 
+    # Si el usuario compara "esta semana" vs "semana pasada",
+    # la semana consultada debe seguir siendo la actual.
+    compares_current_vs_previous = (
+        "esta semana" in msg_lower
+        and re.search(r'\bsemana\s+(pasada|anterior|previa)\b', msg_lower)
+    )
+
     # Semana pasada / anterior / previa
-    if re.search(r'\bsemana\s+(pasada|anterior|previa)\b', msg_lower):
+    if compares_current_vs_previous:
+        target_d = today_d
+    elif re.search(r'\bsemana\s+(pasada|anterior|previa)\b', msg_lower):
         target_d = today_d - timedelta(days=7)
     # Hace N semanas / N semanas atrás
     elif m_n := re.search(r'hace\s+(\d+)\s+semanas?|(\d+)\s+semanas?\s+atr[aá]s', msg_lower):
@@ -5103,11 +5112,23 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     if delta_pct is not None:
         comp_tss_str += f" ({delta_pct:+.1f}%{'  ⚠️ spike' if spike_alert else ''})"
 
+    week_span = f"{week_start.strftime('%d/%m/%Y')} → {week_end.strftime('%d/%m/%Y')}"
+    delta_pct_text = f"{delta_pct:+.1f}%" if delta_pct is not None else "N/A"
+    spike_text = "SI" if spike_alert else "NO"
+
     lines = [
         "## 🧭 Resumen",
         "Datos de la serie Kairos — misma fuente que `/carga`.",
         "",
         "## 📊 Métricas clave",
+        "| Métrica | Valor |",
+        "|---|---:|",
+        f"| Semana natural | {week_span} |",
+        f"| TSS acumulado | {current_week_tss:.1f} |",
+        f"| TSS semana previa | {previous_week_tss:.1f} |",
+        f"| Diferencia porcentual | {delta_pct_text} |",
+        f"| Spike >20% | {spike_text} |",
+        "",
         "| Semana | TSS | CTL (Estado físico) | ATL (Fatiga) | TSB (Forma) | Estado |",
         "|---|---:|---:|---:|---:|---|",
         f"| {week_label} | {current_week_tss:.1f} | {w_ctl:.1f} | {w_atl:.1f} | {w_tsb:+.1f} | {_wstatus(w_tsb, w_atl)} |",
@@ -11133,7 +11154,9 @@ class TrainerAgent:
         Mantiene el bloque determinista como fuente de verdad y limita el LLM
         a interpretar/recomendar usando SOLO esos datos.
         """
-        if not _is_coaching_recommendation_intent(user_message) and route != "daily_readiness":
+        # La capa LLM se activa solo si el usuario pide explicitamente
+        # interpretacion/recomendacion de coaching.
+        if not _is_coaching_recommendation_intent(user_message):
             return deterministic_reply
 
         try:
