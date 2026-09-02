@@ -57,6 +57,8 @@ from agent.trainer_agent import (
     _get_planned_session_for_date,
     _has_goal_in_profile,
     _detect_personal_records_sport_intent,
+    _is_coaching_recommendation_intent,
+    _is_personal_records_intent,
     _is_generic_needs_more_info_reply,
     _is_personal_records_followup_intent,
     _is_plan_status_intent,
@@ -624,6 +626,9 @@ class TestCompactPersonalRecords:
 
 
 class TestPersonalRecordsMarkdown:
+    def test_personal_records_intent_accepts_accented_plural_phrase(self):
+        assert _is_personal_records_intent("¿Cuáles son mis récords personales running?")
+
     def test_build_personal_records_markdown_shows_running_rows(self):
         compact = json.dumps(
             [
@@ -5190,6 +5195,11 @@ class TestDailyReadinessDeterministicRoute:
         assert _is_daily_readiness_intent("Dame mi training readiness")
         assert not _is_daily_readiness_intent("¿Qué zapatillas me recomiendas para trail?")
 
+    def test_is_coaching_recommendation_intent_detects_forma_fisica_queries(self):
+        assert _is_coaching_recommendation_intent("¿Cómo está mi forma física hoy?")
+        assert _is_coaching_recommendation_intent("Dime mi estado de forma actual")
+        assert not _is_coaching_recommendation_intent("Dame mi training readiness")
+
     @pytest.mark.asyncio
     async def test_chat_daily_readiness_route_does_not_call_llm(self):
         from agent.trainer_agent import TrainerAgent
@@ -5251,6 +5261,39 @@ class TestDailyReadinessDeterministicRoute:
 
         with patch("agent.trainer_agent._save_history_entry"):
             out = await TrainerAgent.chat(agent, "Con mi estado actual (TSB + ATL + CTL), ¿recomiendas calidad, rodaje suave o descanso hoy? Justifica con datos")
+
+        agent.client.chat.completions.create.assert_awaited_once()
+        assert "## 🧠 Interpretación de coaching" in out
+
+    @pytest.mark.asyncio
+    async def test_chat_daily_readiness_forma_fisica_uses_hybrid_llm_layer(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"load_metrics": {"series": []}}
+        agent.model = "test-model"
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.client.chat = MagicMock()
+        agent.client.chat.completions = MagicMock()
+        llm_response = MagicMock()
+        llm_response.choices = [MagicMock(message=MagicMock(content="- Recomendación: mantén sesión controlada y revisa recuperación mañana."))]
+        llm_response.usage = None
+        agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
+        agent.collect_startup_snapshot_48h = AsyncMock(return_value={
+            "dates": {"today": date.today().isoformat(), "yesterday": (date.today() - timedelta(days=1)).isoformat()},
+            "body_battery": {"today": {"bodyBatteryLevel": 88}, "yesterday": {}, "summary": ""},
+            "hrv": {"today": {"lastNightAvg": 58, "weeklyAvg": 56, "status": "BALANCED"}, "yesterday": {}, "summary": ""},
+            "sleep": {"today": {"sleepDuration": 8 * 3600, "sleepScore": 84}, "yesterday": {}, "summary": ""},
+            "load_fatigue": {"latest": {"tss": 0.0, "atl": 49.0, "ctl": 54.0, "tsb": 5.0}, "weekly": {"current_tss": 190.0}, "status": "ready", "ranges": {"atl_high": 70.0}, "flags": {"weekly_spike_alert": False}},
+            "trainings": [],
+        })
+
+        with patch("agent.trainer_agent._save_history_entry"):
+            out = await TrainerAgent.chat(agent, "¿Cómo está mi forma física hoy?")
 
         agent.client.chat.completions.create.assert_awaited_once()
         assert "## 🧠 Interpretación de coaching" in out
