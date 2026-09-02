@@ -4231,6 +4231,18 @@ class TestWeekTssDeterministicRoute:
         history = [{"role": "assistant", "content": "¿Cómo te encuentras hoy?"}]
         assert not _is_week_tss_followup_intent("Y para la semana del 13 de agosto de 2026?", history)
 
+    def test_is_week_tss_followup_intent_does_not_hijack_load_trend_query(self):
+        history = [
+            {
+                "role": "assistant",
+                "content": "## 🧭 Resumen\nConsulta de TSS semanal resuelta con datos reales.",
+            }
+        ]
+        assert not _is_week_tss_followup_intent(
+            "¿Cuál es mi tendencia de carga de las últimas 4 semanas?",
+            history,
+        )
+
     def test_tool_router_routes_week_tss_followup_without_tss_word(self):
         import agent.trainer_agent as ta
 
