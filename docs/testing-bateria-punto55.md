@@ -69,6 +69,18 @@ Actualización (2026-09-02): ✅ refactor módulo de cálculo REALIZADO (fase 1)
     - `¿Cuáles son mis récords personales running?` ✅
     - `¿Cuál es mi tendencia de carga de las últimas 4 semanas?` ✅ (tras fix)
 
+Actualización (2026-09-02): ✅ refactor módulo de cálculo REALIZADO (fase 2).
+- Se completó la deduplicación del bloque de cálculo en `trainer_agent.py`.
+- `trainer_agent` ahora delega de forma consistente en la API pública de `agent/load_metrics.py` para helpers de TSS/IF/ritmo/zonas/clasificación.
+- Validación técnica tras cambios:
+  - `pytest -q tests/test_trainer_agent.py` ✅ (326 passed)
+  - `pytest -q` ✅ (401 passed)
+- Smoke E2E runtime real (usuario `rafwill1@hotmail.com`, modelo NVIDIA NIM opción 4):
+  - `¿Cuál es mi tendencia de carga de las últimas 4 semanas?` ✅
+  - `¿Cuánto TSS hice esta semana?` ✅
+  - `¿Puedo entrenar fuerte mañana o necesito recuperar?` ✅
+  - `¿Cuáles son mis récords personales running?` ✅
+
 ---
 
 ## Bloque 1 — Estado de carga actual (ATL/CTL/TSB)

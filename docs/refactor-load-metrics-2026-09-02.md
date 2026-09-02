@@ -81,3 +81,33 @@ Estado actual:
 Siguiente fase sugerida:
 - Reducir duplicacion residual en `agent/trainer_agent.py` eliminando implementaciones internas ya delegadas.
 - Publicar API explicita del modulo (funciones publicas sin prefijo `_`) y documentar contrato de entrada/salida para reutilizacion externa.
+
+## Paso 6. Fase 2 completada (deduplicacion + API publica)
+
+Cambios aplicados:
+- `agent/load_metrics.py` expone API publica estable para reutilizacion:
+  - constantes publicas: `TSS_FORMULA_VERSION`, `SPORT_MODEL_DEFAULTS`
+  - wrappers publicos: `estimate_session_tss`, `compute_load_fatigue_metrics`, `resolve_sport_model_cfg`, `compute_weekly_spike_signal`, y helpers de parsing/extraccion.
+  - `__all__` definido para declarar superficie soportada.
+- `agent/trainer_agent.py` reduce duplicacion en bloque de calculo:
+  - helpers internos reemplazados por delegaciones directas a `agent.load_metrics`.
+  - comportamiento funcional mantenido (contratos y rutas sin cambios).
+
+Validacion posterior a Fase 2:
+- Suite focal de `trainer_agent`:
+  - `pytest -q tests/test_trainer_agent.py`
+  - Resultado: 326 passed.
+- Suite completa del repositorio:
+  - `pytest -q`
+  - Resultado: 401 passed.
+
+Smoke E2E runtime real (usuario `rafwill1@hotmail.com`, modelo NVIDIA NIM opcion 4):
+- `¿Cuál es mi tendencia de carga de las últimas 4 semanas?` -> ruta `load_trend` correcta y tabla semanal ATL/CTL/TSB.
+- `¿Cuánto TSS hice esta semana?` -> ruta `week_tss` correcta con total, desglose diario y desglose por tipo (`rTSS/hrTSS/sTSS`).
+- `¿Puedo entrenar fuerte mañana o necesito recuperar?` -> ruta de readiness correcta con recomendacion determinista.
+- `¿Cuáles son mis récords personales running?` -> ruta `personal_records` correcta con tabla factual (1K, 1 Milla, 5K, 10K, MM, Maraton, distancia maxima).
+
+Estado final de la refactorizacion:
+- Fase 1: COMPLETA.
+- Fase 2: COMPLETA.
+- Riesgo de regresion reducido al consolidar una unica implementacion de calculo reusable.
