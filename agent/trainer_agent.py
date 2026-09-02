@@ -4083,6 +4083,11 @@ def _is_coaching_recommendation_intent(user_message: str) -> bool:
         "interpret",
         "opinion",
         "opinión",
+        "forma fisica",
+        "forma física",
+        "estado de forma",
+        "como estoy de forma",
+        "cómo estoy de forma",
     )
     return any(m in text for m in markers)
 
@@ -5668,13 +5673,31 @@ def _build_training_plan_status_markdown(profile: dict) -> str:
 
 def _is_personal_records_intent(user_message: str) -> bool:
     """Detecta intención de consultar récords personales de running."""
-    text = (user_message or "").strip().lower()
-    if not text:
+    text_raw = (user_message or "").strip()
+    if not text_raw:
         return False
+
+    text = text_raw.lower()
+    text_ascii = "".join(
+        ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn"
+    )
+    text_fuzzy = re.sub(r"[^a-z0-9 ]+", "", text_ascii)
+
+    # Variante robusta por tokens para cubrir: "récords personales",
+    # "records personales", "record personal", "marcas personales", etc.
+    has_record_family = any(
+        tok in text_ascii or tok in text_fuzzy
+        for tok in ("record", "records", "rcord", "rcords", "marca", "marcas", "pr")
+    )
+    has_personal_family = any(tok in text_ascii or tok in text_fuzzy for tok in ("personal", "personales"))
+    if has_record_family and has_personal_family:
+        return True
+
     markers = [
         "record personal",
         "records personales",
         "récord personal",
+        "récords personales",
         "mejores registros",
         "personal records",
         "pr de",
