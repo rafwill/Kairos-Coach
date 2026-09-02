@@ -1845,3 +1845,289 @@ def _compute_load_fatigue_metrics(
         "action": action,
         "recommendation": recommendation,
     }
+
+
+# Public API (stable surface for reuse in other projects)
+SPORT_MODEL_DEFAULTS = _SPORT_MODEL_DEFAULTS
+
+
+def to_iso_date(value: Any) -> str | None:
+    return _to_iso_date(value)
+
+
+def extract_training_load_points(payload: Any) -> list[dict]:
+    return _extract_training_load_points(payload)
+
+
+def extract_activity_duration_hours(activity: dict) -> float:
+    return _extract_activity_duration_hours(activity)
+
+
+def extract_activity_distance_km(activity: dict) -> float | None:
+    return _extract_activity_distance_km(activity)
+
+
+def parse_pace_to_sec_per_km(raw: Any) -> float | None:
+    return _parse_pace_to_sec_per_km(raw)
+
+
+def speed_ms_to_pace_sec_per_km(raw_speed: Any) -> float | None:
+    return _speed_ms_to_pace_sec_per_km(raw_speed)
+
+
+def extract_avg_pace_sec_per_km(activity: dict) -> float | None:
+    return _extract_avg_pace_sec_per_km(activity)
+
+
+def extract_running_effective_pace_sec_per_km(activity: dict) -> float | None:
+    return _extract_running_effective_pace_sec_per_km(activity)
+
+
+def should_use_raw_hr_tss_for_fast_trail(activity: dict) -> bool:
+    return _should_use_raw_hr_tss_for_fast_trail(activity)
+
+
+def extract_training_load_tss(activity: dict) -> float | None:
+    return _extract_training_load_tss(activity)
+
+
+def estimate_if_from_hr(
+    activity: dict,
+    cycling_formula: bool,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+) -> float | None:
+    return _estimate_if_from_hr(
+        activity,
+        cycling_formula=cycling_formula,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+    )
+
+
+def estimate_hr_tss_from_zones(
+    activity: dict,
+    hours: float,
+    hr_zones_raw: str | None = None,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+    apply_cap: bool = True,
+    min_coverage_ratio: float = 0.0,
+) -> float | None:
+    return _estimate_hr_tss_from_zones(
+        activity,
+        hours=hours,
+        hr_zones_raw=hr_zones_raw,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+        apply_cap=apply_cap,
+        min_coverage_ratio=min_coverage_ratio,
+    )
+
+
+def resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, float | None]:
+    return _resolve_hr_profile_values(profile)
+
+
+def extract_threshold_pace_sec_per_km(
+    activity: dict,
+    running_threshold_pace_sec_per_km: float | None = None,
+) -> float | None:
+    return _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
+
+
+def estimate_if_from_rpe(activity: dict) -> float | None:
+    return _estimate_if_from_rpe(activity)
+
+
+def extract_strength_rpe_10(activity: dict) -> float | None:
+    return _extract_strength_rpe_10(activity)
+
+
+def estimate_strength_if(activity: dict) -> float | None:
+    return _estimate_strength_if(activity)
+
+
+def estimate_strength_tss_from_rpe_minutes(activity: dict, hours: float) -> float | None:
+    return _estimate_strength_tss_from_rpe_minutes(activity, hours)
+
+
+def estimate_walk_hike_tss(
+    activity: dict,
+    hours: float,
+    hr_zones_raw: str | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> tuple[float | None, str | None]:
+    return _estimate_walk_hike_tss(activity, hours, hr_zones_raw, hr_rest_bpm, hr_max_bpm)
+
+
+def estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
+    return _estimate_tss_from_power_ftp(activity, ftp, hours)
+
+
+def has_activity_power_data(activity: dict) -> bool:
+    return _has_activity_power_data(activity)
+
+
+def estimate_tss_from_threshold_pace(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None = None,
+    prefer_effective_running_pace: bool = False,
+    if_pace_ceiling: float = 1.20,
+) -> float | None:
+    return _estimate_tss_from_threshold_pace(
+        activity,
+        hours,
+        running_threshold_pace_sec_per_km,
+        prefer_effective_running_pace,
+        if_pace_ceiling,
+    )
+
+
+def extract_running_if_from_threshold_pace(
+    activity: dict,
+    running_threshold_pace_sec_per_km: float | None = None,
+    prefer_effective_running_pace: bool = False,
+    if_pace_ceiling: float = 1.20,
+) -> float | None:
+    return _extract_running_if_from_threshold_pace(
+        activity,
+        running_threshold_pace_sec_per_km,
+        prefer_effective_running_pace,
+        if_pace_ceiling,
+    )
+
+
+def extract_running_session_signals(activity: dict) -> dict[str, Any]:
+    return _extract_running_session_signals(activity)
+
+
+def classify_running_session_with_confidence(activity: dict) -> dict[str, Any]:
+    return _classify_running_session_with_confidence(activity)
+
+
+def classify_running_session(activity: dict) -> str:
+    cls = _classify_running_session_with_confidence(activity)
+    return str(cls.get("session_kind") or "calidad")
+
+
+def estimate_running_tss_examined(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> float | None:
+    return _estimate_running_tss_examined(
+        activity,
+        hours,
+        running_threshold_pace_sec_per_km,
+        hr_rest_bpm,
+        hr_max_bpm,
+    )
+
+
+def estimate_if_from_training_effect(activity: dict) -> float | None:
+    return _estimate_if_from_training_effect(activity)
+
+
+def estimate_session_tss(
+    activity: dict,
+    ftp: float | None = None,
+    running_threshold_pace_sec_per_km: float | None = None,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+    hr_zones_raw: str | None = None,
+) -> tuple[float, str]:
+    return _estimate_session_tss(
+        activity,
+        ftp,
+        running_threshold_pace_sec_per_km,
+        hr_rest_bpm,
+        hr_max_bpm,
+        hr_zones_raw,
+    )
+
+
+def infer_tss_source_tag(activity: dict, tss_label: str, ftp: float | None, hr_zones_raw: str | None) -> str:
+    return _infer_tss_source_tag(activity, tss_label, ftp, hr_zones_raw)
+
+
+def resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
+    return _resolve_running_threshold_pace_sec_per_km(profile)
+
+
+def percentile(values: list[float], pct: float, default: float = 0.0) -> float:
+    return _percentile(values, pct, default)
+
+
+def resolve_sport_model_cfg(profile: dict | None) -> dict:
+    return _resolve_sport_model_cfg(profile)
+
+
+def compute_weekly_spike_signal(
+    series: list[dict],
+    reference_day: date | None = None,
+    threshold_ratio: float = 0.20,
+) -> dict[str, Any]:
+    return _compute_weekly_spike_signal(series, reference_day, threshold_ratio)
+
+
+def compute_load_fatigue_metrics(
+    activities: list[dict],
+    trend_payload: Any,
+    profile: dict | None = None,
+    days_window: int = 56,
+    reference_day: date | None = None,
+) -> dict | None:
+    return _compute_load_fatigue_metrics(
+        activities,
+        trend_payload,
+        profile,
+        days_window,
+        reference_day,
+    )
+
+
+__all__ = [
+    "TSS_FORMULA_VERSION",
+    "TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM",
+    "SPORT_MODEL_DEFAULTS",
+    "to_iso_date",
+    "extract_training_load_points",
+    "extract_activity_duration_hours",
+    "extract_activity_distance_km",
+    "parse_pace_to_sec_per_km",
+    "speed_ms_to_pace_sec_per_km",
+    "extract_avg_pace_sec_per_km",
+    "extract_running_effective_pace_sec_per_km",
+    "should_use_raw_hr_tss_for_fast_trail",
+    "extract_training_load_tss",
+    "estimate_if_from_hr",
+    "estimate_hr_tss_from_zones",
+    "resolve_hr_profile_values",
+    "extract_threshold_pace_sec_per_km",
+    "estimate_if_from_rpe",
+    "extract_strength_rpe_10",
+    "estimate_strength_if",
+    "estimate_strength_tss_from_rpe_minutes",
+    "estimate_walk_hike_tss",
+    "estimate_tss_from_power_ftp",
+    "has_activity_power_data",
+    "estimate_tss_from_threshold_pace",
+    "extract_running_if_from_threshold_pace",
+    "extract_running_session_signals",
+    "classify_running_session_with_confidence",
+    "classify_running_session",
+    "estimate_running_tss_examined",
+    "estimate_if_from_training_effect",
+    "estimate_session_tss",
+    "infer_tss_source_tag",
+    "resolve_running_threshold_pace_sec_per_km",
+    "percentile",
+    "resolve_sport_model_cfg",
+    "compute_weekly_spike_signal",
+    "compute_load_fatigue_metrics",
+]
