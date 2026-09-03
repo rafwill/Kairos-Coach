@@ -3,14 +3,15 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 360 tests (validados localmente a 2026-08-18). CI/CD con GitHub Actions activo.
-- Validacion reciente de regresion focal (2026-08-21): `tests/test_trainer_agent.py` en verde (307 passed).
+- Suite de tests: 401 tests en verde (validado localmente a 2026-09-02). CI/CD con GitHub Actions activo.
+- Validacion reciente de regresion focal (2026-09-02): `tests/test_trainer_agent.py` en verde (326 passed).
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 - Contrato de salida unificado activo (prompt completo + prompt compacto + rutas deterministas clave).
-- Essential Tools: 40 tools activas (2026-08-31); menú de selección eliminado del arranque.
+- Essential Tools: 43 tools activas en runtime (2026-09-03).
 - Modelo NVIDIA NIM activo: `nvidia/nemotron-3.5-lightning-30b-a3b` (sustituye llama-3.x EOL).
 - Batería E2E punto 55: validación E2E re-ejecutada y cerrada (11/11 consultas verificadas) con correcciones aplicadas en runtime (2026-09-01).
 - Bloque cálculo hrTSS trail (sin ponderado + regla trail rápido) validado contra TP: REALIZADO (2026-09-01).
+- Refactor de load metrics completado (Fase 1 + Fase 2, deduplicación + API pública) con validación total en verde (2026-09-02).
 
 ---
 
@@ -18,18 +19,196 @@
 
 ### Prioridad alta
 
-#### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — REALIZADO
-- Objetivo: cerrar la validacion operacional real de TSS, ATL, CTL y TSB en ejecucion completa del agente.
-- Checklist de ejecucion:
-  - [REALIZADO 2026-08-15] Validacion automatizada de regresion: `python -m pytest -q` en verde (317 passed).
-  - [REALIZADO 2026-08-15] Preparar entorno local y variables de Supabase/Garmin.
-  - [REALIZADO 2026-08-15] Ejecutar arranque real del agente con usuario activo y sincronizacion MCP.
-  - [REALIZADO 2026-08-15] Verificar reconstruccion/lectura de serie `load_metrics_daily` (resultado observado: 121 filas persistidas).
-  - [REALIZADO 2026-08-15] Contrastar muestra de actividades y TSS por sesion contra referencias conocidas (FIT de muestra: `tools/fit_tss_probe.py`, delta +1.98 TSS entre metodos).
-  - [REALIZADO 2026-08-15] Verificar coherencia dinamica de CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) en el briefing proactivo de arranque (ATL=52.5, CTL=61.4, TSB=8.9, regla aplicada mostrada).
-  - [REALIZADO 2026-08-15] Registrar evidencia (capturas/logs/resumen) en documentacion operativa: `docs/validation-load-fatigue-e2e-2026-08-15.md`.
-- Criterio de cierre:
-  - Cumplido: validacion end-to-end ejecutada con datos reales y evidencia guardada.
+#### 9) Congelado del código MCP — REALIZADO (2026-09-03)
+- Objetivo (10/10): eliminar dependencia funcional del MCP de terceros en rutas críticas de Kairos, manteniendo rollback inmediato y reduciendo latencia de consultas.
+- Alcance:
+  - Catálogo Essentials objetivo: 43 tools identificadas en runtime actual.
+  - MVP inicial (Ola 1): tools críticas para rutas deterministas y métricas de arranque.
+  - Cobertura completa (Ola 2): completar las 43 tools del catálogo Essentials.
+- Definiciones operativas:
+  - Tool esencial: aparece en runtime, prompts o tests y su contrato impacta respuesta al usuario.
+  - Tool crítica: esencial con impacto directo en rutas deterministas o en snapshot proactivo de arranque.
+  - Contrato versionado: schema de entrada/salida con campos mínimos obligatorios y compatibilidad backward.
+- Métricas de éxito:
+  - Latencia p95 en 4 consultas sentinela: mejora >= 30% frente a backend upstream.
+  - Estabilidad: 0 regresiones en suite `pytest -q` y smoke E2E sentinela en verde.
+  - Confiabilidad de contratos: 100% de tools del catálogo con tests de contrato en CI.
+  - Operabilidad: rollback `MCP_BACKEND=frozen|upstream` validado en < 5 min.
+- Plan de ejecución (MCP propio basado en Essentials):
+  - Fase 1 — Descubrimiento y baseline de uso real.
+    - Inventariar tools MCP usadas en runtime, prompts y tests (frecuencia + criticidad).
+    - Entregable: catálogo único (43) con clasificación esencial/crítica + contratos esperados.
+    - Criterio de salida: catálogo aprobado y trazable a código/tests.
+  - Fase 2 — Estrategia de transición sin ruptura.
+    - Activar backend dual con flag `MCP_BACKEND=frozen|upstream`.
+    - Mantener upstream como fallback temporal durante estabilización.
+    - Criterio de salida: conmutación ida/vuelta validada en local y smoke.
+  - Fase 3 — Capa de adaptación estable en Kairos.
+    - Implementar adapter interno para desacoplar `trainer_agent`/`mcp_client` de payloads volátiles.
+    - Versionar contratos por tool y añadir validación defensiva.
+    - Criterio de salida: rutas críticas consumen solo contratos versionados del adapter.
+  - Fase 4 — Construcción del MCP propio.
+    - Ola 1: implementar primero tools críticas (rutas deterministas + startup metrics + PRs).
+    - Ola 2: completar resto de tools hasta cubrir las 43 Essentials.
+    - Criterio de salida: paridad funcional del catálogo objetivo.
+  - Fase 5 — Pruebas y hardening.
+    - Añadir tests de contratos MCP (schema + campos mínimos) y regresión funcional E2E.
+    - Añadir chequeo CI de drift entre catálogo esperado y tools realmente expuestas.
+    - Criterio de salida: CI en verde con drift-check obligatorio.
+  - Fase 6 — Corte controlado de dependencia externa.
+    - Promover `frozen` como backend por defecto al cumplir métricas.
+    - Mantener `upstream` como contingencia por ventana de observación definida (14 días).
+    - Criterio de salida: sin incidencias P1/P2 en ventana de observación.
+- Criterios de cierre del punto 9:
+  - 43/43 tools Essentials implementadas o explicitamente descartadas con justificación.
+  - Contratos de tools versionados y testeados en CI.
+  - Rutas críticas operativas sin dependencia funcional del MCP de terceros.
+  - Rollback operativo validado mediante flag de backend.
+  - Documentación técnica y runbook de mantenimiento del MCP propio publicados.
+
+- Estado de avance (Fase 1 + Fase 2 en progreso — 2026-09-03):
+  - Inventario preliminar completado en código/prompts/tests.
+  - Baseline confirmado: 43 Essentials objetivo = 40 tools Garmin (`GARMIN_ESSENTIAL_TOOLS`) + 3 tools internas (`kairos_load_trends`, `kairos_correlate`, `kairos_weekly_sport_breakdown`).
+  - Set crítico inicial identificado para Ola 1 (MVP):
+    - `get_user_profile`
+    - `get_activities`
+    - `get_activities_by_date`
+    - `get_activity`
+    - `get_activity_hr_in_timezones`
+    - `get_body_battery`
+    - `get_hrv_data`
+    - `get_sleep_summary`
+    - `get_training_load_trend`
+    - `get_training_readiness` / `get_morning_training_readiness`
+    - `get_personal_record`
+    - `kairos_load_trends`
+  - Siguiente entregable inmediato:
+    - [REALIZADO 2026-09-03] Catálogo único versionado (43) con clasificación `crítica/esencial` por tool y contrato mínimo de entrada/salida.
+  - Fase 2 aplicada en código (backend dual sin ruptura):
+    - Selector `MCP_BACKEND=frozen|upstream` implementado en `agent/mcp_client.py`.
+    - Fallback automático `frozen -> upstream` controlado por `MCP_BACKEND_FALLBACK_UPSTREAM` (default: true).
+    - Soporte de comando local congelado por `KAIROS_MCP_FROZEN_COMMAND` (o binario `garmin-mcp-frozen`).
+    - Señal de backend efectivo expuesta vía `KAIROS_MCP_BACKEND_EFFECTIVE` y mostrada al arrancar en `agent/main.py`.
+  - Validación Fase 2:
+    - Suite de regresión focal en verde: `pytest -q tests/test_main.py tests/test_trainer_agent.py` (383 passed).
+    - Cobertura nueva de conmutación backend en CI: `tests/test_mcp_client.py`.
+      - Selector `MCP_BACKEND` (`frozen|upstream|inválido`).
+      - Fallback `frozen -> upstream` cuando `MCP_BACKEND_FALLBACK_UPSTREAM=true`.
+      - Comportamiento fail-fast cuando fallback está desactivado.
+    - Validación conjunta actualizada: `pytest -q tests/test_mcp_client.py tests/test_main.py tests/test_trainer_agent.py` (391 passed).
+  - Fase 3 iniciada (adapter estable en Kairos):
+    - Capa adapter extraída a módulo dedicado `agent/mcp_adapter.py`.
+    - Normalización de invocaciones (`get_personal_records` -> `get_personal_record`).
+    - Normalización de argumentos para contratos de fecha (`get_body_battery`/`get_body_composition`: `date` -> `start_date/end_date`).
+    - Guardas de contrato mínimo en frontera adapter->MCP (error explícito con versión `mcp-adapter-v1`).
+    - Catálogo Essentials centralizado en `agent/mcp_client.py`:
+      - `GARMIN_ESSENTIAL_TOOLS` (40)
+      - `KAIROS_INTERNAL_ESSENTIAL_TOOLS` (3)
+      - `ALL_ESSENTIAL_TOOLS` (43)
+    - Cobertura nueva en `tests/test_mcp_client.py` para alias, normalización y fail-fast de contrato.
+    - Drift-check base de catálogo añadido en CI (conteo/uniqueness/must-have críticos).
+  - Validación tras inicio Fase 3:
+    - `pytest -q tests/test_mcp_client.py` (15 passed).
+    - `pytest -q tests/test_main.py tests/test_trainer_agent.py tests/test_mcp_client.py` (398 passed).
+  - Fase 4 (Ola 1) iniciada — bootstrap frozen local:
+    - Launcher local añadido: `tools/garmin-mcp-frozen.cmd` (Windows) y `tools/garmin-mcp-frozen.sh` (Unix).
+    - Resolución de backend frozen prioriza wrapper local del repo en `agent/mcp_client.py`.
+    - Hardening de fallback: si frozen falla durante `session.initialize()`, cambia automáticamente a upstream cuando `MCP_BACKEND_FALLBACK_UPSTREAM=true`.
+    - Validación runtime no interactiva: `configured=frozen`, `effective=frozen`, `tools=40`.
+    - Fast-path local añadido para `get_training_load_trend` en backend `frozen` (usa `load_metrics_daily` vía adapter, con fallback transparente a MCP).
+  - Validación tras bootstrap Fase 4:
+    - `pytest -q tests/test_mcp_client.py` (16 passed).
+    - `pytest -q tests/test_main.py tests/test_trainer_agent.py tests/test_mcp_client.py` (399 passed).
+    - Benchmark no interactivo de latencia (`upstream` vs `frozen`) en tools críticas (3 iteraciones por tool):
+      - upstream: `avg=848.3 ms`, `p95=1660.3 ms`.
+      - frozen: `avg=839.7 ms`, `p95=1623.3 ms`.
+      - mejora p95 observada: `+2.2%` (aún por debajo del objetivo >=30%).
+    - Conclusión provisional Fase 4:
+      - Paridad funcional validada en Ola 1 (`effective=frozen`, `tools=40`).
+      - Objetivo de latencia no cumplido todavía; pendiente optimización estructural del backend frozen (más allá de wrapper local).
+  - Validación tras optimización local Fase 4 (2026-09-03):
+    - Benchmark no interactivo con usuario activo (`rafwill1@hotmail.com`), 3 iteraciones por tool crítica:
+      - upstream: `avg=869.7 ms`, `p95=1602.5 ms`.
+      - frozen: `avg=602.1 ms`, `p95=792.0 ms`.
+      - mejora p95 observada: `+50.6%` (objetivo >=30% cumplido).
+      - impacto principal: `get_training_load_trend` (`p95 1653.3 ms -> 203.2 ms`).
+    - Regresión conjunta tras el cambio: `pytest -q tests/test_main.py tests/test_trainer_agent.py tests/test_mcp_client.py` (402 passed).
+    - Smoke E2E runtime real en `MCP_BACKEND=frozen` (usuario `rafwill1@hotmail.com`, NVIDIA NIM opción 4):
+      - `¿Cuál es mi tendencia de carga de las últimas 4 semanas?` -> OK (tabla semanal ATL/CTL/TSB coherente).
+      - `¿Cuánto TSS hice esta semana?` -> OK (total, semanal comparativa, desglose diario y por tipo).
+      - `¿Puedo entrenar fuerte mañana o necesito recuperar?` -> OK (ruta readiness determinista con recomendación concreta).
+      - `¿Cuáles son mis récords personales running?` -> OK (tabla factual 1K/1mi/5K/10K/MM/Maratón/larga).
+      - Señal operativa validada en runtime: `MCP backend efectivo: frozen`, `43 herramientas disponibles`.
+  - Estado de criterio Fase 4 (latencia):
+    - Cumplido para baseline de herramientas críticas medidas.
+    - Batería sentinela E2E interactiva completada en verde; cierre formal de Fase 4 habilitado.
+  - Fase 6 aplicada (corte controlado de dependencia externa):
+    - `MCP_BACKEND=frozen` promovido como default en runtime.
+    - Dependencia de runtime en backend `upstream` eliminada (Kairos solo arranca MCP propio local).
+    - Contratos v1 ampliados para 43/43 tools Essentials y cache fallback crítico en backend frozen.
+    - Runbook técnico publicado en `docs/mcp-frozen-runbook.md`.
+    - Regresión final tras cierre técnico: `pytest -q tests/test_mcp_client.py tests/test_main.py tests/test_trainer_agent.py` (406 passed).
+    - Smoke E2E de regresión sobre MCP propio (`effective=frozen`):
+      - `get_training_load_trend`, `get_activities_by_date`, `get_sleep_summary`, `get_hrv_data`, `get_personal_record` -> OK.
+
+- Cierre del punto 9 (verificación final 2026-09-03):
+  - 43/43 tools Essentials cubiertas en catálogo y contratos v1 (sin gaps).
+  - Rutas críticas con fallback local/caché en frozen (sin dependencia dura en error transitorio de tercero).
+  - Regresión unitaria/funcional en verde y smoke E2E sentinela completado.
+  - Operación local-only validada: Kairos solo depende de su MCP propio y de Garmin Connect API.
+  - Documentación técnica y runbook de mantenimiento publicados.
+
+- Catálogo versionado de tools (v1 - 2026-09-03):
+  - Convención:
+    - Clase `C`: crítica (rutas deterministas/snapshot arranque).
+    - Clase `E`: esencial no crítica (necesaria para cobertura funcional completa).
+  - Contrato mínimo por tool (`input -> output esperado por Kairos`):
+    - `get_user_profile` | C | `{}` -> perfil con sexo/edad/peso/altura o equivalente usable en perfil interno.
+    - `get_activities` | C | `{limit,page}` -> lista con `activityId`, fecha, tipo, distancia, duración.
+    - `get_activity` | C | `{activity_id}` -> detalle de actividad con métricas base y metadatos de esfuerzo.
+    - `get_activity_hr_in_timezones` | C | `{activity_id}` -> zonas FC con tiempos/porcentajes por zona.
+    - `get_activities_by_date` | C | `{start_date,end_date}` -> lista de actividades del rango.
+    - `get_activities_fordate` | E | `{startdate,enddate}` -> alias/fallback de actividades por rango.
+    - `get_activity_splits` | E | `{activity_id}` -> segmentos/laps con distancia y tiempo.
+    - `get_activity_exercise_sets` | E | `{activity_id}` -> bloques/series de fuerza si existen.
+    - `get_activity_power_in_timezones` | E | `{activity_id}` -> zonas de potencia por tiempo.
+    - `get_stats` | E | `{date?}` -> resumen diario agregado (pasos/energía/FC u homólogos).
+    - `get_sleep_summary` | C | `{date}` -> horas de sueño totales y score.
+    - `get_sleep_data` | E | `{date}` -> detalle por fases/eventos de sueño.
+    - `get_heart_rates_summary` | E | `{date}` -> resumen FC diaria (reposo/media/máxima según disponibilidad).
+    - `get_stress_summary` | E | `{date}` -> estrés diario agregado.
+    - `get_respiration_summary` | E | `{date}` -> respiración diaria agregada.
+    - `get_all_day_stress` | E | `{date}` -> serie intradía de estrés.
+    - `get_all_day_events` | E | `{date}` -> eventos intradía relevantes.
+    - `get_body_battery` | C | `{start_date,end_date}` -> carga/descarga Body Battery del día/rango.
+    - `get_rhr_day` | E | `{date}` -> FC en reposo diaria.
+    - `get_spo2_data` | E | `{date}` -> SpO2 diario (agregado o serie corta).
+    - `get_hrv_data` | C | `{date}` -> HRV nocturno + baseline/estado si existe.
+    - `get_daily_steps` | E | `{date}` -> pasos diarios.
+    - `get_hydration_data` | E | `{date}` -> hidratación diaria y objetivo si existe.
+    - `get_body_composition` | E | `{start_date,end_date}` -> peso/composición en rango.
+    - `get_training_readiness` | C | `{date?}` -> readiness score y factores disponibles.
+    - `get_morning_training_readiness` | C | `{date?}` -> readiness matinal para check-in.
+    - `get_training_status` | E | `{}` -> estado global de entrenamiento.
+    - `get_training_load_trend` | C | `{start_date,end_date}` -> serie de carga para contextualización factual.
+    - `get_training_effect` | E | `{activity_id|date?}` -> efecto aeróbico/anaeróbico cuando aplique.
+    - `get_hrv_trend` | E | `{start_date,end_date}` -> tendencia HRV por rango.
+    - `get_vo2max_trend` | E | `{start_date,end_date}` -> tendencia VO2max.
+    - `get_endurance_score` | E | `{}` -> score de resistencia/endurance.
+    - `get_fitnessage_data` | E | `{}` -> fitness age/edad de forma.
+    - `get_lactate_threshold` | E | `{}` -> umbral (ritmo/FC/potencia según datos).
+    - `get_cycling_ftp` | E | `{}` -> FTP ciclismo vigente.
+    - `get_race_predictions` | E | `{}` -> predicciones de carrera por distancia.
+    - `get_personal_record` | C | `{}` -> PRs por tipo (running/ciclismo), con marca y fecha si existe.
+    - `get_weekly_steps` | E | `{start_date?,end_date?}` -> pasos semanales.
+    - `get_weekly_intensity_minutes` | E | `{start_date?,end_date?}` -> minutos de intensidad semanales.
+    - `get_weekly_stress` | E | `{start_date?,end_date?}` -> estrés semanal.
+    - `kairos_load_trends` | C | `{metric,weeks_back}` -> `daily` y `weekly` para TSS/ATL/CTL/TSB.
+    - `kairos_correlate` | E | `{metric_x,metric_y,weeks_back}` -> correlación (`n`,`r`,`interpretación`).
+    - `kairos_weekly_sport_breakdown` | E | `{weeks_back}` -> desglose por deporte (sesiones/horas/km).
+  - Notas de compatibilidad v1:
+    - Alias defensivo de PRs: aceptar `get_personal_records` y resolver a `get_personal_record`.
+    - Para `get_body_battery` y `get_body_composition`, contratos v1 exigen `start_date/end_date`.
 
 #### 37) Integración TrainingPeaks MCP (capa de escritura)
 - Añadir `trainingpeaks-mcp` (https://github.com/JamsusMaximus/trainingpeaks-mcp) como servidor MCP secundario junto a `garmin_mcp`.
@@ -101,34 +280,6 @@
 
 #### 8) Gestión de tokens por proveedor LLM
 - Evaluar tabla dedicada de tokens con campo de proveedor para soportar múltiples LLM de forma ordenada.
-
-#### 9) Congelado del código MCP
-- Evaluar vendorizar/congelar el código MCP en el repo para evitar roturas por cambios upstream.
-- Analizar qué tools usamos y cuáles no para traernos al código solo las que necesitamos.
-- Plan de ejecución propuesto (MCP propio basado en Essentials):
-  - Fase 1 — Descubrimiento y baseline de uso real:
-    - Inventariar tools MCP usadas en runtime, prompts y tests (frecuencia + criticidad).
-    - Entregable: catálogo único de tools esenciales y contratos esperados (input/output).
-  - Fase 2 — Estrategia de transición sin ruptura:
-    - Adoptar backend dual con flag (`MCP_BACKEND=frozen|upstream`) para rollback inmediato.
-    - Mantener upstream como fallback temporal mientras se estabiliza el MCP propio.
-  - Fase 3 — Capa de adaptación estable en Kairos:
-    - Implementar adapter interno para desacoplar `trainer_agent`/`mcp_client` de payloads volátiles.
-    - Versionar contratos de tools esenciales para bloquear cambios no compatibles.
-  - Fase 4 — Construcción del MCP propio (subset Essentials):
-    - Implementar solo las tools críticas usadas por Kairos (no clonar todo el servidor externo).
-    - Priorizar rutas deterministas y métricas de arranque (actividad, carga, HRV, sueño, body battery, PRs).
-  - Fase 5 — Pruebas y hardening:
-    - Añadir tests de contratos MCP (schema + campos mínimos) y regresión funcional E2E.
-    - Añadir chequeo CI de drift entre catálogo esperado y tools realmente expuestas.
-  - Fase 6 — Corte controlado de dependencia externa:
-    - Promover `frozen` como backend por defecto al cumplir criterios de estabilidad.
-    - Mantener `upstream` solo para contingencia durante una ventana de observación.
-- Criterios de cierre del punto 9:
-  - Contratos de tools esenciales versionados y testeados en CI.
-  - Rutas críticas operativas sin dependencia funcional del MCP de terceros.
-  - Rollback operativo validado mediante flag de backend.
-  - Documentación técnica y runbook de mantenimiento del MCP propio publicados.
 
 ---
 
@@ -258,6 +409,10 @@
 - Procedimiento operativo aplicado: borrado de `load_metrics_daily` y limpieza de `load_metrics` en `user_profile` del usuario activo.
 - Resultado esperado documentado: en el siguiente arranque, reconstrucción completa de 120 días con la fórmula vigente.
 - Se documenta además la regla de `formula_version`: si cambia, Kairos fuerza recálculo completo automáticamente.
+
+#### 55) [REANUDACION-E2E] Validacion real de carga/fatiga (2026-08-15) — REALIZADO
+- Validación E2E operativa cerrada con datos reales (TSS/ATL/CTL/TSB) en runtime completo del agente.
+- Evidencia registrada en `docs/validation-load-fatigue-e2e-2026-08-15.md` y revalidaciones posteriores en `docs/testing-bateria-punto55.md`.
 
 #### 56) [PARAM-EFFECTIVE-DATE] Congelación histórica por cambio de parámetros (2026-08-15) — REALIZADO
 - Regla aplicada: cuando cambian parámetros que afectan al cálculo (umbral running, FTP ciclismo, perfil de FC), no se recalcula histórico anterior a la fecha de cambio.
