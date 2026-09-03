@@ -347,7 +347,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - En usuarios nuevos, el onboarding conecta con Garmin, sincroniza biometría y crea base de conocimiento inicial.
 
 * **🔧 Sin dependencias de Node.js:**
-  - El servidor MCP es 100% Python, lanzado por `garmin-mcp` local o `uvx` en fallback.
+  - El servidor MCP es 100% Python, lanzado localmente como `agent.kairos_mcp_server`.
 
 * **📊 Motor de análisis histórico (herramientas internas `kairos_*`):**
   - Tres herramientas Python puras que el LLM puede invocar directamente, sin llamadas extra al MCP:
@@ -382,7 +382,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
 | **Cuenta Garmin Connect** | — | Para consultar datos reales |
 | **Supabase** | — | Obligatorio en arquitectura DB-first |
 | **Una API key LLM** | — | Gemini, Groq, Mistral, Cerebras, NVIDIA o GitHub Models |
-| **uv / uvx** | opcional recomendado | Utilizado para pre-autenticación Garmin y fallback MCP |
+| **uv / uvx** | opcional | No requerido para runtime MCP propio |
 
 ### Instalar uv (recomendado)
 ```powershell
@@ -422,12 +422,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 - abre [`supabase/schema.sql`](supabase/schema.sql)
 - pégalo en SQL Editor de Supabase y pulsa Run
 
-5. (Opcional recomendado) pre-autentica Garmin una vez:
-```powershell
-$env:GARMIN_EMAIL="tu@email.com"
-$env:GARMIN_PASSWORD="tu_contraseña"
-uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
-```
+5. (Opcional) pre-autentica Garmin con un primer arranque de Kairos y guarda sesión.
 
 6. Arranca Kairos:
 ```powershell
@@ -518,17 +513,11 @@ Solución:
 python --version
 ```
 
-3. Error: `uvx is not recognized`
+3. Error: problemas de autenticación Garmin en primer arranque
 
 Solución:
-```powershell
-pip install uv
-```
-
-Luego verifica:
-```powershell
-uvx --version
-```
+- Verifica `GARMIN_EMAIL` y `GARMIN_PASSWORD` en `.env`.
+- Reintenta arranque con `.venv\Scripts\python.exe -m agent.main`.
 
 ### Configuración de `.env` (detalle)
 
@@ -587,7 +576,14 @@ Unix/macOS:
 .venv/bin/python -m agent.main
 ```
 
-El agente iniciará el servidor MCP con `garmin-mcp` local o con `uvx` como fallback. Después aparecerá el menú de proveedores:
+El agente iniciará el MCP propio local de Kairos (`agent.kairos_mcp_server`) y después aparecerá el menú de proveedores:
+
+Selección de backend MCP (transición a MCP propio):
+
+- `MCP_BACKEND=frozen` (default): usa el launcher local `tools/garmin-mcp-frozen.*`.
+- `KAIROS_MCP_FROZEN_COMMAND`: permite indicar un binario frozen específico.
+
+Runbook operativo de backend MCP propio: `docs/mcp-frozen-runbook.md`.
 
 ```
   1 · GitHub Models (gpt-4o-mini)           — dentro de VPN
@@ -628,17 +624,17 @@ A continuación se selecciona el modo de herramientas y el agente conecta con Ga
 
 ---
 
-## 🧩 Servidor MCP: `garmin_mcp`
+## 🧩 Servidor MCP: `kairos_mcp_server`
 
-Este proyecto usa como backend el servidor MCP **[`Taxuspt/garmin_mcp`](https://github.com/Taxuspt/garmin_mcp)**, desarrollado por [Alexandre Domingues](https://github.com/Taxuspt).
+Este proyecto usa un MCP propio local implementado en `agent/kairos_mcp_server.py`, que consulta directamente Garmin Connect mediante la librería `garminconnect`.
 
 | Detalle | Valor |
 |---------|-------|
-| **Repositorio** | [github.com/Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp) |
-| **Herramientas** | 126 (actividades, salud, entrenamiento, workouts, nutrición…) |
-| **Transporte** | stdio (`garmin-mcp` local o `uvx` fallback) |
-| **Autenticación** | OAuth tokens en `~/.garminconnect` |
-| **Licencia** | MIT |
+| **Implementación** | `agent/kairos_mcp_server.py` |
+| **Herramientas** | 40 Garmin Essentials usadas por Kairos |
+| **Transporte** | stdio (subproceso local desde `tools/garmin-mcp-frozen.*`) |
+| **Autenticación** | credenciales Garmin del `.env` |
+| **Dependencia externa** | solo API de Garmin Connect |
 
 ### Modo de herramientas
 
@@ -647,7 +643,7 @@ Al iniciar el agente se pregunta qué conjunto de herramientas cargar:
 | Modo | Herramientas | Tokens por petición | Uso recomendado |
 |------|-------------|---------------------|------------------|
 | **Essential Tools** *(default)* | Subset reducido (configurable) | ~3-5k | Uso diario: salud, actividades, entrenamiento |
-| **Todas** | 126 | ~30k | Acceso a workouts, nutrición, challenges, gear… |
+| **Todas** | 40 (scope Kairos) | ~3-5k | El MCP propio expone el catálogo operativo de Kairos |
 
 Puedes fijar el subconjunto permanentemente añadiendo `GARMIN_ENABLED_TOOLS=tool1,tool2,...` en tu `.env`.
 
@@ -659,7 +655,7 @@ Cambios recientes del servidor MCP de Garmin que ya están contemplados en el c�
 - `get_body_battery` ahora usa rango de fechas: `start_date` + `end_date`.
 - `get_body_composition` ahora usa rango de fechas: `start_date` + `end_date`.
 
-Si actualizas `garmin-mcp`, revisa estos contratos antes de desplegar cambios en prompts o rutas de tools.
+Si actualizas contratos del MCP propio, revisa `agent/mcp_adapter.py` y `tests/test_mcp_client.py` antes de desplegar cambios en prompts o rutas de tools.
 
 ---
 
@@ -673,7 +669,8 @@ kairos-coach/
 ├── agent/
 │   ├── __init__.py
 │   ├── main.py            # Punto de entrada: menú de proveedor, herramientas, chat e interfaz de usuario.
-│   ├── mcp_client.py      # Cliente MCP asíncrono — lanza garmin-mcp local o uvx (fallback).
+│   ├── mcp_client.py      # Cliente MCP asíncrono — lanza el MCP propio local.
+│   ├── kairos_mcp_server.py # Servidor MCP propio con herramientas Garmin Essentials.
 │   ├── storage.py         # Capa de persistencia multiusuario DB-first (Supabase).
 │   └── trainer_agent.py   # Agente: tool-calling, adaptadores LLM, lógica de conversación.
 ├── docs/
