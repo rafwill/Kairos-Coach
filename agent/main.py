@@ -97,7 +97,7 @@ except (ImportError, AttributeError, RuntimeError):
 # Añadir el directorio raíz al path para imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent.mcp_client import garmin_mcp_session
+from agent.mcp_client import garmin_mcp_session, get_configured_mcp_backend
 from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile
 from agent.storage import (
     activate_training_plan,
@@ -1244,14 +1244,18 @@ async def main() -> None:
     _check_env(provider)
 
     _, label, note = _PROVIDER_INFO[provider]
+    requested_backend = get_configured_mcp_backend()
     console.print(Panel.fit(
         f"[bold green]Kairos Coach[/] — Tu entrenador personal con IA\n"
         f"[dim]{label} · {note}[/dim]\n"
+        f"[dim]MCP backend solicitado: {requested_backend}[/dim]\n"
         "[dim]Conectando con Garmin Connect...[/]",
         border_style="green",
     ))
 
     async with garmin_mcp_session(essential_only=True) as session:
+        effective_backend = (os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or requested_backend).strip()
+        console.print(f"[dim]MCP backend efectivo: {effective_backend}[/dim]")
         agent = TrainerAgent(mcp_session=session, provider=provider)
 
         console.print("[dim]Cargando herramientas de Garmin...[/]")
@@ -1383,12 +1387,16 @@ async def main() -> None:
             console.print(f"[dim yellow]⚠ Carga/fatiga no calculada: {_load_exc}[/]")
 
         # Estado proactivo al arranque (especialmente para usuario existente).
-        try:
-            with console.status("[dim]Kairos está pensando y preparando tu resumen inicial...[/]"):
-                proactive_status = await agent.build_startup_status_markdown(profile_changes=profile_changes)
-            console.print(Markdown(proactive_status))
-        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as status_exc:
-            console.print(f"[dim yellow]No se pudo generar el estado proactivo inicial: {status_exc}[/]")
+        skip_startup_status = str(os.environ.get("KAIROS_SKIP_STARTUP_STATUS", "")).strip().lower() in {"1", "true", "yes", "on"}
+        if skip_startup_status:
+            console.print("[dim]Resumen inicial omitido por KAIROS_SKIP_STARTUP_STATUS.[/]")
+        else:
+            try:
+                with console.status("[dim]Kairos está pensando y preparando tu resumen inicial...[/]"):
+                    proactive_status = await agent.build_startup_status_markdown(profile_changes=profile_changes)
+                console.print(Markdown(proactive_status))
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as status_exc:
+                console.print(f"[dim yellow]No se pudo generar el estado proactivo inicial: {status_exc}[/]")
 
         _debug_console("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
         
@@ -1564,7 +1572,7 @@ async def main() -> None:
                 continue
 
             try:
-                with console.status("[bold green]Kairos Coach está analizando tus datos...[/]"):
+                with console.status("[bold green]Kairos Coach está consultando Garmin y analizando tus datos...[/]"):
                     response = await agent.chat(user_input)
                 console.print("\n[bold green]Kairos Coach[/]")
                 console.print(Markdown(_format_coach_markdown(response)))
