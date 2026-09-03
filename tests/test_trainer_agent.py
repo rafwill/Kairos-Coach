@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent.trainer_agent import (
+    _build_mcp_transparency_markdown,
     _build_goal_status_markdown,
     _build_training_plan_status_markdown,
     _build_tools_schema,
@@ -1409,8 +1410,10 @@ class TestStartupProactive:
         assert all("start_date" in args and "end_date" in args for args in bb_calls)
         # get_activities_by_date debe haberse llamado con start_date y end_date
         hist_calls = [args for name, args in captured_calls if name == "get_activities_by_date"]
-        assert len(hist_calls) == 1
-        assert "start_date" in hist_calls[0] and "end_date" in hist_calls[0]
+        assert len(hist_calls) >= 2
+        assert all("start_date" in args and "end_date" in args for args in hist_calls)
+        # Una llamada debe ser el rango corto de 48h para entrenamientos recientes.
+        assert any(args.get("page_size") == 100 for args in hist_calls)
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_fallback_when_by_date_unavailable(self):
@@ -5866,3 +5869,133 @@ class TestSessionSummaryCheckpoint:
             TrainerAgent.save_session_summary_checkpoint(agent)
 
         upsert_mock.assert_called_once()
+
+
+class TestMcpTransparencyAndLatencyRegression:
+    def test_build_mcp_transparency_markdown_groups_events(self):
+        events = [
+            {"tool": "get_user_profile", "mode": "fallback_cache_on_error", "reason": "RuntimeError: boom"},
+            {"tool": "get_user_profile", "mode": "fallback_cache_on_error", "reason": "RuntimeError: boom"},
+            {"tool": "get_training_load_trend", "mode": "fallback_fastpath", "reason": "local fastpath"},
+        ]
+
+        out = _build_mcp_transparency_markdown(events)
+
+        assert "## ℹ️ Transparencia de datos" in out
+        assert "get_user_profile: fallback_cache_on_error x2" in out
+        assert "get_training_load_trend: fallback_fastpath x1" in out
+
+    @pytest.mark.asyncio
+    async def test_build_week_activities_markdown_does_not_use_asyncio_wait_for(self, monkeypatch):
+        import agent.trainer_agent as ta
+
+        async def _boom_wait_for(*_args, **_kwargs):
+            raise AssertionError("wait_for no debe usarse en week_activities")
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return {
+                "activities": [
+                    {
+                        "activityName": "Rodaje",
+                        "activityType": "running",
+                        "startTimeLocal": "2026-09-02 10:00:00",
+                        "duration": 3600,
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_week_activities_markdown(object(), "¿Qué actividades hice esta semana?")
+        assert "Actividades detectadas | 1" in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_does_not_use_asyncio_wait_for(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 4)
+
+        async def _boom_wait_for(*_args, **_kwargs):
+            raise AssertionError("wait_for no debe usarse en week_tss")
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return {
+                "activities": [
+                    {
+                        "activityName": "Rodaje",
+                        "activityType": "running",
+                        "startTimeLocal": "2026-09-01 10:00:00",
+                        "trainingLoad": 50.0,
+                        "duration": 3600,
+                    }
+                ]
+            }
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-09-01", "tss": 0.0, "ctl": 60.0, "atl": 55.0, "tsb": 5.0},
+                    {"date": "2026-09-02", "tss": 0.0, "ctl": 60.0, "atl": 55.0, "tsb": 5.0},
+                    {"date": "2026-09-03", "tss": 0.0, "ctl": 60.0, "atl": 55.0, "tsb": 5.0},
+                    {"date": "2026-09-04", "tss": 0.0, "ctl": 60.0, "atl": 55.0, "tsb": 5.0},
+                ]
+            }
+        }
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
+
+        out = await ta._build_current_week_tss_markdown(object(), profile, "¿Cuánto TSS hice esta semana?")
+        assert "TSS acumulado" in out
+        assert "Actividades:" in out
+
+    @pytest.mark.asyncio
+    async def test_build_mcp_factual_query_markdown_does_not_use_asyncio_wait_for(self, monkeypatch):
+        import agent.trainer_agent as ta
+
+        async def _boom_wait_for(*_args, **_kwargs):
+            raise AssertionError("wait_for no debe usarse en mcp_factual/activity_details")
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            if tool_name == "get_activities_fordate":
+                return {
+                    "activities": [
+                        {
+                            "activityId": 123,
+                            "activityName": "Fuerza",
+                            "activityType": {"typeKey": "strength_training"},
+                            "startTimeLocal": "2026-09-02 18:00:00",
+                            "duration": 3600,
+                            "activityTrainingLoad": 2.4,
+                        }
+                    ]
+                }
+            if tool_name == "get_activity":
+                return {
+                    "activityId": 123,
+                    "activityName": "Fuerza",
+                    "activityType": {"typeKey": "strength_training"},
+                    "startTimeLocal": "2026-09-02 18:00:00",
+                    "duration": 3600,
+                    "activityTrainingLoad": 2.4,
+                }
+            return {}
+
+        monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_mcp_factual_query_markdown(
+            object(),
+            {"load_metrics": {"series": []}},
+            "Analiza mi última actividad",
+        )
+        assert "TSS (actividad)" in out

@@ -12,11 +12,8 @@ cryptography>=42.0.0
 # MCP Python SDK (cliente para conectarse al servidor MCP de Garmin)
 mcp>=1.0.0
 
-# Servidor MCP de Garmin Connect (instalado localmente para evitar problemas SSL con uvx)
-garmin-mcp @ git+https://github.com/Taxuspt/garmin_mcp
-
-# uv / uvx — gestor de herramientas Python (fallback si garmin-mcp no está disponible)
-uv>=0.4.0
+# Cliente oficial no-oficial de Garmin Connect para MCP propio local
+garminconnect>=0.2.25
 
 # Persistencia DB-first multiusuario en Supabase
 supabase>=2.0.0

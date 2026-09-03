@@ -22,7 +22,12 @@ import truststore
 from openai import AsyncOpenAI
 from mcp import ClientSession
 
-from agent.mcp_client import list_available_tools, call_tool
+from agent.mcp_client import (
+    list_available_tools,
+    call_tool,
+    reset_tool_transparency_events,
+    consume_tool_transparency_events,
+)
 from agent import storage as _storage
 from agent import load_metrics as _load_metrics
 
@@ -989,6 +994,9 @@ def _extract_activities_list(payload: Any) -> list[dict]:
         candidates = payload.get("activities")
         if isinstance(candidates, list):
             return [x for x in candidates if isinstance(x, dict)]
+        # Algunos wrappers compactan `get_activities` y devuelven una sola actividad.
+        if payload.get("activityId") is not None or payload.get("activityName") is not None:
+            return [payload]
     return []
 
 
@@ -1043,23 +1051,16 @@ def _extract_cycling_ftp_watts(payload: Any) -> float | None:
 def _is_activity_in_last_48h(activity: dict, now: datetime | None = None) -> bool:
     """Comprueba si una actividad cae en la ventana de últimas 48h."""
     now_day = now.date() if now is not None else datetime.now(tz=timezone.utc).date()
-    start_local = (
-        activity.get("startTimeLocal")
-        or activity.get("startTimeGMT")
-        or activity.get("start_time_local")
-        or activity.get("start_time_gmt")
-        or ""
-    )
-    if not isinstance(start_local, str) or "T" not in start_local:
+    act_iso = _extract_activity_date_iso(activity)
+    if not act_iso:
         return False
-
-    date_part = start_local.split("T", 1)[0]
     try:
-        act_date = date.fromisoformat(date_part)
+        act_date = date.fromisoformat(act_iso)
     except ValueError:
         return False
 
-    return (now_day - act_date) <= timedelta(days=2)
+    delta = now_day - act_date
+    return timedelta(days=0) <= delta <= timedelta(days=2)
 
 
 def _pick_day_payload(payload: Any, target_date: str) -> dict | None:
@@ -1832,16 +1833,81 @@ def _format_load_fatigue_summary(load_metrics: dict | None) -> str:
     latest = load_metrics.get("latest") or {}
     weekly = load_metrics.get("weekly") or {}
     action = str(load_metrics.get("action") or "carga estable")
+    weekly_tss = weekly.get("current_tss_effective", weekly.get("current_tss", 0.0))
     try:
         return (
             f"TSS hoy {float(latest.get('tss', 0.0)):.1f} · "
             f"CTL (Estado físico) {float(latest.get('ctl', 0.0)):.1f} · "
             f"ATL (Fatiga) {float(latest.get('atl', 0.0)):.1f} · "
             f"TSB (Forma) {float(latest.get('tsb', 0.0)):.1f} · "
-            f"Semana {float(weekly.get('current_tss', 0.0)):.1f} TSS ({action})"
+            f"Semana {float(weekly_tss):.1f} TSS ({action})"
         )
     except (TypeError, ValueError):
         return "sin datos suficientes"
+
+
+def _compute_effective_week_tss_from_series_and_activities(
+    *,
+    profile: dict,
+    series: list[dict],
+    activities: list[dict],
+    week_dates: list[date],
+) -> tuple[float, bool]:
+    """Calcula TSS semanal efectivo con criterio unificado.
+
+    Prioriza la serie canónica diaria y solo usa actividad para completar
+    días sin cierre (ausentes o a cero).
+    """
+    tss_by_day: dict[str, float] = {}
+    for row in series or []:
+        d_iso = str((row or {}).get("date") or "")
+        if not d_iso:
+            continue
+        tss_by_day[d_iso] = round(float((row or {}).get("tss") or 0.0), 1)
+
+    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
+    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
+
+    activity_tss_by_day: dict[str, float] = {}
+    for act in activities or []:
+        if not isinstance(act, dict):
+            continue
+        d_iso = _extract_activity_date_iso(act)
+        if not d_iso:
+            continue
+
+        act_tss = _extract_training_load_tss(act)
+        if act_tss is None:
+            est_tss, _ = _estimate_session_tss(
+                act,
+                ftp=_extract_cycling_ftp_watts(profile),
+                running_threshold_pace_sec_per_km=running_threshold_pace,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+                hr_zones_raw=None,
+            )
+            if est_tss > 0:
+                act_tss = float(est_tss)
+
+        if act_tss is None:
+            continue
+
+        activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
+
+    used_activity_fallback = False
+    for d in week_dates:
+        d_iso = d.isoformat()
+        fallback_tss = activity_tss_by_day.get(d_iso)
+        if fallback_tss is None:
+            continue
+        existing_tss = tss_by_day.get(d_iso)
+        if existing_tss is not None and float(existing_tss) > 0.0:
+            continue
+        tss_by_day[d_iso] = round(float(fallback_tss), 1)
+        used_activity_fallback = True
+
+    total = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
+    return total, used_activity_fallback
 
 
 def _build_proactive_status_markdown(snapshot: dict) -> str:
@@ -1923,6 +1989,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         ranges = load_fatigue.get("ranges") or {}
         weekly = load_fatigue.get("weekly") or {}
         recommendation = str(load_fatigue.get("recommendation") or "").strip()
+        weekly_tss = weekly.get("current_tss_effective", weekly.get("current_tss", 0.0))
         if latest:
             lines.append(
                 "  - Estado: "
@@ -1931,7 +1998,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
                 f"(alto>{float(ranges.get('atl_high', 0.0)):.1f}), "
                 f"TSB (Forma)={float(latest.get('tsb', 0.0)):.1f} "
                 f"(objetivo {float(ranges.get('tsb_low', 0.0)):.1f}..{float(ranges.get('tsb_high', 0.0)):.1f}), "
-                f"TSS semanal={float(weekly.get('current_tss', 0.0)):.1f}"
+                f"TSS semanal={float(weekly_tss):.1f}"
             )
         if recommendation:
             lines.append(f"  - Regla aplicada: {recommendation}")
@@ -3563,10 +3630,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     ]
     for args in req_variants:
         try:
-            raw = await asyncio.wait_for(
-                call_tool(mcp_session, "get_activities_by_date", args),
-                timeout=4.0,
-            )
+            raw = await call_tool(mcp_session, "get_activities_by_date", args)
             parsed = _try_parse_json(raw)
             if parsed is None:
                 parsed = raw
@@ -3574,9 +3638,6 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             if acts:
                 activities = acts
                 break
-        except asyncio.TimeoutError:
-            log.debug("_build_current_week_tss_markdown: timeout en get_activities_by_date args=%s", args)
-            continue
         except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
             log.debug("_build_current_week_tss_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
@@ -3738,11 +3799,41 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     lines.append("")
     if act_rows:
         lines.append("Actividades:")
+        reconciled_days: set[str] = set()
         for d_obj, sport, name, tss_val, _tss_src, _tss_label in act_rows:
+            d_iso = d_obj.isoformat()
+            day_tss = tss_by_day.get(d_iso)
+            day_source = tss_source_by_day.get(d_iso, "sin_dato")
+            day_activity_sum = activity_tss_by_day.get(d_iso)
+            day_has_delta = (
+                day_tss is not None
+                and day_activity_sum is not None
+                and abs(float(day_tss) - float(day_activity_sum)) > 0.1
+            )
+
             if tss_val is not None:
-                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS {tss_val:.1f}")
+                if day_source == "load_metrics_daily" and day_has_delta:
+                    lines.append(
+                        f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · "
+                        f"Carga Garmin {tss_val:.1f}"
+                    )
+                    if d_iso not in reconciled_days:
+                        lines.append(
+                            f"  - TSS usado para el total semanal ese día: {float(day_tss):.1f} "
+                            "(fuente canónica: load_metrics_daily)"
+                        )
+                        reconciled_days.add(d_iso)
+                else:
+                    lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS {tss_val:.1f}")
             else:
                 lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS sin datos")
+
+        if reconciled_days:
+            lines.append("")
+            lines.append(
+                "Nota de conciliación: cuando hay diferencia entre carga Garmin por actividad "
+                "y TSS diario canónico, el total semanal prioriza `load_metrics_daily`."
+            )
     else:
         lines.append("- Actividades fuente (Garmin): sin datos en el rango consultado.")
 
@@ -3768,6 +3859,11 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
     """Construye un resumen determinista de actividades por semana natural."""
     today_d = date.today()
     week_start, week_end = _resolve_week_window(user_message, today_d)
+    log.info(
+        "Kairos está consultando actividades semanales en Garmin (%s -> %s)",
+        week_start.isoformat(),
+        week_end.isoformat(),
+    )
 
     activities: list[dict] = []
     req_variants = [
@@ -3784,10 +3880,7 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
     ]
     for args in req_variants:
         try:
-            raw = await asyncio.wait_for(
-                call_tool(mcp_session, "get_activities_by_date", args),
-                timeout=4.0,
-            )
+            raw = await call_tool(mcp_session, "get_activities_by_date", args)
             parsed = _try_parse_json(raw)
             if parsed is None:
                 parsed = raw
@@ -3795,9 +3888,6 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
             if acts:
                 activities = acts
                 break
-        except asyncio.TimeoutError:
-            log.debug("_build_week_activities_markdown: timeout en get_activities_by_date args=%s", args)
-            continue
         except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
             log.debug("_build_week_activities_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
@@ -3884,44 +3974,97 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
     # Si el usuario pide "última actividad" sin fecha explícita,
     # resolvemos la fecha real desde el listado reciente de Garmin.
     if is_last_activity_query and not has_explicit_date:
-        try:
-            raw_recent = await asyncio.wait_for(
-                call_tool(mcp_session, "get_activities", {"start": "0", "limit": "30"}),
-                timeout=4.0,
-            )
+        recent_acts: list[dict] = []
+        end_recent = date.today().isoformat()
+        start_recent = (date.today() - timedelta(days=30)).isoformat()
+        attempts = (
+            (
+                "get_activities_by_date",
+                {
+                    "start_date": start_recent,
+                    "end_date": end_recent,
+                    "page": 0,
+                    "page_size": 200,
+                },
+            ),
+            ("get_activities", {"start": "0", "limit": "60"}),
+        )
+        for tool_name, args in attempts:
+            try:
+                raw_recent = await call_tool(mcp_session, tool_name, args)
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
+                continue
             recent_acts = _extract_activities_list(_try_parse_json(raw_recent) or raw_recent)
-            for act in recent_acts:
-                if not isinstance(act, dict):
+            if recent_acts:
+                break
+
+        latest_candidate_iso: str | None = None
+        for act in recent_acts:
+            if not isinstance(act, dict):
+                continue
+            type_key = str(
+                (act.get("activityTypeDTO") or {}).get("typeKey", "")
+                or (act.get("activityType") or {}).get("typeKey", "")
+                or act.get("type", "")
+            ).lower()
+            if sport_filter == "trail" and "trail" not in type_key:
+                continue
+            if sport_filter == "running" and ("running" not in type_key or "trail" in type_key):
+                continue
+            if sport_filter == "cycling" and "cycl" not in type_key and "bike" not in type_key:
+                continue
+            iso = _extract_activity_date_iso(act)
+            if not iso:
+                continue
+            if latest_candidate_iso is None or iso > latest_candidate_iso:
+                latest_candidate_iso = iso
+
+        # Fallback robusto para consultas "última ..." con filtro de deporte:
+        # escanea días recientes hasta encontrar una actividad válida.
+        if latest_candidate_iso is None and sport_filter:
+            for offset in range(0, 45):
+                probe_d = date.today() - timedelta(days=offset)
+                probe_iso = probe_d.isoformat()
+                try:
+                    raw_probe = await call_tool(mcp_session, "get_activities_fordate", {"date": probe_iso})
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
                     continue
-                type_key = str(
-                    (act.get("activityTypeDTO") or {}).get("typeKey", "")
-                    or (act.get("activityType") or {}).get("typeKey", "")
-                    or act.get("type", "")
-                ).lower()
-                if sport_filter == "trail" and "trail" not in type_key:
+                probe_acts = _extract_activities_list(_try_parse_json(raw_probe) or raw_probe)
+                if not probe_acts:
                     continue
-                if sport_filter == "running" and ("running" not in type_key or "trail" in type_key):
-                    continue
-                if sport_filter == "cycling" and "cycl" not in type_key and "bike" not in type_key:
-                    continue
-                iso = _extract_activity_date_iso(act)
-                if iso:
-                    target_d = date.fromisoformat(iso)
+                for act in probe_acts:
+                    if not isinstance(act, dict):
+                        continue
+                    type_key = str(
+                        (act.get("activityTypeDTO") or {}).get("typeKey", "")
+                        or (act.get("activityType") or {}).get("typeKey", "")
+                        or act.get("type", "")
+                    ).lower()
+                    if sport_filter == "trail" and "trail" not in type_key:
+                        continue
+                    if sport_filter == "running" and ("running" not in type_key or "trail" in type_key):
+                        continue
+                    if sport_filter == "cycling" and "cycl" not in type_key and "bike" not in type_key:
+                        continue
+                    latest_candidate_iso = probe_iso
                     break
-        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
-            pass
+                if latest_candidate_iso:
+                    break
+
+        if latest_candidate_iso:
+            try:
+                target_d = date.fromisoformat(latest_candidate_iso)
+            except ValueError:
+                pass
 
     target_iso = target_d.isoformat()
     wants_activity_details = _is_activity_details_query_intent(user_message)
 
     async def _tool_json(tool_name: str, args: dict) -> Any:
         try:
-            raw = await asyncio.wait_for(call_tool(mcp_session, tool_name, args), timeout=4.0)
+            raw = await call_tool(mcp_session, tool_name, args)
         except (TimeoutError, OSError) as exc:
             log.debug("_build_mcp_factual_query_markdown: fallo red en %s: %s", tool_name, exc)
-            return None
-        except asyncio.TimeoutError:
-            log.debug("_build_mcp_factual_query_markdown: timeout en %s", tool_name)
             return None
         except RuntimeError as exc:
             log.debug("_build_mcp_factual_query_markdown: fallo runtime en %s: %s", tool_name, exc)
@@ -4012,20 +4155,14 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         raw_activity = None
         if primary_id is not None:
             try:
-                raw_activity = await asyncio.wait_for(
-                    call_tool(mcp_session, "get_activity", {"activity_id": primary_id}),
-                    timeout=5.0,
-                )
+                raw_activity = await call_tool(mcp_session, "get_activity", {"activity_id": primary_id})
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
                 raw_activity = None
 
         raw_training_effect = None
         if primary_id is not None:
             try:
-                raw_training_effect = await asyncio.wait_for(
-                    call_tool(mcp_session, "get_training_effect", {"activity_id": primary_id}),
-                    timeout=4.0,
-                )
+                raw_training_effect = await call_tool(mcp_session, "get_training_effect", {"activity_id": primary_id})
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
                 raw_training_effect = None
 
@@ -4037,6 +4174,61 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         te_payload = _try_parse_json(raw_training_effect) if raw_training_effect else None
         te_value, te_source = _format_training_effect(te_payload, act_payload)
 
+        # TSS de la actividad principal:
+        # - Para fuerza, priorizar TSS estimado y mostrar activity load de Garmin por separado
+        #   (no es directamente equivalente a TSS y puede parecer irrealmente bajo).
+        # - Para el resto, mantener preferencia por carga factual de Garmin y fallback estimado.
+        primary_garmin_load = _extract_training_load_tss(act_payload)
+        if primary_garmin_load is None:
+            primary_garmin_load = _extract_training_load_tss(primary)
+
+        hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
+        est_tss, _ = _estimate_session_tss(
+            act_payload,
+            ftp=_extract_cycling_ftp_watts(profile),
+            running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(profile),
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            hr_zones_raw=None,
+        )
+
+        primary_act_type = (
+            act_payload.get("activityType")
+            or act_payload.get("activityTypeDTO")
+            or primary.get("activityType")
+            or primary.get("activityTypeDTO")
+            or act_payload.get("type")
+            or primary.get("type")
+            or ""
+        )
+
+        primary_tss_value: float | None = None
+        primary_tss_source = "no disponible"
+        if _is_strength_activity(primary_act_type):
+            if est_tss <= 0:
+                # Fallback robusto para fuerza cuando Garmin solo expone
+                # activityTrainingLoad (no equivalente a TSS) y faltan señales
+                # para estimar IF/RPE. Usamos una intensidad moderada por duración.
+                hours = _extract_activity_duration_hours(act_payload)
+                if hours <= 0:
+                    hours = _extract_activity_duration_hours(primary)
+                if hours > 0:
+                    est_tss = round(max(0.0, hours * (0.60**2) * 100.0), 1)
+            if est_tss > 0:
+                primary_tss_value = float(est_tss)
+                primary_tss_source = "estimación determinista (fuerza por duración)"
+            elif primary_garmin_load is not None:
+                primary_tss_value = float(primary_garmin_load)
+                primary_tss_source = "Garmin activity load (aprox.)"
+        else:
+            if primary_garmin_load is not None:
+                primary_tss_value = float(primary_garmin_load)
+                primary_tss_source = "Garmin activity load"
+            elif est_tss > 0:
+                primary_tss_value = float(est_tss)
+                primary_tss_source = "estimación determinista"
+        tss_display = f"{float(primary_tss_value):.1f}" if primary_tss_value is not None else "sin datos"
+
         raw_hr_zones = None
         embedded = _find_hr_zones_in_json(act_payload)
         if embedded:
@@ -4046,7 +4238,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             for tool_name in ("get_activity_hr_in_timezones",):
                 for param in ({"activity_id": primary_id}, {"activityId": primary_id}):
                     try:
-                        _raw = await asyncio.wait_for(call_tool(mcp_session, tool_name, param), timeout=4.0)
+                        _raw = await call_tool(mcp_session, tool_name, param)
                     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
                         continue
                     if not _raw:
@@ -4068,7 +4260,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         )
         analysis_md = _format_activity_analysis_for_markdown(analysis)
 
-        return "\n".join([
+        metrics_lines = [
             "## 🧭 Resumen",
             "Detalle de entrenamiento resuelto con datos factuales de MCP.",
             "",
@@ -4077,17 +4269,28 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             "|---|---|---|",
             f"| Fecha consultada | {target_d.strftime('%d/%m/%Y')} | consulta factual MCP |",
             f"| Actividades detectadas | {len(activities)} | {activities_source_tool} |",
+            f"| TSS (actividad) | {tss_display} | {primary_tss_source if primary_tss_value is not None else 'no disponible'} |",
             f"| Training Effect | {te_value} | {te_source} |",
-            "",
-            analysis_md,
-            "",
-            "## ✅ Recomendación",
-            "- Usa este análisis para ajustar intensidad de la próxima sesión según carga real.",
-            "",
-            "## 🎯 Próximo paso",
-            "- Si quieres, convierto este análisis en una sesión concreta para mañana.",
-            "- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).",
-        ])
+        ]
+        if _is_strength_activity(primary_act_type) and primary_garmin_load is not None:
+            metrics_lines.append(
+                f"| Carga Garmin (no TSS) | {float(primary_garmin_load):.1f} | activityTrainingLoad/trainingLoad |"
+            )
+
+        return "\n".join(
+            metrics_lines
+            + [
+                "",
+                analysis_md,
+                "",
+                "## ✅ Recomendación",
+                "- Usa este análisis para ajustar intensidad de la próxima sesión según carga real.",
+                "",
+                "## 🎯 Próximo paso",
+                "- Si quieres, convierto este análisis en una sesión concreta para mañana.",
+                "- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).",
+            ]
+        )
 
     body_payload, hrv_payload, sleep_payload, rhr_payload, stress_summary_payload, all_day_stress_payload, all_day_events_payload, trend_payload = await asyncio.gather(
         _tool_json("get_body_battery", {"start_date": target_iso, "end_date": target_iso}),
@@ -8591,6 +8794,36 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
     }
 
 
+def _build_mcp_transparency_markdown(events: list[dict]) -> str:
+    """Nota visible cuando se usa ruta de contingencia/caché MCP."""
+    if not events:
+        return ""
+
+    grouped: dict[tuple[str, str], int] = {}
+    reasons: dict[tuple[str, str], str] = {}
+    for ev in events:
+        tool = str(ev.get("tool") or "tool_desconocida").strip() or "tool_desconocida"
+        mode = str(ev.get("mode") or "fallback").strip() or "fallback"
+        key = (tool, mode)
+        grouped[key] = grouped.get(key, 0) + 1
+        if key not in reasons:
+            reasons[key] = str(ev.get("reason") or "").strip()
+
+    lines = [
+        "",
+        "## ℹ️ Transparencia de datos",
+        "- Se usó modo de contingencia (caché/fastpath) en algunas consultas MCP.",
+    ]
+    for (tool, mode), count in sorted(grouped.items(), key=lambda item: (-item[1], item[0][0])):
+        reason = reasons.get((tool, mode))
+        if reason:
+            lines.append(f"- {tool}: {mode} x{count} ({reason})")
+        else:
+            lines.append(f"- {tool}: {mode} x{count}")
+    lines.append("- Nota: estos datos pueden no reflejar el último estado en vivo de Garmin.")
+    return "\n".join(lines)
+
+
 class TrainerAgent:
     """
     Agente entrenador personal que usa OpenAI + Garmin MCP.
@@ -9314,17 +9547,24 @@ class TrainerAgent:
         """Recoge un snapshot operativo de 48h para briefing de arranque."""
         today_iso = date.today().isoformat()
         yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
+        two_days_ago_iso = (date.today() - timedelta(days=2)).isoformat()
         _pf = prefetch_today or {}
         _t_snap = time.perf_counter()
 
         async def _tool_json(tool_name: str, args: dict) -> Any:
             try:
-                raw = await call_tool(self.mcp_session, tool_name, args)
+                raw = await asyncio.wait_for(
+                    call_tool(self.mcp_session, tool_name, args),
+                    timeout=8.0,
+                )
             except (TimeoutError, OSError) as exc:
                 log.debug("collect_startup_snapshot_48h: fallo red en %s: %s", tool_name, exc)
                 return None
             except RuntimeError as exc:
                 log.debug("collect_startup_snapshot_48h: fallo runtime en %s: %s", tool_name, exc)
+                return None
+            except asyncio.TimeoutError:
+                log.debug("collect_startup_snapshot_48h: timeout en %s", tool_name)
                 return None
             parsed_raw = _try_parse_json(raw)
             if parsed_raw is not None:
@@ -9353,19 +9593,43 @@ class TrainerAgent:
                 _tool_json("get_hrv_data", {"date": yesterday_iso}),
                 _tool_json("get_sleep_summary", {"date": today_iso}),
                 _tool_json("get_sleep_summary", {"date": yesterday_iso}),
-                _tool_json("get_activities", {"start": "0", "limit": "12"}),
+                _tool_json(
+                    "get_activities_by_date",
+                    {
+                        "start_date": two_days_ago_iso,
+                        "end_date": today_iso,
+                        "page": 0,
+                        "page_size": 100,
+                    },
+                ),
             )
         )
         log.info("[SNAPSHOT] ⏱ gather_7_calls=%.1fs (cached: body=%s hrv=%s)",
                  time.perf_counter() - _t_snap,
                  "body_today" in _pf, "hrv_today" in _pf)
         activities_recent = _extract_activities_list(activities_raw)
+        if not activities_recent:
+            retry_recent_raw = await _tool_json(
+                "get_activities_by_date",
+                {
+                    "start_date": yesterday_iso,
+                    "end_date": today_iso,
+                    "page": 0,
+                    "page_size": 100,
+                },
+            )
+            activities_recent = _extract_activities_list(retry_recent_raw)
+
+        if not activities_recent:
+            # Fallback para backends que no responden bien al filtro por fecha.
+            fallback_recent_raw = await _tool_json("get_activities", {"start": "0", "limit": "20"})
+            activities_recent = _extract_activities_list(fallback_recent_raw)
+
         recent_trainings: list[dict] = []
         for activity in activities_recent:
             if not _is_activity_in_last_48h(activity):
                 continue
-            start_local = str(activity.get("startTimeLocal") or "")
-            day = start_local.split("T", 1)[0] if "T" in start_local else ""
+            day = _extract_activity_date_iso(activity) or ""
             recent_trainings.append(
                 {
                     "date": day,
@@ -9427,6 +9691,33 @@ class TrainerAgent:
             load_fatigue = _build_load_fatigue_dict_from_series(canonical_series, model_cfg)
             if load_fatigue:
                 _load_debug = f"usando serie canónica de DB ({len(canonical_series)} días)"
+                try:
+                    today_d = date.today()
+                    week_start = today_d - timedelta(days=today_d.weekday())
+                    week_dates = [week_start + timedelta(days=i) for i in range((today_d - week_start).days + 1)]
+                    week_activities_raw = await _tool_json(
+                        "get_activities_by_date",
+                        {
+                            "start_date": week_start.isoformat(),
+                            "end_date": today_iso,
+                            "page": 0,
+                            "page_size": 200,
+                        },
+                    )
+                    week_activities = _extract_activities_list(week_activities_raw)
+                    effective_tss, used_fallback = _compute_effective_week_tss_from_series_and_activities(
+                        profile=getattr(self, "user_profile", {}) if hasattr(self, "user_profile") else {},
+                        series=canonical_series,
+                        activities=week_activities,
+                        week_dates=week_dates,
+                    )
+                    load_fatigue.setdefault("weekly", {})
+                    load_fatigue["weekly"]["current_tss_effective"] = effective_tss
+                    load_fatigue["weekly"]["current_tss_effective_source"] = (
+                        "load_metrics_daily+activity_fallback" if used_fallback else "load_metrics_daily"
+                    )
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _week_exc:
+                    log.debug("collect_startup: no se pudo calcular current_tss_effective: %s", _week_exc)
 
         # 2) Fallback legacy: recálculo en vivo sólo si no hay serie canónica.
         if load_fatigue is None:
@@ -9723,6 +10014,10 @@ class TrainerAgent:
         route: str,
     ) -> str:
         """Persiste el turno y emite hook post-mensaje de forma uniforme."""
+        transparency_events = consume_tool_transparency_events()
+        if transparency_events:
+            assistant_reply = assistant_reply + _build_mcp_transparency_markdown(transparency_events)
+
         await self.hook_manager.after_message(
             {
                 "route": route,
@@ -9860,6 +10155,7 @@ class TrainerAgent:
                 "user_message": user_message,
             }
         )
+        reset_tool_transparency_events()
         messages = self._build_messages(user_message)
         _prefetch_cache: dict = {}  # poblado por el pre-fetch si user_date == hoy
         route_key = self.tool_router.route_key(
