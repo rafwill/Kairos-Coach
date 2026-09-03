@@ -96,3 +96,94 @@ Fase D - Consolidacion MCP:
 ## Nota operativa
 
 Para nuevas revalidaciones largas en Windows, mantener append UTF-8 controlado en evidencias para evitar mojibake.
+
+---
+
+## Conclusiones de cierre (2026-09-04)
+
+Ya estan los 2 commits separados; ahora hago push de la rama checkpoint y creo el tag de recuperacion exacta.
+
+`Executed git push and tagged checkpoint branch`
+`Ran git push -u origin checkpoint/2026-09-04-estabiliz...`
+`Ran git tag checkpoint-2026-09-04; git push origin che...`
+
+Ejecutado completo con minimo riesgo, y ya esta todo guardado en GitHub.
+
+Resultado:
+
+1. Rama checkpoint creada y activa:
+	- `checkpoint/2026-09-04-estabilizacion`
+2. Regla anadida para temporales:
+	- `.gitignore`
+3. Temporales `.tmp_*` limpiados del working tree.
+4. Validacion ejecutada:
+	- `pytest` focal -> 33 passed, 0 failed.
+5. Commit 1 (codigo + tests):
+	- `fb7df1b feat: estabilizacion readiness/tss y base nuevo mcp frozen`
+6. Commit 2 (docs + evidencias):
+	- `68b27d2 docs: revalidacion e2e, plan de continuidad y runbook mcp`
+7. Push de rama realizado a origin.
+8. Tag de recuperacion creado y subido:
+	- `checkpoint-2026-09-04`
+
+Estado final:
+
+1. HEAD en:
+	- `68b27d2`
+2. Rama remota disponible:
+	- `origin/checkpoint/2026-09-04-estabilizacion`
+3. Tag remoto disponible:
+	- `checkpoint-2026-09-04`
+4. Working tree limpio.
+
+Nota:
+GitHub respondio que el repo fue movido y recomienda la nueva URL:
+`https://github.com/rafwill/Kairos-Coach.git`
+El push igualmente se realizo correctamente en el remoto actual.
+
+Para retomar manana:
+
+1. `git fetch --all`
+2. `git checkout checkpoint/2026-09-04-estabilizacion`
+3. `git pull`
+
+---
+
+## Guia para continuar desde otro ordenador
+
+Que hay ahora mismo:
+
+1. Main sigue existiendo y no es la rama de trabajo de este checkpoint.
+2. Tu estado exacto de cierre esta en la rama `checkpoint/2026-09-04-estabilizacion`.
+3. El tag `checkpoint-2026-09-04` apunta a ese punto exacto (foto inmutable).
+
+Si quieres continuar exactamente donde lo dejamos (recomendado):
+
+1. En el otro ordenador, trae todo del remoto:
+	- `git fetch --all --tags`
+2. Cambia a la rama checkpoint:
+	- `git checkout -b checkpoint/2026-09-04-estabilizacion origin/checkpoint/2026-09-04-estabilizacion`
+	- (si ya existe local: `git checkout checkpoint/2026-09-04-estabilizacion`)
+3. Actualiza:
+	- `git pull`
+
+Con eso quedas exactamente en el mismo punto de trabajo.
+
+Para volver a tu flujo normal en main:
+
+1. Terminas lo pendiente en la rama checkpoint.
+2. Cuando este validado, haces merge a main (PR o merge directo).
+3. A partir de ahi, en cualquier ordenador vuelves al flujo normal:
+	- `git checkout main`
+	- `git pull`
+
+Para que sirve cada cosa:
+
+1. Rama checkpoint: donde sigues desarrollando.
+2. Tag `checkpoint-2026-09-04`: marcador de recuperacion exacta, por si necesitas volver a ese snapshot.
+3. Main: estable/habitual; no la tocaste durante el cierre de minimo riesgo.
+
+Nota practica:
+
+1. Si en el otro equipo tienes el remoto antiguo y quieres dejarlo limpio con el nombre nuevo:
+	- `git remote set-url origin https://github.com/rafwill/Kairos-Coach.git`
