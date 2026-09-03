@@ -1,59 +1,63 @@
-# Próximos pasos — Kairos Coach
+# Próximos pasos - Kairos Coach
 
-Última actualización: 2026-09-01
+Ultima actualizacion: 2026-09-02
 
 ---
 
 ## Estado actual
 
-Validación E2E del punto 55 completada y ampliada:
-- Batería base: cerrada.
-- Batería complementaria (10 casos nuevos): cerrada.
-- Evidencia documentada en `docs/testing-bateria-punto55.md`.
+Cierre de hoy completado:
+- Punto 55 (validacion E2E real): REALIZADO.
+- Refactor de modulo de calculo load metrics:
+	- Fase 1: REALIZADA.
+	- Fase 2 (deduplicacion + API publica): REALIZADA.
+- Publicado en remoto:
+	- Commit: 3bbbce7
+	- Rama: main
+	- Push: origin/main
 
-Modelo operativo usado hoy:
-- `nvidia/nemotron-3.5-lightning-30b-a3b`
+Validaciones ejecutadas en este cierre:
+- `pytest -q tests/test_trainer_agent.py` -> 326 passed.
+- `pytest -q` -> 401 passed.
+- Smoke E2E real con usuario `rafwill1@hotmail.com` y modelo NVIDIA (opcion 4):
+	- tendencia de carga 4 semanas -> OK
+	- TSS semanal -> OK
+	- readiness (entrenar fuerte o recuperar) -> OK
+	- records running -> OK
 
----
-
-## Dónde nos hemos quedado hoy
-
-Quedamos en hardening de fechas/patrones ya aplicado y revalidado en runtime:
-- `entre el 25/08 y el 30/08` resuelto como rango literal (sin expansión a semana natural).
-- Soporte adicional de parser para:
-	- `del X al Y`
-	- `del X a Y`
-	- `entre el X y el Y`
-	- `desde X hasta Y`
-
-Además, quedaron consolidados estos fixes de coherencia:
-- Comparativa de `week_tss` histórica contra semana previa real (no contra semana actual).
-- `week_activities` muestra `Rango consultado` exacto.
-- `última actividad` y `última actividad de trail` resuelven por factual reciente.
-- `qué me toca hoy` enrutado a `daily_readiness` determinista.
-- Manejo robusto de `403 Forbidden` del proveedor LLM (sin crash).
+Evidencia actualizada en:
+- `docs/testing-bateria-punto55.md`
+- `docs/refactor-load-metrics-2026-09-02.md`
 
 ---
 
-## Próximo arranque (mañana)
+## Donde nos hemos quedado
 
-### Paso 1 — Empezar por cierre técnico corto
-1. Ejecutar smoke de regresión de fechas/intents (tests focales).
-2. Commit + push del lote pendiente (código + tests + documentación).
+El sistema queda estable y publicado tras cerrar la Fase 2 del refactor, con una unica implementacion reusable para calculos de carga/fatiga y sin regresiones detectadas en tests ni en E2E de control.
 
-### Paso 2 — Verificación rápida E2E post-commit
-1. Lanzar Kairos con `rafwill1@hotmail.com`.
-2. Repetir 3 consultas sentinela de fechas:
-	 - `que actividades hice entre el 25/08 y el 30/08?`
-	 - `cuanto tss hice en la semana del 27/07 al 02/08?`
-	 - `como fue mi actividad del 30/08?`
+---
 
-### Paso 3 — Empezar la siguiente prioridad funcional
-1. Retomar evaluación/plan del punto 9 del TODO: MCP propio dentro del proyecto basado en Essentials de Garmin MCP.
-2. Definir alcance mínimo: catálogo de tools, contrato de entrada/salida y rutas deterministas iniciales.
+## Que haremos al retomar
+
+### Paso 1 - Reenganche rapido (10-15 min)
+1. Ejecutar chequeo rapido:
+	 - `git status -sb`
+	 - `pytest -q tests/test_trainer_agent.py`
+2. Ejecutar smoke E2E minimo (4 preguntas sentinela ya usadas en este cierre) para confirmar continuidad del runtime.
+
+### Paso 2 - Siguiente prioridad del roadmap
+1. Empezar el punto 9 del TODO (MCP propio basado en Essentials):
+	 - inventario de tools realmente usadas
+	 - contratos de entrada/salida minimos
+	 - propuesta de adapter estable en Kairos
+2. Definir plan de transicion con flag de backend (`frozen|upstream`) para rollback inmediato.
+
+### Paso 3 - Entregable de la proxima sesion
+1. Documento de diseno inicial del MCP propio (alcance minimo + fases + riesgos).
+2. Lista priorizada de tools Essentials candidatas para implementar primero.
 
 ---
 
 ## Nota operativa
 
-Gemini puede fallar por red corporativa (Zscaler). Para validación estable en este entorno, mantener NVIDIA como modelo por defecto durante pruebas E2E.
+En red corporativa (Zscaler), mantener NVIDIA como modelo por defecto para pruebas E2E estables.
