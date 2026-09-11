@@ -3161,6 +3161,11 @@ def _resolve_hr_threshold_bpm(profile: dict | None) -> tuple[float | None, str, 
     """Extrae FC umbral desde perfil en distintas convenciones de clave."""
     profile = profile if isinstance(profile, dict) else {}
     perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+    user_data = profile.get("userData") if isinstance(profile.get("userData"), dict) else {}
+    data_node = profile.get("data") if isinstance(profile.get("data"), dict) else {}
+    data_user = data_node.get("userData") if isinstance(data_node.get("userData"), dict) else {}
+    result_node = profile.get("result") if isinstance(profile.get("result"), dict) else {}
+    result_user = result_node.get("userData") if isinstance(result_node.get("userData"), dict) else {}
     candidates = (
         perf.get("hr_threshold_bpm"),
         perf.get("lthr_bpm"),
@@ -3169,6 +3174,18 @@ def _resolve_hr_threshold_bpm(profile: dict | None) -> tuple[float | None, str, 
         perf.get("threshold_heart_rate"),
         perf.get("hrAtLactateThreshold"),
         perf.get("heart_rate_threshold"),
+        user_data.get("lactateThresholdHeartRate"),
+        user_data.get("lactate_threshold_heart_rate"),
+        user_data.get("thresholdHeartRate"),
+        user_data.get("threshold_heart_rate"),
+        data_user.get("lactateThresholdHeartRate"),
+        data_user.get("lactate_threshold_heart_rate"),
+        data_user.get("thresholdHeartRate"),
+        data_user.get("threshold_heart_rate"),
+        result_user.get("lactateThresholdHeartRate"),
+        result_user.get("lactate_threshold_heart_rate"),
+        result_user.get("thresholdHeartRate"),
+        result_user.get("threshold_heart_rate"),
         profile.get("hr_threshold_bpm"),
         profile.get("lthr_bpm"),
     )
