@@ -21,6 +21,7 @@ TOOL_CONTRACTS_V1: dict[str, dict] = {
     "get_user_profile": {},
     "get_activities": {},
     "get_activity": {"required_any": [("activity_id",)]},
+    "get_activity_details": {"required_any": [("activity_id",)]},
     "get_activity_hr_in_timezones": {"required_any": [("activity_id",)]},
     "get_activities_by_date": {"required_any": [("start_date", "end_date"), ("startdate", "enddate")]},
     "get_activities_fordate": {"required_any": [("date",), ("startdate", "enddate")]},

@@ -152,10 +152,10 @@ def test_validate_min_input_contract_requires_range_for_body_composition():
 
 
 def test_essentials_catalog_counts_and_uniqueness():
-    assert len(mcp_client.GARMIN_ESSENTIAL_TOOLS) == 40
+    assert len(mcp_client.GARMIN_ESSENTIAL_TOOLS) == 41
     assert len(mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS) == 3
-    assert len(mcp_client.ALL_ESSENTIAL_TOOLS) == 43
-    assert len(set(mcp_client.ALL_ESSENTIAL_TOOLS)) == 43
+    assert len(mcp_client.ALL_ESSENTIAL_TOOLS) == 44
+    assert len(set(mcp_client.ALL_ESSENTIAL_TOOLS)) == 44
 
 
 def test_essentials_catalog_contains_must_have_critical_tools():
@@ -163,6 +163,7 @@ def test_essentials_catalog_contains_must_have_critical_tools():
         "get_user_profile",
         "get_activities_by_date",
         "get_activity",
+        "get_activity_details",
         "get_body_battery",
         "get_hrv_data",
         "get_sleep_summary",

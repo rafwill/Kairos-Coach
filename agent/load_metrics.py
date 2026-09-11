@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 20
+TSS_FORMULA_VERSION = 21
 
 # Fast trail threshold (< 6:00/km) where raw zone hrTSS is explicitly preferred.
 TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
@@ -68,6 +68,19 @@ def _is_running_non_trail_activity(act_type: Any) -> bool:
         act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
     t = str(act_type or "").lower()
     return any(kw in t for kw in ("running", "run", "corr"))
+
+
+def _resolve_activity_type_for_routing(activity: dict) -> Any:
+    if not isinstance(activity, dict):
+        return ""
+    return (
+        activity.get("type")
+        or activity.get("activityType")
+        or activity.get("activityTypeDTO")
+        or activity.get("activityTypeDto")
+        or activity.get("typeDTO")
+        or ""
+    )
 
 
 def _to_iso_date(value: Any) -> str | None:
@@ -839,11 +852,55 @@ def _resolve_hr_threshold_bpm_for_activity(activity: dict, hr_threshold_bpm: flo
     return None
 
 
+def _resolve_trail_rest_hr_bpm(activity: dict, hr_rest_bpm: float | None = None) -> float:
+    def _coerce(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if 30.0 <= v <= 100.0:
+            return v
+        return None
+
+    resolved = _coerce(hr_rest_bpm)
+    if resolved is not None:
+        return resolved
+
+    if not isinstance(activity, dict):
+        return 55.0
+
+    for key in (
+        "restingHeartRate",
+        "resting_heart_rate",
+        "restingHR",
+        "rhr",
+    ):
+        resolved = _coerce(activity.get(key))
+        if resolved is not None:
+            return resolved
+
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    for key in (
+        "restingHeartRate",
+        "resting_heart_rate",
+        "restingHR",
+        "rhr",
+    ):
+        resolved = _coerce(summary.get(key))
+        if resolved is not None:
+            return resolved
+
+    return 55.0
+
+
 def _estimate_hr_tss_from_activity_details_lthr(
     activity: dict,
     hours: float,
     activity_details_raw: str | None,
     hr_threshold_bpm: float | None,
+    hr_rest_bpm: float | None = None,
     min_coverage_ratio: float = 0.40,
 ) -> float | None:
     if hours <= 0:
@@ -854,6 +911,9 @@ def _estimate_hr_tss_from_activity_details_lthr(
     lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
     if lthr is None or lthr <= 0:
         return None
+    hr_rest = _resolve_trail_rest_hr_bpm(activity, hr_rest_bpm)
+    if hr_rest >= lthr - 10.0:
+        hr_rest = max(30.0, lthr - 55.0)
 
     duration_seconds = hours * 3600.0
     samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
@@ -879,7 +939,8 @@ def _estimate_hr_tss_from_activity_details_lthr(
             dt = step_guess
 
         dt = max(1.0, min(30.0, float(dt)))
-        if_sec = max(0.45, min(1.20, float(hr) / float(lthr)))
+        denom = max(1.0, float(lthr) - float(hr_rest))
+        if_sec = max(0.40, min(1.15, (float(hr) - float(hr_rest)) / denom))
         tss_total += (dt / 3600.0) * (if_sec**2) * 100.0
         covered_seconds += dt
 
@@ -1339,6 +1400,7 @@ def _estimate_hr_tss_from_zones_lthr(
     activity: dict,
     hours: float,
     hr_threshold_bpm: float | None,
+    hr_rest_bpm: float | None = None,
     hr_zones_raw: str | None = None,
     min_coverage_ratio: float = 0.0,
 ) -> float | None:
@@ -1348,6 +1410,9 @@ def _estimate_hr_tss_from_zones_lthr(
     lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
     if lthr is None or lthr <= 0:
         return None
+    hr_rest = _resolve_trail_rest_hr_bpm(activity, hr_rest_bpm)
+    if hr_rest >= lthr - 10.0:
+        hr_rest = max(30.0, lthr - 55.0)
 
     zones = _parse_hr_zones_list(hr_zones_raw) if hr_zones_raw else None
     if not zones and isinstance(activity, dict):
@@ -1423,7 +1488,8 @@ def _estimate_hr_tss_from_zones_lthr(
         else:
             continue
 
-        if_zone = max(0.45, min(1.20, hr_mid / lthr))
+        denom = max(1.0, float(lthr) - float(hr_rest))
+        if_zone = max(0.40, min(1.15, (float(hr_mid) - float(hr_rest)) / denom))
         tss_total += (secs / 3600.0) * (if_zone**2) * 100.0
         total_secs += secs
 
@@ -2128,7 +2194,7 @@ def _estimate_session_tss(
     if not isinstance(activity, dict):
         return 0.0, "hrTSS"
 
-    act_type = activity.get("type") or activity.get("activityType") or ""
+    act_type = _resolve_activity_type_for_routing(activity)
     is_cycling = _is_cycling_activity(act_type)
     is_strength = _is_strength_activity(act_type)
     is_trail_hike_walk = _is_trail_hike_walk_activity(act_type)
@@ -2233,6 +2299,7 @@ def _estimate_session_tss(
                         hours=hours,
                         activity_details_raw=details_payload,
                         hr_threshold_bpm=lthr,
+                        hr_rest_bpm=hr_rest_bpm,
                         min_coverage_ratio=0.40,
                     )
                     if tss_hr_stream_lthr is not None:
@@ -2242,6 +2309,7 @@ def _estimate_session_tss(
                         activity,
                         hours=hours,
                         hr_threshold_bpm=lthr,
+                        hr_rest_bpm=hr_rest_bpm,
                         hr_zones_raw=hr_zones_raw,
                         min_coverage_ratio=0.35,
                     )
@@ -2382,7 +2450,7 @@ def _infer_tss_source_tag(activity: dict, tss_label: str, ftp: float | None, hr_
     if not isinstance(activity, dict):
         return "unknown"
 
-    act_type = activity.get("type") or activity.get("activityType") or ""
+    act_type = _resolve_activity_type_for_routing(activity)
     is_cycling = _is_cycling_activity(act_type)
 
     if is_cycling:
