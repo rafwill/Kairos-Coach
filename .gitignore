@@ -40,5 +40,3 @@ memory/*
 .DS_Store
 Thumbs.db
 
-#yaik
-.yaik/
