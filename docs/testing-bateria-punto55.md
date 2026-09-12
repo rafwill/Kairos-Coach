@@ -1,5 +1,7 @@
 ﻿## Testing batería puntos55 — ejecución interactiva en terminal
 
+Nota: este documento es una evidencia histórica fechada (2026-09-03/04); algunos conteos o defaults de runtime pueden haber cambiado en versiones posteriores.
+
 - Fecha: 2026-09-03
 - Usuario: rafwill1@hotmail.com
 - Proveedor/modelo: NVIDIA NIM (nemotron-3.5-lightning-30b-a3b)

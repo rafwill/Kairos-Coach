@@ -1,6 +1,23 @@
 # Proximos pasos - Kairos Coach
 
-Ultima actualizacion: 2026-09-04
+Ultima actualizacion: 2026-09-12
+
+## Actualizacion 2026-09-12 (estado vigente)
+
+Resumen ejecutivo:
+1. CI desbloqueada: dependencias alineadas (`mcp>=1.0.0,<2.0.0` y `fitparse>=1.2.0`).
+2. MCP simplificado en runtime: ruta unica por defecto (single-path directo).
+3. Contingencia mantenida solo como opt-in (`KAIROS_MCP_ENABLE_FALLBACK=true`).
+4. Regresion completa local en verde tras simplificacion: 455 tests OK.
+
+Prioridades recomendadas desde este punto:
+1. Monitorizar 3-5 dias la estabilidad del modo single-path (timeouts, errores MCP y latencia real percibida).
+2. Documentar decision operativa final: mantener fallback opt-in o retirarlo completamente.
+3. Revalidar bateria E2E conversacional con el flujo actual (especialmente consultas mixtas factual + coaching).
+4. Consolidar limpieza tecnica (eliminar menciones legacy de backend dual donde aun queden).
+
+Nota:
+1. El contenido restante de este documento se conserva como bitacora historica de ejecucion y decisiones previas.
 
 ---
 

@@ -3,15 +3,16 @@
 ## Estado actual
 - Arquitectura activa: DB-first multiusuario con Supabase obligatorio.
 - RAG ligero operativo con base de conocimiento del atleta.
-- Suite de tests: 401 tests en verde (validado localmente a 2026-09-02). CI/CD con GitHub Actions activo.
+- Suite de tests: 455 tests en verde (validado localmente a 2026-09-12). CI/CD con GitHub Actions activo.
 - Validacion reciente de regresion focal (2026-09-02): `tests/test_trainer_agent.py` en verde (326 passed).
 - Herramientas internas kairos_* operativas (tendencias, correlaciones, desglose deportivo).
 - Contrato de salida unificado activo (prompt completo + prompt compacto + rutas deterministas clave).
-- Essential Tools: 43 tools activas en runtime (2026-09-03).
+- Essential Tools: 44 tools en catálogo lógico (41 Garmin + 3 internas) (2026-09-12).
 - Modelo NVIDIA NIM activo: `nvidia/nemotron-3.5-lightning-30b-a3b` (sustituye llama-3.x EOL).
 - Batería E2E punto 55: validación E2E re-ejecutada y cerrada (11/11 consultas verificadas) con correcciones aplicadas en runtime (2026-09-01).
 - Bloque cálculo hrTSS trail (sin ponderado + regla trail rápido) validado contra TP: REALIZADO (2026-09-01).
 - Refactor de load metrics completado (Fase 1 + Fase 2, deduplicación + API pública) con validación total en verde (2026-09-02).
+- MCP runtime simplificado: ruta única por defecto (single-path); fallback de contingencia solo opt-in por `KAIROS_MCP_ENABLE_FALLBACK=true` (2026-09-12).
 
 ---
 
@@ -20,6 +21,7 @@
 ### Prioridad alta
 
 #### 9) Congelado del código MCP — REALIZADO (2026-09-03)
+- Nota de contexto (2026-09-12): el detalle de backend dual/upstream en esta sección es histórico del rollout; el estado vigente de runtime es MCP local frozen con ruta única por defecto.
 - Objetivo (10/10): eliminar dependencia funcional del MCP de terceros en rutas críticas de Kairos, manteniendo rollback inmediato y reduciendo latencia de consultas.
 - Alcance:
   - Catálogo Essentials objetivo: 43 tools identificadas en runtime actual.
@@ -157,6 +159,11 @@
   - Regresión unitaria/funcional en verde y smoke E2E sentinela completado.
   - Operación local-only validada: Kairos solo depende de su MCP propio y de Garmin Connect API.
   - Documentación técnica y runbook de mantenimiento publicados.
+
+- Actualización operativa (2026-09-12):
+  - Se elimina de la ruta por defecto la contingencia automática de fast-path/caché.
+  - Se mantiene contingencia como modo opcional activable por entorno (`KAIROS_MCP_ENABLE_FALLBACK=true`).
+  - Dependencias CI alineadas con API MCP v1 y tests FIT (`mcp<2`, `fitparse`).
 
 - Catálogo versionado de tools (v1 - 2026-09-03):
   - Convención:

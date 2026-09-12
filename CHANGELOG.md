@@ -2,6 +2,22 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-09-12
+
+### Changed
+- MCP simplificado a ruta única por defecto (single-path): `call_tool` usa invocación directa sin fast-path/caché automáticos.
+- Fallback MCP convertido en opt-in con `KAIROS_MCP_ENABLE_FALLBACK=true`.
+- `README.md`, runbook frozen y comparativa de tools actualizados al estado operativo real (`41 Garmin + 3 internas`).
+
+### Fixed
+- CI de tests en GitHub: dependencia MCP fijada a API compatible v1 (`mcp>=1.0.0,<2.0.0`) para mantener compatibilidad con `mcp.server.fastmcp.FastMCP`.
+- CI de tests en GitHub: añadida dependencia faltante `fitparse>=1.2.0` para `tools/fit_tss_probe.py` y `tests/test_fit_tss_probe.py`.
+
+### Tests
+- Validación local tras los cambios:
+	- `tests/test_mcp_client.py`: 30 passed.
+	- suite completa: 455 passed.
+
 ## 2026-09-01
 
 ### Added
