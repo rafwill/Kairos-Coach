@@ -1,0 +1,34 @@
+# Tabla comparativa TSS (20 ultimos registros)
+
+Fecha de extraccion: 2026-09-04
+Origen: Garmin MCP + calculo Kairos local
+
+| Fecha | Activity ID | Modalidad | Actividad | hrTSS | TSS bruto Garmin | TSS Kairos | Metodo Kairos | TP | Desviacion (Kairos-TP) |
+| --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- | ---: |
+| 2026-09-04 | 24234082111 | trail_running | Trail.Barranca-Bola-Cotos-Bola-Pto Navacerrada-Emburriaderos-Ortiz-Barranca | 369.4 | 257.2 | 369.4 | hrTSS | 228 hrTSS | 141.4 |
+| 2026-09-03 | 24227364808 | running | Fartlek. Cal + 40' Z3 + VC | 102.3 | 224.6 | 102.3 | TSS | 91 TSS | 11.3 |
+| 2026-09-02 | 24213935868 | strength_training | Gimnasio. Core y tren superior | 41.4 | 2.4 | 33.8 | TSS | 34 TSS | -0.2 |
+| 2026-09-01 | 24201327869 | running | Rodaje. Tapia CDC Z2 | 135.6 | 194.4 | 135.6 | TSS | 103 TSS | 32.6 |
+| 2026-08-31 | 24185208392 | strength_training | Gimnasio. Trabajo neuromuscular con alta carga | 41.8 | 4.0 | 37.1 | TSS | 36 TSS | 1.1 |
+| 2026-08-30 | 24172582627 | trail_running | Trail. Puerto de Navacerrada - Bola - Cotos  - Peñalara i/v | 344.9 | 170.1 | 344.9 | hrTSS | 223 hrTSS | 121.9 |
+| 2026-08-28 | 24152640491 | trail_running | Trail. Navacerrada - Maliciosa - Bola - Puerto de Navacerrada  (Nocturna | 194.8 | 112.3 | 194.8 | hrTSS | 137 hrTSS | 57.8 |
+| 2026-08-27 | 24141099893 | running | Series. 4x1000. Empezamos temporada | 95.4 | 158.0 | 95.4 | TSS | 94 TSS | 1.4 |
+| 2026-08-27 | 24138532236 | strength_training | Gimnasio. Tobillos, cadera y core | 48.0 | 1.5 | 34.0 | TSS | 33 TSS | 1.0 |
+| 2026-08-25 | 24107904670 | trail_running | Trail. Puerto de La Morcuera - Hoya de San Blas i/v | 260.3 | 168.9 | 260.3 | hrTSS | 137 hrTSS | 123.3 |
+| 2026-08-24 | 24100578449 | strength_training | Gimnasio. Trabajo Neuromuscular Trail Sesion 1 | 63.7 | 3.2 | 48.7 | TSS | 47 TSS | 1.7 |
+| 2026-08-23 | 24090094777 | running | Rodaje. 10k de Vuelta de vacaciones | 88.9 | 126.0 | 88.9 | TSS | 61 TSS | 27.9 |
+| 2026-08-21 | 24059814335 | running | Rodaje. 21k Pesadoira | 163.3 | 204.7 | 163.3 | TSS | 135 TSS | 28.3 |
+| 2026-08-19 | 24032702641 | strength_training | Gimnasio. Complemento tobillo y core | 36.7 | 1.2 | 32.5 | TSS | 31 TSS | 1.5 |
+| 2026-08-18 | 24027714450 | running | Fartlek. 8k +2k sostenido | 65.9 | 117.8 | 65.9 | TSS | 66 TSS | -0.1 |
+| 2026-08-17 | 24013969366 | hiking | Senderismo. Ruta A Moa 1/2 con Hector (O Fieiro - A Coruna) | 79.8 | 3.1 | 79.8 | hrTSS | 61 hrTSS | 18.8 |
+| 2026-08-16 | 24003202488 | trail_running | Trail. Pesadoira - Parque Eolico de Orzan (Larga) | 131.6 | 148.0 | 131.6 | hrTSS | 112 hrTSS | 19.6 |
+| 2026-08-15 | 23987906198 | running | Rodaje. 15k Z1-Z2 Pesadoira | 112.3 | 119.8 | 112.3 | TSS | 93 TSS | 19.3 |
+| 2026-08-14 | 23978414652 | strength_training | Fuerza | 40.1 | 1.9 | 28.9 | TSS | 28 TSS | 0.9 |
+| 2026-08-13 | 23966766696 | running | Fartlek. 8x45" cuestas | 80.7 | 102.5 | 80.7 | TSS | 66 TSS | 14.7 |
+
+## Metadatos de calculo
+
+- FTP usado: 205.0
+- Umbral running (sec/km): no disponible en perfil
+- FC reposo usada: no disponible en perfil
+- FC maxima usada: no disponible en perfil

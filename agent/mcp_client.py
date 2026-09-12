@@ -97,6 +97,7 @@ GARMIN_ESSENTIAL_TOOLS: tuple[str, ...] = (
     # Actividades
     "get_activities",
     "get_activity",
+    "get_activity_details",
     "get_activity_hr_in_timezones",
     "get_activities_by_date",
     "get_activities_fordate",
