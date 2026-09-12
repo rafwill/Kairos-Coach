@@ -39,6 +39,13 @@
 
 ## Notas de validacion (2026-09-12)
 
+- Validacion fallback (legacy vs v2) con degradacion artificial: `n=8` sesiones running con TP al forzar `activity_details_raw=None`.
+- Subset real sin `activity_details` en este corte: `n=0` (no hay evidencia productiva todavia para decidir default en fallback).
+- Importante: con `n=8`, diferencias pequenas de MAE (p. ej. `8.67` vs `8.84`) no son interpretables como superioridad estadistica de un modelo sobre otro.
+- Desglose por tipo con muestras unitarias (p. ej. `series n=1`) debe considerarse no interpretable y no usarse como señal de comportamiento por clase.
+- Asimetria conocida de la degradacion artificial: estas sesiones si tenian `activity_details` reales, por lo que el resumen (ritmo/distancia) puede ser de mejor calidad que en casos reales de fallback (reloj antiguo/manual/GPS deficiente). Este A/B representa un escenario favorable de fallback, no necesariamente el peor caso en produccion.
+- Seguimiento recomendado en cortes periodicos: registrar siempre cuantas sesiones nuevas entran en subset real sin details (`real_no_details_rows`) ademas del MAE/Bias/RMSE.
+
 - Regla automatica en observacion: no se considera cerrada hasta validar 3-4 sesiones nuevas de series/fartlek fuera de esta muestra.
 - Umbrales fijados sin usar error TP: `cv_if >= 0.27` o (`transitions_per_h <= 80` y `share_fast >= 0.09`).
 - Trade-off observado: mejora de MAE global con ligero empeoramiento del sesgo global (de -1.15 a -1.51), por infraestimacion ya presente en rodajes.
