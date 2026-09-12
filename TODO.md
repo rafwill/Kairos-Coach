@@ -24,9 +24,10 @@
 - Hallazgo de auditoría (2026-09): en 730 días se observaron `137` sesiones de fuerza, `0` con RPE estructurado, `119` con keywords de texto y `0` casos mixtos.
 - Implicación: la prioridad `RPE -> texto` ya está implementada en código, pero hoy no tiene efecto práctico en producción por ausencia total de señal RPE.
 - Acción recomendada:
-  - Capturar RPE post-sesión de fuerza en flujo de usuario (prompt corto al registrar/sincronizar sesión).
-  - Persistir RPE en perfil/contexto y adjuntarlo al cálculo de TSS de la sesión.
-  - Definir criterio de adopción mínimo (por ejemplo, cobertura RPE >= 60% en fuerza durante 4 semanas) antes de seguir refinando clasificador de texto.
+  - Capturar RPE post-sesión de fuerza con retardo explícito de 20-30 minutos (alineado con método de session-RPE de Foster); evitar captura inmediata al sync para reducir sesgo a la baja.
+  - Persistir RPE por `activity_id` (no agregado diario) y adjuntarlo al cálculo de TSS de esa sesión para mantener trazabilidad en dobles sesiones.
+  - Exponer cobertura RPE en ventana reciente (rolling), no acumulada histórica. Recomendado: últimas 4-6 semanas y/o últimas N sesiones de fuerza.
+  - Definir criterio de adopción mínimo sobre ventana reciente (por ejemplo, cobertura RPE >= 60% durante 4 semanas consecutivas) antes de seguir refinando clasificador de texto.
   - Re-auditar trimestralmente: `rpe_present_count`, `text_keyword_present_count`, `both_signals_count`, `changed_count`.
 
 #### 9) Congelado del código MCP — REALIZADO (2026-09-03)
