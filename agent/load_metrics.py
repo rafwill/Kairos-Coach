@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from statistics import median
 from datetime import date, datetime, timedelta
@@ -291,6 +292,29 @@ def _extract_running_effective_pace_sec_per_km(activity: dict) -> float | None:
         if pace and pace > 0:
             return pace
     return _extract_avg_pace_sec_per_km(activity)
+
+
+def _extract_running_native_effective_pace_sec_per_km(activity: dict) -> float | None:
+    """Return only native effective pace fields (no average-pace fallback)."""
+    for key in (
+        "normalizedPaceSecPerKm",
+        "normalized_pace_sec_per_km",
+        "normalizedPace",
+        "normalized_pace",
+        "gradeAdjustedPaceSecPerKm",
+        "grade_adjusted_pace_sec_per_km",
+        "gradeAdjustedPace",
+        "grade_adjusted_pace",
+        "movingPaceSecPerKm",
+        "moving_pace_sec_per_km",
+        "averageMovingPace",
+        "avgMovingPace",
+        "movingPace",
+    ):
+        pace = _parse_pace_to_sec_per_km(activity.get(key))
+        if pace and pace > 0:
+            return pace
+    return None
 
 
 def _should_use_raw_hr_tss_for_fast_trail(activity: dict) -> bool:
@@ -2126,6 +2150,20 @@ def _classify_running_session_with_confidence(activity: dict) -> dict[str, Any]:
     return {"session_kind": session_kind, "confidence": confidence, "scores": scores}
 
 
+def _resolve_running_tss_model(activity: dict | None = None) -> str:
+    """Resolve running TSS model with activity override and env fallback."""
+    model_raw = None
+    if isinstance(activity, dict):
+        model_raw = activity.get("running_tss_model") or activity.get("_running_tss_model")
+    if model_raw is None:
+        model_raw = os.environ.get("KAIROS_RUNNING_TSS_MODEL")
+
+    model = str(model_raw or "tp_like").strip().lower()
+    if model in {"legacy", "examined", "baseline"}:
+        return "legacy"
+    return "tp_like"
+
+
 def _estimate_running_tss_examined(
     activity: dict,
     hours: float,
@@ -2211,6 +2249,134 @@ def _estimate_running_tss_examined(
     return tss_hr
 
 
+def _estimate_running_tss_tp_like_adjusted(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> float | None:
+    """TP-like running model used as canonical default in running activities."""
+    if hours <= 0:
+        return None
+
+    threshold_pace = _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
+    native_effective_pace = _extract_running_native_effective_pace_sec_per_km(activity)
+    avg_pace = _extract_avg_pace_sec_per_km(activity)
+
+    base_if: float | None = None
+    if threshold_pace and threshold_pace > 0:
+        if native_effective_pace and native_effective_pace > 0:
+            base_if = max(0.50, min(1.35, threshold_pace / native_effective_pace))
+        elif avg_pace and avg_pace > 0:
+            if_avg = max(0.50, min(1.30, threshold_pace / avg_pace))
+            if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
+            if_te = _estimate_if_from_training_effect(activity)
+            fallback_if = None
+            if if_hr is not None and if_te is not None:
+                fallback_if = max(float(if_hr), float(if_te))
+            elif if_hr is not None:
+                fallback_if = float(if_hr)
+            elif if_te is not None:
+                fallback_if = float(if_te)
+
+            if fallback_if is not None:
+                # Blend pace with internal load proxy when NGP/GAP is missing.
+                # Keep fallback influence moderate to avoid overestimating steady rodajes.
+                base_if = max(0.50, min(1.30, (0.84 * if_avg) + (0.16 * fallback_if)))
+            else:
+                base_if = if_avg
+
+    if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
+    tss_hr = max(0.0, hours * (if_hr**2) * 100.0) if if_hr is not None else None
+
+    if base_if is None:
+        return tss_hr
+
+    cls = _classify_running_session_with_confidence(activity)
+    session_kind = str(cls.get("session_kind") or "calidad")
+    confidence = str(cls.get("confidence") or "low")
+    sig = _extract_running_session_signals(activity)
+
+    speed_ratio = float(sig.get("speed_ratio") or 1.0)
+    lap_count = int(sig.get("lap_count") or 0)
+    vigorous_min = float(sig.get("vigorous_min") or 0.0)
+    workout_rpe = sig.get("workout_rpe")
+    workout_rpe = float(workout_rpe) if workout_rpe is not None else 0.0
+    te_label = str(sig.get("te_label") or "")
+    interval_keyword = bool(sig.get("interval_keyword"))
+    fartlek_keyword = bool(sig.get("fartlek_keyword"))
+
+    confidence_factor = {"high": 1.0, "medium": 0.90, "low": 0.80}.get(confidence, 0.80)
+
+    uplift = 0.0
+    if session_kind == "series":
+        if speed_ratio > 1.10:
+            uplift += min(0.060, (speed_ratio - 1.10) * 0.24)
+        if lap_count >= 16:
+            uplift += 0.020
+        elif lap_count >= 10:
+            uplift += 0.010
+        if workout_rpe >= 75.0:
+            uplift += 0.014
+        elif workout_rpe >= 60.0:
+            uplift += 0.008
+        if interval_keyword:
+            uplift += 0.010
+        if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
+            uplift += 0.010
+        if vigorous_min >= 30.0:
+            uplift += 0.008
+        uplift = min(0.110, uplift * confidence_factor)
+    elif session_kind == "fartlek" or fartlek_keyword:
+        if speed_ratio > 1.08:
+            uplift += min(0.030, (speed_ratio - 1.08) * 0.16)
+        if lap_count >= 14:
+            uplift += 0.010
+        if workout_rpe >= 70.0:
+            uplift += 0.010
+        elif workout_rpe >= 55.0:
+            uplift += 0.006
+        if interval_keyword:
+            uplift += 0.008
+        if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
+            uplift += 0.006
+        uplift = min(0.055, uplift * confidence_factor)
+    elif session_kind == "rodaje":
+        if hours >= 1.50:
+            uplift += 0.010
+        elif hours >= 1.00:
+            uplift += 0.006
+        if workout_rpe >= 50.0:
+            uplift += 0.002
+        if speed_ratio > 0 and speed_ratio < 1.14:
+            uplift += 0.002
+        uplift = min(0.014, uplift)
+    else:
+        if workout_rpe >= 60.0:
+            uplift += 0.010
+        if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
+            uplift += 0.008
+        uplift = min(0.025, uplift * confidence_factor)
+
+    if_adjusted = max(0.50, min(1.38, base_if + uplift))
+    tss = max(0.0, hours * (if_adjusted**2) * 100.0)
+
+    # Session calibration to better track TP bias by workout type.
+    session_gain = {
+        "series": 1.10,
+        "fartlek": 1.03,
+        "rodaje": 0.99,
+        "calidad": 1.01,
+    }.get(session_kind, 1.01)
+    tss *= session_gain
+
+    if tss_hr is not None and session_kind in {"series", "fartlek", "calidad"}:
+        tss = max(tss, 0.88 * tss_hr)
+
+    return max(0.0, tss)
+
+
 def _estimate_if_from_training_effect(activity: dict) -> float | None:
     effect = activity.get("activityTrainingEffect") or activity.get("trainingEffect") or activity.get("aerobicTrainingEffect")
     if effect is None:
@@ -2272,13 +2438,23 @@ def _estimate_session_tss(
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
 
     elif is_running_non_trail:
-        tss_running = _estimate_running_tss_examined(
-            activity,
-            hours=hours,
-            running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-        )
+        running_model = _resolve_running_tss_model(activity)
+        if running_model == "legacy":
+            tss_running = _estimate_running_tss_examined(
+                activity,
+                hours=hours,
+                running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+            )
+        else:
+            tss_running = _estimate_running_tss_tp_like_adjusted(
+                activity,
+                hours=hours,
+                running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+            )
         if tss_running is not None:
             return tss_running, "TSS"
 
@@ -2533,6 +2709,7 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
         return None
 
     perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
+    user_data = profile.get("userData") if isinstance(profile.get("userData"), dict) else {}
     candidates: list[Any] = [
         perf.get("running_threshold_pace_sec_per_km"),
         perf.get("running_threshold_pace"),
@@ -2540,6 +2717,11 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
         perf.get("lactate_threshold_pace"),
         perf.get("pace_at_lactate_threshold"),
         perf.get("threshold_pace"),
+        user_data.get("runningThresholdPaceSecPerKm"),
+        user_data.get("runningThresholdPace"),
+        user_data.get("lactateThresholdPaceSecPerKm"),
+        user_data.get("lactateThresholdPace"),
+        user_data.get("paceAtLactateThreshold"),
         profile.get("running_threshold_pace_sec_per_km"),
         profile.get("running_threshold_pace"),
     ]
@@ -2552,6 +2734,10 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
         perf.get("lactate_threshold_speed_mps"),
         perf.get("lactate_threshold_speed"),
         perf.get("running_threshold_speed"),
+        user_data.get("lactateThresholdSpeedMps"),
+        user_data.get("lactateThresholdSpeed"),
+        user_data.get("runningThresholdSpeedMps"),
+        user_data.get("runningThresholdSpeed"),
     ]
     for raw_speed in speed_candidates:
         pace = _speed_ms_to_pace_sec_per_km(raw_speed)
@@ -2577,6 +2763,8 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
         "threshold_speed",
         "runningThresholdSpeedMps",
         "runningThresholdSpeed",
+        "lactateThresholdSpeedMps",
+        "lactateThresholdSpeed",
         "thresholdSpeedMps",
         "thresholdSpeed",
     }
@@ -3141,6 +3329,22 @@ def estimate_running_tss_examined(
     )
 
 
+def estimate_running_tss_tp_like_adjusted(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> float | None:
+    return _estimate_running_tss_tp_like_adjusted(
+        activity,
+        hours,
+        running_threshold_pace_sec_per_km,
+        hr_rest_bpm,
+        hr_max_bpm,
+    )
+
+
 def estimate_if_from_training_effect(activity: dict) -> float | None:
     return _estimate_if_from_training_effect(activity)
 
@@ -3242,6 +3446,7 @@ __all__ = [
     "classify_running_session_with_confidence",
     "classify_running_session",
     "estimate_running_tss_examined",
+    "estimate_running_tss_tp_like_adjusted",
     "estimate_if_from_training_effect",
     "estimate_session_tss",
     "infer_tss_source_tag",
