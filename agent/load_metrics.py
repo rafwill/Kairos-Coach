@@ -15,6 +15,11 @@ from statistics import median
 from datetime import date, datetime, timedelta
 from typing import Any
 
+try:
+    from agent.running_tss import procesar_actividad as _procesar_running_tss
+except (ImportError, RuntimeError):
+    _procesar_running_tss = None
+
 log = logging.getLogger(__name__)
 
 
@@ -2377,6 +2382,67 @@ def _estimate_running_tss_tp_like_adjusted(
     return max(0.0, tss)
 
 
+def _estimate_running_tss_from_activity_details_pipeline(
+    activity: dict,
+    activity_details_raw: Any,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+    hr_threshold_bpm: float | None,
+) -> float | None:
+    """Intenta calcular running TSS desde series de activity_details (NGP + TRIMP calibrado)."""
+    if _procesar_running_tss is None:
+        return None
+    if not activity_details_raw:
+        return None
+
+    threshold_pace = _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
+    if threshold_pace is None or threshold_pace <= 0:
+        return None
+    ftpace_ms = 1000.0 / float(threshold_pace)
+    if ftpace_ms <= 0:
+        return None
+
+    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+    sexo = (
+        activity.get("sex")
+        or activity.get("gender")
+        or activity.get("sexo")
+        or "male"
+    )
+
+    atleta = {
+        "ftpace_ms": ftpace_ms,
+        "hr_reposo": hr_rest_bpm,
+        "hr_max": hr_max_bpm,
+        "lthr": lthr,
+        "sexo": sexo,
+    }
+
+    try:
+        out = _procesar_running_tss(activity_details_raw, atleta)
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(out, dict):
+        return None
+
+    rtss = out.get("rTSS")
+    hrtss = out.get("hrTSS")
+    try:
+        if rtss is not None and float(rtss) > 0:
+            return float(rtss)
+    except (TypeError, ValueError):
+        pass
+    try:
+        if hrtss is not None and float(hrtss) > 0:
+            return float(hrtss)
+    except (TypeError, ValueError):
+        pass
+
+    return None
+
+
 def _estimate_if_from_training_effect(activity: dict) -> float | None:
     effect = activity.get("activityTrainingEffect") or activity.get("trainingEffect") or activity.get("aerobicTrainingEffect")
     if effect is None:
@@ -2438,6 +2504,12 @@ def _estimate_session_tss(
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
 
     elif is_running_non_trail:
+        details_payload = (
+            activity_details_raw
+            or activity.get("_activity_details_raw")
+            or activity.get("activity_details_raw")
+            or activity.get("activityDetailsRaw")
+        )
         running_model = _resolve_running_tss_model(activity)
         if running_model == "legacy":
             tss_running = _estimate_running_tss_examined(
@@ -2448,13 +2520,22 @@ def _estimate_session_tss(
                 hr_max_bpm=hr_max_bpm,
             )
         else:
-            tss_running = _estimate_running_tss_tp_like_adjusted(
+            tss_running = _estimate_running_tss_from_activity_details_pipeline(
                 activity,
-                hours=hours,
+                activity_details_raw=details_payload,
                 running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
                 hr_rest_bpm=hr_rest_bpm,
                 hr_max_bpm=hr_max_bpm,
+                hr_threshold_bpm=hr_threshold_bpm,
             )
+            if tss_running is None:
+                tss_running = _estimate_running_tss_tp_like_adjusted(
+                    activity,
+                    hours=hours,
+                    running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                    hr_rest_bpm=hr_rest_bpm,
+                    hr_max_bpm=hr_max_bpm,
+                )
         if tss_running is not None:
             return tss_running, "TSS"
 
