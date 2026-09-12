@@ -3037,6 +3037,86 @@ class TestLoadFatigueModel:
         # Mantener uplift en series para no perder el ajuste del caso 8x500.
         assert tss > baseline_tss + 7.0
 
+    def test_running_fallback_v2_uses_fixed_hr_guardrail_without_session_uplift(self, monkeypatch):
+        monkeypatch.setenv("KAIROS_RUNNING_TSS_FALLBACK_MODEL", "v2")
+        act = {
+            "type": "running",
+            "duration": 3600,
+            "distance": 8000,
+            "averageHR": 170,
+            "maxHR": 185,
+            "avg_speed_mps": 2.22,
+            "max_speed_mps": 4.80,
+            "lap_count": 32,
+            "workout_rpe": 80,
+            "training_effect_label": "VO2MAX",
+            "name": "Series 12x400 rec 1'",
+        }
+
+        tss, label = _estimate_session_tss(
+            act,
+            running_threshold_pace_sec_per_km=300.0,
+            hr_rest_bpm=50.0,
+            hr_max_bpm=185.0,
+            activity_details_raw=None,
+        )
+
+        # Base por ritmo sería ~44.4 TSS; con v2 debe aplicar solo guardrail HR fijo (k=0.88).
+        # if_hr ~= 0.9778 -> tss_hr ~= 95.6 -> floor ~= 84.1
+        assert label == "TSS"
+        assert 83.0 <= tss <= 85.5
+
+    def test_running_fallback_v2_is_name_agnostic_same_aggregates_same_tss(self, monkeypatch):
+        monkeypatch.setenv("KAIROS_RUNNING_TSS_FALLBACK_MODEL", "v2")
+        base = {
+            "type": "running",
+            "duration": 3600,
+            "distance": 9000,
+            "averageHR": 162,
+            "maxHR": 185,
+            "avg_speed_mps": 2.50,
+            "max_speed_mps": 4.60,
+            "lap_count": 28,
+            "workout_rpe": 76,
+            "training_effect_label": "VO2MAX",
+            "activity_details_raw": None,
+        }
+        act_series = dict(base)
+        act_series["name"] = "Series 10x400"
+        act_plain = dict(base)
+        act_plain["name"] = "Carrera"
+
+        tss_series, _ = _estimate_session_tss(act_series, running_threshold_pace_sec_per_km=300.0)
+        tss_plain, _ = _estimate_session_tss(act_plain, running_threshold_pace_sec_per_km=300.0)
+
+        assert abs(tss_series - tss_plain) < 1e-6
+
+    def test_running_fallback_model_activity_override_v2(self, monkeypatch):
+        monkeypatch.setenv("KAIROS_RUNNING_TSS_FALLBACK_MODEL", "legacy")
+        act = {
+            "type": "running",
+            "duration_seconds": 3475.483,
+            "distance_meters": 10776.09,
+            "avg_speed_mps": 3.101,
+            "max_speed_mps": 4.843,
+            "lap_count": 38,
+            "vigorous_intensity_minutes": 49,
+            "workout_rpe": 60,
+            "training_effect_label": "VO2MAX",
+            "name": "Series en pista 8x500",
+            "running_tss_fallback_model": "v2",
+            "activity_details_raw": None,
+        }
+
+        tss_v2, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+
+        # En este caso de series, v2 evita uplift por clasificación y queda cerca del baseline por ritmo.
+        baseline_if = 300.0 / (3475.483 / 10.77609)
+        baseline_tss = (3475.483 / 3600.0) * (baseline_if ** 2) * 100.0
+
+        assert label == "TSS"
+        assert abs(tss_v2 - baseline_tss) < 1.0
+
     def test_classify_running_session_rodaje(self):
         act = {
             "type": "running",

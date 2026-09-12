@@ -26,6 +26,9 @@ log = logging.getLogger(__name__)
 # Increase when TSS formula behavior changes.
 TSS_FORMULA_VERSION = 22
 
+# Running fallback v2: fixed HR guardrail ratio to avoid per-dataset re-tuning.
+RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
+
 # Fast trail threshold (< 6:00/km) where raw zone hrTSS is explicitly preferred.
 TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
 
@@ -2169,6 +2172,25 @@ def _resolve_running_tss_model(activity: dict | None = None) -> str:
     return "tp_like"
 
 
+def _resolve_running_fallback_model(activity: dict | None = None) -> str:
+    """Resolve running fallback model used when activity_details pipeline is unavailable.
+
+    Defaults to legacy for backward compatibility. Enable simplified fallback with:
+      - env: KAIROS_RUNNING_TSS_FALLBACK_MODEL=v2
+      - activity override: running_tss_fallback_model='v2'
+    """
+    model_raw = None
+    if isinstance(activity, dict):
+        model_raw = activity.get("running_tss_fallback_model") or activity.get("_running_tss_fallback_model")
+    if model_raw is None:
+        model_raw = os.environ.get("KAIROS_RUNNING_TSS_FALLBACK_MODEL")
+
+    model = str(model_raw or "legacy").strip().lower()
+    if model in {"v2", "simple", "minimal"}:
+        return "v2"
+    return "legacy"
+
+
 def _estimate_running_tss_examined(
     activity: dict,
     hours: float,
@@ -2382,6 +2404,48 @@ def _estimate_running_tss_tp_like_adjusted(
     return max(0.0, tss)
 
 
+def _estimate_running_tss_tp_like_v2(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> float | None:
+    """Simplified TP-like fallback for running when activity_details is unavailable.
+
+    Design goals:
+    - Keep this path easy to reason about (base pace IF + single explicit HR guardrail).
+    - Avoid stacked heuristic layers from legacy fallback.
+    - Keep `k` fixed by design (no dataset tuning loops).
+    """
+    if hours <= 0:
+        return None
+
+    threshold_pace = _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
+    native_effective_pace = _extract_running_native_effective_pace_sec_per_km(activity)
+    avg_pace = _extract_avg_pace_sec_per_km(activity)
+
+    base_if: float | None = None
+    if threshold_pace and threshold_pace > 0:
+        if native_effective_pace and native_effective_pace > 0:
+            base_if = max(0.50, min(1.35, threshold_pace / native_effective_pace))
+        elif avg_pace and avg_pace > 0:
+            base_if = max(0.50, min(1.30, threshold_pace / avg_pace))
+
+    if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
+    tss_hr = max(0.0, hours * (if_hr**2) * 100.0) if if_hr is not None else None
+
+    if base_if is None:
+        return tss_hr
+
+    tss_pace = max(0.0, hours * (base_if**2) * 100.0)
+    if tss_hr is None:
+        return tss_pace
+
+    # Single explicit guardrail against implausibly low pace-based fallback output.
+    return max(tss_pace, RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO * tss_hr)
+
+
 def _estimate_running_tss_from_activity_details_pipeline(
     activity: dict,
     activity_details_raw: Any,
@@ -2529,13 +2593,24 @@ def _estimate_session_tss(
                 hr_threshold_bpm=hr_threshold_bpm,
             )
             if tss_running is None:
-                tss_running = _estimate_running_tss_tp_like_adjusted(
-                    activity,
-                    hours=hours,
-                    running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-                    hr_rest_bpm=hr_rest_bpm,
-                    hr_max_bpm=hr_max_bpm,
-                )
+                fallback_model = _resolve_running_fallback_model(activity)
+                if fallback_model == "v2":
+                    # Classification stays metadata-only in v2 fallback (no multipliers by session kind).
+                    tss_running = _estimate_running_tss_tp_like_v2(
+                        activity,
+                        hours=hours,
+                        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                        hr_rest_bpm=hr_rest_bpm,
+                        hr_max_bpm=hr_max_bpm,
+                    )
+                else:
+                    tss_running = _estimate_running_tss_tp_like_adjusted(
+                        activity,
+                        hours=hours,
+                        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                        hr_rest_bpm=hr_rest_bpm,
+                        hr_max_bpm=hr_max_bpm,
+                    )
         if tss_running is not None:
             return tss_running, "TSS"
 
@@ -3426,6 +3501,22 @@ def estimate_running_tss_tp_like_adjusted(
     )
 
 
+def estimate_running_tss_tp_like_v2(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> float | None:
+    return _estimate_running_tss_tp_like_v2(
+        activity,
+        hours,
+        running_threshold_pace_sec_per_km,
+        hr_rest_bpm,
+        hr_max_bpm,
+    )
+
+
 def estimate_if_from_training_effect(activity: dict) -> float | None:
     return _estimate_if_from_training_effect(activity)
 
@@ -3498,6 +3589,7 @@ def compute_load_fatigue_metrics(
 
 __all__ = [
     "TSS_FORMULA_VERSION",
+    "RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO",
     "TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM",
     "SPORT_MODEL_DEFAULTS",
     "to_iso_date",
@@ -3528,6 +3620,7 @@ __all__ = [
     "classify_running_session",
     "estimate_running_tss_examined",
     "estimate_running_tss_tp_like_adjusted",
+    "estimate_running_tss_tp_like_v2",
     "estimate_if_from_training_effect",
     "estimate_session_tss",
     "infer_tss_source_tag",
