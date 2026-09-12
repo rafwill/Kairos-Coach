@@ -21,6 +21,7 @@ PASSTHROUGH_TOOLS: dict[str, str] = {
     "get_user_profile": "get_user_profile",
     "get_activities": "get_activities",
     "get_activity": "get_activity",
+    "get_activity_details": "get_activity_details",
     "get_activity_hr_in_timezones": "get_activity_hr_in_timezones",
     "get_activities_by_date": "get_activities_by_date",
     "get_activity_splits": "get_activity_splits",
@@ -162,6 +163,7 @@ def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
 
     if tool_name in {
         "get_activity",
+        "get_activity_details",
         "get_activity_hr_in_timezones",
         "get_activity_splits",
         "get_activity_exercise_sets",
@@ -353,6 +355,11 @@ def get_activities(start: int = 0, limit: int = 50):
 @mcp.tool(name="get_activity")
 def get_activity(activity_id: int):
     return _dispatch("get_activity", {"activity_id": activity_id})
+
+
+@mcp.tool(name="get_activity_details")
+def get_activity_details(activity_id: int):
+    return _dispatch("get_activity_details", {"activity_id": activity_id})
 
 
 @mcp.tool(name="get_activity_hr_in_timezones")

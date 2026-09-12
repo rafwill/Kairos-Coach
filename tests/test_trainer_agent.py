@@ -49,7 +49,8 @@ from agent.trainer_agent import (
     _fetch_activities_for_load_calc,
     _extract_cycling_ftp_watts,
     _infer_tss_source_tag,
-        _extract_threshold_pace_sec_per_km,
+    _extract_threshold_pace_sec_per_km,
+    _resolve_running_threshold_pace_sec_per_km,
     _extract_iso_date_from_text,
     _extract_iso_date_range_from_text,
     _generate_structured_plan_payload,
@@ -293,6 +294,40 @@ class TestLoadParametersEffectiveDate:
             }
         }
         assert _resolve_load_parameters_effective_date(profile) is None
+
+
+class TestResolveRunningThresholdFromProfile:
+    def test_resolve_running_threshold_from_flat_profile(self):
+        profile = {
+            "performance": {
+                "running_threshold_pace": "4:20",
+            }
+        }
+        out = _resolve_running_threshold_pace_sec_per_km(profile)
+        assert out == 260.0
+
+    def test_resolve_running_threshold_from_nested_profile(self):
+        profile = {
+            "userProfile": {
+                "zones": {
+                    "running": {
+                        "thresholdPace": "4:30"
+                    }
+                }
+            }
+        }
+        out = _resolve_running_threshold_pace_sec_per_km(profile)
+        assert out == 270.0
+
+    def test_resolve_running_threshold_from_nested_speed(self):
+        profile = {
+            "settings": {
+                "runningThresholdSpeedMps": 3.7
+            }
+        }
+        out = _resolve_running_threshold_pace_sec_per_km(profile)
+        assert out is not None
+        assert 269.0 <= out <= 271.0
 
 
 class TestSystemPromptDateFormatRules:
@@ -3042,7 +3077,7 @@ class TestLoadFatigueModel:
         cls = _classify_running_session_with_confidence(act)
         assert cls["session_kind"] == "rodaje"
 
-    def test_estimate_tss_trail_prefers_hr_then_threshold_then_rpe(self):
+    def test_estimate_tss_trail_uses_pace_only_with_native_effective_signal(self):
         act_hr = {
             "type": "trail_running",
             "duration": 7200,
@@ -3054,6 +3089,21 @@ class TestLoadFatigueModel:
         tss_hr, label_hr = _estimate_session_tss(act_hr, running_threshold_pace_sec_per_km=320.0)
         assert label_hr == "hrTSS"
         assert tss_hr > 0
+
+        act_native_pace = {
+            "type": "trail_running",
+            "duration": 7200,
+            "distance": 14000,
+            "gradeAdjustedPace": "6:00",
+            "averageHR": 150,
+            "maxHR": 180,
+        }
+        tss_native, label_native = _estimate_session_tss(
+            act_native_pace,
+            running_threshold_pace_sec_per_km=320.0,
+        )
+        assert label_native == "TSS"
+        assert tss_native > 0
 
         act_pace = {"type": "hiking", "duration": 7200, "distance": 14000}
         tss_pace, label_pace = _estimate_session_tss(act_pace, running_threshold_pace_sec_per_km=320.0)
@@ -3114,7 +3164,7 @@ class TestLoadFatigueModel:
         assert tss_zones > 0
         assert tss_zones < tss_avg
 
-    def test_estimate_tss_trail_hr_zones_uses_raw_without_calibration(self):
+    def test_estimate_tss_trail_hr_zones_uses_tp_like_zone_mapping(self):
         act = {
             "type": "trail_running",
             "duration": 3600,
@@ -3147,8 +3197,8 @@ class TestLoadFatigueModel:
         tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
         assert label_zones == "hrTSS"
-        # 1h íntegra en Z1 (115-125) -> hrTSS bruto por zonas sin ponderación trail.
-        assert abs(tss_zones - 56.25) < 0.05
+        # 1h íntegra en Z1 (115-125) con mapeo TP-like por zonas de FC.
+        assert abs(tss_zones - 27.04) < 0.05
 
         hike_act = {
             "type": "hiking",
@@ -3161,7 +3211,7 @@ class TestLoadFatigueModel:
         # En hike/walk se usa banda específica y blend con zonas (sin factor trail).
         assert 45.0 <= tss_hike_zones <= 60.0
 
-    def test_estimate_tss_trail_fast_pace_keeps_raw_hr_zones(self):
+    def test_estimate_tss_trail_fast_pace_keeps_tp_like_zone_mapping(self):
         act = {
             "type": "trail_running",
             "duration": 3600,
@@ -3195,10 +3245,10 @@ class TestLoadFatigueModel:
         tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
         assert label_zones == "hrTSS"
-        # Sin ponderación trail, siempre se conserva el valor bruto por zonas.
-        assert abs(tss_zones - 56.25) < 0.05
+        # El ritmo no cambia el fallback zonal TP-like cuando no hay NGP nativo.
+        assert abs(tss_zones - 27.04) < 0.05
 
-    def test_estimate_tss_trail_pace_at_6min_keeps_raw_hr_zones(self):
+    def test_estimate_tss_trail_pace_at_6min_keeps_tp_like_zone_mapping(self):
         act = {
             "type": "trail_running",
             "duration": 3600,
@@ -3232,8 +3282,8 @@ class TestLoadFatigueModel:
         tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
         assert label_zones == "hrTSS"
-        # Sin ponderación trail, el ritmo no altera el hrTSS de zonas.
-        assert abs(tss_zones - 56.25) < 0.05
+        # Sin NGP nativo, el ritmo no altera el fallback zonal TP-like.
+        assert abs(tss_zones - 27.04) < 0.05
 
     def test_estimate_tss_trail_low_zone_floor_keeps_raw_hr_zones(self):
         act = {
@@ -3308,7 +3358,7 @@ class TestLoadFatigueModel:
         out = _build_activity_analysis_block(activity_raw=activity_raw, hr_zones_raw=hr_zones_raw)
 
         assert "hrTSS bruto zonas: 56.2" in out
-        assert "hrTSS Kairos aplicado: 56.2" in out
+        assert "hrTSS Kairos aplicado: 27.0" in out
         assert "Factor calibracion trail aplicado" not in out
 
     def test_activity_analysis_block_trail_fast_shows_special_rule_note(self):
@@ -3349,7 +3399,7 @@ class TestLoadFatigueModel:
         out = _build_activity_analysis_block(activity_raw=activity_raw, hr_zones_raw=hr_zones_raw)
 
         assert "hrTSS bruto zonas: 56.2" in out
-        assert "hrTSS Kairos aplicado: 56.2" in out
+        assert "hrTSS Kairos aplicado: 27.0" in out
         assert "Regla trail rapido activa (<6:00/km)" in out
 
     def test_estimate_tss_walking_easy_band_caps_zones(self):
@@ -3422,6 +3472,86 @@ class TestLoadFatigueModel:
         assert label_embedded == "hrTSS"
         assert tss_embedded > 0
         assert tss_embedded < tss_avg_only
+
+    def test_estimate_tss_trail_prefers_stream_karvonen_when_coverage_is_good(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 160,
+            "maxHR": 190,
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
+                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
+            ]
+        )
+        details_raw = json.dumps(
+            {
+                "samples": [
+                    {"seconds": idx * 30, "heartRate": 160}
+                    for idx in range(120)
+                ]
+            }
+        )
+
+        tss_stream, label_stream = _estimate_session_tss(
+            act,
+            hr_zones_raw=hr_zones_raw,
+            activity_details_raw=details_raw,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+        )
+        tss_zones, _ = _estimate_session_tss(
+            act,
+            hr_zones_raw=hr_zones_raw,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+        )
+
+        assert label_stream == "hrTSS"
+        assert tss_stream < tss_zones
+        assert abs(tss_stream - 61.73) < 0.2
+
+    def test_estimate_tss_trail_stream_low_coverage_falls_back_to_zones(self):
+        act = {
+            "type": "trail_running",
+            "duration": 3600,
+            "averageHR": 160,
+            "maxHR": 190,
+        }
+        hr_zones_raw = json.dumps(
+            [
+                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
+                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
+            ]
+        )
+        details_raw = json.dumps(
+            {
+                "samples": [
+                    {"seconds": 0, "heartRate": 160},
+                    {"seconds": 10, "heartRate": 161},
+                    {"seconds": 20, "heartRate": 159},
+                ]
+            }
+        )
+
+        tss_stream_low_cov, label_low_cov = _estimate_session_tss(
+            act,
+            hr_zones_raw=hr_zones_raw,
+            activity_details_raw=details_raw,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+        )
+        tss_zones, _ = _estimate_session_tss(
+            act,
+            hr_zones_raw=hr_zones_raw,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+        )
+
+        assert label_low_cov == "hrTSS"
+        assert abs(tss_stream_low_cov - tss_zones) < 0.05
 
     def test_estimate_tss_cycling_prefers_power_ftp_then_hr_zones_then_hr(self):
         act_pow = {

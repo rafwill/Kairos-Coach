@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from statistics import median
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -17,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 16
+TSS_FORMULA_VERSION = 21
 
 # Fast trail threshold (< 6:00/km) where raw zone hrTSS is explicitly preferred.
 TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
@@ -67,6 +68,19 @@ def _is_running_non_trail_activity(act_type: Any) -> bool:
         act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
     t = str(act_type or "").lower()
     return any(kw in t for kw in ("running", "run", "corr"))
+
+
+def _resolve_activity_type_for_routing(activity: dict) -> Any:
+    if not isinstance(activity, dict):
+        return ""
+    return (
+        activity.get("type")
+        or activity.get("activityType")
+        or activity.get("activityTypeDTO")
+        or activity.get("activityTypeDto")
+        or activity.get("typeDTO")
+        or ""
+    )
 
 
 def _to_iso_date(value: Any) -> str | None:
@@ -479,6 +493,775 @@ def _parse_hr_zones_list(raw: str | None) -> list[dict] | None:
     return normalized if normalized else None
 
 
+def _decode_json_like(payload: Any) -> Any:
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith("{") or text.startswith("["):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return payload
+    return payload
+
+
+def _extract_hr_samples_from_activity_details(
+    activity_details_raw: Any,
+    duration_seconds: float,
+) -> list[tuple[float, float]]:
+    data = _decode_json_like(activity_details_raw)
+    if not isinstance(data, (dict, list)):
+        return []
+
+    samples: list[tuple[float, float]] = []
+
+    def _to_float(raw: Any) -> float | None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _looks_like_hr(key: str) -> bool:
+        key_norm = str(key or "").strip().lower()
+        return key_norm in {
+            "heartrate",
+            "heart_rate",
+            "heartRate",
+            "hr",
+            "hrbpm",
+            "bpm",
+            "directheartrate",
+        } or ("heart" in key_norm and "rate" in key_norm)
+
+    def _extract_time_seconds(sample: dict[str, Any]) -> float | None:
+        for key in (
+            "startTimeInSeconds",
+            "timeInSeconds",
+            "elapsedDuration",
+            "elapsedDurationInSeconds",
+            "timerDurationInSeconds",
+            "offsetInSeconds",
+            "seconds",
+            "timeOffset",
+            "sumDuration",
+            "duration",
+            "timestamp",
+            "epochMs",
+            "millis",
+        ):
+            if key not in sample:
+                continue
+            val = _to_float(sample.get(key))
+            if val is None:
+                continue
+            # Epoch milliseconds.
+            if val > 10_000_000_000:
+                return val / 1000.0
+            return val
+        return None
+
+    def _extract_hr_value(sample: dict[str, Any]) -> float | None:
+        for key, raw in sample.items():
+            if not _looks_like_hr(str(key)):
+                continue
+            val = _to_float(raw)
+            if val is None:
+                continue
+            if 30.0 <= val <= 235.0:
+                return val
+        return None
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+            return
+
+        if not isinstance(node, dict):
+            return
+
+        hr_value = _extract_hr_value(node)
+        t_seconds = _extract_time_seconds(node)
+        if hr_value is not None and t_seconds is not None:
+            samples.append((t_seconds, hr_value))
+
+        # Some payloads expose only arrays of heart-rate values without explicit timestamps.
+        for key, value in node.items():
+            key_norm = str(key or "").strip().lower()
+            if not isinstance(value, list):
+                continue
+            if not (_looks_like_hr(key_norm) or "heartrate" in key_norm):
+                continue
+
+            hr_values: list[float] = []
+            for raw in value:
+                val = _to_float(raw)
+                if val is None:
+                    continue
+                if 30.0 <= val <= 235.0:
+                    hr_values.append(val)
+
+            if not hr_values:
+                continue
+
+            step = (duration_seconds / float(len(hr_values))) if duration_seconds > 0 else 1.0
+            step = max(1.0, step)
+            for idx, hr_val in enumerate(hr_values):
+                samples.append((idx * step, hr_val))
+
+        for nested in node.values():
+            if isinstance(nested, (dict, list)):
+                _walk(nested)
+
+    def _extract_indexed_garmin_samples(root: dict[str, Any]) -> list[tuple[float, float]]:
+        descriptors = root.get("metricDescriptors")
+        rows = root.get("activityDetailMetrics")
+        if not isinstance(descriptors, list) or not isinstance(rows, list):
+            return []
+
+        desc_by_key: dict[str, dict[str, Any]] = {}
+        for d in descriptors:
+            if not isinstance(d, dict):
+                continue
+            key = str(d.get("key") or "").strip()
+            if not key:
+                continue
+            desc_by_key[key] = d
+
+        hr_keys = ("directHeartRate", "heartRate", "hr", "bpm")
+        time_keys = (
+            "directTimestamp",
+            "sumDuration",
+            "sumElapsedDuration",
+            "sumMovingDuration",
+            "elapsedDuration",
+            "timerDurationInSeconds",
+        )
+
+        hr_desc = next((desc_by_key.get(k) for k in hr_keys if desc_by_key.get(k) is not None), None)
+        if not isinstance(hr_desc, dict):
+            return []
+
+        try:
+            hr_idx = int(hr_desc.get("metricsIndex"))
+        except (TypeError, ValueError):
+            return []
+
+        time_desc_pairs: list[tuple[str, dict[str, Any]]] = []
+        for key in time_keys:
+            td = desc_by_key.get(key)
+            if isinstance(td, dict):
+                time_desc_pairs.append((key, td))
+
+        if not time_desc_pairs:
+            return []
+
+        extracted: list[tuple[float, float]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            metrics = row.get("metrics")
+            if not isinstance(metrics, list):
+                continue
+            if hr_idx < 0 or hr_idx >= len(metrics):
+                continue
+
+            hr_val = _to_float(metrics[hr_idx])
+            if hr_val is None or not (30.0 <= hr_val <= 235.0):
+                continue
+
+            time_seconds = None
+            for key, td in time_desc_pairs:
+                try:
+                    t_idx = int(td.get("metricsIndex"))
+                except (TypeError, ValueError):
+                    continue
+                if t_idx < 0 or t_idx >= len(metrics):
+                    continue
+
+                t_raw = _to_float(metrics[t_idx])
+                if t_raw is None:
+                    continue
+
+                if key == "directTimestamp":
+                    time_seconds = (t_raw / 1000.0) if t_raw > 10_000_000_000 else t_raw
+                else:
+                    unit = td.get("unit") if isinstance(td.get("unit"), dict) else {}
+                    factor = _to_float(unit.get("factor")) if isinstance(unit, dict) else None
+                    if factor and factor > 0:
+                        time_seconds = t_raw / factor
+                    else:
+                        time_seconds = t_raw
+                break
+
+            if time_seconds is None:
+                continue
+            extracted.append((time_seconds, hr_val))
+
+        return extracted
+
+    if isinstance(data, dict):
+        samples.extend(_extract_indexed_garmin_samples(data))
+
+    _walk(data)
+
+    if len(samples) < 5:
+        return []
+
+    samples.sort(key=lambda x: x[0])
+    # Normalize absolute timestamps to relative seconds.
+    if samples and samples[0][0] > 86_400 and (samples[-1][0] - samples[0][0]) > 0:
+        base_t = samples[0][0]
+        samples = [(t - base_t, hr) for t, hr in samples]
+
+    dedup: dict[int, float] = {}
+    for t, hr in samples:
+        sec = int(round(max(0.0, t)))
+        dedup[sec] = hr
+
+    out = sorted((float(sec), hr) for sec, hr in dedup.items())
+    return out
+
+
+def _estimate_hr_tss_from_activity_details(
+    activity: dict,
+    hours: float,
+    activity_details_raw: str | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+    min_coverage_ratio: float = 0.40,
+) -> float | None:
+    if hours <= 0:
+        return None
+    if not activity_details_raw:
+        return None
+
+    duration_seconds = hours * 3600.0
+    samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
+    if len(samples) < 5:
+        return None
+
+    avg_hr_raw = (
+        activity.get("averageHR")
+        or activity.get("avgHr")
+        or activity.get("avg_hr_bpm")
+        or activity.get("averageHeartRate")
+    )
+    max_hr_raw = (
+        activity.get("maxHR")
+        or activity.get("maxHr")
+        or activity.get("max_hr_bpm")
+        or activity.get("maxHeartRate")
+    )
+
+    try:
+        avg_hr = float(avg_hr_raw) if avg_hr_raw is not None else None
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        hr_max = float(max_hr_raw) if max_hr_raw is not None else (float(hr_max_bpm) if hr_max_bpm else 185.0)
+    except (TypeError, ValueError):
+        return None
+
+    if hr_rest <= 0:
+        hr_rest = 50.0
+    if hr_max <= 0:
+        hr_max = 185.0
+    if avg_hr is not None:
+        hr_max = max(hr_max, avg_hr + 5.0)
+        hr_rest = min(hr_rest, avg_hr - 5.0)
+
+    denom = max(1.0, hr_max - hr_rest)
+
+    deltas = [
+        samples[idx + 1][0] - samples[idx][0]
+        for idx in range(len(samples) - 1)
+        if (samples[idx + 1][0] - samples[idx][0]) > 0
+    ]
+    step_guess = float(median(deltas)) if deltas else 1.0
+    step_guess = max(1.0, min(30.0, step_guess))
+
+    tss_total = 0.0
+    covered_seconds = 0.0
+    for idx, (t_sec, hr) in enumerate(samples):
+        if idx + 1 < len(samples):
+            dt = samples[idx + 1][0] - t_sec
+            if dt <= 0:
+                dt = step_guess
+        else:
+            dt = step_guess
+
+        dt = max(1.0, min(30.0, float(dt)))
+        hrr = (float(hr) - hr_rest) / denom
+        if_sec = max(0.0, min(1.10, hrr))
+        tss_total += (dt / 3600.0) * (if_sec**2) * 100.0
+        covered_seconds += dt
+
+    coverage_ratio = (covered_seconds / duration_seconds) if duration_seconds > 0 else 0.0
+    if coverage_ratio < max(0.0, float(min_coverage_ratio or 0.0)):
+        return None
+
+    return max(0.0, tss_total)
+
+
+def _resolve_hr_threshold_bpm_for_activity(activity: dict, hr_threshold_bpm: float | None = None) -> float | None:
+    def _coerce(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if 120.0 <= v <= 230.0:
+            return v
+        return None
+
+    resolved = _coerce(hr_threshold_bpm)
+    if resolved is not None:
+        return resolved
+
+    if not isinstance(activity, dict):
+        return None
+
+    for key in (
+        "hr_threshold_bpm",
+        "lthr_bpm",
+        "lthr",
+        "lactate_threshold_hr_bpm",
+        "lactate_threshold_heart_rate",
+        "threshold_heart_rate",
+        "hrAtLactateThreshold",
+        "heart_rate_threshold",
+    ):
+        resolved = _coerce(activity.get(key))
+        if resolved is not None:
+            return resolved
+
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    for key in (
+        "hr_threshold_bpm",
+        "lthr_bpm",
+        "lthr",
+        "lactate_threshold_hr_bpm",
+        "lactate_threshold_heart_rate",
+        "threshold_heart_rate",
+        "hrAtLactateThreshold",
+        "heart_rate_threshold",
+    ):
+        resolved = _coerce(summary.get(key))
+        if resolved is not None:
+            return resolved
+
+    return None
+
+
+def _resolve_trail_rest_hr_bpm(activity: dict, hr_rest_bpm: float | None = None) -> float:
+    def _coerce(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if 30.0 <= v <= 100.0:
+            return v
+        return None
+
+    resolved = _coerce(hr_rest_bpm)
+    if resolved is not None:
+        return resolved
+
+    if not isinstance(activity, dict):
+        return 55.0
+
+    for key in (
+        "restingHeartRate",
+        "resting_heart_rate",
+        "restingHR",
+        "rhr",
+    ):
+        resolved = _coerce(activity.get(key))
+        if resolved is not None:
+            return resolved
+
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    for key in (
+        "restingHeartRate",
+        "resting_heart_rate",
+        "restingHR",
+        "rhr",
+    ):
+        resolved = _coerce(summary.get(key))
+        if resolved is not None:
+            return resolved
+
+    return 55.0
+
+
+def _estimate_hr_tss_from_activity_details_lthr(
+    activity: dict,
+    hours: float,
+    activity_details_raw: str | None,
+    hr_threshold_bpm: float | None,
+    hr_rest_bpm: float | None = None,
+    min_coverage_ratio: float = 0.40,
+) -> float | None:
+    if hours <= 0:
+        return None
+    if not activity_details_raw:
+        return None
+
+    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+    if lthr is None or lthr <= 0:
+        return None
+    hr_rest = _resolve_trail_rest_hr_bpm(activity, hr_rest_bpm)
+    if hr_rest >= lthr - 10.0:
+        hr_rest = max(30.0, lthr - 55.0)
+
+    duration_seconds = hours * 3600.0
+    samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
+    if len(samples) < 5:
+        return None
+
+    deltas = [
+        samples[idx + 1][0] - samples[idx][0]
+        for idx in range(len(samples) - 1)
+        if (samples[idx + 1][0] - samples[idx][0]) > 0
+    ]
+    step_guess = float(median(deltas)) if deltas else 1.0
+    step_guess = max(1.0, min(30.0, step_guess))
+
+    tss_total = 0.0
+    covered_seconds = 0.0
+    for idx, (t_sec, hr) in enumerate(samples):
+        if idx + 1 < len(samples):
+            dt = samples[idx + 1][0] - t_sec
+            if dt <= 0:
+                dt = step_guess
+        else:
+            dt = step_guess
+
+        dt = max(1.0, min(30.0, float(dt)))
+        denom = max(1.0, float(lthr) - float(hr_rest))
+        if_sec = max(0.40, min(1.15, (float(hr) - float(hr_rest)) / denom))
+        tss_total += (dt / 3600.0) * (if_sec**2) * 100.0
+        covered_seconds += dt
+
+    coverage_ratio = (covered_seconds / duration_seconds) if duration_seconds > 0 else 0.0
+    if coverage_ratio < max(0.0, float(min_coverage_ratio or 0.0)):
+        return None
+
+    return max(0.0, tss_total)
+
+
+def _extract_splits_list(payload: Any) -> list[dict]:
+    data = _decode_json_like(payload)
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+
+    if isinstance(data, dict):
+        for key in (
+            "splits",
+            "splitSummaries",
+            "split_summary",
+            "laps",
+            "data",
+            "items",
+            "result",
+            "lapDTOs",
+            "lapSummaries",
+        ):
+            nested = data.get(key)
+            if isinstance(nested, list):
+                return [row for row in nested if isinstance(row, dict)]
+
+        for value in data.values():
+            if isinstance(value, (list, dict)):
+                found = _extract_splits_list(value)
+                if found:
+                    return found
+
+    return []
+
+
+def _split_first_float(split: dict, *keys: str) -> float | None:
+    for key in keys:
+        raw = split.get(key)
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _extract_split_duration_seconds(split: dict) -> float | None:
+    return _split_first_float(
+        split,
+        "duration",
+        "durationInSeconds",
+        "elapsedDuration",
+        "movingDuration",
+        "seconds",
+        "splitDuration",
+        "lapDuration",
+        "total_time_seconds",
+    )
+
+
+def _extract_split_distance_meters(split: dict) -> float | None:
+    # Explicit meter keys in Garmin payloads.
+    for key in ("distanceInMeters", "distance_m"):
+        if key in split:
+            value = _split_first_float(split, key)
+            if value is not None and value > 0:
+                return value
+
+    # Garmin lapDTOs commonly expose distance in meters under "distance".
+    if "distance" in split:
+        value = _split_first_float(split, "distance")
+        if value is not None and value > 0:
+            # Heuristic: large values are meters; tiny values are likely kilometers.
+            if value >= 100.0:
+                return value
+            return value * 1000.0
+
+    # Alternative keys that may be in kilometers.
+    for key in ("splitDistance", "lapDistance"):
+        if key in split:
+            value = _split_first_float(split, key)
+            if value is not None and value > 0:
+                return value * 1000.0
+
+    return None
+
+
+def _extract_split_net_grade(split: dict, distance_m: float) -> float | None:
+    if distance_m <= 0:
+        return None
+
+    grade_pct = _split_first_float(split, "avgGrade", "averageGrade", "grade", "gradePercent")
+    if grade_pct is not None:
+        return grade_pct / 100.0
+
+    elev_gain = _split_first_float(split, "elevationGain", "elevation_gain", "totalAscent", "ascent", "gain")
+    elev_loss = _split_first_float(split, "elevationLoss", "elevation_loss", "totalDescent", "descent", "loss")
+    if elev_gain is None and elev_loss is None:
+        start_ele = _split_first_float(split, "startElevation", "startElevationInMeters", "start_elevation")
+        end_ele = _split_first_float(split, "endElevation", "endElevationInMeters", "end_elevation")
+        if start_ele is not None and end_ele is not None:
+            return (end_ele - start_ele) / distance_m
+        return None
+
+    gain = max(0.0, elev_gain or 0.0)
+    loss = max(0.0, elev_loss or 0.0)
+    return (gain - loss) / distance_m
+
+
+def _running_energy_cost_ratio_for_grade(grade_decimal: float) -> float:
+    s = max(-0.30, min(0.30, float(grade_decimal)))
+    cost = (
+        155.4 * (s**5)
+        - 30.4 * (s**4)
+        - 43.3 * (s**3)
+        + 46.3 * (s**2)
+        + 19.5 * s
+        + 3.6
+    )
+    return max(0.70, min(1.60, cost / 3.6))
+
+
+def _extract_trail_ngp_like_pace_sec_per_km(
+    activity: dict,
+    splits_raw: str | None = None,
+) -> tuple[float | None, float]:
+    splits_payload: Any = splits_raw
+    if splits_payload is None and isinstance(activity, dict):
+        splits_payload = (
+            activity.get("_splits_raw")
+            or activity.get("splits_raw")
+            or activity.get("splitsRaw")
+            or activity.get("splits")
+        )
+
+    splits = _extract_splits_list(splits_payload)
+    if not splits:
+        return None, 0.0
+
+    total_weight = 0.0
+    weighted_speed4 = 0.0
+    covered_seconds = 0.0
+
+    for split in splits:
+        if not isinstance(split, dict):
+            continue
+
+        duration_s = _extract_split_duration_seconds(split)
+        distance_m = _extract_split_distance_meters(split)
+        if duration_s is None or distance_m is None:
+            continue
+        if duration_s <= 0 or distance_m <= 0:
+            continue
+
+        grade = _extract_split_net_grade(split, distance_m)
+        if grade is None:
+            continue
+
+        speed_ms = distance_m / duration_s
+        if speed_ms <= 0:
+            continue
+
+        cost_ratio = _running_energy_cost_ratio_for_grade(grade)
+        eq_flat_speed = speed_ms * cost_ratio
+        if eq_flat_speed <= 0:
+            continue
+
+        weight = max(1.0, duration_s)
+        weighted_speed4 += weight * (eq_flat_speed**4)
+        total_weight += weight
+        covered_seconds += duration_s
+
+    if total_weight <= 0:
+        return None, 0.0
+
+    ngp_like_speed = (weighted_speed4 / total_weight) ** 0.25
+    if ngp_like_speed <= 0:
+        return None, 0.0
+
+    pace_sec_per_km = 1000.0 / ngp_like_speed
+    activity_seconds = _extract_activity_duration_hours(activity) * 3600.0
+    coverage = (covered_seconds / activity_seconds) if activity_seconds > 0 else 0.0
+    return pace_sec_per_km, max(0.0, min(1.0, coverage))
+
+
+def _estimate_trail_tss_high_precision(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+    splits_raw: str | None = None,
+) -> float | None:
+    if hours <= 0:
+        return None
+
+    threshold_pace = _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
+    if not threshold_pace or threshold_pace <= 0:
+        return None
+
+    # TP-like requirement: use native effective pace signal (NGP/GAP/normalized pace).
+    # Reconstructed NGP from coarse laps is too unstable and can overestimate heavily.
+    pace_effective = None
+    for key in (
+        "normalizedPaceSecPerKm",
+        "normalized_pace_sec_per_km",
+        "normalizedPace",
+        "normalized_pace",
+        "gradeAdjustedPaceSecPerKm",
+        "grade_adjusted_pace_sec_per_km",
+        "gradeAdjustedPace",
+        "grade_adjusted_pace",
+    ):
+        pace = _parse_pace_to_sec_per_km(activity.get(key))
+        if pace and pace > 0:
+            pace_effective = pace
+            break
+
+    if not pace_effective and isinstance(activity.get("summaryDTO"), dict):
+        summary = activity.get("summaryDTO") or {}
+        for key in (
+            "normalizedPaceSecPerKm",
+            "normalizedPace",
+            "gradeAdjustedPaceSecPerKm",
+            "gradeAdjustedPace",
+        ):
+            pace = _parse_pace_to_sec_per_km(summary.get(key))
+            if pace and pace > 0:
+                pace_effective = pace
+                break
+
+    if not pace_effective or pace_effective <= 0:
+        return None
+
+    # TP-like running stress core: IF from threshold pace vs effective (NGP-like) pace.
+    if_pace = max(0.40, min(1.50, threshold_pace / pace_effective))
+    return max(0.0, hours * (if_pace**2) * 100.0)
+
+
+def _estimate_trail_hr_tss_tp_like(
+    activity: dict,
+    hours: float,
+    hr_zones_raw: str | None = None,
+) -> float | None:
+    if hours <= 0:
+        return None
+
+    zones = _parse_hr_zones_list(hr_zones_raw) if hr_zones_raw else None
+    if not zones and isinstance(activity, dict):
+        for key in (
+            "heartRateZones",
+            "hr_zones",
+            "hrZones",
+            "timeInHeartRateZones",
+            "heartRateTimeInZones",
+            "zones",
+        ):
+            raw_z = activity.get(key)
+            if not raw_z:
+                continue
+            try:
+                zones = _parse_hr_zones_list(json.dumps(raw_z, ensure_ascii=False))
+            except (TypeError, ValueError, OverflowError):
+                zones = None
+            if zones:
+                break
+
+    if not zones:
+        return None
+
+    # Fixed zone-based IF profile for trail hrTSS fallback (TP-like, no split heuristics).
+    zone_if_map = {
+        1: 0.52,
+        2: 0.60,
+        3: 0.68,
+        4: 0.78,
+        5: 0.88,
+        6: 0.96,
+        7: 1.02,
+    }
+
+    tss_total = 0.0
+    total_secs = 0.0
+    for z in zones:
+        if not isinstance(z, dict):
+            continue
+
+        try:
+            secs = float(z.get("secsInZone") or 0.0)
+        except (TypeError, ValueError):
+            secs = 0.0
+        if secs <= 0:
+            continue
+
+        try:
+            zone_num = int(z.get("zoneNumber") or 0)
+        except (TypeError, ValueError):
+            zone_num = 0
+
+        if_zone = zone_if_map.get(zone_num)
+        if if_zone is None:
+            if zone_num > 0:
+                if_zone = min(1.05, 0.52 + (zone_num - 1) * 0.10)
+            else:
+                if_zone = 0.60
+
+        tss_total += (secs / 3600.0) * (if_zone**2) * 100.0
+        total_secs += secs
+
+    if total_secs <= 0:
+        return None
+
+    return max(0.0, tss_total)
+
+
 def _estimate_hr_tss_from_zones(
     activity: dict,
     hours: float,
@@ -610,6 +1393,113 @@ def _estimate_hr_tss_from_zones(
 
     if apply_cap:
         return max(0.0, tss_total)
+    return max(0.0, tss_total)
+
+
+def _estimate_hr_tss_from_zones_lthr(
+    activity: dict,
+    hours: float,
+    hr_threshold_bpm: float | None,
+    hr_rest_bpm: float | None = None,
+    hr_zones_raw: str | None = None,
+    min_coverage_ratio: float = 0.0,
+) -> float | None:
+    if hours <= 0:
+        return None
+
+    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+    if lthr is None or lthr <= 0:
+        return None
+    hr_rest = _resolve_trail_rest_hr_bpm(activity, hr_rest_bpm)
+    if hr_rest >= lthr - 10.0:
+        hr_rest = max(30.0, lthr - 55.0)
+
+    zones = _parse_hr_zones_list(hr_zones_raw) if hr_zones_raw else None
+    if not zones and isinstance(activity, dict):
+        for key in (
+            "heartRateZones",
+            "hr_zones",
+            "hrZones",
+            "timeInHeartRateZones",
+            "heartRateTimeInZones",
+            "zones",
+        ):
+            raw_z = activity.get(key)
+            if not raw_z:
+                continue
+            try:
+                zones = _parse_hr_zones_list(json.dumps(raw_z, ensure_ascii=False))
+            except (TypeError, ValueError, OverflowError):
+                zones = None
+            if zones:
+                break
+
+    if not zones:
+        return None
+
+    dur_s = hours * 3600.0
+    total_secs = 0.0
+    tss_total = 0.0
+
+    for z in zones:
+        if not isinstance(z, dict):
+            continue
+
+        secs = 0.0
+        try:
+            secs = float(z.get("secsInZone") or 0.0)
+        except (TypeError, ValueError):
+            secs = 0.0
+
+        if secs <= 0:
+            try:
+                pct = z.get("pctDirect")
+                if pct is not None:
+                    secs = max(0.0, float(pct) / 100.0 * dur_s)
+            except (TypeError, ValueError):
+                secs = 0.0
+
+        if secs <= 0:
+            continue
+
+        lo_raw = z.get("minHeartRateIn")
+        hi_raw = z.get("maxHeartRateIn")
+        lo = hi = None
+        try:
+            if lo_raw not in (None, "?"):
+                lo = float(lo_raw)
+        except (TypeError, ValueError):
+            lo = None
+        try:
+            if hi_raw not in (None, "?"):
+                hi = float(hi_raw)
+        except (TypeError, ValueError):
+            hi = None
+
+        if lo is not None and hi is not None and hi < lo:
+            lo, hi = hi, lo
+
+        if lo is not None and hi is not None:
+            hr_mid = (lo + hi) / 2.0
+        elif lo is not None:
+            hr_mid = lo + 5.0
+        elif hi is not None:
+            hr_mid = hi - 5.0
+        else:
+            continue
+
+        denom = max(1.0, float(lthr) - float(hr_rest))
+        if_zone = max(0.40, min(1.15, (float(hr_mid) - float(hr_rest)) / denom))
+        tss_total += (secs / 3600.0) * (if_zone**2) * 100.0
+        total_secs += secs
+
+    if total_secs <= 0:
+        return None
+
+    coverage_ratio = total_secs / dur_s if dur_s > 0 else 0.0
+    if coverage_ratio < max(0.0, float(min_coverage_ratio or 0.0)):
+        return None
+
     return max(0.0, tss_total)
 
 
@@ -1296,11 +2186,15 @@ def _estimate_session_tss(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
     hr_zones_raw: str | None = None,
+    splits_raw: str | None = None,
+    activity_details_raw: str | None = None,
+    use_trail_splits: bool = True,
+    hr_threshold_bpm: float | None = None,
 ) -> tuple[float, str]:
     if not isinstance(activity, dict):
         return 0.0, "hrTSS"
 
-    act_type = activity.get("type") or activity.get("activityType") or ""
+    act_type = _resolve_activity_type_for_routing(activity)
     is_cycling = _is_cycling_activity(act_type)
     is_strength = _is_strength_activity(act_type)
     is_trail_hike_walk = _is_trail_hike_walk_activity(act_type)
@@ -1346,19 +2240,134 @@ def _estimate_session_tss(
             return tss_running, "TSS"
 
     elif is_trail_hike_walk:
+        details_payload = (
+            activity_details_raw
+            or activity.get("_activity_details_raw")
+            or activity.get("activity_details_raw")
+            or activity.get("activityDetailsRaw")
+        )
         if is_trail:
-            tss_hr_zones = _estimate_hr_tss_from_zones(
-                activity,
-                hours=hours,
-                hr_zones_raw=hr_zones_raw,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                apply_cap=False,
-            )
-            if tss_hr_zones is not None:
-                if _should_use_raw_hr_tss_for_fast_trail(activity):
+            if _should_use_raw_hr_tss_for_fast_trail(activity):
+                # Keep fast-trail pattern intact.
+                if use_trail_splits:
+                    tss_trail_precise = _estimate_trail_tss_high_precision(
+                        activity,
+                        hours=hours,
+                        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                        hr_rest_bpm=hr_rest_bpm,
+                        hr_max_bpm=hr_max_bpm,
+                        splits_raw=splits_raw,
+                    )
+                    if tss_trail_precise is not None:
+                        return max(0.0, float(tss_trail_precise)), "TSS"
+
+                tss_hr_stream = _estimate_hr_tss_from_activity_details(
+                    activity,
+                    hours=hours,
+                    activity_details_raw=details_payload,
+                    hr_rest_bpm=hr_rest_bpm,
+                    hr_max_bpm=hr_max_bpm,
+                    min_coverage_ratio=0.40,
+                )
+                if tss_hr_stream is not None:
+                    return max(0.0, float(tss_hr_stream)), "hrTSS"
+
+                tss_trail_tp_like = _estimate_trail_hr_tss_tp_like(
+                    activity,
+                    hours=hours,
+                    hr_zones_raw=hr_zones_raw,
+                )
+                if tss_trail_tp_like is not None:
+                    return max(0.0, float(tss_trail_tp_like)), "hrTSS"
+
+                tss_hr_zones = _estimate_hr_tss_from_zones(
+                    activity,
+                    hours=hours,
+                    hr_zones_raw=hr_zones_raw,
+                    hr_rest_bpm=hr_rest_bpm,
+                    hr_max_bpm=hr_max_bpm,
+                    apply_cap=False,
+                )
+                if tss_hr_zones is not None:
                     return max(0.0, float(tss_hr_zones)), "hrTSS"
-                return max(0.0, float(tss_hr_zones)), "hrTSS"
+            else:
+                # TP-like for non-fast trail: prefer LTHR-based hrTSS, then fallback to pace-based TSS.
+                lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+                if lthr is not None:
+                    tss_hr_stream_lthr = _estimate_hr_tss_from_activity_details_lthr(
+                        activity,
+                        hours=hours,
+                        activity_details_raw=details_payload,
+                        hr_threshold_bpm=lthr,
+                        hr_rest_bpm=hr_rest_bpm,
+                        min_coverage_ratio=0.40,
+                    )
+                    if tss_hr_stream_lthr is not None:
+                        return max(0.0, float(tss_hr_stream_lthr)), "hrTSS"
+
+                    tss_hr_zones_lthr = _estimate_hr_tss_from_zones_lthr(
+                        activity,
+                        hours=hours,
+                        hr_threshold_bpm=lthr,
+                        hr_rest_bpm=hr_rest_bpm,
+                        hr_zones_raw=hr_zones_raw,
+                        min_coverage_ratio=0.35,
+                    )
+                    if tss_hr_zones_lthr is not None:
+                        return max(0.0, float(tss_hr_zones_lthr)), "hrTSS"
+
+                    tss_trail_pace = _estimate_tss_from_threshold_pace(
+                        activity,
+                        hours=hours,
+                        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                        prefer_effective_running_pace=True,
+                        if_pace_ceiling=1.50,
+                    )
+                    if tss_trail_pace is not None:
+                        return max(0.0, float(tss_trail_pace)), "TSS"
+                else:
+                    # No LTHR available: keep legacy non-fast trail behavior.
+                    if use_trail_splits:
+                        tss_trail_precise = _estimate_trail_tss_high_precision(
+                            activity,
+                            hours=hours,
+                            running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                            hr_rest_bpm=hr_rest_bpm,
+                            hr_max_bpm=hr_max_bpm,
+                            splits_raw=splits_raw,
+                        )
+                        if tss_trail_precise is not None:
+                            return max(0.0, float(tss_trail_precise)), "TSS"
+
+                    tss_hr_stream = _estimate_hr_tss_from_activity_details(
+                        activity,
+                        hours=hours,
+                        activity_details_raw=details_payload,
+                        hr_rest_bpm=hr_rest_bpm,
+                        hr_max_bpm=hr_max_bpm,
+                        min_coverage_ratio=0.40,
+                    )
+                    if tss_hr_stream is not None:
+                        return max(0.0, float(tss_hr_stream)), "hrTSS"
+
+                    tss_trail_tp_like = _estimate_trail_hr_tss_tp_like(
+                        activity,
+                        hours=hours,
+                        hr_zones_raw=hr_zones_raw,
+                    )
+                    if tss_trail_tp_like is not None:
+                        return max(0.0, float(tss_trail_tp_like)), "hrTSS"
+
+                    tss_hr_zones = _estimate_hr_tss_from_zones(
+                        activity,
+                        hours=hours,
+                        hr_zones_raw=hr_zones_raw,
+                        hr_rest_bpm=hr_rest_bpm,
+                        hr_max_bpm=hr_max_bpm,
+                        apply_cap=False,
+                    )
+                    if tss_hr_zones is not None:
+                        return max(0.0, float(tss_hr_zones)), "hrTSS"
 
         if is_hike_walk:
             tss_walk, lbl_walk = _estimate_walk_hike_tss(
@@ -1441,7 +2450,7 @@ def _infer_tss_source_tag(activity: dict, tss_label: str, ftp: float | None, hr_
     if not isinstance(activity, dict):
         return "unknown"
 
-    act_type = activity.get("type") or activity.get("activityType") or ""
+    act_type = _resolve_activity_type_for_routing(activity)
     is_cycling = _is_cycling_activity(act_type)
 
     if is_cycling:
@@ -1461,6 +2470,13 @@ def _infer_tss_source_tag(activity: dict, tss_label: str, ftp: float | None, hr_
         if native_tss is not None:
             return "native_tss"
         return "pace_or_model"
+    if tss_label == "hrTSS" and (
+        activity.get("_activity_details_raw")
+        or activity.get("activity_details_raw")
+        or activity.get("activityDetailsRaw")
+    ):
+        return "hr_stream"
+
     if tss_label == "hrTSS" and hr_zones_raw:
         return "hr_zones"
     if tss_label == "hrTSS":
@@ -1497,6 +2513,58 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
         pace = _speed_ms_to_pace_sec_per_km(raw_speed)
         if pace and pace > 0:
             return pace
+
+    # Garmin profile payloads can nest threshold pace/speed under zone settings.
+    pace_keys = {
+        "running_threshold_pace_sec_per_km",
+        "running_threshold_pace",
+        "threshold_pace_sec_per_km",
+        "threshold_pace",
+        "runningThresholdPaceSecPerKm",
+        "runningThresholdPace",
+        "thresholdPaceSecPerKm",
+        "thresholdPace",
+        "paceAtLactateThreshold",
+    }
+    speed_keys = {
+        "running_threshold_speed_mps",
+        "running_threshold_speed",
+        "threshold_speed_mps",
+        "threshold_speed",
+        "runningThresholdSpeedMps",
+        "runningThresholdSpeed",
+        "thresholdSpeedMps",
+        "thresholdSpeed",
+    }
+
+    def _walk(node: Any) -> float | None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in pace_keys:
+                    pace = _parse_pace_to_sec_per_km(value)
+                    if pace and pace > 0:
+                        return pace
+                if key in speed_keys:
+                    pace = _speed_ms_to_pace_sec_per_km(value)
+                    if pace and pace > 0:
+                        return pace
+
+            for value in node.values():
+                found = _walk(value)
+                if found and found > 0:
+                    return found
+
+        elif isinstance(node, list):
+            for item in node:
+                found = _walk(item)
+                if found and found > 0:
+                    return found
+
+        return None
+
+    nested = _walk(profile)
+    if nested and nested > 0:
+        return nested
 
     return None
 
@@ -2040,14 +3108,22 @@ def estimate_session_tss(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
     hr_zones_raw: str | None = None,
+    splits_raw: str | None = None,
+    activity_details_raw: str | None = None,
+    use_trail_splits: bool = True,
+    hr_threshold_bpm: float | None = None,
 ) -> tuple[float, str]:
     return _estimate_session_tss(
-        activity,
-        ftp,
-        running_threshold_pace_sec_per_km,
-        hr_rest_bpm,
-        hr_max_bpm,
-        hr_zones_raw,
+        activity=activity,
+        ftp=ftp,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+        hr_zones_raw=hr_zones_raw,
+        splits_raw=splits_raw,
+        activity_details_raw=activity_details_raw,
+        use_trail_splits=use_trail_splits,
+        hr_threshold_bpm=hr_threshold_bpm,
     )
 
 
