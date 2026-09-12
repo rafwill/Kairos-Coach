@@ -20,6 +20,15 @@
 
 ### Prioridad alta
 
+#### Nuevo: Instrumentar captura de RPE en fuerza (pendiente)
+- Hallazgo de auditoría (2026-09): en 730 días se observaron `137` sesiones de fuerza, `0` con RPE estructurado, `119` con keywords de texto y `0` casos mixtos.
+- Implicación: la prioridad `RPE -> texto` ya está implementada en código, pero hoy no tiene efecto práctico en producción por ausencia total de señal RPE.
+- Acción recomendada:
+  - Capturar RPE post-sesión de fuerza en flujo de usuario (prompt corto al registrar/sincronizar sesión).
+  - Persistir RPE en perfil/contexto y adjuntarlo al cálculo de TSS de la sesión.
+  - Definir criterio de adopción mínimo (por ejemplo, cobertura RPE >= 60% en fuerza durante 4 semanas) antes de seguir refinando clasificador de texto.
+  - Re-auditar trimestralmente: `rpe_present_count`, `text_keyword_present_count`, `both_signals_count`, `changed_count`.
+
 #### 9) Congelado del código MCP — REALIZADO (2026-09-03)
 - Nota de contexto (2026-09-12): el detalle de backend dual/upstream en esta sección es histórico del rollout; el estado vigente de runtime es MCP local frozen con ruta única por defecto.
 - Objetivo (10/10): eliminar dependencia funcional del MCP de terceros en rutas críticas de Kairos, manteniendo rollback inmediato y reduciendo latencia de consultas.

@@ -1813,6 +1813,10 @@ def _estimate_strength_if(activity: dict) -> float | None:
             return val
 
     # Structured signal first: explicit numeric RPE beats text hints.
+    # Operational note (audit 2026-09): current real history showed 0/137
+    # strength sessions with structured RPE present, so text fallback still
+    # drives production behavior today. Keep this order to be ready once
+    # RPE capture is instrumented.
     cls = _classify_strength_session_with_confidence(activity)
     session_kind = str(cls.get("session_kind") or "general")
     if session_kind == "heavy":
