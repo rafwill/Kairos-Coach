@@ -9,8 +9,11 @@ truststore>=0.9.0
 # Cifrado de contraseñas (Fernet AES-128-CBC + HMAC-SHA256 en storage.py)
 cryptography>=42.0.0
 
-# MCP Python SDK (cliente para conectarse al servidor MCP de Garmin)
-mcp>=1.0.0
+# MCP Python SDK (este código usa FastMCP de la API v1)
+mcp>=1.0.0,<2.0.0
+
+# Parser de ficheros FIT usado por tools/fit_tss_probe.py y sus tests
+fitparse>=1.2.0
 
 # Cliente oficial no-oficial de Garmin Connect para MCP propio local
 garminconnect>=0.2.25
