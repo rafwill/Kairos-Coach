@@ -6,8 +6,10 @@ Operar Kairos con backend MCP propio local (`frozen`) como única ruta de ejecuc
 ## Estado operativo
 - Backend por defecto: `MCP_BACKEND=frozen`.
 - Señal en runtime: `KAIROS_MCP_BACKEND_EFFECTIVE`.
-- Catálogo Essentials: 43 tools (`40 Garmin + 3 Kairos internas`).
+- Catálogo Essentials: 44 tools (`41 Garmin + 3 Kairos internas`).
 - Contratos versionados: `mcp-adapter-v1`.
+- Ruta de invocación por defecto: single-path directo a MCP.
+- Fallback de contingencia: desactivado por defecto (activar con `KAIROS_MCP_ENABLE_FALLBACK=true`).
 
 ## Comandos de operación
 
@@ -24,7 +26,7 @@ Unix/macOS:
 
 ## Verificación rápida (<= 5 min)
 1. Confirmar backend efectivo en startup: `MCP backend efectivo: frozen`.
-2. Confirmar tools cargadas: `43 herramientas disponibles`.
+2. Confirmar tools cargadas: `44 herramientas disponibles`.
 3. Ejecutar smoke sentinela (4 preguntas):
    - `¿Cuál es mi tendencia de carga de las últimas 4 semanas?`
    - `¿Cuánto TSS hice esta semana?`
@@ -32,9 +34,11 @@ Unix/macOS:
    - `¿Cuáles son mis récords personales running?`
 
 ## Estrategia de resiliencia
-- Fast-path local en frozen para `get_training_load_trend` contra `load_metrics_daily`.
-- Caché local por usuario para tools críticas (clave: tool + args + versión de contrato).
-- Si falla llamada MCP en frozen y existe caché válida, se devuelve caché antes de fallar.
+- Camino principal: llamada directa MCP (sin rutas paralelas ni fallback implícito).
+- Modo contingencia (opt-in):
+  - Fast-path local en frozen para `get_training_load_trend` contra `load_metrics_daily`.
+  - Caché local por usuario para tools críticas (clave: tool + args + versión de contrato).
+  - Si falla llamada MCP y existe caché válida, se devuelve caché.
 
 ## Validaciones obligatorias antes de release
 ```powershell
@@ -51,6 +55,9 @@ Unix/macOS:
   - `agent/mcp_client.py` (`GARMIN_ESSENTIAL_TOOLS`, `ALL_ESSENTIAL_TOOLS`).
   - `agent/mcp_adapter.py` (`TOOL_CONTRACTS_V1`, normalización y fallback).
   - `tests/test_mcp_client.py` (drift-check y contrato).
+- Si cambia política de resiliencia, alinear también:
+  - `README.md` (sección backend MCP y modo de herramientas).
+  - `KAIROS_MCP_ENABLE_FALLBACK` en `.env.example`/runbooks si aplica.
 - Si cambia launcher local, revisar:
   - `tools/garmin-mcp-frozen.cmd`
   - `tools/garmin-mcp-frozen.sh`

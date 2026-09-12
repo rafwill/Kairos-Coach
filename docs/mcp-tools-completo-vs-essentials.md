@@ -1,7 +1,11 @@
 # MCP Garmin: Completo vs Essentials
 
 - Total tools (completo): 126
-- Tools en essentials: 40
+- Tools en essentials Garmin: 41
+- Catálogo lógico usado por Kairos: 44 (`41 Garmin + 3 internas kairos_*`)
+
+Referencia canónica de catálogo en código:
+- `agent/mcp_client.py` -> `GARMIN_ESSENTIAL_TOOLS` y `ALL_ESSENTIAL_TOOLS`
 
 ## Tabla completa
 

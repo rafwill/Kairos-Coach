@@ -582,6 +582,11 @@ Selección de backend MCP (transición a MCP propio):
 
 - `MCP_BACKEND=frozen` (default): usa el launcher local `tools/garmin-mcp-frozen.*`.
 - `KAIROS_MCP_FROZEN_COMMAND`: permite indicar un binario frozen específico.
+- `KAIROS_MCP_ENABLE_FALLBACK=true` (opcional): habilita fast-path/caché de contingencia.
+
+Comportamiento por defecto:
+- Ruta única de invocación MCP (single-path, llamada directa).
+- Sin fallback/caché automático si no se activa `KAIROS_MCP_ENABLE_FALLBACK`.
 
 Runbook operativo de backend MCP propio: `docs/mcp-frozen-runbook.md`.
 
@@ -591,10 +596,10 @@ Runbook operativo de backend MCP propio: `docs/mcp-frozen-runbook.md`.
   3 · Google Gemini (gemini-2.0-flash)      — ~1M tokens/día gratis
   4 · Mistral      (mistral-small)          — gratis · function calling nativo  ← recomendado
   5 · Cerebras     (llama-3.3-70b)          — ultrarrápido · gratis
-  6 · NVIDIA NIM   (llama3-70b-instruct)    — gratis · API compatible OpenAI
+  6 · NVIDIA NIM   (nemotron-3.5-lightning-30b-a3b) — gratis · API compatible OpenAI
 ```
 
-A continuación se selecciona el modo de herramientas y el agente conecta con Garmin Connect.
+Tras seleccionar proveedor, el agente conecta con Garmin Connect usando MCP local.
 
 ### Comandos disponibles en el chat
 
@@ -631,21 +636,20 @@ Este proyecto usa un MCP propio local implementado en `agent/kairos_mcp_server.p
 | Detalle | Valor |
 |---------|-------|
 | **Implementación** | `agent/kairos_mcp_server.py` |
-| **Herramientas** | 40 Garmin Essentials usadas por Kairos |
+| **Herramientas** | 41 Garmin Essentials usadas por Kairos |
 | **Transporte** | stdio (subproceso local desde `tools/garmin-mcp-frozen.*`) |
 | **Autenticación** | credenciales Garmin del `.env` |
 | **Dependencia externa** | solo API de Garmin Connect |
 
 ### Modo de herramientas
 
-Al iniciar el agente se pregunta qué conjunto de herramientas cargar:
+Kairos opera con un único catálogo Essentials en runtime (sin selector interactivo de modo):
 
 | Modo | Herramientas | Tokens por petición | Uso recomendado |
 |------|-------------|---------------------|------------------|
-| **Essential Tools** *(default)* | Subset reducido (configurable) | ~3-5k | Uso diario: salud, actividades, entrenamiento |
-| **Todas** | 40 (scope Kairos) | ~3-5k | El MCP propio expone el catálogo operativo de Kairos |
+| **Essentials único** *(default)* | 41 Garmin + 3 internas Kairos (44 en catálogo lógico) | ~3-5k | Uso diario y rutas deterministas |
 
-Puedes fijar el subconjunto permanentemente añadiendo `GARMIN_ENABLED_TOOLS=tool1,tool2,...` en tu `.env`.
+Opcionalmente puedes restringir el subconjunto en `.env` con `GARMIN_ENABLED_TOOLS=tool1,tool2,...`.
 
 ### Compatibilidad MCP (verificado local)
 
@@ -954,7 +958,7 @@ En recálculo completo (`force_full_recalc=True`), Kairos enriquece ciclismo y r
 
 ## 🧪 Tests
 
-El proyecto incluye una suite activa de tests unitarios (colección en crecimiento continuo) que cubre funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM. Como referencia reciente, `tests/test_trainer_agent.py` valida actualmente 307 tests en verde.
+El proyecto incluye una suite activa de tests unitarios (colección en crecimiento continuo) que cubre funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM. Referencia reciente de validación completa local: `455 passed`.
 
 ### Instalar dependencias de desarrollo
 ```powershell
