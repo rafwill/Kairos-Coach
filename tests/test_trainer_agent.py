@@ -2867,9 +2867,9 @@ class TestLoadFatigueModel:
             "maxHR": 185,
         }
         tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-        # 10k en 1h => 6:00/km. Umbral 5:00/km => IF=0.833... => ~69.4 TSS
+        # TP-like canónico aplica leve ajuste de sesión sobre el baseline por ritmo.
         assert label == "TSS"
-        assert abs(tss - 69.4) < 1.0
+        assert abs(tss - 76.1) < 1.0
 
     def test_estimate_tss_running_prefers_effective_pace_when_available(self):
         act = {
@@ -2880,9 +2880,9 @@ class TestLoadFatigueModel:
             "normalizedPace": "5:00",
         }
         tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-        # Si usa normalizedPace=5:00 con umbral 5:00, IF=1.0 => 100 TSS
+        # IF=1.0 y calibración TP-like para running continuo.
         assert label == "TSS"
-        assert abs(tss - 100.0) < 1.0
+        assert abs(tss - 101.0) <= 1.0
 
     def test_estimate_tss_running_uses_distance_meters_for_pace_fallback(self):
         act = {
@@ -2967,9 +2967,9 @@ class TestLoadFatigueModel:
             assert label == "TSS"
             # 10k en 1h => 6:00/km. Umbral 5:00/km => ~69.4 TSS (sin inflado intervalico)
             assert abs(tss - 69.4) < 1.0
-        # Running no trail: clamp IF a 1.30 => 1h => 169 TSS
+        # Running no trail: clamp IF a 1.30 + ganancia de sesión TP-like.
         assert running_label == "TSS"
-        assert abs(running_tss - 169.0) < 1.0
+        assert abs(running_tss - 170.7) < 1.0
 
         # Hike/walk usa bandas específicas (no clamp de running/trail).
         assert trail_label == "TSS"
@@ -2995,9 +2995,24 @@ class TestLoadFatigueModel:
         baseline_tss = (4385.93 / 3600.0) * (baseline_if ** 2) * 100.0
 
         assert label == "TSS"
-        # Debe mantenerse controlado frente al baseline por ritmo (sin sobreinflar).
+        # Debe mantenerse controlado frente al baseline por ritmo.
         assert tss >= baseline_tss
-        assert tss <= baseline_tss + 6.0
+        assert tss <= baseline_tss + 22.0
+
+    def test_estimate_tss_running_allows_legacy_model_override(self):
+        act = {
+            "type": "running",
+            "duration": 3600,
+            "distance": 10000,
+            "averageHR": 160,
+            "maxHR": 185,
+            "running_tss_model": "legacy",
+        }
+
+        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
+
+        assert label == "TSS"
+        assert abs(tss - 69.4) < 1.0
 
     def test_estimate_tss_running_series_keeps_interval_uplift(self):
         act = {
@@ -6018,6 +6033,9 @@ class TestMcpTransparencyAndLatencyRegression:
     @pytest.mark.asyncio
     async def test_build_week_activities_markdown_does_not_use_asyncio_wait_for(self, monkeypatch):
         import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        today = _Date.today().isoformat()
 
         async def _boom_wait_for(*_args, **_kwargs):
             raise AssertionError("wait_for no debe usarse en week_activities")
@@ -6029,7 +6047,7 @@ class TestMcpTransparencyAndLatencyRegression:
                     {
                         "activityName": "Rodaje",
                         "activityType": "running",
-                        "startTimeLocal": "2026-09-02 10:00:00",
+                        "startTimeLocal": f"{today} 10:00:00",
                         "duration": 3600,
                     }
                 ]
