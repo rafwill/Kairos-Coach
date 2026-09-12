@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 22
+TSS_FORMULA_VERSION = 23
 
 # Running fallback v2: fixed HR guardrail ratio to avoid per-dataset re-tuning.
 RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
@@ -1722,17 +1722,18 @@ def _extract_strength_rpe_10(activity: dict) -> float | None:
     return max(1.0, min(10.0, rpe))
 
 
-def _estimate_strength_if(activity: dict) -> float | None:
-    for key in ("gym_if", "strength_if", "intensityFactor", "intensity_factor", "if"):
-        raw = activity.get(key)
-        if raw is None:
-            continue
-        try:
-            val = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if 0.35 <= val <= 1.10:
-            return val
+def _classify_strength_session_with_confidence(activity: dict) -> dict[str, Any]:
+    """Classify strength session using structured signals first and text only as tie-break.
+
+    Returns a compact metadata payload for validation and observability.
+    """
+    rpe = _extract_strength_rpe_10(activity)
+    if rpe is not None:
+        if rpe <= 4.0:
+            return {"session_kind": "light", "confidence": "high", "source": "rpe"}
+        if rpe <= 6.0:
+            return {"session_kind": "maintenance", "confidence": "high", "source": "rpe"}
+        return {"session_kind": "heavy", "confidence": "high", "source": "rpe"}
 
     txt = " ".join(
         [
@@ -1786,23 +1787,44 @@ def _estimate_strength_if(activity: dict) -> float | None:
     )
 
     if any(k in txt for k in heavy_keywords):
-        return 0.80
+        return {"session_kind": "heavy", "confidence": "low", "source": "text"}
     if any(k in txt for k in light_keywords):
-        return 0.50
+        return {"session_kind": "light", "confidence": "low", "source": "text"}
     if any(k in txt for k in neuromuscular_keywords):
-        return 0.57
+        return {"session_kind": "neuromuscular", "confidence": "low", "source": "text"}
     if any(k in txt for k in maintenance_keywords):
-        return 0.55
+        return {"session_kind": "maintenance", "confidence": "low", "source": "text"}
     if any(k in txt for k in general_keywords):
-        return 0.56
+        return {"session_kind": "general", "confidence": "low", "source": "text"}
 
-    rpe = _extract_strength_rpe_10(activity)
-    if rpe is not None:
-        if rpe <= 4.0:
-            return 0.50
-        if rpe <= 6.0:
-            return 0.56
+    return {"session_kind": "general", "confidence": "low", "source": "default"}
+
+
+def _estimate_strength_if(activity: dict) -> float | None:
+    for key in ("gym_if", "strength_if", "intensityFactor", "intensity_factor", "if"):
+        raw = activity.get(key)
+        if raw is None:
+            continue
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0.35 <= val <= 1.10:
+            return val
+
+    # Structured signal first: explicit numeric RPE beats text hints.
+    cls = _classify_strength_session_with_confidence(activity)
+    session_kind = str(cls.get("session_kind") or "general")
+    if session_kind == "heavy":
         return 0.80
+    if session_kind == "light":
+        return 0.50
+    if session_kind == "neuromuscular":
+        return 0.57
+    if session_kind == "maintenance":
+        return 0.55
+    if session_kind == "general":
+        return 0.56
 
     return 0.56
 
@@ -1829,15 +1851,10 @@ def _estimate_strength_tss_from_rpe_minutes(activity: dict, hours: float) -> flo
     return max(0.0, minutes * tss_per_min)
 
 
-def _estimate_walk_hike_tss(
-    activity: dict,
-    hours: float,
-    hr_zones_raw: str | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-) -> tuple[float | None, str | None]:
+def _classify_walk_hike_session_with_confidence(activity: dict, hours: float) -> dict[str, Any]:
+    """Classify hike/walk load band prioritizing structured signals over free text."""
     if hours <= 0:
-        return None, None
+        return {"band": "easy", "if_model": 0.45, "source": "default", "confidence": "low"}
 
     txt = " ".join(
         [
@@ -1883,9 +1900,8 @@ def _estimate_walk_hike_tss(
     )
     brisk_kw = ("power walking", "ritmo vivo", "vivo", "marcha", "brisk", "ligero rapido", "ligero rápido")
 
-    is_heavy = (
-        any(k in txt for k in heavy_kw)
-        or "hiking" in act_type
+    heavy_structured = (
+        ("hiking" in act_type)
         or (elev_gain is not None and elev_gain >= 250.0)
         or (
             elev_gain is not None
@@ -1894,16 +1910,50 @@ def _estimate_walk_hike_tss(
             and (elev_gain / max(1.0, distance_m / 1000.0)) >= 35.0
         )
     )
-    is_brisk = any(k in txt for k in brisk_kw) or (kmh is not None and kmh >= 5.8)
+    brisk_structured = kmh is not None and kmh >= 5.8
 
-    if is_heavy:
-        if_model = 0.71
+    heavy_text = any(k in txt for k in heavy_kw)
+    brisk_text = any(k in txt for k in brisk_kw)
+
+    has_structured = (
+        (elev_gain is not None)
+        or (kmh is not None)
+        or ("hiking" in act_type)
+    )
+
+    if has_structured:
+        if heavy_structured:
+            return {"band": "heavy", "if_model": 0.71, "source": "structured", "confidence": "high"}
+        if brisk_structured:
+            return {"band": "brisk", "if_model": 0.57, "source": "structured", "confidence": "high"}
+        return {"band": "easy", "if_model": 0.45, "source": "structured", "confidence": "medium"}
+
+    if heavy_text:
+        return {"band": "heavy", "if_model": 0.71, "source": "text", "confidence": "low"}
+    if brisk_text:
+        return {"band": "brisk", "if_model": 0.57, "source": "text", "confidence": "low"}
+    return {"band": "easy", "if_model": 0.45, "source": "default", "confidence": "low"}
+
+
+def _estimate_walk_hike_tss(
+    activity: dict,
+    hours: float,
+    hr_zones_raw: str | None,
+    hr_rest_bpm: float | None,
+    hr_max_bpm: float | None,
+) -> tuple[float | None, str | None]:
+    if hours <= 0:
+        return None, None
+
+    cls = _classify_walk_hike_session_with_confidence(activity, hours)
+    band = str(cls.get("band") or "easy")
+    if_model = float(cls.get("if_model") or 0.45)
+
+    if band == "heavy":
         min_h, max_h = 40.0, None
-    elif is_brisk:
-        if_model = 0.57
+    elif band == "brisk":
         min_h, max_h = 25.0, 40.0
     else:
-        if_model = 0.45
         min_h, max_h = 15.0, 25.0
 
     tss_model = max(0.0, hours * (if_model**2) * 100.0)
@@ -3469,6 +3519,14 @@ def classify_running_session(activity: dict) -> str:
     return str(cls.get("session_kind") or "calidad")
 
 
+def classify_strength_session_with_confidence(activity: dict) -> dict[str, Any]:
+    return _classify_strength_session_with_confidence(activity)
+
+
+def classify_walk_hike_session_with_confidence(activity: dict, hours: float) -> dict[str, Any]:
+    return _classify_walk_hike_session_with_confidence(activity, hours)
+
+
 def estimate_running_tss_examined(
     activity: dict,
     hours: float,
@@ -3618,6 +3676,8 @@ __all__ = [
     "extract_running_session_signals",
     "classify_running_session_with_confidence",
     "classify_running_session",
+    "classify_strength_session_with_confidence",
+    "classify_walk_hike_session_with_confidence",
     "estimate_running_tss_examined",
     "estimate_running_tss_tp_like_adjusted",
     "estimate_running_tss_tp_like_v2",

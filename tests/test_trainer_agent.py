@@ -35,6 +35,8 @@ from agent.trainer_agent import (
     _format_activity_analysis_for_markdown,
     _build_load_trend_table,
     _classify_running_session_with_confidence,
+    _classify_strength_session_with_confidence,
+    _classify_walk_hike_session_with_confidence,
     _estimate_session_tss,
     _compute_load_fatigue_metrics,
     _format_load_fatigue_summary,
@@ -2857,6 +2859,120 @@ class TestLoadFatigueModel:
 
         assert label == "TSS"
         assert abs(tss - 25.0) < 0.1
+
+    def test_estimate_tss_strength_rpe_overrides_conflicting_text_keyword(self):
+        act = {
+            "type": "strength_training",
+            "duration": 3600,
+            "rpe": 8,
+            "name": "Movilidad suave de descarga",
+        }
+
+        tss, label = _estimate_session_tss(act)
+
+        assert label == "TSS"
+        # RPE estructurado manda sobre texto ambiguo.
+        assert abs(tss - 64.0) < 0.1
+
+    def test_strength_classification_labeled_sample_structured_first(self):
+        labeled = [
+            ({"rpe": 8, "name": "Movilidad suave"}, "heavy"),
+            ({"rpe": 3, "name": "Fuerza maxima"}, "light"),
+            ({"rpe": 5, "name": "Heavy day"}, "maintenance"),
+            ({"name": "Fuerza maxima 5x5"}, "heavy"),
+            ({"name": "Movilidad y tonificación"}, "light"),
+            ({"name": "Gimnasio general"}, "general"),
+        ]
+
+        # Mini-set orientativo: usar como smoke test de regresión, no como validación cerrada.
+        assert len(labeled) == 6
+
+        ok = 0
+        for payload, expected in labeled:
+            act = {"type": "strength_training", **payload}
+            cls = _classify_strength_session_with_confidence(act)
+            if cls["session_kind"] == expected:
+                ok += 1
+
+        accuracy = ok / len(labeled)
+        assert accuracy >= 1.0
+
+    def test_strength_tss_invariant_to_text_when_rpe_present(self):
+        base = {
+            "type": "strength_training",
+            "duration": 3600,
+            "rpe": 8,
+        }
+        act_a = dict(base)
+        act_a["name"] = "Movilidad suave"
+        act_b = dict(base)
+        act_b["name"] = "Fuerza maxima 1RM"
+
+        tss_a, _ = _estimate_session_tss(act_a)
+        tss_b, _ = _estimate_session_tss(act_b)
+
+        assert abs(tss_a - tss_b) < 1e-6
+
+    def test_walk_hike_tss_invariant_to_text_when_structured_signals_present(self):
+        base = {
+            "type": "walking",
+            "duration": 3600,
+            "distance": 6200,  # 6.2 km/h -> brisk por señal estructurada
+            "elevationGain": 0,
+        }
+        act_a = dict(base)
+        act_a["name"] = "Paseo suave"
+        act_b = dict(base)
+        act_b["name"] = "Mochila montaña power walking"
+
+        tss_a, _ = _estimate_session_tss(act_a)
+        tss_b, _ = _estimate_session_tss(act_b)
+
+        assert abs(tss_a - tss_b) < 1e-6
+
+    def test_walk_hike_classification_prefers_structured_over_text(self):
+        act = {
+            "type": "walking",
+            "duration": 3600,
+            "distance": 6200,
+            "elevationGain": 0,
+            "name": "Mochila montaña",
+        }
+        cls = _classify_walk_hike_session_with_confidence(act, hours=1.0)
+        assert cls["band"] == "brisk"
+        assert cls["source"] == "structured"
+        assert cls["confidence"] == "high"
+
+    def test_walk_hike_text_fallback_when_no_structured_signals(self):
+        act = {
+            "type": "walking",
+            "duration": 3600,
+            "name": "Power walking en montaña con mochila",
+        }
+
+        cls = _classify_walk_hike_session_with_confidence(act, hours=1.0)
+        tss, label = _estimate_session_tss(act)
+
+        assert cls["source"] == "text"
+        assert cls["band"] in {"brisk", "heavy"}
+        assert label == "TSS"
+        assert tss is not None
+        assert tss > 0
+
+    def test_strength_classification_reports_signal_source(self):
+        cls_rpe = _classify_strength_session_with_confidence(
+            {"type": "strength_training", "rpe": 8, "name": "Movilidad suave"}
+        )
+        assert cls_rpe["session_kind"] == "heavy"
+        assert cls_rpe["source"] == "rpe"
+        assert cls_rpe["confidence"] == "high"
+
+        cls_text = _classify_strength_session_with_confidence(
+            {"type": "strength_training", "name": "Fuerza maxima 5x5"}
+        )
+        assert cls_text["session_kind"] == "heavy"
+        assert cls_text["source"] == "text"
+        assert cls_text["confidence"] == "low"
 
     def test_estimate_tss_running_prefers_threshold_pace_over_hr(self):
         act = {

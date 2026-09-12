@@ -1464,6 +1464,14 @@ def _classify_running_session(activity: dict) -> str:
     return _load_metrics.classify_running_session(activity)
 
 
+def _classify_strength_session_with_confidence(activity: dict) -> dict[str, Any]:
+    return _load_metrics.classify_strength_session_with_confidence(activity)
+
+
+def _classify_walk_hike_session_with_confidence(activity: dict, hours: float) -> dict[str, Any]:
+    return _load_metrics.classify_walk_hike_session_with_confidence(activity, hours)
+
+
 def _estimate_running_tss_examined(
     activity: dict,
     hours: float,
