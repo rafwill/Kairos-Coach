@@ -8,6 +8,8 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - MCP simplificado a ruta única por defecto (single-path): `call_tool` usa invocación directa sin fast-path/caché automáticos.
 - Fallback MCP convertido en opt-in con `KAIROS_MCP_ENABLE_FALLBACK=true`.
 - `README.md`, runbook frozen y comparativa de tools actualizados al estado operativo real (`41 Garmin + 3 internas`).
+- Modelo de TSS actualizado a `TSS_FORMULA_VERSION=23`.
+- Fuerza y walk/hike pasan a clasificación estructurada-first (RPE/sensores antes que texto libre) con texto como fallback explícito.
 
 ### Fixed
 - CI de tests en GitHub: dependencia MCP fijada a API compatible v1 (`mcp>=1.0.0,<2.0.0`) para mantener compatibilidad con `mcp.server.fastmcp.FastMCP`.
@@ -17,6 +19,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Validación local tras los cambios:
 	- `tests/test_mcp_client.py`: 30 passed.
 	- suite completa: 455 passed.
+	- suite completa tras guardrails de clasificación: 465 passed.
+
+### Notes
+- Auditoría rápida de impacto histórico en fuerza (lookback 730 días): `723` actividades, `137` sesiones de fuerza, `0` sesiones con RPE estructurado presente, `119` con keywords de texto, `0` casos con coexistencia RPE+keyword y por tanto `0` cambios de bucket observables en histórico actual.
 
 ## 2026-09-01
 
