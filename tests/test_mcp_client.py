@@ -223,6 +223,7 @@ async def test_call_tool_returns_contract_error_without_calling_session():
 
 @pytest.mark.asyncio
 async def test_call_tool_records_transparency_event_for_fastpath(monkeypatch):
+    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
     monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(mcp_client, "resolve_local_fastpath_response", lambda *_args, **_kwargs: '{"ok":1}')
     monkeypatch.setattr(mcp_client, "cache_tool_response", lambda *_args, **_kwargs: None)
@@ -243,6 +244,7 @@ async def test_call_tool_records_transparency_event_for_fastpath(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_tool_records_transparency_event_for_cached_error_fallback(monkeypatch):
+    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
     monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(mcp_client, "resolve_local_fastpath_response", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(mcp_client, "resolve_cached_tool_response", lambda *_args, **_kwargs: '{"cached":true}')
@@ -323,6 +325,7 @@ def test_resolve_local_fastpath_response_builds_training_load_payload(monkeypatc
 
 @pytest.mark.asyncio
 async def test_call_tool_uses_local_fastpath_when_available(monkeypatch):
+    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
     monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(
         mcp_client,
@@ -344,6 +347,7 @@ async def test_call_tool_uses_local_fastpath_when_available(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_tool_returns_cached_response_on_runtime_error_in_frozen(monkeypatch):
+    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
     monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(
         mcp_client,
@@ -362,3 +366,35 @@ async def test_call_tool_returns_cached_response_on_runtime_error_in_frozen(monk
 
     out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
     assert out == '{"cached":true}'
+
+
+@pytest.mark.asyncio
+async def test_call_tool_default_single_path_ignores_fastpath(monkeypatch):
+    monkeypatch.delenv("KAIROS_MCP_ENABLE_FALLBACK", raising=False)
+    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
+    monkeypatch.setattr(
+        mcp_client,
+        "resolve_local_fastpath_response",
+        lambda tool_name, arguments, backend_effective: '{"should":"not-use"}',
+    )
+
+    class FakeSession:
+        async def call_tool(self, _name: str, _arguments: dict):
+            return SimpleNamespace(content=[SimpleNamespace(text="direct")])
+
+    out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
+    assert out == "direct"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_default_single_path_returns_error_without_cache(monkeypatch):
+    monkeypatch.delenv("KAIROS_MCP_ENABLE_FALLBACK", raising=False)
+    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
+    monkeypatch.setattr(mcp_client, "resolve_cached_tool_response", lambda *_args, **_kwargs: '{"cached":true}')
+
+    class FakeSession:
+        async def call_tool(self, _name: str, _arguments: dict):
+            raise RuntimeError("mcp down")
+
+    out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
+    assert "Error al llamar a 'get_user_profile': mcp down" == out

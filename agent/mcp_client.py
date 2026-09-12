@@ -60,6 +60,12 @@ def consume_tool_transparency_events() -> list[dict]:
     return out
 
 
+def _is_mcp_fallback_enabled() -> bool:
+    """Controla fallback/caché MCP. Por defecto desactivado para ruta única."""
+    raw = (os.environ.get("KAIROS_MCP_ENABLE_FALLBACK") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _iter_exception_group(exc: BaseException) -> list[BaseException]:
     """Aplana un BaseExceptionGroup para inspeccionar todas sus excepciones internas."""
     if isinstance(exc, BaseExceptionGroup):
@@ -340,19 +346,22 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
             return contract_error
 
         backend_effective = (os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or "").strip().lower()
-        local_fastpath = resolve_local_fastpath_response(
-            normalized_tool_name,
-            normalized_args,
-            backend_effective=backend_effective,
-        )
-        if local_fastpath is not None:
-            _record_tool_transparency_event(
+        fallback_enabled = _is_mcp_fallback_enabled()
+
+        if fallback_enabled:
+            local_fastpath = resolve_local_fastpath_response(
                 normalized_tool_name,
-                mode="fallback_fastpath",
-                reason="resolved via local fastpath/cache in frozen backend",
+                normalized_args,
+                backend_effective=backend_effective,
             )
-            cache_tool_response(normalized_tool_name, normalized_args, local_fastpath)
-            return local_fastpath
+            if local_fastpath is not None:
+                _record_tool_transparency_event(
+                    normalized_tool_name,
+                    mode="fallback_fastpath",
+                    reason="resolved via local fastpath/cache in frozen backend",
+                )
+                cache_tool_response(normalized_tool_name, normalized_args, local_fastpath)
+                return local_fastpath
 
         result = await session.call_tool(normalized_tool_name, normalized_args)
         # El contenido puede ser texto o JSON estructurado
@@ -362,20 +371,22 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
                 if hasattr(block, "text"):
                     parts.append(block.text)
             response_text = "\n".join(parts)
-            cache_tool_response(normalized_tool_name, normalized_args, response_text)
+            if fallback_enabled:
+                cache_tool_response(normalized_tool_name, normalized_args, response_text)
             return response_text
         return "Sin datos disponibles."
     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError) as e:
-        cached = resolve_cached_tool_response(
-            normalized_tool_name if 'normalized_tool_name' in locals() else tool_name,
-            normalized_args if 'normalized_args' in locals() else arguments,
-            backend_effective=(os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or "").strip().lower(),
-        )
-        if cached is not None:
-            _record_tool_transparency_event(
+        if _is_mcp_fallback_enabled():
+            cached = resolve_cached_tool_response(
                 normalized_tool_name if 'normalized_tool_name' in locals() else tool_name,
-                mode="fallback_cache_on_error",
-                reason=f"{type(e).__name__}: {e}",
+                normalized_args if 'normalized_args' in locals() else arguments,
+                backend_effective=(os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or "").strip().lower(),
             )
-            return cached
+            if cached is not None:
+                _record_tool_transparency_event(
+                    normalized_tool_name if 'normalized_tool_name' in locals() else tool_name,
+                    mode="fallback_cache_on_error",
+                    reason=f"{type(e).__name__}: {e}",
+                )
+                return cached
         return f"Error al llamar a '{tool_name}': {str(e)}"
