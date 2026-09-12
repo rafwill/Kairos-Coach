@@ -18,10 +18,16 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 21
+TSS_FORMULA_VERSION = 22
 
 # Fast trail threshold (< 6:00/km) where raw zone hrTSS is explicitly preferred.
 TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
+
+# Non-fast trail smoothing for sustained very-low-intensity blocks.
+TRAIL_NON_FAST_LOW_IF_THRESHOLD = 0.58
+TRAIL_NON_FAST_LOW_IF_FLOOR = 0.58
+TRAIL_NON_FAST_LOW_IF_MIN_BLOCK_SECONDS = 5 * 60
+TRAIL_NON_FAST_LOW_IF_APPLY_RATIO = 0.18
 
 
 def _is_cycling_activity(act_type: Any) -> bool:
@@ -901,6 +907,7 @@ def _estimate_hr_tss_from_activity_details_lthr(
     activity_details_raw: str | None,
     hr_threshold_bpm: float | None,
     hr_rest_bpm: float | None = None,
+    attenuate_sustained_low_if: bool = False,
     min_coverage_ratio: float = 0.40,
 ) -> float | None:
     if hours <= 0:
@@ -930,6 +937,7 @@ def _estimate_hr_tss_from_activity_details_lthr(
 
     tss_total = 0.0
     covered_seconds = 0.0
+    segments: list[tuple[float, float]] = []
     for idx, (t_sec, hr) in enumerate(samples):
         if idx + 1 < len(samples):
             dt = samples[idx + 1][0] - t_sec
@@ -941,8 +949,43 @@ def _estimate_hr_tss_from_activity_details_lthr(
         dt = max(1.0, min(30.0, float(dt)))
         denom = max(1.0, float(lthr) - float(hr_rest))
         if_sec = max(0.40, min(1.15, (float(hr) - float(hr_rest)) / denom))
+        segments.append((dt, if_sec))
         tss_total += (dt / 3600.0) * (if_sec**2) * 100.0
         covered_seconds += dt
+
+    if attenuate_sustained_low_if and segments and covered_seconds > 0:
+        low_threshold = float(TRAIL_NON_FAST_LOW_IF_THRESHOLD)
+        low_floor = float(TRAIL_NON_FAST_LOW_IF_FLOOR)
+        min_block = float(TRAIL_NON_FAST_LOW_IF_MIN_BLOCK_SECONDS)
+
+        adjusted_segments: list[tuple[float, float]] = []
+        low_total_seconds = 0.0
+        i = 0
+        while i < len(segments):
+            dt_i, if_i = segments[i]
+            if if_i < low_threshold:
+                j = i
+                block_seconds = 0.0
+                while j < len(segments) and segments[j][1] < low_threshold:
+                    block_seconds += segments[j][0]
+                    j += 1
+
+                if block_seconds >= min_block:
+                    low_total_seconds += block_seconds
+                    for k in range(i, j):
+                        dt_k, if_k = segments[k]
+                        adjusted_segments.append((dt_k, max(low_floor, if_k)))
+                else:
+                    adjusted_segments.extend(segments[i:j])
+                i = j
+                continue
+
+            adjusted_segments.append((dt_i, if_i))
+            i += 1
+
+        low_ratio = low_total_seconds / covered_seconds
+        if low_ratio >= float(TRAIL_NON_FAST_LOW_IF_APPLY_RATIO):
+            tss_total = sum((dt / 3600.0) * (if_sec**2) * 100.0 for dt, if_sec in adjusted_segments)
 
     coverage_ratio = (covered_seconds / duration_seconds) if duration_seconds > 0 else 0.0
     if coverage_ratio < max(0.0, float(min_coverage_ratio or 0.0)):
@@ -2300,6 +2343,7 @@ def _estimate_session_tss(
                         activity_details_raw=details_payload,
                         hr_threshold_bpm=lthr,
                         hr_rest_bpm=hr_rest_bpm,
+                        attenuate_sustained_low_if=True,
                         min_coverage_ratio=0.40,
                     )
                     if tss_hr_stream_lthr is not None:
