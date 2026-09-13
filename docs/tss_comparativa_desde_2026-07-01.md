@@ -1,0 +1,76 @@
+# Comparativa TSS desde 2026-07-01
+
+## Metadatos
+
+- Estado: baseline historico de comparativa general (no usar como fuente unica para cierre trail v24).
+- Fecha de corte: 2026-09-13
+- Hora de actualizacion: 15:45:45
+- Actividades totales: 56
+- Actividades con TP local: 42
+
+## Referencias vigentes
+
+- Fuente trail vigente: `docs/tss_trail_metodo_desde_2026-07-01.csv`.
+- Regeneracion reproducible trail: `tools/regenerate_trail_tss_table.py`.
+- Cierre del bloque trail: `docs/trail-tss-cierre-2026-09-13.md`.
+
+## Tabla historica
+
+| Fecha | Activity ID | Modalidad | Actividad | TP (local) | Nuevo calculo (metodo) | Desviacion (nuevo-TP) |
+| --- | ---: | --- | --- | ---: | ---: | ---: |
+| 2026-09-11 10:04:00 | 24322094785 | trail_running | Trail.Barranca-Bola-Cotos-Cabezas-Bola-Pto Navacerrada-Emburria-Barranca | 261.7 | 306.2 (hrTSS) | 44.5 |
+| 2026-09-10 18:10:19 | 24312789916 | running | Rodaje. Tapia CDC en Z2 y subidas en Z3 | 102.0 | 100.2 (TSS) | -1.8 |
+| 2026-09-09 21:21:44 | 24301805124 | treadmill_running | Eliptica. 30' Z1 Transferencia Fuerza | 20.0 | 39.2 (TSS) | 19.2 |
+| 2026-09-09 20:31:15 | 24301501111 | strength_training | Gimnasio. Trail - Estabilidad y core | 25.0 | 24.0 (TSS) | -1.0 |
+| 2026-09-08 23:02:02 | 24289871567 | running | Rodaje. 50min Z2 nocturnos | 50.0 | 52.4 (TSS) | 2.4 |
+| 2026-09-08 06:53:09 | 24279679308 | strength_training | Gimnasio. Trabajo neuromuscular con alta carga | 43.0 | 35.2 (TSS) | -7.8 |
+| 2026-09-04 09:20:01 | 24234082111 | trail_running | Trail.Barranca-Bola-Cotos-Bola-Pto Navacerrada-Emburriaderos-Ortiz-Barranca | 228.0 | 294.1 (hrTSS) | 66.1 |
+| 2026-09-03 20:00:14 | 24227364808 | running | Fartlek. Cal + 40' Z3 + VC | 91.0 | 83.4 (TSS) | -7.6 |
+| 2026-09-02 18:58:46 | 24213935868 | strength_training | Gimnasio. Core y tren superior | 34.0 | 33.8 (TSS) | -0.2 |
+| 2026-09-01 19:22:14 | 24201327869 | running | Rodaje. Tapia CDC Z2 | 103.0 | 99.1 (TSS) | -3.9 |
+| 2026-08-31 16:23:55 | 24185208392 | strength_training | Gimnasio. Trabajo neuromuscular con alta carga | 36.0 | 37.1 (TSS) | 1.1 |
+| 2026-08-30 09:13:04 | 24172582627 | trail_running | Trail. Puerto de Navacerrada - Bola - Cotos  - Peñalara i/v | 223.0 | 232.1 (hrTSS) | 9.1 |
+| 2026-08-28 19:56:43 | 24152640491 | trail_running | Trail. Navacerrada - Maliciosa - Bola - Puerto de Navacerrada  (Nocturna | 137.0 | 141.7 (hrTSS) | 4.7 |
+| 2026-08-27 19:50:28 | 24141099893 | running | Series. 4x1000. Empezamos temporada | 94.0 | 117.4 (TSS) | 23.4 |
+| 2026-08-27 17:24:17 | 24138532236 | strength_training | Gimnasio. Tobillos, cadera y core | 33.0 | 34.0 (TSS) | 1.0 |
+| 2026-08-25 09:29:39 | 24107904670 | trail_running | Trail. Puerto de La Morcuera - Hoya de San Blas i/v | 137.0 | 201.8 (hrTSS) | 64.8 |
+| 2026-08-24 18:29:09 | 24100578449 | strength_training | Gimnasio. Trabajo Neuromuscular Trail Sesión 1 | 47.0 | 48.7 (TSS) | 1.7 |
+| 2026-08-23 21:03:35 | 24090094777 | running | Rodaje. 10k de Vuelta de vacaciones | 61.0 | 54.8 (TSS) | -6.2 |
+| 2026-08-21 11:44:36 | 24059814335 | running | Rodaje. 21k Pesadoira | 135.0 | 130.0 (TSS) | -5.0 |
+| 2026-08-19 08:54:35 | 24032702641 | strength_training | Gimnasio. Complemento tobillo y core | 31.0 | 32.5 (TSS) | 1.5 |
+| 2026-08-18 20:24:14 | 24027714450 | running | Fartlek. 8k +2k sostenido | 66.0 | 71.9 (TSS) | 5.9 |
+| 2026-08-17 18:24:37 | 24013969366 | hiking | Senderismo. Ruta A Moa 1/2 con Héctor (O Fieiro - A Coruña) | 61.0 | 79.8 (hrTSS) | 18.8 |
+| 2026-08-16 20:08:12 | 24003202488 | trail_running | Trail. Pesadoira - Parque Eólico de Orzán (Larga) | 112.0 | 100.1 (hrTSS) | -11.9 |
+| 2026-08-15 15:38:51 | 23987906198 | running | Rodaje. 15k Z1-Z2 Pesadoira | 93.0 | 90.3 (TSS) | -2.7 |
+| 2026-08-14 20:46:35 | 23978414652 | strength_training | Fuerza | 28.0 | 28.9 (TSS) | 0.9 |
+| 2026-08-13 20:41:29 | 23966766696 | running | Fartlek. 8x45" cuestas | 66.0 | 77.1 (TSS) | 11.1 |
+| 2026-08-12 15:43:09 | 23950882994 | gravel_cycling | Gravel. Alrededores de A Pereira | - | 89.3 (TSS) | - |
+| 2026-08-11 20:56:48 | 23941202646 | running | Rodaje. 8km con Héctor en bici | 47.0 | 46.7 (TSS) | -0.3 |
+| 2026-08-10 19:27:50 | 23926829037 | strength_training | Gimnasio. Mantenimiento Pesadoira Premium Box | - | 33.4 (TSS) | - |
+| 2026-08-09 17:45:43 | 23915033216 | trail_running | Trail. Monte O Pindo - Presa y Cascada Ézaro (Pindo-A Coruña) | 103.7 | 130.2 (hrTSS) | 26.5 |
+| 2026-08-08 20:53:53 | 23903772587 | running | Rodaje. 55' Z1-Z2 Cto 10k Pesadoira | 64.0 | 61.4 (TSS) | -2.6 |
+| 2026-08-07 17:07:47 | 23889452312 | gravel_cycling | Gravel. Alrededores de A Pereira | - | 66.0 (hrTSS) | - |
+| 2026-08-06 20:45:31 | 23879627570 | running | Fartlek. 6x45" cuestas + 6x45" llano | 76.0 | 83.1 (TSS) | 7.1 |
+| 2026-08-04 18:25:40 | 23852863121 | trail_running | Trail. Monte Padriñan/Sanxenxo (Sanxenxo - Pontevedra) | 91.4 | 131.5 (hrTSS) | 40.1 |
+| 2026-08-03 11:56:52 | 23834553122 | strength_training | Gimnasio. Full tren inferior (Augusta Wellness Resort - Sanxenxo) | - | 36.8 (TSS) | - |
+| 2026-08-02 15:26:44 | 23829149525 | walking | Turismo. Paseo Maritimo de Sanxenxo y Portonovo | - | 184.5 (hrTSS) | - |
+| 2026-08-01 19:58:32 | 23816417942 | running | Rodaje. Paseo Marítimo San Xenxo y Portonovo (SanXenXo - Pontevedra) | 77.0 | 82.3 (TSS) | 5.3 |
+| 2026-07-31 16:42:26 | 23802741099 | running | Rodaje. 17k Pesadoira | 108.0 | 107.5 (TSS) | -0.5 |
+| 2026-07-28 20:04:00 | 23768097885 | road_biking | Road. Un poquito de CDC | - | 102.4 (TSS) | - |
+| 2026-07-27 23:42:39 | 23756058994 | running | Rodaje. 45' Z1 Por Parque Emperatriz de Austria | 50.0 | 46.5 (TSS) | -3.5 |
+| 2026-07-26 08:56:27 | 23736736755 | trail_running | Trail.Miraflores-Senda Paco-Pico de la Pala-Pico de la Perdiguera- Morcuera | 128.2 | 159.0 (hrTSS) | 30.8 |
+| 2026-07-25 15:08:57 | 23728782881 | mountain_biking | MTB. 50km por el Parque Regional del Suroeste | - | 107.2 (TSS) | - |
+| 2026-07-23 17:59:55 | 23707417406 | trail_running | Trail. Barranca - Bola - Mirador de las Canchas - Senda Ortiz - Barranca | 132.7 | 151.8 (hrTSS) | 19.1 |
+| 2026-07-22 09:57:48 | 23688665150 | mountain_biking | MTB. Parque Emperatriz de Austria - El Pardo i/v | - | 128.0 (TSS) | - |
+| 2026-07-19 08:38:45 | 23650370517 | running | Rodaje. 16km Pesadoira | 100.0 | 96.3 (TSS) | -3.7 |
+| 2026-07-18 11:39:48 | 23640705145 | gravel_cycling | Gravel. Vuelta rapida con Héctor | - | 6.0 (hrTSS) | - |
+| 2026-07-17 16:35:27 | 23632323070 | running | Rodaje. 75' Z1 Pesadoira | 82.0 | 81.3 (TSS) | -0.7 |
+| 2026-07-15 07:53:55 | 23603234401 | running | Rodaje.10k Z1 en Pradolongo | 60.0 | 54.8 (TSS) | -5.2 |
+| 2026-07-14 10:04:05 | 23592664136 | mountain_biking | MTB. Parque Emperatriz de Austria - Chorro del Pardo i/v | - | 111.3 (TSS) | - |
+| 2026-07-12 09:28:38 | 23568059621 | road_biking | Road. Parque Emperatriz de Austria - SMDLV i/v | - | 111.8 (TSS) | - |
+| 2026-07-11 09:03:11 | 23555669922 | running | Rodaje. 90' Z2 Polvoranca | 98.0 | 91.2 (TSS) | -6.8 |
+| 2026-07-10 07:23:21 | 23543457135 | running | Rodaje. 40' suaves por Pradalongo | 46.0 | 42.8 (TSS) | -3.2 |
+| 2026-07-09 08:53:00 | 23532902698 | mountain_biking | MTB. Tapia y desayuno I/V por Madrid Río | - | 92.9 (TSS) | - |
+| 2026-07-04 12:32:05 | 23478220005 | hiking | Senderismo. Pla de Beret - Refugi de Mongarri i/v (Baqueira Beret - Lleida) | - | 113.8 (hrTSS) | - |
+| 2026-07-03 16:56:01 | 23468464527 | walking | Turismo. Vielha (Alto Arán - Lleida) | - | 99.8 (hrTSS) | - |
+| 2026-07-02 07:30:15 | 23455001968 | trail_running | Ultra Trail. Hoka Val d'Aran Pyrenees by UTMB PDA 2026 | 493.7 | 547.0 (hrTSS) | 53.3 |

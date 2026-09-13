@@ -1,10 +1,32 @@
 # Tabla comparativa Trail Running desde 2026-06-01
 
+## Metadatos
+
+- Estado: baseline historico (pre-cierre final de investigacion trail).
 - Generada: 2026-09-12
 - Rango: 2026-06-01 a 2026-09-06
 
+## Nota de vigencia
+
+Este documento se mantiene como referencia historica de una fase intermedia.
+
+Para estado operativo vigente (formula v24 + columnas diagnosticas + validacion de anclas), usar:
+
+- `docs/tss_trail_metodo_desde_2026-07-01.csv`
+- `tools/regenerate_trail_tss_table.py`
+
+Columnas canonicas para comparacion actual vs TP:
+
+- `ratio_recomputed_vs_tp`
+- `delta_recomputed_vs_tp`
+- `duration_hours_resolved`
+- `hr_coverage_ratio`
+- `grade_source`, `grade_p50`, `grade_steep_up_share`
+
+## Tabla historica
+
 | Fecha | Activity ID | Modalidad | Actividad | Kairos actual | Kairos formula nueva | Metodo nuevo | TP | Desv nueva-TP | Kairos no-rapido atenuado | Desv atenuado-TP |
-|---|---:|---|---|---:|---:|---|---|---:|---:|---:|
+| --- | ---: | --- | --- | ---: | ---: | --- | --- | ---: | ---: | ---: |
 | 2026-09-11 | 24322094785 | trail_running | Navacerrada Trail running | 306.2 | 261.7 | hrTSS | 260 hrTSS | 1.7 | 261.7 | 1.7 |
 | 2026-09-04 | 24234082111 | trail_running | Trail.Barranca-Bola-Cotos-Bola-Pto Navacerrada-Emburriaderos-Ortiz-Barranca | 369.4 | 235.8 | hrTSS | 228 hrTSS | 7.8 | 235.8 | 7.8 |
 | 2026-08-30 | 24172582627 | trail_running | Trail. Puerto de Navacerrada - Bola - Cotos  - Peñalara i/v | 344.9 | 197.9 | hrTSS | 223 hrTSS | -25.1 | 210.0 | -13.0 |

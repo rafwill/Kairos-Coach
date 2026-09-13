@@ -32,6 +32,10 @@ agent.log
 tmp/
 .tmp_*
 
+# Real payload captures for offline forensic replay (sensitive/user data)
+fixtures/real_payloads/*
+!fixtures/real_payloads/.gitkeep
+
 # Memoria local del usuario (puede contener datos personales)
 memory/*
 !memory/.gitkeep

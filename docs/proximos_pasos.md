@@ -1,20 +1,19 @@
 # Proximos pasos - Kairos Coach
 
-Ultima actualizacion: 2026-09-12
+Ultima actualizacion: 2026-09-13
 
-## Actualizacion 2026-09-12 (estado vigente)
+## Actualizacion 2026-09-13 (estado vigente)
 
 Resumen ejecutivo:
-1. CI desbloqueada: dependencias alineadas (`mcp>=1.0.0,<2.0.0` y `fitparse>=1.2.0`).
-2. MCP simplificado en runtime: ruta unica por defecto (single-path directo).
-3. Contingencia mantenida solo como opt-in (`KAIROS_MCP_ENABLE_FALLBACK=true`).
-4. Regresion completa local en verde tras simplificacion: 455 tests OK.
+1. Investigacion trail cerrada en su causa principal: el desvio grande se explicaba por el bug de duracion de entrada (`hours`).
+2. Formula vigente consolidada en `TSS_FORMULA_VERSION=24` con validacion de anclas en cada regeneracion trail.
+3. Artefacto trail oficial actualizado: `docs/tss_trail_metodo_desde_2026-07-01.csv` con comparativa historica y comparativa recalculada vs TP.
+4. Instrumentacion diagnostica persistida en tabla: `duration_hours_resolved`, `hr_coverage_ratio`, `grade_source`, `grade_p50`, `grade_steep_up_share`.
 
 Prioridades recomendadas desde este punto:
-1. Monitorizar 3-5 dias la estabilidad del modo single-path (timeouts, errores MCP y latencia real percibida).
-2. Documentar decision operativa final: mantener fallback opt-in o retirarlo completamente.
-3. Revalidar bateria E2E conversacional con el flujo actual (especialmente consultas mixtas factual + coaching).
-4. Consolidar limpieza tecnica (eliminar menciones legacy de backend dual donde aun queden).
+1. Acumular 2-3 actividades trail cortas nuevas con TP para contrastar la hipotesis de sesgo en sesiones cortas.
+2. Recalcular con `tools/regenerate_trail_tss_table.py` tras cada nueva trail y revisar evolucion de `ratio_recomputed_vs_tp`.
+3. Mantener enfoque de evidencia: separar patron observado de causa confirmada hasta tener muestra suficiente.
 
 Nota:
 1. El contenido restante de este documento se conserva como bitacora historica de ejecucion y decisiones previas.
@@ -64,6 +63,7 @@ Punto en el que estamos:
 Evidencia viva:
 1. `docs/testing-bateria-punto55.md`
 2. `docs/refactor-load-metrics-2026-09-02.md`
+3. `docs/trail-tss-cierre-2026-09-13.md`
 
 ---
 

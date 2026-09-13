@@ -1,0 +1,43 @@
+generated_at,formula_version,fecha,activity_id,modalidad,actividad,nueva_formula_valor_metodo,nueva_formula_valor,nueva_formula_metodo,tp_memoria_valor_unidad,tp_memoria_valor,tp_memoria_unidad,delta_nueva_vs_tp,ratio_nueva_vs_tp
+2026-09-13 21:11:02,24,2026-09-11 10:04:00,24322094785,trail_running,Trail.Barranca-Bola-Cotos-Cabezas-Bola-Pto Navacerrada-Emburria-Barranca,261.7 hrTSS,261.7,hrTSS,261.7 hrTSS,261.7,hrTSS,-0.0,1.0
+2026-09-13 21:11:02,24,2026-09-10 18:10:19,24312789916,running,Rodaje. Tapia CDC en Z2 y subidas en Z3,94.7 TSS,94.7,TSS,102.0 rTSS,102.0,rTSS,-7.3,0.928
+2026-09-13 21:11:02,24,2026-09-09 21:21:44,24301805124,treadmill_running,Eliptica. 30' Z1 Transferencia Fuerza,23.2 hrTSS,23.2,hrTSS,20.0 rTSS,20.0,rTSS,3.2,1.161
+2026-09-13 21:11:02,24,2026-09-09 20:31:15,24301501111,strength_training,Gimnasio. Trail - Estabilidad y core,24.0 TSS,24.0,TSS,25.0 TSS,25.0,TSS,-1.0,0.959
+2026-09-13 21:11:02,24,2026-09-08 23:02:02,24289871567,running,Rodaje. 50min Z2 nocturnos,49.5 TSS,49.5,TSS,50.0 rTSS,50.0,rTSS,-0.5,0.99
+2026-09-13 21:11:02,24,2026-09-08 06:53:09,24279679308,strength_training,Gimnasio. Trabajo neuromuscular con alta carga,35.2 TSS,35.2,TSS,43.0 TSS,43.0,TSS,-7.8,0.819
+2026-09-13 21:11:02,24,2026-09-04 09:20:01,24234082111,trail_running,Trail.Barranca-Bola-Cotos-Bola-Pto Navacerrada-Emburriaderos-Ortiz-Barranca,235.8 hrTSS,235.8,hrTSS,228.0 hrTSS,228.0,hrTSS,7.8,1.034
+2026-09-13 21:11:02,24,2026-09-03 20:00:14,24227364808,running,Fartlek. Cal + 40' Z3 + VC,78.7 TSS,78.7,TSS,91.0 rTSS,91.0,rTSS,-12.3,0.865
+2026-09-13 21:11:02,24,2026-09-02 18:58:46,24213935868,strength_training,Gimnasio. Core y tren superior,33.6 TSS,33.6,TSS,34.0 TSS,34.0,TSS,-0.4,0.989
+2026-09-13 21:11:02,24,2026-09-01 19:22:14,24201327869,running,Rodaje. Tapia CDC Z2,93.6 TSS,93.6,TSS,103.0 rTSS,103.0,rTSS,-9.4,0.909
+2026-09-13 21:11:02,24,2026-08-31 16:23:55,24185208392,strength_training,Gimnasio. Trabajo neuromuscular con alta carga,37.0 TSS,37.0,TSS,36.0 TSS,36.0,TSS,1.0,1.029
+2026-09-13 21:11:02,24,2026-08-30 09:13:04,24172582627,trail_running,Trail. Puerto de Navacerrada - Bola - Cotos  - Peñalara i/v,210.0 hrTSS,210.0,hrTSS,223.0 hrTSS,223.0,hrTSS,-13.0,0.942
+2026-09-13 21:11:02,24,2026-08-28 19:56:43,24152640491,trail_running,Trail. Navacerrada - Maliciosa - Bola - Puerto de Navacerrada  (Nocturna,108.1 hrTSS,108.1,hrTSS,137.0 hrTSS,137.0,hrTSS,-28.9,0.789
+2026-09-13 21:11:02,24,2026-08-27 19:50:28,24141099893,running,Series. 4x1000. Empezamos temporada,110.8 TSS,110.8,TSS,94.0 rTSS,94.0,rTSS,16.8,1.179
+2026-09-13 21:11:02,24,2026-08-27 17:24:17,24138532236,strength_training,"Gimnasio. Tobillos, cadera y core",34.0 TSS,34.0,TSS,33.0 TSS,33.0,TSS,1.0,1.029
+2026-09-13 21:11:02,24,2026-08-25 09:29:39,24107904670,trail_running,Trail. Puerto de La Morcuera - Hoya de San Blas i/v,140.1 hrTSS,140.1,hrTSS,137.0 hrTSS,137.0,hrTSS,3.1,1.023
+2026-09-13 21:11:02,24,2026-08-24 18:29:09,24100578449,strength_training,Gimnasio. Trabajo Neuromuscular Trail Sesión 1,48.7 TSS,48.7,TSS,47.0 TSS,47.0,TSS,1.7,1.035
+2026-09-13 21:11:02,24,2026-08-23 21:03:35,24090094777,running,Rodaje. 10k de Vuelta de vacaciones,51.7 TSS,51.7,TSS,61.0 rTSS,61.0,rTSS,-9.3,0.848
+2026-09-13 21:11:02,24,2026-08-21 11:44:36,24059814335,running,Rodaje. 21k Pesadoira,122.8 TSS,122.8,TSS,135.0 rTSS,135.0,rTSS,-12.2,0.91
+2026-09-13 21:11:02,24,2026-08-19 08:54:35,24032702641,strength_training,Gimnasio. Complemento tobillo y core,34.5 TSS,34.5,TSS,31.0 TSS,31.0,TSS,3.5,1.112
+2026-09-13 21:11:02,24,2026-08-18 20:24:14,24027714450,running,Fartlek. 8k +2k sostenido,68.3 TSS,68.3,TSS,66.0 rTSS,66.0,rTSS,2.3,1.035
+2026-09-13 21:11:02,24,2026-08-17 18:24:37,24013969366,hiking,Senderismo. Ruta A Moa 1/2 con Héctor (O Fieiro - A Coruña),113.0 TSS,113.0,TSS,61.0 hrTSS,61.0,hrTSS,52.0,1.853
+2026-09-13 21:11:02,24,2026-08-16 20:08:12,24003202488,trail_running,Trail. Pesadoira - Parque Eólico de Orzán (Larga),84.6 hrTSS,84.6,hrTSS,112.0 hrTSS,112.0,hrTSS,-27.4,0.755
+2026-09-13 21:11:02,24,2026-08-15 15:38:51,23987906198,running,Rodaje. 15k Z1-Z2 Pesadoira,85.3 TSS,85.3,TSS,93.0 rTSS,93.0,rTSS,-7.7,0.917
+2026-09-13 21:11:02,24,2026-08-14 20:46:35,23978414652,strength_training,Fuerza,28.9 TSS,28.9,TSS,28.0 TSS,28.0,TSS,0.9,1.031
+2026-09-13 21:11:02,24,2026-08-13 20:41:29,23966766696,running,"Fartlek. 8x45"" cuestas",72.8 TSS,72.8,TSS,66.0 rTSS,66.0,rTSS,6.8,1.103
+2026-09-13 21:11:02,24,2026-08-11 20:56:48,23941202646,running,Rodaje. 8km con Héctor en bici,44.1 TSS,44.1,TSS,47.0 rTSS,47.0,rTSS,-2.9,0.938
+2026-09-13 21:11:02,24,2026-08-09 17:45:43,23915033216,trail_running,Trail. Monte O Pindo - Presa y Cascada Ézaro (Pindo-A Coruña),103.7 hrTSS,103.7,hrTSS,103.7 hrTSS,103.7,hrTSS,-0.0,1.0
+2026-09-13 21:11:02,24,2026-08-08 20:53:53,23903772587,running,Rodaje. 55' Z1-Z2 Cto 10k Pesadoira,58.0 TSS,58.0,TSS,64.0 rTSS,64.0,rTSS,-6.0,0.906
+2026-09-13 21:11:02,24,2026-08-06 20:45:31,23879627570,running,"Fartlek. 6x45"" cuestas + 6x45"" llano",78.5 TSS,78.5,TSS,76.0 rTSS,76.0,rTSS,2.5,1.033
+2026-09-13 21:11:02,24,2026-08-04 18:25:40,23852863121,trail_running,Trail. Monte Padriñan/Sanxenxo (Sanxenxo - Pontevedra),91.4 hrTSS,91.4,hrTSS,91.4 hrTSS,91.4,hrTSS,0.0,1.001
+2026-09-13 21:11:02,24,2026-08-01 19:58:32,23816417942,running,Rodaje. Paseo Marítimo San Xenxo y Portonovo (SanXenXo - Pontevedra),77.8 TSS,77.8,TSS,77.0 rTSS,77.0,rTSS,0.8,1.01
+2026-09-13 21:11:02,24,2026-07-31 16:42:26,23802741099,running,Rodaje. 17k Pesadoira,101.6 TSS,101.6,TSS,108.0 rTSS,108.0,rTSS,-6.4,0.94
+2026-09-13 21:11:02,24,2026-07-27 23:42:39,23756058994,running,Rodaje. 45' Z1 Por Parque Emperatriz de Austria,43.9 TSS,43.9,TSS,50.0 rTSS,50.0,rTSS,-6.1,0.878
+2026-09-13 21:11:02,24,2026-07-26 08:56:27,23736736755,trail_running,Trail.Miraflores-Senda Paco-Pico de la Pala-Pico de la Perdiguera- Morcuera,128.2 hrTSS,128.2,hrTSS,128.2 hrTSS,128.2,hrTSS,-0.0,1.0
+2026-09-13 21:11:02,24,2026-07-23 17:59:55,23707417406,trail_running,Trail. Barranca - Bola - Mirador de las Canchas - Senda Ortiz - Barranca,132.7 hrTSS,132.7,hrTSS,132.7 hrTSS,132.7,hrTSS,-0.0,1.0
+2026-09-13 21:11:02,24,2026-07-19 08:38:45,23650370517,running,Rodaje. 16km Pesadoira,90.9 TSS,90.9,TSS,100.0 rTSS,100.0,rTSS,-9.1,0.909
+2026-09-13 21:11:02,24,2026-07-17 16:35:27,23632323070,running,Rodaje. 75' Z1 Pesadoira,76.8 TSS,76.8,TSS,82.0 rTSS,82.0,rTSS,-5.2,0.936
+2026-09-13 21:11:02,24,2026-07-15 07:53:55,23603234401,running,Rodaje.10k Z1 en Pradolongo,51.8 TSS,51.8,TSS,60.0 rTSS,60.0,rTSS,-8.2,0.863
+2026-09-13 21:11:02,24,2026-07-11 09:03:11,23555669922,running,Rodaje. 90' Z2 Polvoranca,86.1 TSS,86.1,TSS,98.0 rTSS,98.0,rTSS,-11.9,0.879
+2026-09-13 21:11:02,24,2026-07-10 07:23:21,23543457135,running,Rodaje. 40' suaves por Pradalongo,40.4 TSS,40.4,TSS,46.0 rTSS,46.0,rTSS,-5.6,0.879
+2026-09-13 21:11:02,24,2026-07-02 07:30:15,23455001968,trail_running,Ultra Trail. Hoka Val d'Aran Pyrenees by UTMB PDA 2026,493.7 hrTSS,493.7,hrTSS,493.7 hrTSS,493.7,hrTSS,0.0,1.0
