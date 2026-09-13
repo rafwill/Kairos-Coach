@@ -9,6 +9,7 @@ import site
 import shutil
 import sys
 import logging
+import re
 import anyio
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -64,6 +65,59 @@ def _is_mcp_fallback_enabled() -> bool:
     """Controla fallback/caché MCP. Por defecto desactivado para ruta única."""
     raw = (os.environ.get("KAIROS_MCP_ENABLE_FALLBACK") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _extract_first_http_code(text: str) -> str:
+    if not text:
+        return ""
+    match = re.search(r"\bHTTP\s*(\d{3})\b", text, flags=re.IGNORECASE)
+    if match:
+        return str(match.group(1))
+    if "rate limited (429)" in text.lower():
+        return "429"
+    return ""
+
+
+def _classify_mcp_error_text(text: str) -> dict:
+    txt = str(text or "")
+    low = txt.lower()
+
+    code = _extract_first_http_code(txt)
+    has_403 = code == "403" or " 403" in low or "forbidden" in low
+    has_429 = code == "429" or "rate limited" in low or "too many requests" in low
+    has_auth = any(
+        token in low
+        for token in (
+            "login failed",
+            "all login strategies exhausted",
+            "unauthorized",
+            "forbidden",
+            "credentials",
+            "token",
+            "session",
+            "authentication",
+        )
+    )
+
+    if has_403 and has_429:
+        kind = "mixed_auth_and_rate_limit"
+    elif has_429:
+        kind = "rate_limit"
+    elif has_403 or has_auth:
+        kind = "auth_or_session"
+    else:
+        kind = "unknown"
+
+    retry_after = ""
+    retry_match = re.search(r"retry-?after\s*[:=]?\s*(\d+)", low)
+    if retry_match:
+        retry_after = str(retry_match.group(1))
+
+    return {
+        "kind": kind,
+        "http_code": code,
+        "retry_after_seconds": retry_after,
+    }
 
 
 def _iter_exception_group(exc: BaseException) -> list[BaseException]:
@@ -371,6 +425,24 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
                 if hasattr(block, "text"):
                     parts.append(block.text)
             response_text = "\n".join(parts)
+            if getattr(result, "isError", False):
+                diag = _classify_mcp_error_text(response_text)
+                log.warning(
+                    "MCP tool error tool=%s kind=%s http=%s retry_after=%s",
+                    normalized_tool_name,
+                    diag.get("kind") or "",
+                    diag.get("http_code") or "",
+                    diag.get("retry_after_seconds") or "",
+                )
+                _record_tool_transparency_event(
+                    normalized_tool_name,
+                    mode="mcp_error",
+                    reason=(
+                        f"kind={diag.get('kind') or ''};"
+                        f"http={diag.get('http_code') or ''};"
+                        f"retry_after={diag.get('retry_after_seconds') or ''}"
+                    ),
+                )
             if fallback_enabled:
                 cache_tool_response(normalized_tool_name, normalized_args, response_text)
             return response_text
