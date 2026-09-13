@@ -50,6 +50,29 @@ Unix/macOS:
 - 0 regresiones en tests y smoke E2E sentinela.
 - Drift-check de catálogo Essentials en CI.
 
+## Incidentes 403 y 429 (diagnostico operativo)
+
+Cuando aparezcan `429` y `403` mezclados en una misma tanda, no usar retry ciego.
+
+### Comando recomendado
+
+```powershell
+c:/Github/garmin-ai-coach/.venv/Scripts/python.exe tools/mcp_relogin_probe.py
+```
+
+Comportamiento por defecto de la sonda:
+
+1. Re-login aislado sin llamadas de datos.
+2. Cooldown largo (`900s`, 15 min) antes de sondear.
+3. Sonda lenta (`8s` entre llamadas).
+4. Stop en el primer error para evitar escalada anti-abuso.
+
+### Lectura rapida de resultados
+
+1. `first_429_session_age_seconds` bajo (por ejemplo < 10s): probable bloqueo a nivel cuenta/IP, no solo por sesion.
+2. `429` seguido de `403` en la misma corrida: posible escalada anti-abuso; ampliar ventana de espera.
+3. Si el probe no queda limpio, no ejecutar trazas largas de analisis (hiking/running) en ese momento.
+
 ## Mantenimiento
 - Si cambia el catálogo o contrato de tools, actualizar:
   - `agent/mcp_client.py` (`GARMIN_ESSENTIAL_TOOLS`, `ALL_ESSENTIAL_TOOLS`).

@@ -21,6 +21,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - `docs/proximos_pasos.md` actualizado al estado post-cierre de investigacion trail (residuo abierto e hipotesis en observacion).
 - `docs/tss_comparativa_trail_desde_2026-06-01.md` actualizado para reflejar baseline historico vs recalculo v24.
 - `docs/tss_comparativa_desde_2026-07-01.md` marcado como baseline historico y enlazado al artefacto vigente de recalculo.
+- `docs/mcp-frozen-runbook.md` ampliado con protocolo de incidentes 403/429 y uso de sonda segura de re-login.
+- `docs/siguiente_iteracion_playbook_2026-09-13.md` agregado como guia operativa de arranque para la siguiente iteracion.
+- `docs/trail-tss-cierre-2026-09-13.md` ampliado con estado post-cierre (hiking/running abiertos) y referencias al diagnostico MCP.
 
 ## 2026-09-12
 

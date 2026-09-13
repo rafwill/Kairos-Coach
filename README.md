@@ -31,6 +31,19 @@ Resumen del ultimo barrido completo (11 trail con TP):
 - 2/11 muestran infraestimacion notable (~`0.79` y `0.76`) con cobertura HR alta, causa aun abierta.
 - Hipotesis en seguimiento: sesgo en sesiones trail cortas, pendiente de mas muestra.
 
+## Estado Abierto De Validacion (2026-09-13 noche)
+
+Pendientes de cierre antes de dar por definitiva la calibracion multideporte:
+
+- Hiking: posible regresion severa en `24013969366` (ratio `1.853`, etiqueta `TSS`), pendiente de traza de rama determinista cuando el MCP estabilice.
+- Running: sesgo negativo en la tabla independiente (`n=21`, `MAE=7.11`, `bias=-4.33`) pendiente de reconciliacion contra el corte previo oficial.
+- MCP Garmin: patron mixto `429` + `403` confirmado en la misma sesion; tratar como bloqueo cuenta/IP + posible degradacion de sesion, no como simple retry corto.
+
+Runbook operativo recomendado para reanudar diagnostico:
+
+- `tools/mcp_relogin_probe.py` (re-login aislado + cooldown + sonda lenta con stop temprano).
+- `docs/siguiente_iteracion_playbook_2026-09-13.md` (orden operativo: hiking primero, luego running).
+
 ---
 
 ## 🎯 Qué hace concretamente
