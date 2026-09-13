@@ -11,11 +11,20 @@
 - Causa raiz principal cerrada: la sobreestimacion alta venia del calculo de duracion de entrada (`hours`).
 - La rama de calculo `non_fast:lthr_details` no se modifico como respuesta principal al desvio grande.
 
+## Estado post-cierre (validacion cruzada abierta)
+
+- Hiking: actividad `24013969366` muestra desviacion alta (`113.0` vs `61.0`, ratio `1.853`) y cambio de etiqueta observado en tabla independiente; pendiente traza determinista rama-por-rama.
+- Running: en comparativa independiente actual aparece sesgo negativo agregado (`n=21`, `MAE=7.11`, `bias=-4.33`) pendiente de reconciliacion contra el corte previo oficial.
+- MCP Garmin: diagnostico de estabilidad bloqueado temporalmente por mezcla de `429` y `403` dentro de la misma ventana de sesion.
+
 ## Referencias
 
 - Tabla trail vigente: `docs/tss_trail_metodo_desde_2026-07-01.csv`
 - Script de regeneracion: `tools/regenerate_trail_tss_table.py`
 - Plan de continuidad: `docs/proximos_pasos.md`
+- Tabla independiente multideporte: `docs/tss_independiente_desde_2026-07-01_hasta_2026-09-13.csv`
+- Sonda de estabilidad MCP: `tools/mcp_relogin_probe.py`
+- Resultado de referencia de la sonda: `docs/mcp_relogin_probe_20260913_214913.json`
 
 ## Evidencia clave
 
