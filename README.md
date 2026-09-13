@@ -4,6 +4,33 @@
 
 La conversación con el coach tiene contexto real porque los números son reales. Antes de responder cualquier pregunta sobre estado, rendimiento o recomendaciones, el sistema consulta tus datos de Garmin. Nunca inventa, nunca generaliza.
 
+## Estado Trail TSS (2026-09-13)
+
+Estado validado con datos reales y recalculo reproducible:
+
+- Formula activa: `TSS_FORMULA_VERSION=24`.
+- Causa raiz principal cerrada: la sobreestimacion alta en trail se debia al resolutor de duracion (`hours`) y no a la rama `non_fast:lthr_details`.
+- Artefacto oficial de comparativa trail: `docs/tss_trail_metodo_desde_2026-07-01.csv`.
+- Script oficial de regeneracion y validacion de anclas: `tools/regenerate_trail_tss_table.py`.
+- Documento de cierre del bloque trail: `docs/trail-tss-cierre-2026-09-13.md`.
+
+La tabla trail mantiene ahora dos planos de comparacion:
+
+- Historico baseline: `ratio_tss_tp` y `tss_prod_corregido`.
+- Recalculo vigente vs TP: `ratio_recomputed_vs_tp` y `delta_recomputed_vs_tp`.
+
+Columnas diagnosticas persistidas para analisis causal sin reconstruir forenses:
+
+- `duration_hours_resolved`
+- `hr_coverage_ratio`
+- `grade_source`, `grade_p50`, `grade_steep_up_share`
+
+Resumen del ultimo barrido completo (11 trail con TP):
+
+- 7/11 actividades convergen a ratio ~`1.00-1.02`.
+- 2/11 muestran infraestimacion notable (~`0.79` y `0.76`) con cobertura HR alta, causa aun abierta.
+- Hipotesis en seguimiento: sesgo en sesiones trail cortas, pendiente de mas muestra.
+
 ---
 
 ## 🎯 Qué hace concretamente

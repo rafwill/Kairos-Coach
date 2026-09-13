@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 23
+TSS_FORMULA_VERSION = 24
 
 # Running fallback v2: fixed HR guardrail ratio to avoid per-dataset re-tuning.
 RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
@@ -175,6 +175,103 @@ def _extract_activity_duration_hours(activity: dict) -> float:
         return max(0.0, float(duration_seconds) / 3600.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _extract_duration_seconds_from_activity_details_payload(payload: Any) -> float | None:
+    data = _decode_json_like(payload)
+    if not isinstance(data, dict):
+        return None
+
+    # Keep this conservative: only inspect activity-level nodes, not arbitrary nested
+    # lap/segment trees where "duration" can represent partial intervals.
+    candidate_keys = (
+        "elapsedDuration",
+        "elapsedDurationInSeconds",
+        "timerDurationInSeconds",
+        "sumDuration",
+        "sumElapsedDuration",
+        "sumMovingDuration",
+        "duration",
+        "durationInSeconds",
+        "movingDuration",
+        "moving_duration_seconds",
+        "totalDuration",
+    )
+
+    def _pick(node: Any) -> float | None:
+        if not isinstance(node, dict):
+            return None
+        best = 0.0
+        for key in candidate_keys:
+            raw = node.get(key)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > best:
+                best = value
+        return best if best > 0 else None
+
+    # 1) Root node
+    root_value = _pick(data)
+    if root_value is not None:
+        return root_value
+
+    # 2) Known summary containers frequently present in Garmin payloads.
+    for key in (
+        "summaryDTO",
+        "summary",
+        "activitySummary",
+        "activity",
+        "metadata",
+        "detailsSummary",
+    ):
+        value = _pick(data.get(key))
+        if value is not None:
+            return value
+
+    return None
+
+
+def _resolve_activity_duration_hours(
+    activity: dict,
+    hr_zones_raw: str | None = None,
+    activity_details_raw: str | None = None,
+) -> float:
+    hours = _extract_activity_duration_hours(activity)
+    if hours > 0:
+        return hours
+
+    duration_seconds = 0.0
+
+    zones = _parse_hr_zones_list(hr_zones_raw) if hr_zones_raw else None
+    if zones:
+        zone_seconds = 0.0
+        for z in zones:
+            if not isinstance(z, dict):
+                continue
+            try:
+                zone_seconds += max(0.0, float(z.get("secsInZone") or 0.0))
+            except (TypeError, ValueError):
+                continue
+        duration_seconds = max(duration_seconds, zone_seconds)
+
+    # Real trail payloads observed so far expose no usable duration at details root
+    # or summary-like containers, so effective duration typically comes from samples.
+    details_seconds = _extract_duration_seconds_from_activity_details_payload(activity_details_raw)
+    if details_seconds is not None:
+        duration_seconds = max(duration_seconds, details_seconds)
+
+    if duration_seconds <= 0 and activity_details_raw:
+        samples = _extract_hr_samples_from_activity_details(activity_details_raw, 0.0)
+        if len(samples) >= 2:
+            duration_seconds = max(duration_seconds, float(samples[-1][0]))
+
+    if duration_seconds <= 0:
+        return 0.0
+    return max(0.0, duration_seconds / 3600.0)
 
 
 def _extract_activity_distance_km(activity: dict) -> float | None:
@@ -768,14 +865,20 @@ def _estimate_hr_tss_from_activity_details(
     hr_max_bpm: float | None,
     min_coverage_ratio: float = 0.40,
 ) -> float | None:
-    if hours <= 0:
-        return None
     if not activity_details_raw:
         return None
 
-    duration_seconds = hours * 3600.0
+    duration_seconds = hours * 3600.0 if hours > 0 else 0.0
+    if duration_seconds <= 0:
+        duration_seconds = float(_extract_duration_seconds_from_activity_details_payload(activity_details_raw) or 0.0)
+
     samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
     if len(samples) < 5:
+        return None
+
+    if duration_seconds <= 0 and len(samples) >= 2:
+        duration_seconds = max(0.0, float(samples[-1][0]))
+    if duration_seconds <= 0:
         return None
 
     avg_hr_raw = (
@@ -798,8 +901,6 @@ def _estimate_hr_tss_from_activity_details(
     except (TypeError, ValueError):
         return None
 
-    if hr_rest <= 0:
-        hr_rest = 50.0
     if hr_max <= 0:
         hr_max = 185.0
     if avg_hr is not None:
@@ -807,7 +908,6 @@ def _estimate_hr_tss_from_activity_details(
         hr_rest = min(hr_rest, avg_hr - 5.0)
 
     denom = max(1.0, hr_max - hr_rest)
-
     deltas = [
         samples[idx + 1][0] - samples[idx][0]
         for idx in range(len(samples) - 1)
@@ -942,9 +1042,20 @@ def _estimate_hr_tss_from_activity_details_lthr(
     attenuate_sustained_low_if: bool = False,
     min_coverage_ratio: float = 0.40,
 ) -> float | None:
-    if hours <= 0:
-        return None
     if not activity_details_raw:
+        return None
+
+    duration_seconds = hours * 3600.0 if hours > 0 else 0.0
+    if duration_seconds <= 0:
+        duration_seconds = float(_extract_duration_seconds_from_activity_details_payload(activity_details_raw) or 0.0)
+
+    samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
+    if len(samples) < 5:
+        return None
+
+    if duration_seconds <= 0 and len(samples) >= 2:
+        duration_seconds = max(0.0, float(samples[-1][0]))
+    if duration_seconds <= 0:
         return None
 
     lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
@@ -953,11 +1064,6 @@ def _estimate_hr_tss_from_activity_details_lthr(
     hr_rest = _resolve_trail_rest_hr_bpm(activity, hr_rest_bpm)
     if hr_rest >= lthr - 10.0:
         hr_rest = max(30.0, lthr - 55.0)
-
-    duration_seconds = hours * 3600.0
-    samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
-    if len(samples) < 5:
-        return None
 
     deltas = [
         samples[idx + 1][0] - samples[idx][0]
@@ -985,12 +1091,24 @@ def _estimate_hr_tss_from_activity_details_lthr(
         tss_total += (dt / 3600.0) * (if_sec**2) * 100.0
         covered_seconds += dt
 
+    attenuation_debug = str(os.environ.get("KAIROS_TRAIL_LOW_IF_DEBUG") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    low_ratio_debug = 0.0
+    low_total_seconds_debug = 0.0
+    attenuation_applied_debug = False
+    attenuation_tss_share_debug = 0.0
+    tss_before_attenuation_debug = tss_total
+
     if attenuate_sustained_low_if and segments and covered_seconds > 0:
         low_threshold = float(TRAIL_NON_FAST_LOW_IF_THRESHOLD)
         low_floor = float(TRAIL_NON_FAST_LOW_IF_FLOOR)
         min_block = float(TRAIL_NON_FAST_LOW_IF_MIN_BLOCK_SECONDS)
 
-        adjusted_segments: list[tuple[float, float]] = []
+        adjusted_segments: list[tuple[float, float, bool]] = []
         low_total_seconds = 0.0
         i = 0
         while i < len(segments):
@@ -1006,22 +1124,52 @@ def _estimate_hr_tss_from_activity_details_lthr(
                     low_total_seconds += block_seconds
                     for k in range(i, j):
                         dt_k, if_k = segments[k]
-                        adjusted_segments.append((dt_k, max(low_floor, if_k)))
+                        adjusted_segments.append((dt_k, max(low_floor, if_k), True))
                 else:
-                    adjusted_segments.extend(segments[i:j])
+                    for k in range(i, j):
+                        dt_k, if_k = segments[k]
+                        adjusted_segments.append((dt_k, if_k, False))
                 i = j
                 continue
 
-            adjusted_segments.append((dt_i, if_i))
+            adjusted_segments.append((dt_i, if_i, False))
             i += 1
 
         low_ratio = low_total_seconds / covered_seconds
+        low_ratio_debug = low_ratio
+        low_total_seconds_debug = low_total_seconds
         if low_ratio >= float(TRAIL_NON_FAST_LOW_IF_APPLY_RATIO):
-            tss_total = sum((dt / 3600.0) * (if_sec**2) * 100.0 for dt, if_sec in adjusted_segments)
+            attenuation_applied_debug = True
+            tss_total = sum((dt / 3600.0) * (if_sec**2) * 100.0 for dt, if_sec, _ in adjusted_segments)
+            attenuated_tss = sum(
+                (dt / 3600.0) * (if_sec**2) * 100.0
+                for dt, if_sec, is_attenuated in adjusted_segments
+                if is_attenuated
+            )
+            if tss_total > 0:
+                attenuation_tss_share_debug = max(0.0, min(1.0, attenuated_tss / tss_total))
 
     coverage_ratio = (covered_seconds / duration_seconds) if duration_seconds > 0 else 0.0
     if coverage_ratio < max(0.0, float(min_coverage_ratio or 0.0)):
         return None
+
+    if attenuation_debug and attenuate_sustained_low_if:
+        activity_id = activity.get("activityId") or activity.get("activity_id") or activity.get("id") or "?"
+        activity_name = str(activity.get("activityName") or activity.get("name") or "")
+        log.warning(
+            "[trail_low_if_debug] id=%s name=%s low_ratio=%.3f threshold=%.3f low_seconds=%.1f covered_seconds=%.1f applied=%s tss_before=%.1f tss_after=%.1f attenuated_tss_share=%.3f coverage=%.3f",
+            activity_id,
+            activity_name,
+            low_ratio_debug,
+            float(TRAIL_NON_FAST_LOW_IF_APPLY_RATIO),
+            low_total_seconds_debug,
+            covered_seconds,
+            attenuation_applied_debug,
+            tss_before_attenuation_debug,
+            tss_total,
+            attenuation_tss_share_debug,
+            coverage_ratio,
+        )
 
     return max(0.0, tss_total)
 
@@ -2596,7 +2744,18 @@ def _estimate_session_tss(
     is_running_non_trail = _is_running_non_trail_activity(act_type)
     tss_native = _extract_training_load_tss(activity)
 
-    hours = _extract_activity_duration_hours(activity)
+    details_payload = (
+        activity_details_raw
+        or activity.get("_activity_details_raw")
+        or activity.get("activity_details_raw")
+        or activity.get("activityDetailsRaw")
+    )
+
+    hours = _resolve_activity_duration_hours(
+        activity,
+        hr_zones_raw=hr_zones_raw,
+        activity_details_raw=details_payload,
+    )
     if hours <= 0:
         if tss_native is not None:
             return tss_native, "TSS"
@@ -2622,12 +2781,6 @@ def _estimate_session_tss(
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
 
     elif is_running_non_trail:
-        details_payload = (
-            activity_details_raw
-            or activity.get("_activity_details_raw")
-            or activity.get("activity_details_raw")
-            or activity.get("activityDetailsRaw")
-        )
         running_model = _resolve_running_tss_model(activity)
         if running_model == "legacy":
             tss_running = _estimate_running_tss_examined(
@@ -2669,12 +2822,6 @@ def _estimate_session_tss(
             return tss_running, "TSS"
 
     elif is_trail_hike_walk:
-        details_payload = (
-            activity_details_raw
-            or activity.get("_activity_details_raw")
-            or activity.get("activity_details_raw")
-            or activity.get("activityDetailsRaw")
-        )
         if is_trail:
             if _should_use_raw_hr_tss_for_fast_trail(activity):
                 # Keep fast-trail pattern intact.

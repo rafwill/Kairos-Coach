@@ -9409,6 +9409,7 @@ class TrainerAgent:
 
         # 4. TSS por día para las actividades nuevas
         hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(self.user_profile)
+        hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(self.user_profile)
         tss_by_day:   dict[str, float] = {}
         count_by_day: dict[str, int]   = {}
         running_mix_by_day: dict[str, dict[str, int]] = {}
@@ -9519,6 +9520,7 @@ class TrainerAgent:
                 hr_zones_raw=hr_zones_raw,
                 splits_raw=splits_raw,
                 activity_details_raw=activity_details_raw,
+                hr_threshold_bpm=hr_threshold_bpm,
             )
             tss_source = _infer_tss_source_tag(
                 activity=act,

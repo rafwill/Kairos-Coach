@@ -2,6 +2,26 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-09-13
+
+### Changed
+- Modelo de carga actualizado a `TSS_FORMULA_VERSION=24` con resolucion de duracion robusta para trail cuando faltan campos de resumen en payloads reales.
+- Nuevo script oficial reproducible para recalculo trail y validacion de anclas: `tools/regenerate_trail_tss_table.py`.
+- Tabla operativa `docs/tss_trail_metodo_desde_2026-07-01.csv` ampliada con columnas de diagnostico:
+	- `ratio_recomputed_vs_tp`, `delta_recomputed_vs_tp`
+	- `duration_hours_resolved`, `hr_coverage_ratio`
+	- `grade_source`, `grade_p50`, `grade_steep_up_share`
+
+### Fixed
+- Investigacion trail cerrada en su causa principal: la sobreestimacion alta venia del bug de duracion de entrada (`hours`) y no de la rama `non_fast:lthr_details`.
+- Eliminada ambiguedad entre ratio historico y ratio recalculado: el artefacto documenta ahora ambos de forma explicita.
+
+### Docs
+- `README.md` actualizado con estado trail 2026-09-13, flujo de regeneracion y columnas diagnosticas.
+- `docs/proximos_pasos.md` actualizado al estado post-cierre de investigacion trail (residuo abierto e hipotesis en observacion).
+- `docs/tss_comparativa_trail_desde_2026-06-01.md` actualizado para reflejar baseline historico vs recalculo v24.
+- `docs/tss_comparativa_desde_2026-07-01.md` marcado como baseline historico y enlazado al artefacto vigente de recalculo.
+
 ## 2026-09-12
 
 ### Changed
