@@ -1,0 +1,92 @@
+{
+  "started_at": "2026-09-13T19:47:33Z",
+  "ended_at": "2026-09-13T19:49:13Z",
+  "relogin": {
+    "ok": true,
+    "note": "session_initialized",
+    "cooldown_seconds": 6.0
+  },
+  "probe": {
+    "ok": true,
+    "error": "",
+    "summary": {
+      "session_started_at": "2026-09-13T19:47:48Z",
+      "session_ended_at": "2026-09-13T19:49:13Z",
+      "first_403_session_age_seconds": 36.848,
+      "first_429_session_age_seconds": 6.444,
+      "calls_total": 5,
+      "calls_ok": 0,
+      "calls_error": 5
+    },
+    "events": [
+      {
+        "phase": "probe",
+        "call_index": 1,
+        "tool": "get_user_profile",
+        "args": {},
+        "ok": false,
+        "kind": "rate_limit",
+        "http_code": "429",
+        "retry_after_seconds": "",
+        "session_age_seconds": 6.444,
+        "message_excerpt": "Error executing tool get_user_profile: Login failed: All login strategies rate limited (429). Try again later or check your IP/network."
+      },
+      {
+        "phase": "probe",
+        "call_index": 2,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24013969366
+        },
+        "ok": false,
+        "kind": "rate_limit",
+        "http_code": "429",
+        "retry_after_seconds": "",
+        "session_age_seconds": 13.87,
+        "message_excerpt": "Error executing tool get_activity: Login failed: All login strategies rate limited (429). Try again later or check your IP/network."
+      },
+      {
+        "phase": "probe",
+        "call_index": 3,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24227364808
+        },
+        "ok": false,
+        "kind": "auth_or_session",
+        "http_code": "403",
+        "retry_after_seconds": "",
+        "session_age_seconds": 36.848,
+        "message_excerpt": "Error executing tool get_activity: Login failed: All login strategies exhausted: Portal login failed (non-JSON): HTTP 403"
+      },
+      {
+        "phase": "probe",
+        "call_index": 4,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24059814335
+        },
+        "ok": false,
+        "kind": "auth_or_session",
+        "http_code": "403",
+        "retry_after_seconds": "",
+        "session_age_seconds": 59.415,
+        "message_excerpt": "Error executing tool get_activity: Login failed: All login strategies exhausted: Portal login failed (non-JSON): HTTP 403"
+      },
+      {
+        "phase": "probe",
+        "call_index": 5,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24201327869
+        },
+        "ok": false,
+        "kind": "auth_or_session",
+        "http_code": "403",
+        "retry_after_seconds": "",
+        "session_age_seconds": 84.418,
+        "message_excerpt": "Error executing tool get_activity: Login failed: All login strategies exhausted: Portal login failed (non-JSON): HTTP 403"
+      }
+    ]
+  }
+}
