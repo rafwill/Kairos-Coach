@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 24
+TSS_FORMULA_VERSION = 26
 
 # Running fallback v2: fixed HR guardrail ratio to avoid per-dataset re-tuning.
 RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
@@ -1970,7 +1970,8 @@ def _estimate_strength_if(activity: dict) -> float | None:
     if session_kind == "heavy":
         return 0.80
     if session_kind == "light":
-        return 0.50
+        # Recalibrado con muestra junio 2026 de movilidad/activacion.
+        return 0.552292
     if session_kind == "neuromuscular":
         return 0.57
     if session_kind == "maintenance":

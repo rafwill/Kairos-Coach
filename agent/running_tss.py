@@ -35,6 +35,31 @@ _INTERVAL_CV_IF_THRESHOLD = 0.27
 _INTERVAL_LOW_TRANSITIONS_PER_H_THRESHOLD = 80.0
 _INTERVAL_LOW_TRANSITIONS_MIN_FAST_SHARE = 0.09
 
+# Detector 1: tempo sostenido (bloque continuo largo con IF por encima de nivel relativo).
+_TEMPO_SUSTAINED_MIN_SECONDS = 400
+_TEMPO_SUSTAINED_IF_DELTA_OVER_MEAN = 0.04
+_TEMPO_SUSTAINED_IF_FLOOR = 0.78
+_TEMPO_SUSTAINED_GAP_TOLERANCE_S = 20
+# Limitación conocida aceptada: actividad 24027714450 (tramo sostenido corto
+# embebido en rodaje largo) queda fuera del detector de tempo con bloque
+# máximo ~289 s incluso absorbiendo huecos cortos, y no se trata como bug.
+
+# Detector 2: repeticiones cortas (alternancia alta + señal rápida no diluida).
+_SHORT_REPS_ROLLING_WINDOW_S = 6
+# Bajo conteo work/rest robusto (sin estado mid), 10 repeticiones en ~20 min
+# producen ~60 transiciones/h; se fija margen para no perder ese patrón.
+_SHORT_REPS_MIN_TRANSITIONS_PER_H = 80.0
+_SHORT_REPS_MIN_FAST_SHARE = 0.06
+_SHORT_REPS_MIN_WORK_BOUTS_IN_RANGE = 4
+_SHORT_REPS_WORK_BOUT_MIN_S = 8
+_SHORT_REPS_WORK_BOUT_MAX_S = 40
+_SHORT_REPS_RECOVERY_BOUT_MIN_S = 8
+_SHORT_REPS_RECOVERY_BOUT_MAX_S = 120
+
+# Atenuación de descuento en bajada: mantiene parte del ajuste Minetti negativo
+# para no sobrepenalizar rodajes con pendiente descendente sostenida.
+_MINETTI_NEGATIVE_DISCOUNT_STRENGTH = 0.55
+
 
 def _as_float(value: Any) -> float | None:
     try:
@@ -289,6 +314,8 @@ def velocidad_ajustada_por_pendiente(velocidad_ms: list[float], pendiente: list[
     out: list[float] = []
     for v, g in zip(velocidad_ms, pendiente):
         factor = coste_minetti(g) / c0 if c0 > 0 else 1.0
+        if g < 0 and factor < 1.0:
+            factor = 1.0 - ((1.0 - factor) * _MINETTI_NEGATIVE_DISCOUNT_STRENGTH)
         out.append(max(0.0, float(v) * factor))
     return out
 
@@ -412,6 +439,208 @@ def _should_include_pauses_in_ngp(interval_traits: dict[str, float]) -> bool:
     )
 
 
+def _rolling_if_series(
+    velocidad_ajustada_ms_1hz: list[float],
+    paused_mask: list[bool],
+    ftpace_ms: float,
+    rolling_window_s: int,
+) -> list[float]:
+    n = len(velocidad_ajustada_ms_1hz)
+    if n == 0 or len(paused_mask) != n or ftpace_ms <= 0:
+        return []
+
+    w = max(1, int(rolling_window_s))
+    acc = 0.0
+    roll: list[float] = []
+    for i, val in enumerate(velocidad_ajustada_ms_1hz):
+        x = 0.0 if paused_mask[i] else float(val)
+        acc += x
+        if i >= w:
+            old = 0.0 if paused_mask[i - w] else float(velocidad_ajustada_ms_1hz[i - w])
+            acc -= old
+            m = acc / float(w)
+        else:
+            m = acc / float(i + 1)
+        roll.append(max(0.0, m))
+
+    return [v / ftpace_ms for v in roll]
+
+
+def _longest_true_run_seconds(mask: list[bool]) -> int:
+    best = 0
+    cur = 0
+    for val in mask:
+        if val:
+            cur += 1
+            if cur > best:
+                best = cur
+        else:
+            cur = 0
+    return best
+
+
+def _fill_short_false_gaps(mask: list[bool], max_gap_s: int) -> list[bool]:
+    """Rellena huecos `False` cortos entre dos tramos `True` (fusión en cascada)."""
+    if max_gap_s <= 0 or not mask:
+        return list(mask)
+
+    out = list(mask)
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        n = len(out)
+        while i < n:
+            if out[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < n and not out[j + 1]:
+                j += 1
+
+            gap_len = j - i + 1
+            if i - 1 >= 0 and j + 1 < n and out[i - 1] and out[j + 1] and gap_len <= max_gap_s:
+                for k in range(i, j + 1):
+                    out[k] = True
+                changed = True
+            i = j + 1
+
+    return out
+
+
+def _detect_sustained_tempo_block(
+    velocidad_ajustada_ms_1hz: list[float],
+    paused_mask: list[bool],
+    ftpace_ms: float,
+) -> dict[str, float | bool]:
+    """Detecta bloque largo y continuo de intensidad sostenida.
+
+    Señal principal: duración del bloque más largo por encima de un umbral
+    relativo al IF medio de la sesión (no depende de número de transiciones).
+    """
+    if_values = _rolling_if_series(velocidad_ajustada_ms_1hz, paused_mask, ftpace_ms, rolling_window_s=20)
+    if not if_values:
+        return {
+            "tempo_detector_triggered": False,
+            "tempo_detector_if_threshold": 0.0,
+            "tempo_detector_longest_block_s": 0.0,
+        }
+
+    active_if = [x for x, paused in zip(if_values, paused_mask) if not paused]
+    if_mean = fmean(active_if) if active_if else 0.0
+    threshold = max(_TEMPO_SUSTAINED_IF_FLOOR, if_mean + _TEMPO_SUSTAINED_IF_DELTA_OVER_MEAN)
+
+    sustained_mask = [(not paused) and (x >= threshold) for x, paused in zip(if_values, paused_mask)]
+    sustained_mask = _fill_short_false_gaps(sustained_mask, _TEMPO_SUSTAINED_GAP_TOLERANCE_S)
+    longest_block_s = _longest_true_run_seconds(sustained_mask)
+    triggered = longest_block_s >= _TEMPO_SUSTAINED_MIN_SECONDS
+
+    return {
+        "tempo_detector_triggered": bool(triggered),
+        "tempo_detector_if_threshold": float(threshold),
+        "tempo_detector_longest_block_s": float(longest_block_s),
+    }
+
+
+def _detect_short_repetitions_pattern(
+    velocidad_ajustada_ms_1hz: list[float],
+    paused_mask: list[bool],
+    ftpace_ms: float,
+) -> dict[str, float | bool]:
+    """Detecta repeticiones cortas con alternancia alta.
+
+    Usa una ventana de suavizado corta para evitar diluir repeticiones de
+    ~15-30 s en la detección de variabilidad rápida.
+    """
+    if_values = _rolling_if_series(
+        velocidad_ajustada_ms_1hz,
+        paused_mask,
+        ftpace_ms,
+        rolling_window_s=_SHORT_REPS_ROLLING_WINDOW_S,
+    )
+    n = len(if_values)
+    if n < 60:
+        return {
+            "short_reps_detector_triggered": False,
+            "short_reps_detector_transitions_per_h": 0.0,
+            "short_reps_detector_share_fast": 0.0,
+        }
+
+    active_if = [x for x, paused in zip(if_values, paused_mask) if not paused]
+    if_mean = fmean(active_if) if active_if else 0.0
+    work_floor = max(0.85, if_mean + 0.03)
+    work_mask = [(not paused) and (x >= work_floor) for x, paused in zip(if_values, paused_mask)]
+
+    transitions = 0
+    prev_state = None
+    for is_work in work_mask:
+        state = "work" if is_work else "rest"
+        if prev_state is None:
+            prev_state = state
+            continue
+        if state != prev_state:
+            transitions += 1
+            prev_state = state
+
+    work_bouts_in_range = 0
+    work_bouts: list[int] = []
+    recovery_bouts: list[int] = []
+    bout_len = 0
+    for is_work in work_mask:
+        if is_work:
+            bout_len += 1
+            continue
+        if _SHORT_REPS_WORK_BOUT_MIN_S <= bout_len <= _SHORT_REPS_WORK_BOUT_MAX_S:
+            work_bouts_in_range += 1
+            work_bouts.append(bout_len)
+        bout_len = 0
+    if _SHORT_REPS_WORK_BOUT_MIN_S <= bout_len <= _SHORT_REPS_WORK_BOUT_MAX_S:
+        work_bouts_in_range += 1
+        work_bouts.append(bout_len)
+
+    # Extrae duraciones de recuperación para chequear periodicidad de alternancia.
+    bout_len = 0
+    for is_work in work_mask:
+        if not is_work:
+            bout_len += 1
+            continue
+        if _SHORT_REPS_RECOVERY_BOUT_MIN_S <= bout_len <= _SHORT_REPS_RECOVERY_BOUT_MAX_S:
+            recovery_bouts.append(bout_len)
+        bout_len = 0
+    if _SHORT_REPS_RECOVERY_BOUT_MIN_S <= bout_len <= _SHORT_REPS_RECOVERY_BOUT_MAX_S:
+        recovery_bouts.append(bout_len)
+
+    work_bout_cv = (
+        (pstdev(work_bouts) / fmean(work_bouts)) if len(work_bouts) > 1 and fmean(work_bouts) > 0 else 999.0
+    )
+    recovery_bout_cv = (
+        (pstdev(recovery_bouts) / fmean(recovery_bouts))
+        if len(recovery_bouts) > 1 and fmean(recovery_bouts) > 0
+        else 999.0
+    )
+
+    share_fast = sum(1 for x, paused in zip(if_values, paused_mask) if (not paused) and x >= 0.90) / float(
+        max(1, sum(1 for p in paused_mask if not p))
+    )
+    duration_h = n / 3600.0
+    transitions_per_h = transitions / duration_h if duration_h > 0 else 0.0
+
+    triggered = (
+        transitions_per_h >= _SHORT_REPS_MIN_TRANSITIONS_PER_H
+        and share_fast >= _SHORT_REPS_MIN_FAST_SHARE
+        and work_bouts_in_range >= _SHORT_REPS_MIN_WORK_BOUTS_IN_RANGE
+    )
+
+    return {
+        "short_reps_detector_triggered": bool(triggered),
+        "short_reps_detector_transitions_per_h": float(transitions_per_h),
+        "short_reps_detector_share_fast": float(share_fast),
+        "short_reps_detector_work_bouts_in_range": float(work_bouts_in_range),
+        "short_reps_detector_work_bout_cv": float(work_bout_cv),
+        "short_reps_detector_recovery_bout_cv": float(recovery_bout_cv),
+    }
+
+
 def calcular_rtss(duracion_seg: float, ngp_ms: float, ftpace_ms: float) -> tuple[float, float]:
     """Calcula rTSS e IF.
 
@@ -522,7 +751,31 @@ def procesar_actividad(activity_details_json: Any, atleta: dict[str, Any]) -> di
     ftpace_ms = _as_float(atleta.get("ftpace_ms")) or 0.0
 
     interval_traits = _infer_interval_session_traits(v_adj, paused, ftpace_ms)
-    include_pauses_in_ngp = _should_include_pauses_in_ngp(interval_traits)
+    legacy_variant_a_triggered = _should_include_pauses_in_ngp(interval_traits)
+    tempo_detector = _detect_sustained_tempo_block(v_adj, paused, ftpace_ms)
+    # Exclusión mutua: si hay bloque tempo sostenido, no evaluar short reps.
+    # Limitación conocida (documentada y aparcada): con n=4 casos reales del
+    # segmento repeticiones_cortas, el detector short_reps no es fiable
+    # (3/4 reales no activan y hay activaciones en rodajes normales).
+    # Hipótesis para próxima sesión (sin implementar aquí): correlación
+    # FC-velocidad con retraso fisiológico esperado, en lugar de basarse solo
+    # en cinemática de velocidad.
+    if bool(tempo_detector.get("tempo_detector_triggered")):
+        short_reps_detector = {
+            "short_reps_detector_triggered": False,
+            "short_reps_detector_transitions_per_h": 0.0,
+            "short_reps_detector_share_fast": 0.0,
+            "short_reps_detector_work_bouts_in_range": 0.0,
+            "short_reps_detector_work_bout_cv": 0.0,
+            "short_reps_detector_recovery_bout_cv": 0.0,
+        }
+    else:
+        short_reps_detector = _detect_short_repetitions_pattern(v_adj, paused, ftpace_ms)
+    include_pauses_in_ngp = bool(
+        legacy_variant_a_triggered
+        or tempo_detector.get("tempo_detector_triggered")
+        or short_reps_detector.get("short_reps_detector_triggered")
+    )
     ngp = calcular_ngp(
         v_adj,
         paused_mask=(None if include_pauses_in_ngp else paused),
@@ -549,7 +802,23 @@ def procesar_actividad(activity_details_json: Any, atleta: dict[str, Any]) -> di
         "paused_seconds": int(sum(1 for x in paused if x)),
         "samples_1hz": n,
         "include_pauses_in_ngp": include_pauses_in_ngp,
+        "legacy_variant_a_triggered": legacy_variant_a_triggered,
         "interval_share_fast": interval_traits.get("share_fast", 0.0),
         "interval_cv_if": interval_traits.get("cv_if", 0.0),
         "interval_transitions_per_h": interval_traits.get("transitions_per_h", 0.0),
+        "tempo_detector_triggered": tempo_detector.get("tempo_detector_triggered", False),
+        "tempo_detector_if_threshold": tempo_detector.get("tempo_detector_if_threshold", 0.0),
+        "tempo_detector_longest_block_s": tempo_detector.get("tempo_detector_longest_block_s", 0.0),
+        "short_reps_detector_triggered": short_reps_detector.get("short_reps_detector_triggered", False),
+        "short_reps_detector_transitions_per_h": short_reps_detector.get(
+            "short_reps_detector_transitions_per_h", 0.0
+        ),
+        "short_reps_detector_share_fast": short_reps_detector.get("short_reps_detector_share_fast", 0.0),
+        "short_reps_detector_work_bouts_in_range": short_reps_detector.get(
+            "short_reps_detector_work_bouts_in_range", 0.0
+        ),
+        "short_reps_detector_work_bout_cv": short_reps_detector.get("short_reps_detector_work_bout_cv", 0.0),
+        "short_reps_detector_recovery_bout_cv": short_reps_detector.get(
+            "short_reps_detector_recovery_bout_cv", 0.0
+        ),
     }
