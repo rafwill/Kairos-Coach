@@ -2,6 +2,18 @@
 
 ## Contexto
 
+### Contexto de cierre de investigacion (estado de referencia)
+
+Este es el cierre de una investigacion larga sobre el motor de calculo de TSS/rTSS/hrTSS del proyecto, que replica la metodologia de TrainingPeaks para running, trail, fuerza, hiking, ciclismo e indoor running. La causa raiz de los problemas de trail (bug de duracion) ya esta corregida y validada (`TSS_FORMULA_VERSION=24`). Quedan dos correcciones pendientes, ya diagnosticadas con precision, y una prueba final que certifica el cierre. No se pide mas diagnostico: las causas ya se conocen; esto es trabajo de implementacion y validacion final.
+
+**Criterio de cierre aceptado (fijado antes de ejecutar la prueba final, para no negociarlo despues de ver el resultado):**
+
+- MAE global de running < 6 (idealmente; tolerancia aceptada hasta 7 dado que ni el propio TrainingPeaks garantiza mayor precision en metodos no basados en potencia).
+- Sesgo global de running dentro de +/-3.
+- Ningun segmento de running (rodaje continuo / fartlek-tempo sostenido / repeticiones cortas) con ratio medio (calculado/TP) fuera del rango 0.88-1.12 de forma sistematica.
+
+Si estos tres criterios se cumplen sobre el conjunto combinado (julio-septiembre + junio), el bloque de running queda cerrado. Si no se cumplen tras implementar las dos correcciones de abajo, no forzar el cierre: documentar el estado real y decidir explicitamente si se amplia el criterio o se sigue investigando.
+
 Estoy construyendo un módulo dentro de mi proyecto `garmin-ai-coach` que debe calcular el **Training Stress Score para carrera** replicando, con la mayor fidelidad posible, la metodología que usa TrainingPeaks (rTSS y hrTSS), a partir de datos extraídos de Garmin Connect.
 
 Quiero que implementes un módulo Python autocontenido, testeable y documentado, siguiendo exactamente la especificación de abajo. No inventes fórmulas alternativas ni "mejores" — donde la especificación diga que algo es una aproximación (porque el algoritmo original es propietario), impleméntalo tal cual se indica.
