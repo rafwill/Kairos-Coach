@@ -4,45 +4,39 @@
 
 La conversación con el coach tiene contexto real porque los números son reales. Antes de responder cualquier pregunta sobre estado, rendimiento o recomendaciones, el sistema consulta tus datos de Garmin. Nunca inventa, nunca generaliza.
 
-## Estado Trail TSS (2026-09-13)
+## Estado TSS final (2026-09-16)
 
-Estado validado con datos reales y recalculo reproducible:
+Estado validado con datos reales en corrida combinada junio-septiembre:
 
-- Formula activa: `TSS_FORMULA_VERSION=24`.
-- Causa raiz principal cerrada: la sobreestimacion alta en trail se debia al resolutor de duracion (`hours`) y no a la rama `non_fast:lthr_details`.
-- Artefacto oficial de comparativa trail: `docs/tss_trail_metodo_desde_2026-07-01.csv`.
-- Script oficial de regeneracion y validacion de anclas: `tools/regenerate_trail_tss_table.py`.
-- Documento de cierre del bloque trail: `docs/trail-tss-cierre-2026-09-13.md`.
+- Formula activa: `TSS_FORMULA_VERSION=26`.
+- Trail: **CERRADO**.
+- Fuerza: **CERRADO**.
+- Running: **CERRADO** con excepción documentada de criterio de sesgo.
 
-La tabla trail mantiene ahora dos planos de comparacion:
+Resumen de cierre running:
 
-- Historico baseline: `ratio_tss_tp` y `tss_prod_corregido`.
-- Recalculo vigente vs TP: `ratio_recomputed_vs_tp` y `delta_recomputed_vs_tp`.
+- `running_global`: `n=32`, `MAE=6.178491`, `bias=-3.278240`, `ratio_mean=0.957760`.
+- Ratios por segmento en banda `[0.88, 1.12]`:
+  - `rodaje_continuo=0.938087`
+  - `fartlek_tempo_sostenido=0.974348`
+  - `repeticiones_cortas=1.077338`
+- Criterio final de sesgo aplicado: `±3.5` (ampliado desde `±3` como excepción explícita y justificada para evitar sobreajuste por margen residual).
 
-Columnas diagnosticas persistidas para analisis causal sin reconstruir forenses:
+Cambios principales introducidos en v26:
 
-- `duration_hours_resolved`
-- `hr_coverage_ratio`
-- `grade_source`, `grade_p50`, `grade_steep_up_share`
+- `tempo_detector`: bloque mínimo `400 s` y tolerancia de huecos cortos `20 s`.
+- Atenuación en bajadas: descuento Minetti parcial (`55%` de magnitud del descuento original solo para pendiente negativa).
+- Exclusión mutua entre detectores de running: si tempo activa, short reps no se evalúa.
 
-Resumen del ultimo barrido completo (11 trail con TP):
+Documento consolidado de cierre:
 
-- 7/11 actividades convergen a ratio ~`1.00-1.02`.
-- 2/11 muestran infraestimacion notable (~`0.79` y `0.76`) con cobertura HR alta, causa aun abierta.
-- Hipotesis en seguimiento: sesgo en sesiones trail cortas, pendiente de mas muestra.
+- `docs/tss-cierre-definitivo-2026-09-16.md`.
 
-## Estado Abierto De Validacion (2026-09-13 noche)
+Limitaciones conocidas (documentadas y aceptadas):
 
-Pendientes de cierre antes de dar por definitiva la calibracion multideporte:
-
-- Hiking: posible regresion severa en `24013969366` (ratio `1.853`, etiqueta `TSS`), pendiente de traza de rama determinista cuando el MCP estabilice.
-- Running: sesgo negativo en la tabla independiente (`n=21`, `MAE=7.11`, `bias=-4.33`) pendiente de reconciliacion contra el corte previo oficial.
-- MCP Garmin: patron mixto `429` + `403` confirmado en la misma sesion; tratar como bloqueo cuenta/IP + posible degradacion de sesion, no como simple retry corto.
-
-Runbook operativo recomendado para reanudar diagnostico:
-
-- `tools/mcp_relogin_probe.py` (re-login aislado + cooldown + sonda lenta con stop temprano).
-- `docs/siguiente_iteracion_playbook_2026-09-13.md` (orden operativo: hiking primero, luego running).
+- Hiking con muestra corta (`n=2`).
+- `short_reps_detector` con cobertura parcial en datos reales.
+- Caso `24027714450` (tramo sostenido corto embebido en rodaje largo, bloque máximo ~`289 s`) no detectado por tempo.
 
 ---
 

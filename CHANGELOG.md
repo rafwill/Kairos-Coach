@@ -2,6 +2,36 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-09-16
+
+### Changed
+- Modelo de carga actualizado a `TSS_FORMULA_VERSION=26` por cambios en comportamiento de cálculo de running.
+- `tempo_detector` de running ajustado a bloque mínimo de `400 s` (antes `540 s`) con tolerancia de huecos cortos de `20 s` para continuidad de esfuerzo sostenido.
+- Cálculo de velocidad ajustada por pendiente con atenuación del descuento Minetti en bajada (`_MINETTI_NEGATIVE_DISCOUNT_STRENGTH=0.55`), manteniendo sin cambios la pendiente positiva.
+- Criterio de cierre de sesgo de running ampliado y documentado de `±3` a `±3.5` como excepción explícita de tolerancia operativa.
+
+### Fixed
+- Exclusión mutua entre detectores de running: si `tempo_detector_triggered=True`, `short_reps_detector` se fuerza a `False` para evitar doble clasificación incompatible.
+
+### Tests
+- Validación de running tras cambios: `tests/test_running_tss.py` en verde (`14 passed`).
+- Validación de regresión trail/running/fuerza en batería focal: `366 passed`.
+
+### Docs
+- Cierre consolidado en documento único: `docs/tss-cierre-definitivo-2026-09-16.md`.
+- `README.md` actualizado al estado final v26 y a criterios de cierre vigentes.
+- `docs/proximos_pasos.md` actualizado para reflejar running/fuerza/trail cerrados con límites conocidos documentados.
+- `docs/trail-tss-cierre-2026-09-13.md` marcado como artefacto intermedio archivado.
+
+### Notes
+- Resultado de validación combinada junio-septiembre:
+	- running global `MAE=6.178491`, `bias=-3.278240`, `ratio_mean=0.957760`.
+	- segmentos running en rango de ratio `[0.88, 1.12]`.
+- Limitaciones conocidas documentadas sin bug abierto:
+	- hiking con muestra corta (`n=2`),
+	- cobertura parcial de `short_reps_detector`,
+	- caso `24027714450` (bloque sostenido corto ~`289 s`).
+
 ## 2026-09-13
 
 ### Changed

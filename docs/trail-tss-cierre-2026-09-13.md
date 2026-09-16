@@ -1,5 +1,8 @@
 # Cierre Trail TSS - 2026-09-13
 
+> Estado: archivado como documento intermedio.
+> Referencia consolidada vigente: `docs/tss-cierre-definitivo-2026-09-16.md`.
+
 ## Metadatos
 
 - Fecha de cierre: 2026-09-13
@@ -14,7 +17,11 @@
 ## Estado post-cierre (validacion cruzada abierta)
 
 - Hiking: actividad `24013969366` muestra desviacion alta (`113.0` vs `61.0`, ratio `1.853`) y cambio de etiqueta observado en tabla independiente; pendiente traza determinista rama-por-rama.
-- Running: en comparativa independiente actual aparece sesgo negativo agregado (`n=21`, `MAE=7.11`, `bias=-4.33`) pendiente de reconciliacion contra el corte previo oficial.
+- Running: `5.823/+0.941` no tiene artefacto canonico reproducible en repo; el comportamiento actual reproducible es `~78.7` para este caso, introducido en `940f03cc` junto con el pipeline fisico.
+- Running: pendiente evaluar si ese resultado es mejora o regresion de precision para patron `fartlek/Z3`, dado que el metodo anterior (`~90.0`) estaba mas cerca de `TP=91.0` en esta actividad concreta.
+- Hallazgo adicional (Variante A): esta actividad no activa la regla (`cv_if=0.147`, `transitions_per_h=71.2`, `share_fast=0.056`, todos por debajo de umbral) pese a ser un fartlek con bloque sostenido en Z3; posible hueco de cobertura para patron `tempo sostenido` frente a `repeticiones cortas`.
+- Actualizacion post-prueba final junio-septiembre (v25): el frente abierto principal de running ya no son los patrones intervalados, sino `rodaje_continuo` por infraestimacion sistematica (`n=26`, `bias=-6.953118`, `MAE=7.260891`), con contribucion dominante al sesgo global de running.
+- Fuerza movilidad/activacion (Tarea 2): IF recalibrado de `0.50` a `0.552292` con muestra junio (5 sesiones). Este encaje en la muestra usada para calibrar es evidencia algebraica in-sample; la validacion empirica out-of-sample de esa subcategoria sigue pendiente por falta de casos con TP (`n=0` en julio-septiembre).
 - MCP Garmin: diagnostico de estabilidad bloqueado temporalmente por mezcla de `429` y `403` dentro de la misma ventana de sesion.
 
 ## Referencias
