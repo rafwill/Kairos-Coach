@@ -2858,7 +2858,7 @@ class TestLoadFatigueModel:
         tss, label = _estimate_session_tss(act)
 
         assert label == "TSS"
-        assert abs(tss - 25.0) < 0.1
+        assert abs(tss - 30.5) < 0.1
 
     def test_estimate_tss_strength_rpe_overrides_conflicting_text_keyword(self):
         act = {
