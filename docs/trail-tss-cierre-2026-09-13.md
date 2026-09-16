@@ -6,10 +6,13 @@
 ## Metadatos
 
 - Fecha de cierre: 2026-09-13
-- Formula vigente: `TSS_FORMULA_VERSION=24`
+- Formula vigente en la fecha de ese cierre: `TSS_FORMULA_VERSION=24`
 - Alcance: actividades trail con TP local desde 2026-07-01
 
 ## Estado
+
+Nota: este documento describe el cierre trail en su momento. El estado consolidado
+multideporte vigente se mantiene en `docs/tss-cierre-definitivo-2026-09-16.md`.
 
 - Causa raiz principal cerrada: la sobreestimacion alta venia del calculo de duracion de entrada (`hours`).
 - La rama de calculo `non_fast:lthr_details` no se modifico como respuesta principal al desvio grande.
