@@ -9,6 +9,7 @@ Cubre:
   - _is_first_time
 """
 
+import asyncio
 from datetime import date, timedelta
 from unittest.mock import patch
 
@@ -23,6 +24,7 @@ from agent.main import (
     _parse_plan_command,
     _set_hr_profile_values,
     _set_running_threshold_pace,
+    _sync_from_garmin,
     _validate_date,
     _validate_hours,
     _validate_time,
@@ -230,23 +232,58 @@ class TestSetRunningThresholdPace:
         assert "Formato no válido" in msg
 
 
-    class TestSetHrProfileValues:
-        def test_sets_hr_profile_and_marks_update_date(self):
-            profile = {}
-            ok, msg = _set_hr_profile_values(profile, "48", "186")
-            assert ok
-            assert "FC reposo=48 bpm" in msg
-            perf = profile.get("performance") or {}
-            assert perf.get("hr_rest_bpm") == 48
-            assert perf.get("hr_max_bpm") == 186
-            assert perf.get("hr_profile_date")
-            assert perf.get("performance_params_updated_at")
+class TestSetHrProfileValues:
+    def test_sets_hr_profile_and_marks_update_date(self):
+        profile = {}
+        ok, msg = _set_hr_profile_values(profile, "48", "186")
+        assert ok
+        assert "FC reposo=48 bpm" in msg
+        perf = profile.get("performance") or {}
+        assert perf.get("hr_rest_bpm") == 48
+        assert perf.get("hr_max_bpm") == 186
+        assert perf.get("hr_profile_date")
+        assert perf.get("performance_params_updated_at")
 
-        def test_rejects_invalid_hr_ranges(self):
-            profile = {}
-            ok, msg = _set_hr_profile_values(profile, "110", "186")
-            assert not ok
-            assert "reposo fuera de rango" in msg.lower()
+    def test_rejects_invalid_hr_ranges(self):
+        profile = {}
+        ok, msg = _set_hr_profile_values(profile, "110", "186")
+        assert not ok
+        assert "reposo fuera de rango" in msg.lower()
+
+
+class _FakeAgentSync:
+    def __init__(self, data):
+        self._data = data
+
+    async def fetch_garmin_personal_data(self):
+        return self._data
+
+
+class TestSyncFromGarmin:
+    def test_no_changes_does_not_persist_profile(self):
+        profile = {"personal": {"name": "Rafa", "age": 35}}
+        saved = {"called": False}
+
+        def _save(_profile):
+            saved["called"] = True
+
+        with patch("agent.main._load_user_profile", return_value=profile), patch(
+            "agent.main._save_user_profile", side_effect=_save
+        ):
+            out = asyncio.run(_sync_from_garmin(_FakeAgentSync({"name": "Rafa", "age": 35})))
+
+        assert out == []
+        assert saved["called"] is False
+
+    def test_save_failure_does_not_crash_startup(self):
+        profile = {"personal": {"name": "Old"}}
+
+        with patch("agent.main._load_user_profile", return_value=profile), patch(
+            "agent.main._save_user_profile", side_effect=RuntimeError("statement timeout")
+        ):
+            out = asyncio.run(_sync_from_garmin(_FakeAgentSync({"name": "New"})))
+
+        assert out == []
 
 # ─── _is_first_time ──────────────────────────────────────────────────────────
 

@@ -306,6 +306,8 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - También soporta semanas históricas explícitas (`semana del 10 de agosto de 2026`).
   - Soporta fechas cortas de entrada (`dd/mm/yy`, por ejemplo `17/08/26`).
   - El detalle de actividades (tipo/nombre) se toma de Garmin como fuente real y se devuelve sin inferencias del LLM.
+  - En la vista semanal se muestra un único TSS por día (el usado por el modelo de carga y fatiga).
+  - No se muestran TSS por actividad en ese bloque para evitar discrepancias visuales y confusión de interpretación.
 
 * **🧩 Formato de salida unificado (prompt + rutas deterministas):**
   - Kairos usa una plantilla única de 4 secciones en respuestas de coaching y factuales:
@@ -786,7 +788,7 @@ main.py → asyncio.run(run_agent())
     ├─ modo incremental_refresh: refresca días recientes si entraron actividades nuevas
     └─ modo full_recalc (casos puntuales): usuario nuevo/cambio fórmula/serie inválida
   └─ TrainerAgent.build_startup_status_markdown()
-    └─ collect_startup_snapshot_48h() + serie canónica DB
+    └─ collect_startup_snapshot_48h() + serie diaria TSS en DB (`load_metrics_daily`)
       └─ _build_proactive_status_markdown(snapshot)  → briefing visible al usuario
 ```
 
@@ -911,82 +913,31 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 
 **Por qué nuestro modelo es válido:** CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) son modelos relacionales, no absolutos. Lo que importa es que la unidad de carga sea **consistente para el mismo atleta**, no que sea exactamente 100 en umbral. La individualización está en los tau y percentiles propios de cada atleta, no en el valor absoluto de cada sesión.
 
-**Unidad de esfuerzo por tipo de actividad (persistida en el agente):**
+### Diseno vigente (v26)
 
-| Tipo de actividad | Prioridad 1 | Prioridad 2 | Prioridad 3 |
-|-------------------|-------------|-------------|-------------|
-| Fuerza / Gimnasio | **hrTSS por zonas FC (si cobertura >=35%)** | **TSS por IF estimado de fuerza** | **TSS por RPE/minuto** |
-| Running (no Trail) | **TSS por ritmo umbral (rTSS interno)** | **hrTSS por FC** | - |
-| Trail running | **hrTSS por zonas FC (calibrado)**<br/>**Excepción:** si ritmo final `< 6:00/km` usa **hrTSS bruto por zonas** | **hrTSS por FC** | **TSS por ritmo umbral / hrTSS por RPE** |
-| Senderismo / Hike / Caminar | **TSS por bandas walking/hiking (suave, vivo, carga/cuestas)** | **Blend con hrTSS por zonas (si cobertura >=35%)** | **TSS por banda sin zonas** |
-| Ciclismo (cualquier modalidad) | **TSS por potencia + FTP** | **hrTSS por zonas FC** | **hrTSS por FC** |
-| Otras modalidades (natación, remo, etc.) | **hrTSS por zonas FC** | **hrTSS por FC** | **Training Effect / IF por defecto** |
+La referencia normativa para calculo actual es:
 
-Notas de implementación:
-- Para running, el ritmo umbral se obtiene del perfil persistido por usuario (`/perfil umbral <mm:ss>`).
-- Para ciclismo, el FTP se obtiene del perfil cacheado o de `get_cycling_ftp`.
-- Para fuerza/gimnasio sin señales fiables de FC, se usa IF por tipología de sesión:
-  - Movilidad/acondicionamiento ligero: IF ~= 0.50
-  - Mantenimiento: IF ~= 0.55
-  - Fuerza general/hipertrofia: IF ~= 0.56
-  - Neuromuscular: IF ~= 0.57
-  - Fuerza máxima/potencia pesada: IF ~= 0.80
-- Fallback por RPE/minuto en fuerza cuando hay RPE explícito:
-  - RPE 3-4: ~0.5 TSS/min
-  - RPE 5-6: ~1.0 TSS/min
-  - RPE 7: ~1.2 TSS/min
-  - RPE 8: ~1.35 TSS/min
-  - RPE 9-10: ~1.5 TSS/min
-- Para walking/hiking se aplica una calibración por bandas de carga por hora:
-  - Caminata suave / regenerativa: 15-25 TSS/h
-  - Caminata ritmo vivo / power walking: 25-40 TSS/h
-  - Senderismo con mochila / cuestas largas: 40-60+ TSS/h
-- Importante: esta calibración afecta solo a `walking/hiking`.
-- En `trail_running` se aplica calibración por defecto (`hrTSS zonas * 0.72`), salvo regla de trail rápido: si el ritmo final/efectivo es `< 6:00/km`, Kairos usa `hrTSS bruto por zonas`.
-- En análisis de actividad trail con zonas FC disponibles, Kairos muestra explícitamente ambos valores: `hrTSS bruto zonas` y `hrTSS Kairos aplicado`.
-- Si faltan datos clave, el sistema conserva fallbacks defensivos (trainingStressScore/trainingLoad nativo, Training Effect e IF por defecto) para no perder continuidad de la serie CTL (Estado físico)/ATL (Fatiga)/TSB (Forma).
+- `docs/tss-cierre-definitivo-2026-09-16.md`
+- `docs/tss_independiente_junio_a_septiembre_hasta_2026-09-16.csv`
 
-Reglas verificadas por tipología:
-- Running asfalto/pista: `rTSS`.
-- Trail running: `hrTSS` calibrado, excepto trail rápido (`< 6:00/km`) donde usa `hrTSS` bruto por zonas.
-- Walking/hiking: `TSS` por bandas (con blend de zonas cuando existe cobertura suficiente).
-- Ciclismo con potencia+FTP: `TSS de potencia`.
+Resumen ejecutivo del diseno actual:
 
-Persistencia de umbral de running por usuario (`user_profile.data.performance`):
-- `running_threshold_pace_sec_per_km`
-- `running_threshold_pace`
-- `running_threshold_pace_date`
+- Running usa pipeline fisico en `agent/running_tss.py` (series de velocidad/elevacion/FC desde `get_activity_details`, NGP aproximado, rTSS y hrTSS).
+- En v26 se ajusto el detector de tempo (`_TEMPO_SUSTAINED_MIN_SECONDS=400`, tolerancia de huecos cortos) y se aplico atenuacion de descuento Minetti en bajada (`_MINETTI_NEGATIVE_DISCOUNT_STRENGTH=0.55`).
+- Tambien se introdujo exclusion mutua de detectores: si tempo activa, short reps no activa.
+- Trail, fuerza y running quedaron cerrados bajo el criterio final documentado (running con excepcion de sesgo explicita en +/-3.5).
 
-### Clasificacion de running por tipo de sesion
+### Nota importante de trazabilidad
 
-Para sesiones de running no-trail, Kairos clasifica cada actividad en una de estas categorias:
+El enfoque anterior basado en heuristicas de clasificacion por keywords de sesion
+(`rodaje/fartlek/series`) y ajustes ad-hoc de uplift, asi como la calibracion
+historial de `trail_running` con factor fijo `0.72` y excepcion de trail rapido,
+se conserva solo como contexto historico de iteraciones previas.
 
-- `rodaje`
-- `fartlek`
-- `series`
-- `calidad` (fallback cuando la evidencia es ambigua)
+No debe considerarse la definicion vigente del calculo actual.
 
-La clasificacion usa señales combinadas del payload de actividad:
-
-- Relacion velocidad maxima / velocidad media (`speed_ratio`)
-- Numero de vueltas (`lap_count`)
-- Minutos vigorosos
-- RPE del entrenamiento
-- Etiqueta de efecto de entrenamiento (`training_effect_label`)
-- Texto de nombre/descripcion/notas (keywords de rodaje, fartlek y series)
-
-Cada clase obtiene un score, y el sistema estima ademas una confianza (`high`, `medium`, `low`).
-
-### Impacto directo en el calculo de TSS running
-
-- `rodaje`: se mantiene el TSS base por ritmo umbral (sin inflado artificial).
-- `fartlek`: uplift pequeno y acotado para evitar sobreestimacion sistematica.
-- `series`: uplift mayor para conservar sensibilidad en trabajos fraccionados.
-- Confianza baja: se reduce automaticamente el uplift para priorizar estabilidad.
-
-Adicionalmente, durante el recálculo de carga se persiste una traza de inferencia (`running_session_inference`) con muestras recientes de `session_kind` y `confidence` por actividad, para auditoria y calibracion futura.
-
-En recálculo completo (`force_full_recalc=True`), Kairos enriquece ciclismo y running no-trail con `get_activity` para incorporar señales de variabilidad (`lap_count`, `avg_speed_mps`, `max_speed_mps`, `workout_rpe`, `training_effect_label`) antes de calcular TSS.
+Para decisiones tecnicas y validacion, usar siempre la referencia de cierre v26
+indicada arriba.
 
 ---
 

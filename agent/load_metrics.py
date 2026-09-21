@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 26
+TSS_FORMULA_VERSION = 28
 
 # Running fallback v2: fixed HR guardrail ratio to avoid per-dataset re-tuning.
 RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
@@ -501,6 +501,47 @@ def _estimate_if_from_hr(
         if cycling_formula:
             return max(0.35, min(1.05, hrr))
         return max(0.50, min(1.05, 0.40 + hrr * 0.65))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _estimate_strength_if_from_hr(
+    activity: dict,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+) -> float | None:
+    """Calibrated HR->IF mapping for strength sessions.
+
+    Important: strength should not rely on activity-level maxHR spikes/drops,
+    because these fields are often unstable in gym sessions. We anchor to profile
+    maxHR (or default) for a more TP-like stress scale.
+    """
+    avg_hr_raw = (
+        activity.get("averageHR")
+        or activity.get("avgHr")
+        or activity.get("avg_hr_bpm")
+        or activity.get("averageHeartRate")
+    )
+    if avg_hr_raw is None:
+        return None
+
+    try:
+        avg_hr = float(avg_hr_raw)
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        # Deliberately ignore activity maxHR for strength calibration.
+        hr_max = float(hr_max_bpm) if hr_max_bpm else 185.0
+
+        if hr_rest <= 0:
+            hr_rest = 50.0
+        if hr_max <= hr_rest + 5.0:
+            hr_max = hr_rest + 5.0
+
+        hrr = (avg_hr - hr_rest) / (hr_max - hr_rest)
+        # Conservative floor/ceiling tuned for gym sessions to avoid overestimation.
+        hrr = max(0.20, min(0.85, hrr))
+
+        if_strength = 0.50 + (hrr * 0.40)
+        return max(0.45, min(0.85, if_strength))
     except (TypeError, ValueError, ZeroDivisionError):
         return None
 
@@ -2758,6 +2799,9 @@ def _estimate_session_tss(
         activity_details_raw=details_payload,
     )
     if hours <= 0:
+        if is_strength:
+            # Fuerza: no usar carga nativa; sin duración no se puede aplicar fórmula HR.
+            return 0.0, "hrTSS"
         if tss_native is not None:
             return tss_native, "TSS"
         return 0.0, "hrTSS"
@@ -2973,31 +3017,11 @@ def _estimate_session_tss(
             return max(0.0, hours * (if_rpe**2) * 100.0), "hrTSS"
 
     elif is_strength:
-        tss_hr_zones = _estimate_hr_tss_from_zones(
-            activity,
-            hours=hours,
-            hr_zones_raw=hr_zones_raw,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            min_coverage_ratio=0.35,
-        )
-        if tss_hr_zones is not None:
-            return tss_hr_zones, "hrTSS"
-
-        if_strength = _estimate_strength_if(activity)
-        if if_strength is not None:
-            return max(0.0, hours * (if_strength**2) * 100.0), "TSS"
-
-        tss_rpe_minutes = _estimate_strength_tss_from_rpe_minutes(activity, hours)
-        if tss_rpe_minutes is not None:
-            return tss_rpe_minutes, "TSS"
-
-        if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
+        if_hr = _estimate_strength_if_from_hr(activity, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
         if if_hr is not None:
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
-        if_rpe = _estimate_if_from_rpe(activity)
-        if if_rpe is not None:
-            return max(0.0, hours * (if_rpe**2) * 100.0), "hrTSS"
+        # Sin señal HR usable en fuerza no se estima carga.
+        return 0.0, "hrTSS"
 
     if tss_native is not None:
         return tss_native, "TSS"
