@@ -43,3 +43,31 @@ Para trabajo nuevo, usar como fuente vigente:
 - `docs/tss_independiente_junio_a_septiembre_hasta_2026-09-16.csv`
 
 Los documentos intermedios se mantienen solo para trazabilidad historica.
+
+## Checkpoint de continuidad (2026-09-21)
+
+Estado guardado para reanudar en la siguiente sesion:
+
+1. Rama de trabajo activa con cambios publicados:
+      - Branch: `feature/calibracion-fuerza-tp`
+      - Commit: `37cbf30`
+      - Push remoto: completado en `origin/feature/calibracion-fuerza-tp`
+2. Calibracion de fuerza implementada y validada en codigo/tests:
+      - Estimador de fuerza recalibrado (enfoque global, no por actividad aislada).
+      - Suite validada previamente en esta iteracion (`tests/test_trainer_agent.py` y corrida completa).
+3. Artefactos de analisis ya generados:
+      - `docs/strength_tss_baseline_tp_vs_kairos_2026-09-21.md`
+      - `docs/strength_tss_calibrated_tp_vs_kairos_2026-09-21.md`
+      - `docs/strength_calibration_window_120_2026-09-21.csv` (ventana global 120 sesiones)
+4. Estado del dataset global (120 sesiones de fuerza):
+      - `tp_tss` aun pendiente de completar desde export/copia de TrainingPeaks.
+      - Columnas listas para cruce y metricas (`tp_tss`, `delta_kairos_minus_tp`).
+5. Proximo paso operativo al retomar:
+      - Importar/pegar `tp_tss` de TP para esas 120 sesiones.
+      - Calcular metricas globales finales: MAE, bias, mediana error absoluto, percentiles y ratio.
+      - Si aplica, ajustar una sola vez la calibracion global y volver a validar.
+
+Nota rapida TP:
+- Si no aparece boton Export/Download, usar Calendar en vista lista, filtrar Strength + rango de fechas,
+  copiar tabla a hoja de calculo y guardar CSV limpio con columnas `date,activity_name,tp_tss`
+  (idealmente `activity_id,date,activity_name,tp_tss`).
