@@ -57,6 +57,37 @@ class _DummySupabase:
         return _DummyTable(self, name)
 
 
+class _TimeoutOnceTable:
+    def __init__(self, parent):
+        self.parent = parent
+        self._payload = None
+
+    def upsert(self, payload):
+        self._payload = payload
+        return self
+
+    def execute(self):
+        self.parent.calls += 1
+        if self.parent.calls == 1:
+            raise Exception(
+                {
+                    "message": "canceling statement due to statement timeout",
+                    "code": "57014",
+                }
+            )
+        self.parent.last_upsert = self._payload
+        return _DummyResult([])
+
+
+class _TimeoutOnceSupabase:
+    def __init__(self):
+        self.calls = 0
+        self.last_upsert = None
+
+    def table(self, _name: str):
+        return _TimeoutOnceTable(self)
+
+
 def test_sanitize_credentials_removes_garmin_password_without_mutating_input():
     original = {
         "garmin_email": "runner@example.com",
@@ -112,6 +143,26 @@ def test_register_app_user_never_persists_garmin_password(monkeypatch):
     persisted_credentials = fake_sb.last_insert["credentials"]
     assert "garmin_password" not in persisted_credentials
     assert persisted_credentials["garmin_email"] == "runner@example.com"
+
+
+def test_is_statement_timeout_error_detects_postgrest_payload():
+    exc = Exception({"message": "canceling statement due to statement timeout", "code": "57014"})
+    assert storage._is_statement_timeout_error(exc) is True
+
+
+def test_save_user_profile_retries_once_on_statement_timeout(monkeypatch):
+    fake_sb = _TimeoutOnceSupabase()
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake_sb)
+    monkeypatch.setattr(storage.time, "sleep", lambda _s: None)
+
+    storage.save_user_profile({"personal": {"name": "Rafa"}})
+
+    assert fake_sb.calls == 2
+    assert fake_sb.last_upsert == {
+        "app_user_id": "user-1",
+        "data": {"personal": {"name": "Rafa"}},
+    }
 
 
 def test_persist_session_summary_daily_updates_existing_date(monkeypatch):

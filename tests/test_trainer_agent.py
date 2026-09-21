@@ -2118,6 +2118,40 @@ class TestFetchActivitiesForLoadCalc:
         assert len(out) == 1
         assert int(out[0].get("activityId") or 0) == 2
 
+    @pytest.mark.asyncio
+    async def test_fetch_activities_parses_concatenated_json_objects(self):
+        from datetime import date as _date
+
+        today = _date.today()
+        today_iso = today.isoformat()
+        yesterday_iso = (today - timedelta(days=1)).isoformat()
+
+        raw_concat = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "activityId": 10,
+                        "startTimeLocal": f"{today_iso}T07:00:00",
+                        "trainingLoad": 50.0,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "activityId": 11,
+                        "startTimeLocal": f"{yesterday_iso}T08:00:00",
+                        "trainingLoad": 40.0,
+                    }
+                ),
+            ]
+        )
+
+        session = MagicMock()
+        with patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value=raw_concat)):
+            out = await _fetch_activities_for_load_calc(session, yesterday_iso, today_iso)
+
+        ids = {int(a.get("activityId") or 0) for a in out}
+        assert ids == {10, 11}
+
 
 # ─── Fallback de planificacion y rangos trend ─────────────────────────────
 
@@ -2763,8 +2797,16 @@ class TestLoadFatigueModel:
         # Con 1h íntegra en Z1, el mapeo por HRR da IF≈0.725 => ~52.56 TSS
         assert abs(tss - 52.56) < 0.3
 
-    def test_estimate_tss_strength_prefers_hr_then_rpe(self):
-        act_hr = {"type": "strength_training", "averageHR": 145, "maxHR": 180, "duration": 3600, "rpe": 9}
+    def test_estimate_tss_strength_ignores_native_and_uses_calibrated_hr_formula(self):
+        act = {
+            "type": "strength_training",
+            "duration": 3600,
+            "trainingLoad": 33.35,
+            "averageHR": 145,
+            "maxHR": 180,
+            "rpe": 9,
+            "name": "Fuerza maxima 5x5",
+        }
         hr_zones_raw = json.dumps(
             [
                 {
@@ -2772,55 +2814,31 @@ class TestLoadFatigueModel:
                     "secsInZone": 3600,
                     "minHeartRateIn": 115,
                     "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
+                }
             ]
         )
 
-        tss_zones, label_zones = _estimate_session_tss(act_hr, hr_zones_raw=hr_zones_raw)
-        tss_hr, label_hr = _estimate_session_tss(act_hr)
+        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
-        assert label_zones == "hrTSS"
-        assert abs(tss_zones - 56.25) < 0.05
-        assert label_hr == "TSS"
-        # RPE 9 => fuerza maxima/potencia (IF 0.80) => ~64 TSS en 1h.
-        assert abs(tss_hr - 64.0) < 0.1
+        assert label == "hrTSS"
+        assert abs(tss - 61.1) < 0.3
 
-        act_rpe = {"type": "strength_training", "duration": 3600, "rpe": "7-8"}
-        tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
-        assert label_rpe == "TSS"
-        # "7-8" => RPE medio 7.5 => bucket intenso (IF 0.80) en el método IF.
-        assert abs(tss_rpe - 64.0) < 0.1
+    def test_estimate_tss_strength_without_hr_returns_zero(self):
+        act = {"type": "strength_training", "duration": 3600}
+        tss, label = _estimate_session_tss(act)
 
-    def test_estimate_tss_strength_rpe_fraction_uses_numerator(self):
-        act_fraction = {"type": "strength_training", "duration": 3600, "rpe": "7/10"}
-        act_plain = {"type": "strength_training", "duration": 3600, "rpe": 7}
-        tss_fraction, label_fraction = _estimate_session_tss(act_fraction)
-        tss_plain, label_plain = _estimate_session_tss(act_plain)
+        assert label == "hrTSS"
+        assert tss == 0.0
 
-        assert label_fraction == "TSS"
-        assert label_plain == "TSS"
-        assert abs(tss_fraction - tss_plain) < 0.01
-
-    def test_estimate_tss_strength_sparse_hr_zones_falls_back_to_hr(self):
+    def test_estimate_tss_strength_uses_hr_only_even_with_rpe_and_text(self):
         act = {
             "type": "strength_training",
             "duration": 3600,
             "averageHR": 145,
             "maxHR": 180,
+            "rpe": "7/10",
+            "name": "Movilidad suave",
         }
-        # Solo 1 minuto de zonas para una sesión de 60 minutos: cobertura insuficiente.
         hr_zones_raw = json.dumps([
             {
                 "zoneNumber": 1,
@@ -2832,21 +2850,19 @@ class TestLoadFatigueModel:
 
         tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
-        assert label == "TSS"
-        # Sin cobertura suficiente de zonas, usa IF conservador por defecto (0.56).
-        assert abs(tss - 31.36) < 0.2
+        assert label == "hrTSS"
+        assert abs(tss - 61.1) < 0.3
 
-    def test_estimate_tss_strength_manual_if_override(self):
+    def test_estimate_tss_strength_native_label_kept_even_without_duration(self):
         act = {
             "type": "strength_training",
-            "duration": 3600,
-            "gym_if": 0.85,
+            "trainingStressScore": 21.7,
         }
 
         tss, label = _estimate_session_tss(act)
 
-        assert label == "TSS"
-        assert abs(tss - 72.25) < 0.1
+        assert label == "hrTSS"
+        assert tss == 0.0
 
     def test_estimate_tss_strength_light_session_keyword(self):
         act = {
@@ -2857,10 +2873,10 @@ class TestLoadFatigueModel:
 
         tss, label = _estimate_session_tss(act)
 
-        assert label == "TSS"
-        assert abs(tss - 30.5) < 0.1
+        assert label == "hrTSS"
+        assert tss == 0.0
 
-    def test_estimate_tss_strength_rpe_overrides_conflicting_text_keyword(self):
+    def test_estimate_tss_strength_rpe_and_text_do_not_change_single_fallback(self):
         act = {
             "type": "strength_training",
             "duration": 3600,
@@ -2870,9 +2886,8 @@ class TestLoadFatigueModel:
 
         tss, label = _estimate_session_tss(act)
 
-        assert label == "TSS"
-        # RPE estructurado manda sobre texto ambiguo.
-        assert abs(tss - 64.0) < 0.1
+        assert label == "hrTSS"
+        assert tss == 0.0
 
     def test_strength_classification_labeled_sample_structured_first(self):
         labeled = [
@@ -4557,6 +4572,10 @@ class TestWeekTssDeterministicRoute:
         assert _is_week_tss_intent("¿Qué actividades han contribuido al TSS de esta semana? Dame día, actividad y TSS estimado por sesión")
         assert not _is_week_tss_intent("Como esta mi HRV hoy?")
 
+    def test_is_week_tss_intent_does_not_hijack_single_day_query(self):
+        assert not _is_week_tss_intent("Dime los TSSs del domingo 20 de septiembre")
+        assert _is_mcp_factual_query_intent("Dime los TSSs del domingo 20 de septiembre")
+
     def test_is_week_activities_intent_detects_weekly_activity_queries(self):
         assert _is_week_activities_intent("Cuales son mis actividades de la semana del 10 de agosto 2026?")
         assert _is_week_activities_intent("Que entrenamientos hice esta semana?")
@@ -4621,6 +4640,17 @@ class TestWeekTssDeterministicRoute:
             {},
         )
         assert route == "week_tss"
+
+    def test_tool_router_routes_single_day_tss_to_mcp_factual(self):
+        import agent.trainer_agent as ta
+
+        router = ta.ToolRouter(enabled=True)
+        route = router.route_key(
+            "Dime los TSSs del domingo 20 de septiembre",
+            [],
+            {},
+        )
+        assert route == "mcp_factual"
 
     def test_is_load_trend_intent_detects_atl_ctl_tsb_trend_query(self):
         assert _is_load_trend_intent(
@@ -5009,10 +5039,12 @@ class TestGoalStatusDeterministicRoute:
 
         assert "| Semana natural | 10/08/2026 → 16/08/2026 |" in out
         assert "| TSS acumulado | 120.0 |" in out
-        assert "lunes 10/08: 40.0" in out
-        assert "domingo 16/08: 15.0" in out
-        assert "TSS 40.0" in out
-        assert "TSS 15.0" in out
+        assert "lunes 10/08: 40.0 (rTSS 40.0 · hrTSS 0.0 · sTSS 0.0)" in out
+        assert "domingo 16/08: 15.0 (rTSS 15.0 · hrTSS 0.0 · sTSS 0.0)" in out
+        assert "- 10/08: TSS 40.0" in out
+        assert "- 16/08: TSS 15.0" in out
+        assert "- Running — Rodaje lunes" in out
+        assert "- Senderismo — Senderismo domingo" in out
         assert "Actividad fuera de semana" not in out
 
     @pytest.mark.asyncio
@@ -5114,6 +5146,66 @@ class TestGoalStatusDeterministicRoute:
         assert "| TSS semana previa | 100.0 |" in out
         assert "| Diferencia porcentual | +76.9% |" in out
         assert "| Spike >20% | SI |" in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_shows_daily_tss_and_per_activity_tss_only_for_multi_activity_days(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 20)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-09-14", "tss": 0.0},
+                    {"date": "2026-09-15", "tss": 78.7},
+                    {"date": "2026-09-16", "tss": 59.4},
+                    {"date": "2026-09-17", "tss": 115.7},
+                    {"date": "2026-09-18", "tss": 180.2},
+                    {"date": "2026-09-19", "tss": 0.0},
+                    {"date": "2026-09-20", "tss": 134.0},
+                ]
+            }
+        }
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return [
+                {
+                    "activityName": "Eliptica. 30' Z1 Transferencia Fuerza",
+                    "activityType": "elliptical",
+                    "startTimeLocal": "2026-09-16 07:00:00",
+                    "trainingLoad": 18.5,
+                },
+                {
+                    "activityName": "Trabajo neuromuscular con alta carga",
+                    "activityType": "strength_training",
+                    "startTimeLocal": "2026-09-16 19:00:00",
+                    "trainingLoad": 3.6,
+                },
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="Dime los TSS de esta semana y actividades",
+        )
+
+        assert "- 16/09: TSS 59.4" in out
+        assert "Eliptica. 30' Z1 Transferencia Fuerza · TSS 59.4 (rTSS)" in out
+        assert "Trabajo neuromuscular con alta carga" in out
+        assert "Trabajo neuromuscular con alta carga · TSS" not in out
+        assert "TSS diario canónico" not in out
+        assert "suma TSS actividades listadas" not in out
+        assert "Carga Garmin" not in out
 
     @pytest.mark.asyncio
     async def test_build_current_week_tss_markdown_semana_pasada_uses_non_inverted_activity_window(self, monkeypatch):
@@ -5955,7 +6047,7 @@ class TestMcpFactualDeterministicRoute:
         )
 
         assert "Desglose por tipo de TSS:" in out
-        assert "rTSS: 37.1" in out
+        assert "rTSS: 40.4" in out
         assert "hrTSS: 0.0" in out
         assert "sTSS: 0.0" in out
 
