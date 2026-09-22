@@ -43,3 +43,94 @@ Para trabajo nuevo, usar como fuente vigente:
 - `docs/tss_independiente_junio_a_septiembre_hasta_2026-09-16.csv`
 
 Los documentos intermedios se mantienen solo para trazabilidad historica.
+
+
+
+
+22/09/2026
+
+Excelente propuesta. Ya corrí exactamente esas comprobaciones y salieron datos útiles.
+
+Resultado 1: uso real en runtime
+
+La ruta de cálculo de TSS de fuerza está usando el estimador HR, no la tabla de IF por etiquetas:
+definición HR strength IF: load_metrics.py:508
+uso en rama strength dentro de estimate_session_tss: load_metrics.py:3020
+La clasificación por texto y el IF por categoría sí existen:
+clasificador: load_metrics.py:1914
+IF por categoría: load_metrics.py:1992
+Pero en cálculo operativo de strength TSS, hoy manda la ruta HR en esa rama.
+Resultado 2: heavy en historial local disponible
+Conté categorías inferidas con la lógica actual en dos datasets:
+
+Tabla independiente fuerza (18 strength):
+heavy: 0
+light: 5
+neuromuscular: 8
+general: 5
+other: 0
+Ventana 120 (dataset amplio local):
+heavy: 0
+light: 22
+neuromuscular: 22
+general: 74
+other: 2
+Conclusión factual: no aparece heavy en ninguno de los dos cortes locales analizados.
+
+Resultado 3: simulación de fusión general + neuromuscular
+Hice la simulación como pedías, pero correctamente sobre calc_tss actual (no anclando a TP), aplicando el factor de cambio de IF en las categorías fusionadas:
+
+Modelo A: general 0.56, neuromuscular 0.57
+Modelo B: ambas en 0.565
+light, maintenance y heavy iguales
+Impacto frente a TP:
+
+Full 18
+
+A: MAE 0.982401, bias 0.550934, ratio 1.014786
+B: MAE 0.974577, bias 0.363488, ratio 1.011986
+Delta B-A: MAE -0.007824, bias -0.187445, ratio -0.002800
+OOS 13
+
+A: MAE 1.113596, bias 0.783746, ratio 1.020399
+B: MAE 1.102763, bias 0.524206, ratio 1.016522
+Delta B-A: MAE -0.010833, bias -0.259540, ratio -0.003877
+Lectura:
+
+No empeora; mejora leve y estable.
+Está muy lejos del umbral de deterioro material de 0.2 MAE.
+Tu hipótesis de simplificación queda respaldada numéricamente en estos cortes.
+Tu condición metodológica por calendario
+Totalmente de acuerdo. La decisión debería gatillarse por ventana temporal, no solo por conteo. Propuesta operativa limpia:
+
+Ventana fija de 6 a 8 semanas.
+Evaluación al cierre de ventana sobre OOS puro.
+Accionar solo si se mantiene patrón consistente en al menos dos ventanas consecutivas.
+Si quieres, te dejo ahora mismo ese criterio escrito en proximos_pasos.md como regla explícita de gobierno para no volver a ajustar por resultado puntual.
+
+## Aclaraciones de la sesion (22/09/2026)
+
+Resumen corto de preguntas y respuestas para evitar ambiguedades en iteraciones futuras:
+
+1. Modelo A vs Modelo B
+- Modelo A: `general=0.56`, `neuromuscular=0.57` (separados).
+- Modelo B: `general` y `neuromuscular` fusionados a `0.565`.
+- `light`, `maintenance` y `heavy` se mantienen iguales en la simulacion.
+
+2. IF fijo por categoria vs IF por frecuencia cardiaca
+- IF fijo por categoria: valor hardcodeado segun `session_kind` en `_estimate_strength_if`.
+- IF por FC: valor calculado dinamicamente en `_estimate_strength_if_from_hr` usando FC media + FC reposo/max de perfil.
+
+3. Origen del `0.56` de `general`
+- Es un valor heuristico historico (hardcodeado), no una calibracion reciente documentada.
+- En codigo aparece explicitamente en `agent/load_metrics.py` dentro de `_estimate_strength_if`:
+      - `if session_kind == "general": return 0.56`
+      - `return 0.56` (fallback final)
+
+4. Uso operativo actual en fuerza
+- En la rama principal de calculo de TSS de fuerza, hoy manda el estimador HR (`_estimate_strength_if_from_hr`).
+- La tabla IF por etiquetas sigue existiendo para clasificacion/compatibilidad y analisis.
+
+5. Nota metodologica
+- Para decidir cambios de calibracion: evaluar por ventana temporal fija (6-8 semanas) y sobre OOS puro,
+      evitando ajustes por un unico caso o por lectura oportunista de resultados.
