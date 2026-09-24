@@ -1,0 +1,99 @@
+{
+  "started_at": "2026-09-24T08:55:30Z",
+  "ended_at": "2026-09-24T09:11:21Z",
+  "relogin": {
+    "ok": true,
+    "note": "session_initialized",
+    "cooldown_seconds": 900.0
+  },
+  "probe": {
+    "ok": true,
+    "error": "",
+    "summary": {
+      "session_started_at": "2026-09-24T09:10:35Z",
+      "session_ended_at": "2026-09-24T09:11:21Z",
+      "first_403_session_age_seconds": null,
+      "first_429_session_age_seconds": null,
+      "calls_total": 5,
+      "calls_ok": 5,
+      "calls_error": 0
+    },
+    "events": [
+      {
+        "phase": "probe",
+        "call_index": 1,
+        "tool": "get_user_profile",
+        "args": {},
+        "ok": true,
+        "kind": "ok",
+        "http_code": "",
+        "retry_after_seconds": "",
+        "session_age_seconds": 11.522,
+        "message_excerpt": "{\n  \"id\": 3252512,\n  \"userData\": {\n    \"gender\": \"MALE\",\n    \"weight\": 66400.0,\n    \"height\": 173.0,\n    \"timeFormat\": \"time_twenty_four_hr\",\n    \"birthDate\": \"1982-02-28\",\n    \"measurementSystem\": \"metric\",\n    \"activit"
+      },
+      {
+        "phase": "probe",
+        "call_index": 2,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24013969366
+        },
+        "ok": true,
+        "kind": "ok",
+        "http_code": "",
+        "retry_after_seconds": "",
+        "session_age_seconds": 20.178,
+        "message_excerpt": "{\n  \"activityId\": 24013969366,\n  \"activityUUID\": {\n    \"uuid\": \"ecd667a4-085e-43e5-acc6-737ac61ea253\"\n  },\n  \"activityName\": \"Senderismo. Ruta A Moa 1/2 con H\u00e9ctor (O Fieiro - A Coru\u00f1a)\",\n  \"description\": \"\",\n  \"userProf"
+      },
+      {
+        "phase": "probe",
+        "call_index": 3,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24227364808
+        },
+        "ok": true,
+        "kind": "ok",
+        "http_code": "",
+        "retry_after_seconds": "",
+        "session_age_seconds": 28.631,
+        "message_excerpt": "{\n  \"activityId\": 24227364808,\n  \"activityUUID\": {\n    \"uuid\": \"13641de9-1d1a-4606-afce-822b739a23e6\"\n  },\n  \"activityName\": \"Fartlek. Cal + 40' Z3 + VC\",\n  \"description\": \"\",\n  \"userProfileId\": 3252512,\n  \"isMultiSportP"
+      },
+      {
+        "phase": "probe",
+        "call_index": 4,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24059814335
+        },
+        "ok": true,
+        "kind": "ok",
+        "http_code": "",
+        "retry_after_seconds": "",
+        "session_age_seconds": 37.112,
+        "message_excerpt": "{\n  \"activityId\": 24059814335,\n  \"activityUUID\": {\n    \"uuid\": \"a8984449-f803-4b52-a741-44de0b50ec83\"\n  },\n  \"activityName\": \"Rodaje. 21k Pesadoira\",\n  \"userProfileId\": 3252512,\n  \"isMultiSportParent\": false,\n  \"activity"
+      },
+      {
+        "phase": "probe",
+        "call_index": 5,
+        "tool": "get_activity",
+        "args": {
+          "activity_id": 24201327869
+        },
+        "ok": true,
+        "kind": "ok",
+        "http_code": "",
+        "retry_after_seconds": "",
+        "session_age_seconds": 45.611,
+        "message_excerpt": "{\n  \"activityId\": 24201327869,\n  \"activityUUID\": {\n    \"uuid\": \"7e8698c4-4bc4-44ab-b453-c697374a1289\"\n  },\n  \"activityName\": \"Rodaje. Tapia CDC Z2\",\n  \"userProfileId\": 3252512,\n  \"isMultiSportParent\": false,\n  \"activityT"
+      }
+    ]
+  },
+  "interpretation": {
+    "rate_limit_scope_hint": "unknown",
+    "escalation_429_to_403_possible": false,
+    "first_403_session_age_seconds": null,
+    "first_429_session_age_seconds": null,
+    "stop_on_first_error": true
+  }
+}

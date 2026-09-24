@@ -162,6 +162,7 @@ def _extract_training_load_points(payload: Any) -> list[dict]:
 
 
 def _extract_activity_duration_hours(activity: dict) -> float:
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
     duration_seconds = (
         activity.get("duration_seconds")
         or activity.get("duration")
@@ -169,6 +170,10 @@ def _extract_activity_duration_hours(activity: dict) -> float:
         or activity.get("elapsedDuration")
         or activity.get("movingDuration")
         or activity.get("moving_duration_seconds")
+        or summary.get("duration")
+        or summary.get("durationInSeconds")
+        or summary.get("elapsedDuration")
+        or summary.get("movingDuration")
         or 0
     )
     try:
@@ -470,17 +475,26 @@ def _estimate_if_from_hr(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
 ) -> float | None:
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
     avg_hr_raw = (
         activity.get("averageHR")
         or activity.get("avgHr")
         or activity.get("avg_hr_bpm")
         or activity.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("avg_hr_bpm")
+        or summary.get("averageHeartRate")
     )
     max_hr_raw = (
         activity.get("maxHR")
         or activity.get("maxHr")
         or activity.get("max_hr_bpm")
         or activity.get("maxHeartRate")
+        or summary.get("maxHR")
+        or summary.get("maxHr")
+        or summary.get("max_hr_bpm")
+        or summary.get("maxHeartRate")
     )
     if avg_hr_raw is None:
         return None
@@ -516,11 +530,16 @@ def _estimate_strength_if_from_hr(
     because these fields are often unstable in gym sessions. We anchor to profile
     maxHR (or default) for a more TP-like stress scale.
     """
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
     avg_hr_raw = (
         activity.get("averageHR")
         or activity.get("avgHr")
         or activity.get("avg_hr_bpm")
         or activity.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("avg_hr_bpm")
+        or summary.get("averageHeartRate")
     )
     if avg_hr_raw is None:
         return None
@@ -1773,26 +1792,39 @@ def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, floa
 
     perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
     health = profile.get("health") if isinstance(profile.get("health"), dict) else {}
+    user_data = profile.get("userData") if isinstance(profile.get("userData"), dict) else {}
 
     hr_rest_candidates = [
+        perf.get("hr_rest_bpm"),
         perf.get("resting_hr"),
         perf.get("restingHeartRate"),
         perf.get("resting_heart_rate"),
+        health.get("hr_rest_bpm"),
         health.get("resting_hr"),
         health.get("restingHeartRate"),
         health.get("resting_heart_rate"),
+        user_data.get("restingHeartRate"),
+        user_data.get("resting_heart_rate"),
+        user_data.get("hrRestingValue"),
+        profile.get("hr_rest_bpm"),
         profile.get("resting_hr"),
         profile.get("restingHeartRate"),
         profile.get("resting_heart_rate"),
         profile.get("rhr"),
     ]
     hr_max_candidates = [
+        perf.get("hr_max_bpm"),
         perf.get("max_hr"),
         perf.get("maxHeartRate"),
         perf.get("max_heart_rate"),
+        health.get("hr_max_bpm"),
         health.get("max_hr"),
         health.get("maxHeartRate"),
         health.get("max_heart_rate"),
+        user_data.get("maxHeartRate"),
+        user_data.get("max_heart_rate"),
+        user_data.get("hrMaximumValue"),
+        profile.get("hr_max_bpm"),
         profile.get("max_hr"),
         profile.get("maxHeartRate"),
         profile.get("max_heart_rate"),

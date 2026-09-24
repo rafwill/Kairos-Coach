@@ -53,6 +53,7 @@ from agent.trainer_agent import (
     _infer_tss_source_tag,
     _extract_threshold_pace_sec_per_km,
     _resolve_running_threshold_pace_sec_per_km,
+    _resolve_hr_profile_values,
     _extract_iso_date_from_text,
     _extract_iso_date_range_from_text,
     _generate_structured_plan_payload,
@@ -117,6 +118,34 @@ class TestSecondsToHhmmss:
 
     def test_above_one_hour(self):
         assert _seconds_to_hhmmss(5400) == "01:30:00"
+
+
+class TestResolveHrProfileValues:
+    def test_prefers_kairos_performance_hr_keys(self):
+        profile = {
+            "performance": {
+                "hr_rest_bpm": 49,
+                "hr_max_bpm": 188,
+            }
+        }
+
+        hr_rest, hr_max = _resolve_hr_profile_values(profile)
+
+        assert hr_rest == 49
+        assert hr_max == 188
+
+    def test_reads_garmin_user_data_hr_keys(self):
+        profile = {
+            "userData": {
+                "restingHeartRate": 52,
+                "maxHeartRate": 183,
+            }
+        }
+
+        hr_rest, hr_max = _resolve_hr_profile_values(profile)
+
+        assert hr_rest == 52
+        assert hr_max == 183
 
     def test_float_rounds_up(self):
         # 90.6 → 91 segundos → 01:31
@@ -2888,6 +2917,22 @@ class TestLoadFatigueModel:
 
         assert label == "hrTSS"
         assert tss == 0.0
+
+    def test_estimate_tss_strength_supports_summary_dto_payload_shape(self):
+        act = {
+            "activityTypeDTO": {"typeKey": "strength_training"},
+            "summaryDTO": {
+                "duration": 2751.608,
+                "averageHR": 79.0,
+                "maxHR": 122.0,
+            },
+            "activityName": "Gimnasio. Trail - Estabilidad y core",
+        }
+
+        tss, label = _estimate_session_tss(act)
+
+        assert label == "hrTSS"
+        assert abs(tss - 26.23) < 0.5
 
     def test_strength_classification_labeled_sample_structured_first(self):
         labeled = [
