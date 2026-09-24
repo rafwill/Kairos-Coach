@@ -134,3 +134,57 @@ Resumen corto de preguntas y respuestas para evitar ambiguedades en iteraciones 
 5. Nota metodologica
 - Para decidir cambios de calibracion: evaluar por ventana temporal fija (6-8 semanas) y sobre OOS puro,
       evitando ajustes por un unico caso o por lectura oportunista de resultados.
+
+
+
+
+
+24/09/2026 12:24
+
+Este log termina de confirmar tres cosas importantes:
+
+La lectura metodológica que marcaste se sostiene.
+
+En la corrida n=18 con hr_max=232, el Modelo A queda casi plano:
+
+hrr_clamped en [0.20, 0.216]
+
+IF en [0.580, 0.586]
+
+15 de 18 sesiones pegadas al piso 0.20
+
+Eso no es un modelo sensible a intensidad real, es casi un IF constante.
+
+El resultado A vs B se mueve con cobertura MCP, pero el patrón central no cambia.
+
+n=14: A MAE 4.67, B MAE 3.54
+
+n=12: A MAE 4.62, B MAE 3.50
+
+n=10: A MAE 4.79, B MAE 3.44
+
+En todas esas corridas parciales recientes, B queda mejor que A.
+
+El MCP está sano en autenticación, pero inestable en get_activity para el bloque más reciente.
+
+mcp_relogin_probe dio 5/5 OK.
+
+Aun así, hay timeouts repetidos en las mismas actividades recientes.
+
+Eso explica por qué la métrica final oscila por cobertura, no por cambio conceptual del modelo.
+
+Delta técnico relevante:
+
+El script en workspace ya quedó con timeout de 60s y guardarraíl robusto para hr_max en compare_strength_models_ab.py.
+Tus logs con timeout de 25s corresponden a ejecuciones anteriores que quedaron en historial del terminal.
+Cuando probé distribución paginada de maxHR en una sesión posterior, vino vacía y por eso cae a fallback_185.
+Conclusión operativa al día de hoy:
+
+No hay base para afirmar A gana.
+Sí hay base para afirmar que A está estructuralmente comprimido por clamp y que B es el candidato más estable mientras hr_max siga frágil.
+Tu hipótesis sobre la dirección del sesgo de A al corregir hr_max plausible está validada.
+Si quieres, siguiente paso lo dejo automático y determinista:
+
+Reintento selectivo solo de las actividades que fallan (sin recalcular todo).
+Derivación de hr_max desde las actividades efectivamente recuperadas del set de referencia, con cap duro fisiológico y percentil robusto.
+Reporte final único n=18 con tabla por sesión y columnas hrr_clamped/IF de A para auditoría.
