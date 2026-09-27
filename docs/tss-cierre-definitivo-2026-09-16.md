@@ -2,11 +2,54 @@
 
 ## Estado final
 
-- Formula vigente: `TSS_FORMULA_VERSION=26`.
+- Formula vigente: `TSS_FORMULA_VERSION=29`.
 - Bloques principales:
   - Trail: **CERRADO**.
-  - Fuerza: **CERRADO**.
+  - Fuerza: **CERRADO** (actualizado 2026-09-27 con Modelo B en produccion).
   - Running: **CERRADO** con excepción de sesgo documentada.
+
+## Actualizacion de fuerza (2026-09-27)
+
+### Causa raiz confirmada
+
+1. La ruta de produccion de fuerza estaba usando HR-reserve (Modelo A) con compresion de intensidad:
+   - `hrr_clamped` frecuentemente en piso.
+   - IF casi plano en la muestra real.
+2. La calibracion historica de fuerza por categorias/texto no estaba gobernando la rama operativa real.
+
+### Evidencia de decision (A vs B)
+
+1. Sensibilidad monotona de A al corregir `hr_max` en rango plausible (`232 -> 180`):
+   - al bajar `hr_max`, empeoran sesgo y MAE de A de forma consistente.
+2. Comparativas A/B repetidas con muestra de 18 sesiones y cierre por reintento selectivo 1x1.
+3. Veredicto: **Modelo B (LTHR-anchored)** elegido como principal para fuerza.
+
+### Modelo aplicado en produccion
+
+1. Coeficientes activos (calibracion LS in-sample):
+   - `intercepto=0.523104204`
+   - `pendiente=0.145349624`
+2. Clamps de seguridad mantenidos:
+   - `z` en `[0, 1.15]`
+   - `IF` en `[0.45, 0.80]`
+3. Guardrail de extrapolacion en runtime:
+   - warning explicito cuando `z_c` cae fuera de `[0.134744, 0.321826]`.
+4. Fallback:
+   - si falta LTHR/umbral, cae a HR-reserve (Modelo A) para no perder robustez operativa.
+
+### Limitaciones y etiqueta metodologica
+
+1. Calibracion LS de fuerza etiquetada como **in-sample**, pendiente de confirmacion **out-of-sample**.
+2. Rango de calibracion estrecho en esta muestra (`z_c` bajo), con alta correlacion `duration_h` vs `tp_local`.
+3. Criterio de confirmacion: ventana calendario de 6-8 semanas antes de consolidar como definitivo OOS.
+
+### Estado de integracion y trazabilidad
+
+1. Cambio integrado en rama principal (`main`) y publicado.
+2. Rama de trabajo `feature/calibracion-fuerza-tp` mergeada y eliminada (local/remoto).
+3. Artefactos finales de fuerza a conservar como referencia:
+   - `docs/strength_model_b_recalibrated_2026-09-27.csv`
+   - `docs/strength_model_b_recalibrated_2026-09-27.md`
 
 ## Cambios de formula incluidos en v26
 
