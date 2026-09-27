@@ -2313,7 +2313,7 @@ def _is_week_tss_intent(user_message: str) -> bool:
         "actividad", "actividades", "sesion", "sesión", "estimado por sesion", "estimado por sesión",
     ]
     week_markers = [
-        "esta semana", "semana", "semanal", "lunes", "domingo", "acumulado semanal",
+        "esta semana", "semana", "semanal", "acumulado semanal", "week",
     ]
     return any(marker in text for marker in week_markers) and any(marker in text for marker in data_markers)
 
@@ -3678,9 +3678,24 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             log.debug("_build_current_week_tss_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
 
-    act_rows: list[tuple[date, str, str, float | None, str, str | None]] = []
+    act_rows: list[tuple[date, str, str, float | None, str, str | None, str]] = []
     activity_tss_by_day: dict[str, float] = {}
-    tss_breakdown = {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0}
+    activity_type_tss_by_day: dict[str, dict[str, float]] = {}
+
+    def _resolve_tss_bucket(activity: dict, tss_label: str | None) -> str:
+        act_type = activity.get("type") or activity.get("activityType") or ""
+        act_type_l = str(act_type).lower()
+        if "swim" in act_type_l or "nat" in act_type_l:
+            return "sTSS"
+        if _is_strength_activity(act_type):
+            return "hrTSS"
+        label_l = str(tss_label or "").lower()
+        if label_l == "hrtss":
+            return "hrTSS"
+        if label_l == "stss":
+            return "sTSS"
+        return "rTSS"
+
     for act in activities:
         if not isinstance(act, dict):
             continue
@@ -3697,7 +3712,8 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
         tss_source = "sin datos"
         tss_label: str | None = None
-        act_tss = _extract_training_load_tss(act)
+        act_type = act.get("type") or act.get("activityType") or ""
+        act_tss = None if _is_strength_activity(act_type) else _extract_training_load_tss(act)
         if act_tss is None:
             est_tss, est_label = _estimate_session_tss(
                 act,
@@ -3713,7 +3729,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
                 tss_label = str(est_label or "")
                 tss_source = "estimado"
         else:
-            tss_source = "trainingLoad Garmin"
+            tss_source = "estimado"
             est_tss, est_label = _estimate_session_tss(
                 act,
                 ftp=_extract_cycling_ftp_watts(profile),
@@ -3726,6 +3742,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             if est_tss > 0:
                 tss_label = str(est_label or "")
         if week_start <= d_obj <= week_end:
+            bucket = _resolve_tss_bucket(act, tss_label)
             act_rows.append((
                 d_obj,
                 sport,
@@ -3733,18 +3750,14 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
                 round(float(act_tss), 1) if act_tss is not None else None,
                 tss_source,
                 tss_label,
+                bucket,
             ))
         if act_tss is not None:
             activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
             if week_start <= d_obj <= week_end:
-                act_type_l = str(act.get("type") or act.get("activityType") or "").lower()
-                if "swim" in act_type_l or "nat" in act_type_l:
-                    bucket = "sTSS"
-                elif str(tss_label or "").lower() == "hrtss":
-                    bucket = "hrTSS"
-                else:
-                    bucket = "rTSS"
-                tss_breakdown[bucket] = round(tss_breakdown.get(bucket, 0.0) + float(act_tss), 1)
+                bucket = _resolve_tss_bucket(act, tss_label)
+                per_day = activity_type_tss_by_day.setdefault(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0})
+                per_day[bucket] = round(per_day.get(bucket, 0.0) + float(act_tss), 1)
     act_rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
 
     # Si falta un día en la serie diaria, o existe con TSS=0 sin cierre real,
@@ -3759,7 +3772,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         if existing_tss is not None and float(existing_tss) > 0.0:
             continue
         tss_by_day[d_iso] = round(float(fallback_tss), 1)
-        tss_source_by_day[d_iso] = "garmin_activity_load"
+        tss_source_by_day[d_iso] = "activity_tss_fallback"
         used_activity_fallback = True
 
     current_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
@@ -3768,6 +3781,41 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         delta_pct = round(((current_week_tss - previous_week_tss) / previous_week_tss) * 100.0, 1)
     else:
         delta_pct = None
+
+    # Normaliza desglose rTSS/hrTSS/sTSS al TSS diario mostrado para mantener
+    # consistencia entre "Desglose por tipo" y TSS semanal.
+    day_type_breakdown: dict[str, dict[str, float]] = {}
+    tss_breakdown = {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0}
+    for d in week_dates:
+        d_iso = d.isoformat()
+        day_tss = float(tss_by_day.get(d_iso, 0.0) or 0.0)
+        raw = activity_type_tss_by_day.get(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0})
+        raw_r = float(raw.get("rTSS", 0.0) or 0.0)
+        raw_h = float(raw.get("hrTSS", 0.0) or 0.0)
+        raw_s = float(raw.get("sTSS", 0.0) or 0.0)
+        raw_total = raw_r + raw_h + raw_s
+
+        if raw_total > 0.0:
+            if day_tss > 0.0:
+                scale = day_tss / raw_total
+                comp = {
+                    "rTSS": round(raw_r * scale, 1),
+                    "hrTSS": round(raw_h * scale, 1),
+                    "sTSS": round(raw_s * scale, 1),
+                }
+                drift = round(day_tss - (comp["rTSS"] + comp["hrTSS"] + comp["sTSS"]), 1)
+                if abs(drift) > 0.0:
+                    comp["rTSS"] = round(comp["rTSS"] + drift, 1)
+            else:
+                comp = {"rTSS": round(raw_r, 1), "hrTSS": round(raw_h, 1), "sTSS": round(raw_s, 1)}
+        else:
+            comp = {"rTSS": round(day_tss, 1), "hrTSS": 0.0, "sTSS": 0.0}
+
+        day_type_breakdown[d_iso] = comp
+        tss_breakdown["rTSS"] = round(tss_breakdown["rTSS"] + comp["rTSS"], 1)
+        tss_breakdown["hrTSS"] = round(tss_breakdown["hrTSS"] + comp["hrTSS"], 1)
+        tss_breakdown["sTSS"] = round(tss_breakdown["sTSS"] + comp["sTSS"], 1)
+
     spike_alert = bool(previous_week_tss > 0.0 and current_week_tss > (previous_week_tss * 1.2))
     has_week_end_load_row = week_end.isoformat() in tss_by_day and tss_source_by_day.get(week_end.isoformat()) == "load_metrics_daily"
     is_current_week = week_end == today_d
@@ -3830,48 +3878,57 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
 
     for d in week_dates:
         d_iso = d.isoformat()
+        comp = day_type_breakdown.get(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0})
         lines.append(
-            f"  - {weekday_es.get(d.weekday(), d.strftime('%A'))} {d.strftime('%d/%m')}: {tss_by_day.get(d_iso, 0.0):.1f}"
+            f"  - {weekday_es.get(d.weekday(), d.strftime('%A'))} {d.strftime('%d/%m')}: {tss_by_day.get(d_iso, 0.0):.1f} "
+            f"(rTSS {comp['rTSS']:.1f} · hrTSS {comp['hrTSS']:.1f} · sTSS {comp['sTSS']:.1f})"
         )
 
     lines.append("")
     if act_rows:
         lines.append("Actividades:")
-        reconciled_days: set[str] = set()
-        for d_obj, sport, name, tss_val, _tss_src, _tss_label in act_rows:
+        rows_by_day: dict[str, list[tuple[date, str, str, float | None, str]]] = {}
+        for d_obj, sport, name, tss_val, _tss_src, _tss_label, tss_bucket in act_rows:
             d_iso = d_obj.isoformat()
+            rows_by_day.setdefault(d_iso, []).append((d_obj, sport, name, tss_val, tss_bucket))
+
+        for d_iso in sorted(rows_by_day.keys()):
+            d_obj = rows_by_day[d_iso][0][0]
             day_tss = tss_by_day.get(d_iso)
-            day_source = tss_source_by_day.get(d_iso, "sin_dato")
-            day_activity_sum = activity_tss_by_day.get(d_iso)
-            day_has_delta = (
-                day_tss is not None
-                and day_activity_sum is not None
-                and abs(float(day_tss) - float(day_activity_sum)) > 0.1
-            )
-
-            if tss_val is not None:
-                if day_source == "load_metrics_daily" and day_has_delta:
-                    lines.append(
-                        f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · "
-                        f"Carga Garmin {tss_val:.1f}"
-                    )
-                    if d_iso not in reconciled_days:
-                        lines.append(
-                            f"  - TSS usado para el total semanal ese día: {float(day_tss):.1f} "
-                            "(fuente canónica: load_metrics_daily)"
-                        )
-                        reconciled_days.add(d_iso)
-                else:
-                    lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS {tss_val:.1f}")
+            if day_tss is not None:
+                lines.append(f"- {d_obj.strftime('%d/%m')}: TSS {float(day_tss):.1f}")
             else:
-                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} · TSS sin datos")
+                lines.append(f"- {d_obj.strftime('%d/%m')}: TSS sin datos")
+            day_rows = rows_by_day[d_iso]
+            show_activity_tss = len(day_rows) > 1
 
-        if reconciled_days:
-            lines.append("")
-            lines.append(
-                "Nota de conciliación: cuando hay diferencia entre carga Garmin por actividad "
-                "y TSS diario canónico, el total semanal prioriza `load_metrics_daily`."
-            )
+            # Mantiene consistencia visual: si el TSS diario canónico difiere de la
+            # suma por actividad, reescala el detalle de actividades para ese día.
+            normalized_tss_by_idx: dict[int, float] = {}
+            raw_vals: list[tuple[int, float]] = [
+                (idx, float(row[3])) for idx, row in enumerate(day_rows) if row[3] is not None
+            ]
+            raw_sum = round(sum(v for _, v in raw_vals), 1)
+            day_tss_f = float(day_tss) if day_tss is not None else 0.0
+            if raw_vals and day_tss_f > 0.0 and raw_sum > 0.0 and abs(day_tss_f - raw_sum) >= 0.1:
+                scale = day_tss_f / raw_sum
+                for idx, raw_v in raw_vals:
+                    normalized_tss_by_idx[idx] = round(raw_v * scale, 1)
+                drift = round(day_tss_f - sum(normalized_tss_by_idx.values()), 1)
+                if abs(drift) > 0.0:
+                    idx_max = max(raw_vals, key=lambda x: x[1])[0]
+                    normalized_tss_by_idx[idx_max] = round(normalized_tss_by_idx.get(idx_max, 0.0) + drift, 1)
+
+            for idx, (_d_obj, sport, name, act_tss, tss_bucket) in enumerate(day_rows):
+                act_tss_display = normalized_tss_by_idx.get(idx)
+                if show_activity_tss and act_tss is not None:
+                    if act_tss_display is None:
+                        act_tss_display = float(act_tss)
+                    lines.append(f"  - {sport} — {name} · TSS {act_tss_display:.1f} ({tss_bucket})")
+                elif act_tss is not None:
+                    lines.append(f"  - {sport} — {name} ({tss_bucket})")
+                else:
+                    lines.append(f"  - {sport} — {name}")
     else:
         lines.append("- Actividades fuente (Garmin): sin datos en el rango consultado.")
 
@@ -3880,7 +3937,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     if spike_alert:
         lines.append("- ⚠️ Spike semanal >20% detectado vs semana previa: reduce 15-25% la carga en próximos 2-3 días.")
     elif used_activity_fallback:
-        lines.append("- Nota: faltaban cierres en `load_metrics_daily` para algún día; se usó fallback con `trainingLoad` de actividades Garmin.")
+        lines.append("- Nota: faltaban cierres en `load_metrics_daily` para algún día; se usó fallback con TSS estimado desde actividades.")
     elif is_current_week and (not has_week_end_load_row) and any(x[0] == today_d for x in act_rows):
         lines.append("- Nota: hay actividad hoy, pero el cierre diario de TSS aún no está persistido en `load_metrics_daily`.")
     else:
@@ -7573,10 +7630,94 @@ def _parse_activities_response(raw: str | None) -> tuple[list[dict], bool, int]:
     if not raw or not raw.strip():
         return [], False, 0
     stripped = raw.strip()
+
+    def _extract_docs(text: str) -> list[Any]:
+        """Extrae uno o varios documentos JSON de una cadena.
+
+        Algunos backends de `get_activities` pueden devolver varios objetos JSON
+        concatenados en el mismo payload en lugar de un array único. Este helper
+        itera con `raw_decode` para recuperar todos los documentos válidos.
+        """
+        docs: list[Any] = []
+        decoder = json.JSONDecoder()
+        idx = 0
+        n = len(text)
+        while idx < n:
+            while idx < n and text[idx].isspace():
+                idx += 1
+            if idx >= n:
+                break
+            try:
+                obj, end = decoder.raw_decode(text, idx)
+            except json.JSONDecodeError:
+                break
+            docs.append(obj)
+            idx = end
+
+        if docs:
+            return docs
+
+        # Fallback: algunos payloads llegan en líneas JSON independientes.
+        line_docs: list[Any] = []
+        for line in text.splitlines():
+            l = line.strip()
+            if not l:
+                continue
+            try:
+                line_docs.append(json.loads(l))
+            except json.JSONDecodeError:
+                continue
+        return line_docs
+
     try:
         data = json.loads(stripped)
     except json.JSONDecodeError:
-        return [], False, 0
+        docs = _extract_docs(stripped)
+        if not docs:
+            return [], False, 0
+
+        # Caso común: N objetos de actividad concatenados.
+        if all(isinstance(doc, dict) for doc in docs):
+            if all(("activityId" in doc) or ("id" in doc) or ("activity_id" in doc) for doc in docs):
+                activities = [doc for doc in docs if isinstance(doc, dict)]
+                log.debug("get_activities -> %d objetos JSON concatenados (actividad)", len(activities))
+                return activities, False, 0
+
+            # O un único documento objeto válido envuelto en docs.
+            if len(docs) == 1:
+                data = docs[0]
+            else:
+                # Mezcla heterogénea: intentar agregar actividades de cada objeto.
+                activities: list[dict] = []
+                has_more = False
+                next_start = 0
+                for doc in docs:
+                    if not isinstance(doc, dict):
+                        continue
+                    block = doc.get("activities") or doc.get("activityList") or doc.get("list") or []
+                    if isinstance(block, list):
+                        activities.extend(a for a in block if isinstance(a, dict))
+                    has_more = has_more or bool(doc.get("has_more") or doc.get("hasMore"))
+                    try:
+                        cand = int(doc.get("next_start") or doc.get("nextStart") or 0)
+                    except (TypeError, ValueError):
+                        cand = 0
+                    next_start = max(next_start, cand)
+                if activities:
+                    log.debug(
+                        "get_activities -> %d actividades agregadas desde %d docs concatenados",
+                        len(activities),
+                        len(docs),
+                    )
+                    return activities, has_more, next_start
+                return [], False, 0
+        else:
+            # Lista/mixto de docs JSON: agrupar dicts de actividad.
+            activities = [doc for doc in docs if isinstance(doc, dict) and (("activityId" in doc) or ("id" in doc) or ("activity_id" in doc))]
+            if activities:
+                log.debug("get_activities -> %d docs mixtos interpretados como actividades", len(activities))
+                return activities, False, 0
+            return [], False, 0
 
     # Formato lista directa: [{...}, {...}]
     if isinstance(data, list):

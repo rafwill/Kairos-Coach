@@ -24,7 +24,18 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 26
+TSS_FORMULA_VERSION = 29
+
+# Strength (LTHR-anchored) IF model calibrated in-sample on 2026-09-27.
+STRENGTH_LTHR_IF_INTERCEPT = 0.523104204
+STRENGTH_LTHR_IF_SLOPE = 0.145349624
+STRENGTH_LTHR_Z_CLAMP_MIN = 0.0
+STRENGTH_LTHR_Z_CLAMP_MAX = 1.15
+STRENGTH_LTHR_IF_MIN = 0.45
+STRENGTH_LTHR_IF_MAX = 0.80
+# Guardrail support window from calibration sample (z_c observed min/max).
+STRENGTH_LTHR_Z_SUPPORT_MIN = 0.134744
+STRENGTH_LTHR_Z_SUPPORT_MAX = 0.321826
 
 # Running fallback v2: fixed HR guardrail ratio to avoid per-dataset re-tuning.
 RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
@@ -162,6 +173,7 @@ def _extract_training_load_points(payload: Any) -> list[dict]:
 
 
 def _extract_activity_duration_hours(activity: dict) -> float:
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
     duration_seconds = (
         activity.get("duration_seconds")
         or activity.get("duration")
@@ -169,6 +181,10 @@ def _extract_activity_duration_hours(activity: dict) -> float:
         or activity.get("elapsedDuration")
         or activity.get("movingDuration")
         or activity.get("moving_duration_seconds")
+        or summary.get("duration")
+        or summary.get("durationInSeconds")
+        or summary.get("elapsedDuration")
+        or summary.get("movingDuration")
         or 0
     )
     try:
@@ -470,17 +486,26 @@ def _estimate_if_from_hr(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
 ) -> float | None:
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
     avg_hr_raw = (
         activity.get("averageHR")
         or activity.get("avgHr")
         or activity.get("avg_hr_bpm")
         or activity.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("avg_hr_bpm")
+        or summary.get("averageHeartRate")
     )
     max_hr_raw = (
         activity.get("maxHR")
         or activity.get("maxHr")
         or activity.get("max_hr_bpm")
         or activity.get("maxHeartRate")
+        or summary.get("maxHR")
+        or summary.get("maxHr")
+        or summary.get("max_hr_bpm")
+        or summary.get("maxHeartRate")
     )
     if avg_hr_raw is None:
         return None
@@ -501,6 +526,113 @@ def _estimate_if_from_hr(
         if cycling_formula:
             return max(0.35, min(1.05, hrr))
         return max(0.50, min(1.05, 0.40 + hrr * 0.65))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _estimate_strength_if_from_hr(
+    activity: dict,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+) -> float | None:
+    """Calibrated HR->IF mapping for strength sessions.
+
+    Important: strength should not rely on activity-level maxHR spikes/drops,
+    because these fields are often unstable in gym sessions. We anchor to profile
+    maxHR (or default) for a more TP-like stress scale.
+    """
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    avg_hr_raw = (
+        activity.get("averageHR")
+        or activity.get("avgHr")
+        or activity.get("avg_hr_bpm")
+        or activity.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("avg_hr_bpm")
+        or summary.get("averageHeartRate")
+    )
+    if avg_hr_raw is None:
+        return None
+
+    try:
+        avg_hr = float(avg_hr_raw)
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        # Deliberately ignore activity maxHR for strength calibration.
+        hr_max = float(hr_max_bpm) if hr_max_bpm else 185.0
+
+        if hr_rest <= 0:
+            hr_rest = 50.0
+        if hr_max <= hr_rest + 5.0:
+            hr_max = hr_rest + 5.0
+
+        hrr = (avg_hr - hr_rest) / (hr_max - hr_rest)
+        # Conservative floor/ceiling tuned for gym sessions to avoid overestimation.
+        hrr = max(0.20, min(0.85, hrr))
+
+        if_strength = 0.50 + (hrr * 0.40)
+        return max(0.45, min(0.85, if_strength))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _estimate_strength_if_from_lthr(
+    activity: dict,
+    hr_rest_bpm: float | None = None,
+    hr_threshold_bpm: float | None = None,
+) -> float | None:
+    """LTHR-anchored IF for strength sessions.
+
+    Uses the calibrated linear map IF = a + b*z_c where z_c is Karvonen-like
+    normalization against LTHR. Logs when production data falls outside the
+    calibration support window to flag extrapolation risk.
+    """
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    avg_hr_raw = (
+        activity.get("averageHR")
+        or activity.get("avgHr")
+        or activity.get("avg_hr_bpm")
+        or activity.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("avg_hr_bpm")
+        or summary.get("averageHeartRate")
+    )
+    if avg_hr_raw is None:
+        return None
+
+    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+    if lthr is None or lthr <= 0:
+        return None
+
+    try:
+        avg_hr = float(avg_hr_raw)
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        if hr_rest <= 0:
+            hr_rest = 50.0
+        # Keep physiological distance between resting and threshold anchors.
+        if hr_rest >= lthr - 5.0:
+            hr_rest = max(30.0, float(lthr) - 55.0)
+
+        denom = max(1.0, float(lthr) - float(hr_rest))
+        z = (float(avg_hr) - float(hr_rest)) / denom
+        z_c = max(STRENGTH_LTHR_Z_CLAMP_MIN, min(STRENGTH_LTHR_Z_CLAMP_MAX, z))
+
+        if z_c < STRENGTH_LTHR_Z_SUPPORT_MIN or z_c > STRENGTH_LTHR_Z_SUPPORT_MAX:
+            log.warning(
+                "[strength_lthr_extrapolation] id=%s name=%s z_c=%.4f support=[%.4f, %.4f] avg_hr=%.1f hr_rest=%.1f lthr=%.1f",
+                activity.get("activityId") or activity.get("activity_id"),
+                activity.get("activityName") or activity.get("name") or "",
+                float(z_c),
+                float(STRENGTH_LTHR_Z_SUPPORT_MIN),
+                float(STRENGTH_LTHR_Z_SUPPORT_MAX),
+                float(avg_hr),
+                float(hr_rest),
+                float(lthr),
+            )
+
+        if_strength = STRENGTH_LTHR_IF_INTERCEPT + (STRENGTH_LTHR_IF_SLOPE * z_c)
+        return max(STRENGTH_LTHR_IF_MIN, min(STRENGTH_LTHR_IF_MAX, if_strength))
     except (TypeError, ValueError, ZeroDivisionError):
         return None
 
@@ -1732,26 +1864,39 @@ def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, floa
 
     perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
     health = profile.get("health") if isinstance(profile.get("health"), dict) else {}
+    user_data = profile.get("userData") if isinstance(profile.get("userData"), dict) else {}
 
     hr_rest_candidates = [
+        perf.get("hr_rest_bpm"),
         perf.get("resting_hr"),
         perf.get("restingHeartRate"),
         perf.get("resting_heart_rate"),
+        health.get("hr_rest_bpm"),
         health.get("resting_hr"),
         health.get("restingHeartRate"),
         health.get("resting_heart_rate"),
+        user_data.get("restingHeartRate"),
+        user_data.get("resting_heart_rate"),
+        user_data.get("hrRestingValue"),
+        profile.get("hr_rest_bpm"),
         profile.get("resting_hr"),
         profile.get("restingHeartRate"),
         profile.get("resting_heart_rate"),
         profile.get("rhr"),
     ]
     hr_max_candidates = [
+        perf.get("hr_max_bpm"),
         perf.get("max_hr"),
         perf.get("maxHeartRate"),
         perf.get("max_heart_rate"),
+        health.get("hr_max_bpm"),
         health.get("max_hr"),
         health.get("maxHeartRate"),
         health.get("max_heart_rate"),
+        user_data.get("maxHeartRate"),
+        user_data.get("max_heart_rate"),
+        user_data.get("hrMaximumValue"),
+        profile.get("hr_max_bpm"),
         profile.get("max_hr"),
         profile.get("maxHeartRate"),
         profile.get("max_heart_rate"),
@@ -2758,6 +2903,9 @@ def _estimate_session_tss(
         activity_details_raw=details_payload,
     )
     if hours <= 0:
+        if is_strength:
+            # Fuerza: no usar carga nativa; sin duración no se puede aplicar fórmula HR.
+            return 0.0, "hrTSS"
         if tss_native is not None:
             return tss_native, "TSS"
         return 0.0, "hrTSS"
@@ -2973,31 +3121,19 @@ def _estimate_session_tss(
             return max(0.0, hours * (if_rpe**2) * 100.0), "hrTSS"
 
     elif is_strength:
-        tss_hr_zones = _estimate_hr_tss_from_zones(
+        if_lthr = _estimate_strength_if_from_lthr(
             activity,
-            hours=hours,
-            hr_zones_raw=hr_zones_raw,
             hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            min_coverage_ratio=0.35,
+            hr_threshold_bpm=hr_threshold_bpm,
         )
-        if tss_hr_zones is not None:
-            return tss_hr_zones, "hrTSS"
+        if if_lthr is not None:
+            return max(0.0, hours * (if_lthr**2) * 100.0), "hrTSS"
 
-        if_strength = _estimate_strength_if(activity)
-        if if_strength is not None:
-            return max(0.0, hours * (if_strength**2) * 100.0), "TSS"
-
-        tss_rpe_minutes = _estimate_strength_tss_from_rpe_minutes(activity, hours)
-        if tss_rpe_minutes is not None:
-            return tss_rpe_minutes, "TSS"
-
-        if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
+        if_hr = _estimate_strength_if_from_hr(activity, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
         if if_hr is not None:
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
-        if_rpe = _estimate_if_from_rpe(activity)
-        if if_rpe is not None:
-            return max(0.0, hours * (if_rpe**2) * 100.0), "hrTSS"
+        # Sin señal HR usable en fuerza no se estima carga.
+        return 0.0, "hrTSS"
 
     if tss_native is not None:
         return tss_native, "TSS"

@@ -150,11 +150,21 @@ async def _sync_from_garmin(agent) -> list[str]:
             if field in labels:
                 updated.append(labels[field])
 
-    _save_user_profile(profile)
-    if updated:
-        console.print(f"[green]✓[/] Garmin → perfil actualizado: [dim]{', '.join(updated)}[/]")
-    else:
+    if not updated:
         console.print("[dim]✓ Datos de Garmin sin cambios.[/]")
+        return []
+
+    try:
+        _save_user_profile(profile)
+    except Exception as exc:
+        log.warning("_sync_from_garmin: no se pudo guardar perfil en Supabase: %s", exc)
+        console.print(
+            "[yellow]⚠ No se pudo guardar el perfil en Supabase (timeout transitorio). "
+            "Continuo con el arranque.[/]"
+        )
+        return []
+
+    console.print(f"[green]✓[/] Garmin → perfil actualizado: [dim]{', '.join(updated)}[/]")
     return updated
 
 

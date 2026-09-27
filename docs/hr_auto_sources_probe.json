@@ -1,0 +1,88 @@
+{
+  "today": "2026-09-23",
+  "rhr_window_days": 14,
+  "rhr_values_count": 14,
+  "rhr_avg": 40.714285714285715,
+  "rhr_rows": [
+    {
+      "date": "2026-09-10",
+      "rhr": 41.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-11",
+      "rhr": 41.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-12",
+      "rhr": 38.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-13",
+      "rhr": 39.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-14",
+      "rhr": 45.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-15",
+      "rhr": 40.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-16",
+      "rhr": 40.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-17",
+      "rhr": 40.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-18",
+      "rhr": 41.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-19",
+      "rhr": 40.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-20",
+      "rhr": 40.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-21",
+      "rhr": 45.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-22",
+      "rhr": 41.0,
+      "source": "get_rhr_day"
+    },
+    {
+      "date": "2026-09-23",
+      "rhr": 39.0,
+      "source": "get_rhr_day"
+    }
+  ],
+  "activities_last_365_count": 100,
+  "activities_with_max_hr_count": 99,
+  "hr_max_empirical": 171.0,
+  "activities_all_history_count": 100,
+  "activities_all_history_with_max_hr_count": 99,
+  "hr_max_empirical_all_history": 171.0,
+  "activities_paged_count": 0,
+  "activities_paged_with_max_hr_count": 0,
+  "hr_max_empirical_paged": null,
+  "profile_hr_max_like_keys": []
+}

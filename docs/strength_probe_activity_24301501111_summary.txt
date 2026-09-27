@@ -1,0 +1,12 @@
+activity_id=24301501111
+raw_type=str
+parsed_type=dict
+top_level_keys_count=12
+top_level_keys=accessControlRuleDTO, activityId, activityName, activityTypeDTO, activityUUID, connectIQMeasurements, eventTypeDTO, isMultiSportParent, metadataDTO, summaryDTO, timeZoneUnitDTO, userProfileId
+
+matched_paths:
+- $.activityTypeDTO.typeKey = 'strength_training'
+- $.eventTypeDTO.typeKey = 'uncategorized'
+- $.accessControlRuleDTO.typeKey = 'groups'
+- $.summaryDTO.averageHR = 79.0
+- $.summaryDTO.maxHR = 122.0

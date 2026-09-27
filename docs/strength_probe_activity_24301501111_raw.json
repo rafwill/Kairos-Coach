@@ -1,0 +1,163 @@
+{
+  "activityId": 24301501111,
+  "activityUUID": {
+    "uuid": "c49b2318-5393-4094-8f77-e8c05db663cc"
+  },
+  "activityName": "Gimnasio. Trail - Estabilidad y core",
+  "userProfileId": 3252512,
+  "isMultiSportParent": false,
+  "activityTypeDTO": {
+    "typeId": 13,
+    "typeKey": "strength_training",
+    "parentTypeId": 29,
+    "isHidden": false,
+    "restricted": false,
+    "trimmable": false
+  },
+  "eventTypeDTO": {
+    "typeId": 9,
+    "typeKey": "uncategorized",
+    "sortOrder": 10
+  },
+  "accessControlRuleDTO": {
+    "typeId": 4,
+    "typeKey": "groups"
+  },
+  "timeZoneUnitDTO": {
+    "unitId": 124,
+    "unitKey": "Europe/Paris",
+    "factor": 0.0,
+    "timeZone": "Europe/Paris"
+  },
+  "metadataDTO": {
+    "isOriginal": true,
+    "deviceApplicationInstallationId": 992087,
+    "agentApplicationInstallationId": null,
+    "agentString": null,
+    "fileFormat": {
+      "formatId": 7,
+      "formatKey": "fit"
+    },
+    "associatedCourseId": null,
+    "lastUpdateDate": "2026-09-10T11:20:03.0",
+    "uploadedDate": "2026-09-09T19:19:25.0",
+    "videoUrl": null,
+    "hasPolyline": false,
+    "hasChartData": true,
+    "hasHrTimeInZones": true,
+    "hasPowerTimeInZones": false,
+    "userInfoDto": {
+      "userProfilePk": 3252512,
+      "displayname": "rafwill",
+      "fullname": "Rafael Fernández Sánchez",
+      "profileImageUrlLarge": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/232b077b-79d1-414c-b5d0-193d101bfd90-3252512.jpg",
+      "profileImageUrlMedium": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/bdfa169d-64dd-4840-9f86-e8f012fca559-3252512.jpg",
+      "profileImageUrlSmall": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/151a0eec-9d3c-4ea2-a6f5-10d866d51eea-3252512.jpg",
+      "userPro": false
+    },
+    "childIds": [],
+    "childActivityTypes": [],
+    "sensors": [
+      {
+        "sourceType": "BLUETOOTH_LOW_ENERGY",
+        "batteryStatus": "GOOD",
+        "bleDeviceType": "HEART_RATE",
+        "batteryLevel": 57
+      }
+    ],
+    "activityImages": [],
+    "manufacturer": "GARMIN",
+    "diveNumber": null,
+    "lapCount": 1,
+    "associatedWorkoutId": null,
+    "isAtpActivity": null,
+    "deviceMetaDataDTO": {
+      "deviceId": "3393214462",
+      "deviceTypePk": 36680,
+      "deviceVersionPk": 992087
+    },
+    "hasIntensityIntervals": false,
+    "hasSplits": false,
+    "eBikeMaxAssistModes": null,
+    "eBikeBatteryUsage": null,
+    "eBikeBatteryRemaining": null,
+    "eBikeAssistModeInfoDTOList": null,
+    "hasRunPowerWindData": null,
+    "calendarEventInfo": null,
+    "groupRideUUID": null,
+    "hasHeatMap": false,
+    "sessionResultType": "ORIGINAL",
+    "hasMultiDayActivities": true,
+    "thirdPartyGymEquipment": [],
+    "personalRecord": false,
+    "gcj02": false,
+    "runPowerWindDataEnabled": null,
+    "elevationCorrected": false,
+    "trimmed": false,
+    "manualActivity": false,
+    "autoCalcCalories": false,
+    "favorite": false
+  },
+  "summaryDTO": {
+    "startTimeLocal": "2026-09-09T20:31:15.0",
+    "startTimeGMT": "2026-09-09T18:31:15.0",
+    "distance": 0.0,
+    "duration": 2751.608,
+    "movingDuration": 2751.608,
+    "elapsedDuration": 2751.608,
+    "averageSpeed": 0.0,
+    "averageMovingSpeed": 0.0,
+    "calories": 157.0,
+    "bmrCalories": 59.0,
+    "averageHR": 79.0,
+    "maxHR": 122.0,
+    "minHR": 57.0,
+    "averageTemperature": 28.383357558139537,
+    "maxTemperature": 29.0,
+    "minTemperature": 28.0,
+    "trainingEffect": 0.30000001192092896,
+    "anaerobicTrainingEffect": 0.0,
+    "aerobicTrainingEffectMessage": "NO_AEROBIC_BENEFIT_18",
+    "anaerobicTrainingEffectMessage": "NO_ANAEROBIC_BENEFIT_0",
+    "totalExerciseReps": 5,
+    "activeSets": 1,
+    "waterEstimated": 403.0,
+    "minRespirationRate": 14.569999694824219,
+    "maxRespirationRate": 23.350000381469727,
+    "avgRespirationRate": 18.1299991607666,
+    "trainingEffectLabel": "UNKNOWN",
+    "activityTrainingLoad": 4.669586181640625,
+    "minActivityLapDuration": 2751.608,
+    "moderateIntensityMinutes": 10,
+    "vigorousIntensityMinutes": 1,
+    "steps": 10,
+    "recoveryHeartRate": 9
+  },
+  "connectIQMeasurements": [
+    {
+      "appID": "5a3e2cda-12f0-4afd-88ed-000e67a68d84",
+      "developerFieldNumber": 7,
+      "value": "161.0"
+    },
+    {
+      "appID": "286fcd0e-8697-4d22-a557-6203ae3cca18",
+      "developerFieldNumber": 2,
+      "value": "158.0"
+    },
+    {
+      "appID": "5a3e2cda-12f0-4afd-88ed-000e67a68d84",
+      "developerFieldNumber": 6,
+      "value": "142.0"
+    },
+    {
+      "appID": "286fcd0e-8697-4d22-a557-6203ae3cca18",
+      "developerFieldNumber": 1,
+      "value": "141.0"
+    },
+    {
+      "appID": "286fcd0e-8697-4d22-a557-6203ae3cca18",
+      "developerFieldNumber": 3,
+      "value": "145.0"
+    }
+  ]
+}
