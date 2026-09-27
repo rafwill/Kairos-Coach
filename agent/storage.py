@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import logging
 import os
+import time
 from datetime import date
 from uuid import uuid4
 
@@ -135,6 +136,27 @@ def _is_missing_table_error(exc: Exception, table_name: str) -> bool:
             and tbl in msg
         )
     )
+
+
+def _is_statement_timeout_error(exc: Exception) -> bool:
+    """Detecta timeout de sentencia en respuestas PostgREST/Supabase."""
+    code = ""
+    message = ""
+    payload = None
+    try:
+        payload = exc.args[0] if getattr(exc, "args", None) else None
+    except (IndexError, TypeError):
+        payload = None
+
+    if isinstance(payload, dict):
+        code = str(payload.get("code") or "")
+        message = str(payload.get("message") or "")
+
+    if not message:
+        message = str(exc)
+
+    msg = message.lower()
+    return code == "57014" or "statement timeout" in msg
 
 
 def _normalize_username(username: str) -> str:
@@ -304,7 +326,24 @@ def load_user_profile() -> dict:
 def save_user_profile(profile: dict) -> None:
     uid = _require_active_user_id()
     sb = _require_supabase()
-    sb.table("user_profile").upsert({"app_user_id": uid, "data": profile or {}}).execute()
+    payload = {"app_user_id": uid, "data": profile or {}}
+
+    # Supabase puede devolver timeout transitorio (57014) bajo carga; reintentamos
+    # pocas veces para evitar fallo fatal de arranque.
+    for attempt in range(3):
+        try:
+            sb.table("user_profile").upsert(payload).execute()
+            return
+        except Exception as exc:
+            if not _is_statement_timeout_error(exc) or attempt == 2:
+                raise
+            delay_s = 0.25 * (attempt + 1)
+            log.warning(
+                "save_user_profile: statement timeout (intento %d/3), reintentando en %.2fs",
+                attempt + 1,
+                delay_s,
+            )
+            time.sleep(delay_s)
 
 
 def load_session_context() -> dict:

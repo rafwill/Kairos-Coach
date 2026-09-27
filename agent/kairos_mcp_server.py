@@ -5,17 +5,21 @@ Servidor MCP propio de Kairos para consultas Garmin (sin dependencia de runtime 
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from datetime import timedelta
 from typing import Any
 
 from garminconnect import Garmin
+from garminconnect.exceptions import GarminConnectAuthenticationError
+from garminconnect.exceptions import GarminConnectConnectionError
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("kairos-garmin-mcp", instructions="Kairos local Garmin MCP server")
 
 _client: Garmin | None = None
 _client_identity: tuple[str, str] | None = None
+_AUTH_LIKE_HTTP_CODES = {"401", "403"}
 
 PASSTHROUGH_TOOLS: dict[str, str] = {
     "get_user_profile": "get_user_profile",
@@ -133,20 +137,58 @@ def _garmin_client() -> Garmin:
     return client
 
 
-def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
+def _invalidate_client_cache() -> None:
+    global _client
+    global _client_identity
+    _client = None
+    _client_identity = None
+
+
+def _is_auth_like_connection_error(exc: Exception) -> bool:
+    """True only when the error text explicitly reports API Error 401/403."""
+    text = str(exc)
+    match = re.search(r"API Error (\d{3})", text)
+    if not match:
+        return False
+    code = match.group(1)
+    if code == "429":
+        return False
+    return code in _AUTH_LIKE_HTTP_CODES
+
+
+def _invoke_with_auth_retry(method_name: str, *args: Any, **kwargs: Any) -> Any:
+    """Invoke a Garmin method and retry once only for auth-like failures."""
     client = _garmin_client()
-    method_name = PASSTHROUGH_TOOLS[tool_name]
     method = getattr(client, method_name)
 
+    try:
+        return method(*args, **kwargs)
+    except GarminConnectAuthenticationError:
+        _invalidate_client_cache()
+        client = _garmin_client()
+        method = getattr(client, method_name)
+        return method(*args, **kwargs)
+    except GarminConnectConnectionError as exc:
+        if not _is_auth_like_connection_error(exc):
+            raise
+        _invalidate_client_cache()
+        client = _garmin_client()
+        method = getattr(client, method_name)
+        return method(*args, **kwargs)
+
+
+def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
+    method_name = PASSTHROUGH_TOOLS[tool_name]
+
     if tool_name == "get_activities":
-        return method(_as_int(args.get("start", 0), 0), _as_int(args.get("limit", 50), 50))
+        return _invoke_with_auth_retry(method_name, _as_int(args.get("start", 0), 0), _as_int(args.get("limit", 50), 50))
 
     if tool_name == "get_activities_by_date":
         start = _as_iso_day(args.get("start_date") or args.get("startdate"))
         end = _as_iso_day(args.get("end_date") or args.get("enddate") or start, default=start)
         page = _as_int(args.get("page", 0), 0)
         page_size = _as_int(args.get("page_size", 100), 100)
-        data = method(start, end)
+        data = _invoke_with_auth_retry(method_name, start, end)
         if not isinstance(data, list):
             return data
         begin = max(0, page * page_size)
@@ -172,10 +214,10 @@ def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
         activity_id = args.get("activity_id")
         if activity_id in (None, ""):
             raise RuntimeError(f"{tool_name} requiere activity_id")
-        return method(int(activity_id))
+        return _invoke_with_auth_retry(method_name, int(activity_id))
 
     if tool_name == "get_stats":
-        return method(_as_iso_day(args.get("date")))
+        return _invoke_with_auth_retry(method_name, _as_iso_day(args.get("date")))
 
     if tool_name in {
         "get_sleep_data",
@@ -187,29 +229,28 @@ def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
         "get_daily_steps",
         "get_hydration_data",
     }:
-        return method(_as_iso_day(args.get("date")))
+        return _invoke_with_auth_retry(method_name, _as_iso_day(args.get("date")))
 
     if tool_name in {"get_body_battery", "get_body_composition"}:
         start = _as_iso_day(args.get("start_date") or args.get("date"))
         end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
-        return method(start, end)
+        return _invoke_with_auth_retry(method_name, start, end)
 
     if tool_name in {"get_training_readiness", "get_morning_training_readiness"}:
-        return method(_as_iso_day(args.get("date")))
+        return _invoke_with_auth_retry(method_name, _as_iso_day(args.get("date")))
 
     cleaned = {k: v for k, v in args.items() if v not in (None, "")}
     try:
-        return method(**cleaned)
+        return _invoke_with_auth_retry(method_name, **cleaned)
     except TypeError:
-        return method()
+        return _invoke_with_auth_retry(method_name)
 
 
 def _training_load_trend(args: dict[str, Any]) -> dict[str, Any]:
-    client = _garmin_client()
     start = _as_iso_day(args.get("start_date") or args.get("date"))
     end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
 
-    data = client.get_activities_by_date(start, end)
+    data = _invoke_with_auth_retry("get_activities_by_date", start, end)
     if not isinstance(data, list):
         return {"start_date": start, "end_date": end, "days_with_data": 0, "trend": []}
 
@@ -227,14 +268,13 @@ def _training_load_trend(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
-    client = _garmin_client()
     start = _as_iso_day(args.get("start_date") or args.get("date"))
     end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
 
     trend: list[dict[str, Any]] = []
     for day in _iso_date_iter(start, end):
         try:
-            payload = client.get_hrv_data(day)
+            payload = _invoke_with_auth_retry("get_hrv_data", day)
         except Exception:
             continue
 
@@ -256,27 +296,24 @@ def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _vo2max_trend(args: dict[str, Any]) -> dict[str, Any]:
-    client = _garmin_client()
     start = _as_iso_day(args.get("start_date") or args.get("date"))
     end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
-    payload = client.get_max_metrics(start, end)
+    payload = _invoke_with_auth_retry("get_max_metrics", start, end)
     return {"start_date": start, "end_date": end, "metrics": payload}
 
 
 def _activities_fordate(args: dict[str, Any]) -> Any:
-    client = _garmin_client()
     if args.get("date"):
-        return client.get_activities_fordate(_as_iso_day(args.get("date")))
+        return _invoke_with_auth_retry("get_activities_fordate", _as_iso_day(args.get("date")))
 
     start = _as_iso_day(args.get("startdate") or args.get("start_date"))
     end = _as_iso_day(args.get("enddate") or args.get("end_date") or start, default=start)
-    return client.get_activities_by_date(start, end)
+    return _invoke_with_auth_retry("get_activities_by_date", start, end)
 
 
 def _heart_rates_summary(args: dict[str, Any]) -> dict[str, Any]:
-    client = _garmin_client()
     d = _as_iso_day(args.get("date"))
-    payload = client.get_heart_rates(d)
+    payload = _invoke_with_auth_retry("get_heart_rates", d)
 
     out = {"date": d, "restingHeartRate": None, "min": None, "max": None, "avg": None}
     if isinstance(payload, dict):
@@ -293,24 +330,21 @@ def _heart_rates_summary(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _stress_summary(args: dict[str, Any]) -> dict[str, Any]:
-    client = _garmin_client()
     d = _as_iso_day(args.get("date"))
-    return {"date": d, "stress": client.get_stress_data(d)}
+    return {"date": d, "stress": _invoke_with_auth_retry("get_stress_data", d)}
 
 
 def _respiration_summary(args: dict[str, Any]) -> dict[str, Any]:
-    client = _garmin_client()
     d = _as_iso_day(args.get("date"))
-    return {"date": d, "respiration": client.get_respiration_data(d)}
+    return {"date": d, "respiration": _invoke_with_auth_retry("get_respiration_data", d)}
 
 
 def _training_effect(args: dict[str, Any]) -> dict[str, Any]:
-    client = _garmin_client()
     activity_id = args.get("activity_id")
     if activity_id in (None, ""):
         return {"message": "activity_id requerido para get_training_effect"}
 
-    payload = client.get_activity(int(activity_id))
+    payload = _invoke_with_auth_retry("get_activity", int(activity_id))
     if not isinstance(payload, dict):
         return {"activity_id": int(activity_id), "training_effect": None}
 
@@ -562,7 +596,7 @@ def get_weekly_stress(start_date: str | None = None, end_date: str | None = None
 @mcp.tool(name="get_sleep_summary")
 def get_sleep_summary(date: str | None = None):
     d = _as_iso_day(date)
-    payload = _garmin_client().get_sleep_data(d)
+    payload = _invoke_with_auth_retry("get_sleep_data", d)
     if not isinstance(payload, dict):
         return {"date": d, "sleep": payload}
 
