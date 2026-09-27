@@ -108,7 +108,6 @@ Veredicto final:
 
 Documentos archivados (referencia histórica, no fuente vigente de decisión):
 - `docs/proximos_pasos.md`
-- `docs/trail-tss-cierre-2026-09-13.md`
 - `docs/tss_independiente_desde_2026-07-01_hasta_2026-09-13.csv`
 - `docs/tss_independiente_desde_2026-07-01_hasta_2026-09-13.md`
 - `docs/tss_independiente_desde_2026-07-01_hasta_2026-09-15.csv`
