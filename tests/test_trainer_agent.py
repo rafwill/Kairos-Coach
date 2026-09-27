@@ -2963,6 +2963,28 @@ class TestLoadFatigueModel:
         # Ensure the production route truly switched from the old HR-reserve fallback.
         assert abs(tss_lthr - tss_fallback) > 0.8
 
+    def test_estimate_tss_strength_falls_back_to_hr_reserve_when_lthr_missing(self):
+        act = {
+            "activityTypeDTO": {"typeKey": "strength_training"},
+            "summaryDTO": {
+                "duration": 2751.608,
+                "averageHR": 79.0,
+                "maxHR": 122.0,
+            },
+            "activityName": "Gimnasio. Trail - Estabilidad y core",
+        }
+
+        tss_fallback, label = _estimate_session_tss(
+            act,
+            hr_rest_bpm=40.714285714285715,
+            hr_threshold_bpm=None,
+            hr_max_bpm=185.0,
+        )
+
+        assert label == "hrTSS"
+        # Fallback branch (HR-reserve A) remains stable and non-zero.
+        assert abs(tss_fallback - 28.08) < 0.6
+
     def test_strength_classification_labeled_sample_structured_first(self):
         labeled = [
             ({"rpe": 8, "name": "Movilidad suave"}, "heavy"),
