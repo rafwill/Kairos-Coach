@@ -2934,6 +2934,35 @@ class TestLoadFatigueModel:
         assert label == "hrTSS"
         assert abs(tss - 26.23) < 0.5
 
+    def test_estimate_tss_strength_prefers_lthr_model_when_threshold_available(self):
+        act = {
+            "activityTypeDTO": {"typeKey": "strength_training"},
+            "summaryDTO": {
+                "duration": 2751.608,
+                "averageHR": 79.0,
+                "maxHR": 122.0,
+            },
+            "activityName": "Gimnasio. Trail - Estabilidad y core",
+            "activityId": 24301501111,
+        }
+
+        tss_lthr, label_lthr = _estimate_session_tss(
+            act,
+            hr_rest_bpm=40.714285714285715,
+            hr_threshold_bpm=169.0,
+        )
+        tss_fallback, _ = _estimate_session_tss(
+            act,
+            hr_rest_bpm=40.714285714285715,
+            hr_threshold_bpm=None,
+        )
+
+        assert label_lthr == "hrTSS"
+        # LTHR branch should match calibrated target (~24.53 for this known sample).
+        assert abs(tss_lthr - 24.53) < 0.6
+        # Ensure the production route truly switched from the old HR-reserve fallback.
+        assert abs(tss_lthr - tss_fallback) > 0.8
+
     def test_strength_classification_labeled_sample_structured_first(self):
         labeled = [
             ({"rpe": 8, "name": "Movilidad suave"}, "heavy"),

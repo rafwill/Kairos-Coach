@@ -24,7 +24,18 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 28
+TSS_FORMULA_VERSION = 29
+
+# Strength (LTHR-anchored) IF model calibrated in-sample on 2026-09-27.
+STRENGTH_LTHR_IF_INTERCEPT = 0.523104204
+STRENGTH_LTHR_IF_SLOPE = 0.145349624
+STRENGTH_LTHR_Z_CLAMP_MIN = 0.0
+STRENGTH_LTHR_Z_CLAMP_MAX = 1.15
+STRENGTH_LTHR_IF_MIN = 0.45
+STRENGTH_LTHR_IF_MAX = 0.80
+# Guardrail support window from calibration sample (z_c observed min/max).
+STRENGTH_LTHR_Z_SUPPORT_MIN = 0.134744
+STRENGTH_LTHR_Z_SUPPORT_MAX = 0.321826
 
 # Running fallback v2: fixed HR guardrail ratio to avoid per-dataset re-tuning.
 RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
@@ -561,6 +572,67 @@ def _estimate_strength_if_from_hr(
 
         if_strength = 0.50 + (hrr * 0.40)
         return max(0.45, min(0.85, if_strength))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _estimate_strength_if_from_lthr(
+    activity: dict,
+    hr_rest_bpm: float | None = None,
+    hr_threshold_bpm: float | None = None,
+) -> float | None:
+    """LTHR-anchored IF for strength sessions.
+
+    Uses the calibrated linear map IF = a + b*z_c where z_c is Karvonen-like
+    normalization against LTHR. Logs when production data falls outside the
+    calibration support window to flag extrapolation risk.
+    """
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    avg_hr_raw = (
+        activity.get("averageHR")
+        or activity.get("avgHr")
+        or activity.get("avg_hr_bpm")
+        or activity.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("avg_hr_bpm")
+        or summary.get("averageHeartRate")
+    )
+    if avg_hr_raw is None:
+        return None
+
+    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+    if lthr is None or lthr <= 0:
+        return None
+
+    try:
+        avg_hr = float(avg_hr_raw)
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        if hr_rest <= 0:
+            hr_rest = 50.0
+        # Keep physiological distance between resting and threshold anchors.
+        if hr_rest >= lthr - 5.0:
+            hr_rest = max(30.0, float(lthr) - 55.0)
+
+        denom = max(1.0, float(lthr) - float(hr_rest))
+        z = (float(avg_hr) - float(hr_rest)) / denom
+        z_c = max(STRENGTH_LTHR_Z_CLAMP_MIN, min(STRENGTH_LTHR_Z_CLAMP_MAX, z))
+
+        if z_c < STRENGTH_LTHR_Z_SUPPORT_MIN or z_c > STRENGTH_LTHR_Z_SUPPORT_MAX:
+            log.warning(
+                "[strength_lthr_extrapolation] id=%s name=%s z_c=%.4f support=[%.4f, %.4f] avg_hr=%.1f hr_rest=%.1f lthr=%.1f",
+                activity.get("activityId") or activity.get("activity_id"),
+                activity.get("activityName") or activity.get("name") or "",
+                float(z_c),
+                float(STRENGTH_LTHR_Z_SUPPORT_MIN),
+                float(STRENGTH_LTHR_Z_SUPPORT_MAX),
+                float(avg_hr),
+                float(hr_rest),
+                float(lthr),
+            )
+
+        if_strength = STRENGTH_LTHR_IF_INTERCEPT + (STRENGTH_LTHR_IF_SLOPE * z_c)
+        return max(STRENGTH_LTHR_IF_MIN, min(STRENGTH_LTHR_IF_MAX, if_strength))
     except (TypeError, ValueError, ZeroDivisionError):
         return None
 
@@ -3049,6 +3121,14 @@ def _estimate_session_tss(
             return max(0.0, hours * (if_rpe**2) * 100.0), "hrTSS"
 
     elif is_strength:
+        if_lthr = _estimate_strength_if_from_lthr(
+            activity,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_threshold_bpm=hr_threshold_bpm,
+        )
+        if if_lthr is not None:
+            return max(0.0, hours * (if_lthr**2) * 100.0), "hrTSS"
+
         if_hr = _estimate_strength_if_from_hr(activity, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
         if if_hr is not None:
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"

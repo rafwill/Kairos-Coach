@@ -188,3 +188,64 @@ Si quieres, siguiente paso lo dejo automático y determinista:
 Reintento selectivo solo de las actividades que fallan (sin recalcular todo).
 Derivación de hr_max desde las actividades efectivamente recuperadas del set de referencia, con cap duro fisiológico y percentil robusto.
 Reporte final único n=18 con tabla por sesión y columnas hrr_clamped/IF de A para auditoría.
+
+
+
+27/09/2026
+
+Actualizacion de criterio (fuerza) tras sensibilidad monotona de `hr_max` y corridas parciales repetidas.
+
+Decision de modelo principal
+
+- Se decide **Modelo B (LTHR-anchored)** como modelo principal para fuerza.
+- Esta decision no queda bloqueada por derivar `hr_max` con precision, porque la sensibilidad de A ya
+      demostro una tendencia monotona en todo el rango plausible analizado (`232 -> 180`): al bajar `hr_max`,
+      empeoran sesgo y MAE de A de forma consistente.
+- Conclusión metodologica: A no falla por un valor puntual; su comportamiento estructural queda comprimido
+      (muchas sesiones en piso de `hrr_clamped`), por lo que no es el candidato principal.
+
+Reorden de prioridades (operativo)
+
+1. **Elegir B ya** para el bloque de fuerza (decision cerrada).
+2. Cerrar cobertura a `18/18` con reintento selectivo solo de actividades fallidas,
+       pero con objetivo de completar evidencia para calibracion de B (no para decidir A vs B).
+3. Ejecutar segunda vuelta de calibracion explicita de B (pendiente/intercepto),
+       etiquetada como fase separada de esta comparacion limpia.
+4. Dejar derivacion robusta de `hr_max` como trabajo residual para fallback cuando falte LTHR.
+
+Chequeo barato pedido: patron de timeouts recientes
+
+- Los errores de `get_activity` no se distribuyen al azar en todo el set; se concentran en el bloque
+      de actividades mas recientes (principalmente ids del tramo `2026-08-14` a `2026-09-09`).
+- El subconjunto exacto que falla rota entre corridas, pero dentro del mismo bloque reciente,
+      lo que sugiere un problema puntual de esos payloads/ruta de servidor bajo carga y no una
+      caida general de autenticacion (probe MCP sigue limpio).
+- Implicacion: para cierre de evidencia conviene reintento selectivo por id (1x1) antes que
+      repetir corridas completas con timeouts globales.
+
+Ejecucion de cierre (27/09/2026)
+
+- Se ejecutó reintento selectivo 1x1 sobre filas con `calc_error`, con pausa fija de `2.5 s`
+      entre reintentos fallidos (hasta 3 intentos por actividad).
+- Resultado: cierre a `18/18` (`rows_ok=18`, `rows_err=0`) sin relanzar corrida completa.
+- Metricas finales del cierre:
+      - `A (HR reserve)`: `MAE=4.426684`, `bias=4.426684`, `ratio_mean=1.123277`.
+      - `B (LTHR anchored)`: `MAE=3.613082`, `bias=-3.613082`, `ratio_mean=0.893243`.
+- Diagnostico A (corrida final 18/18):
+      - `hrr_clamped` en `[0.20, 0.2865]`.
+      - `IF_A` en `[0.58, 0.6146]`.
+      - Persistencia de compresion de intensidad en A, coherente con decision de mantener B como principal.
+
+Cierre operativo en produccion (27/09/2026)
+
+- Ruta real de fuerza en `agent/load_metrics.py` actualizada para usar **Modelo B LTHR-anchored**
+      como principal (con fallback a HR-reserve solo si falta LTHR/umbral).
+- `TSS_FORMULA_VERSION` incrementada a `29` por cambio de comportamiento real de formula.
+- Coeficientes activos en produccion:
+      - `intercepto=0.523104204`
+      - `pendiente=0.145349624`
+      - clamps de seguridad conservados (`IF` en `[0.45, 0.80]`, `z` en `[0, 1.15]`).
+- Se añade guardarrail de observabilidad: warning explicito cuando `z_c` cae fuera del rango
+      de calibracion in-sample `[0.134744, 0.321826]` para detectar extrapolacion en tiempo real.
+- Estado fuerza: **CERRADO** en produccion, con watch-item de confirmacion out-of-sample por
+      ventana calendario de 6-8 semanas.

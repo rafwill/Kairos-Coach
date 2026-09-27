@@ -1,5 +1,5 @@
 generated_at,activity_id,fecha,actividad_ref,tp_local,tp_unit,average_hr,duration_h,segment,tss_model_a,tss_model_b,model_a_label,model_b_source,hrr_model_a_raw,hrr_model_a_clamped,if_model_a_effective,calc_error
-2026-09-24 11:00:42,24301501111,2026-09-09,Gimnasio. Trail - Estabilidad y core,25.0,TSS,,,movilidad_activacion,,,,,,,,Error executing tool get_activity: timeout after 60s
+2026-09-24 11:00:42,24301501111,2026-09-09,Gimnasio. Trail - Estabilidad y core,25.0,TSS,79.0,0.7643355555555557,movilidad_activacion,28.081995513912585,22.58315391899357,hrTSS,lthr_model,0.26534653465346536,0.26534653465346536,0.6061386138613861,
 2026-09-24 11:00:42,24279679308,2026-09-08,Gimnasio. Trabajo neuromuscular con alta carga,43.0,TSS,67.0,1.4093655555555558,neuromuscular,47.411057288888905,37.74308163013656,hrTSS,lthr_model,0.1825828797624938,0.2,0.5800000000000001,
 2026-09-24 11:00:42,24213935868,2026-09-02,Gimnasio. Core y tren superior,34.0,TSS,71.0,1.077706388888889,other_strength,36.770523527071994,29.8426648307476,hrTSS,lthr_model,0.21029193468579907,0.21029193468579907,0.5841167738743196,
 2026-09-24 11:00:42,24185208392,2026-08-31,Gimnasio. Trabajo neuromuscular con alta carga,36.0,TSS,74.0,1.1403886111111112,neuromuscular,40.02452710745424,32.36871200390711,hrTSS,lthr_model,0.23107372587827804,0.23107372587827804,0.5924294903513112,
