@@ -295,7 +295,6 @@ Resultado actual de outliers (sin presuponer culpa de TP ni de código):
 activity_id	fecha	modalidad	TP	Kairos	ratio	delta	dur_h	avg_pace	run_if	tempo_det	short_reps_det	same_day_total	same_day_same_modality	tp_wrong_activity_risk	estado
 24492874850	2026-09-25	walking	18.000	121.015	6.723	103.015	3.418	19:17.41				2	1	medium	source_unverified
 24484006590	2026-09-24	walking	10.000	57.778	5.778	47.778	0.997	13:57.52				2	1	medium	source_unverified
-24398763300	2026-09-17	running	54.000	100.624	1.863	46.624	1.470	5:20.62	0.827	0	1	1	1	low	source_unverified
 24502427862	2026-09-26	walking	3.000	33.199	11.066	30.199	0.873	23:36.43				2	1	medium	source_unverified
 24383422318	2026-09-16	elliptical	21.000	47.744	2.274	26.744	0.525	6:59.82				2	1	medium	source_unverified
 24430006167	2026-09-20	walking	15.000	30.850	2.057	15.850	0.848	21:28.66				2	1	medium	source_unverified
@@ -311,3 +310,103 @@ Yo los marco uno por uno en:
 verified_and_same_activity, o
 verified_but_wrong_activity_or_transcribed
 Solo los que queden en verified_and_same_activity con discrepancia pasan a auditoría técnica.
+
+Correccion aplicada (28/09/2026):
+
+- Actividad `24398763300` (running): TP corregido a `104 rTSS` (estaba mal copiado como `54`).
+- Reclasificacion del caso: `verified_but_wrong_activity_or_transcribed`.
+- Implicacion: sale del bloque de outliers y no requiere auditoria tecnica de codigo.
+
+28/09/2026 (ajuste metodologico inmediato)
+
+Separacion de criterio por modalidad antes de pedir mas evidencia TP:
+
+1. Running (`activity_id=24398763300`): caso cerrado por correccion de transcripcion TP.
+      - TP correcto: `104 rTSS` (no `54`).
+      - Estado: `verified_but_wrong_activity_or_transcribed`.
+
+2. Walking + elliptical: priorizar revision de metodo de calculo antes de calibrar contra TP.
+      - En outliers actuales, Kairos concentra `~35-38 TSS/h` en varias caminatas, pese a ritmos distintos.
+      - En el mismo bloque, TP/h varia fuerte y no monotono con ritmo (`~3.4` a `17.7` en walking), por lo que
+            no se debe forzar ajuste de codigo contra TP sin confirmar primero unidad/metodo de referencia.
+
+Confirmacion de codigo actual (sin cambios de produccion):
+
+- `agent/load_metrics.py` en `_estimate_walk_hike_tss` usa:
+      - clasificacion por banda (`easy/brisk/heavy`) con `if_model` base,
+      - mezcla `70%` hr-zones + `30%` modelo,
+      - clamps explicitos de `TSS/h` por banda (`easy: 15-25`, `brisk: 25-40`, `heavy: >=40`).
+- La rama de walking/hiking se enruta desde `estimate_session_tss` hacia `_estimate_walk_hike_tss`.
+- Eliptica hoy cae en rama generica (no en rama especifica dedicada), por lo que se debe registrar
+      claramente el `source_tag` real en la auditoria.
+
+Mejoras aplicadas al script de auditoria (`tools/audit_outliers_since_0911.py`):
+
+1. Columna de unidad TP por actividad (`tp_unit`) con estado inicial `pending_evidence`.
+2. Columna de FC media (`avg_hr_bpm`) para comparacion metodologica por actividad.
+3. Columnas de trazabilidad Kairos (`method`, `kairos_source_tag`, `kairos_branch`).
+4. Columnas normalizadas por hora (`tp_tss_h`, `kairos_tss_h`) para detectar componentes casi fijos.
+
+Regla operativa actualizada:
+
+- Running `24398763300`: cerrado por correccion de fuente (transcripcion), sin auditoria tecnica.
+- En walking/elliptical, primero completar `tp_unit` + `avg_hr_bpm` + `kairos_branch/source_tag` para decidir
+      objetivo del modelo: (a) imitar TP o (b) estimar carga fisiologica real.
+
+
+      28/09/2026 16:21
+
+      Ejecución completada. Salió un resultado más decisivo de lo esperado: en estas 5 actividades no está entrando el cálculo por zonas; está cayendo en fallback por FC media, y eso explica tanto el suelo de caminatas como el caso de elíptica.
+
+Tabla A: descomposición por actividad (resultado real)
+
+activity_id	modalidad	avg_hr	maxHR actividad	dur_h	banda walk/hike	tss_zones_h	tss_model_h	final_h	IF equivalente
+24492874850	walking	64	98	3.418	easy	no aplica (zonas no útiles)	20.25	35.405	0.595
+24484006590	walking	70	86	0.997	easy	no aplica (zonas no útiles)	20.25	57.952	0.761
+24502427862	walking	58	74	0.873	easy	no aplica (zonas no útiles)	20.25	38.029	0.617
+24430006167	walking	60	82	0.848	easy	no aplica (zonas no útiles)	20.25	36.380	0.603
+24383422318	elliptical	113	124	0.525	n/a	no aplica (zonas no útiles)	n/a	90.940	0.954
+Notas clave de esa tabla:
+
+Las 4 caminatas fueron clasificadas como easy (no heavy).
+La de 57.9 TSS/h no viene de topes de banda ni de heavy: viene del fallback de FC con maxHR de actividad muy bajo (86).
+La elíptica a 90.9 TSS/h también sale por fallback de FC con maxHR de actividad 124, no por una integración real de zonas.
+Tabla B: suelos y techos teóricos (ruta walk/hike)
+
+Esto está definido en load_metrics.py:2236 y funciones relacionadas:
+
+IF modelo por banda:
+easy: 0.45
+brisk: 0.57
+heavy: 0.71
+Topes por banda:
+easy: 15 a 25 TSS/h
+brisk: 25 a 40 TSS/h
+heavy: mínimo 40 TSS/h, sin máximo
+Suelo por clamp HRR->IF de la fórmula:
+HRR mínimo: 0.30 en load_metrics.py:524
+IF = 0.40 + 0.65*HRR en load_metrics.py:528
+IF mínimo efectivo: 0.595
+TSS/h mínimo equivalente: 35.4025
+Pero en esta corrida, el driver real no fue la rama de zonas con mezcla/caps, sino fallback por FC media.
+
+Por qué no entraron zonas (hallazgo crítico)
+
+Inspección del payload crudo de get_activity_hr_in_timezones:
+
+En las 4 caminatas, secsInZone llega en 0.0 para todas las zonas.
+En elíptica sí aparece tiempo en zona 1 (843.201 s), pero el formato viene como objetos concatenados, no como JSON válido de lista.
+En consecuencia, el parser de zonas no construye una estructura útil y la función cae a fallback por FC media.
+Dónde se decide en código
+
+Fallback HR para walk/hike en load_metrics.py:2279.
+Fórmula HRR->IF usada por fallback en load_metrics.py:528.
+Ruta genérica (elíptica) y fallback en load_metrics.py:3141, load_metrics.py:3151.
+Conclusión operativa
+
+Tu hipótesis del suelo elevado era correcta en espíritu, pero en estas 5 actividades el mecanismo dominante fue fallback HR con maxHR de actividad muy bajo.
+La caminata de 57.9 TSS/h no es un caso heavy ni de texto/desnivel; es efecto matemático de avgHR 70 con maxHR 86 en fallback.
+La elíptica de 90.9 TSS/h tampoco está “bien explicada por zonas”; es fallback HR con IF implícito alto por maxHR 124.
+Siguiente paso natural:
+
+Puedo dejarte una versión del reporte que agregue dos columnas de diagnóstico en el audit: used_zones_effective (sí/no) y hr_fallback_inputs (avgHR, maxHR usado), para que este patrón se vea automáticamente en cada corrida.

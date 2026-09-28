@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from agent.load_metrics import (
     estimate_session_tss,
     extract_activity_duration_hours,
+    infer_tss_source_tag,
     resolve_hr_profile_values,
     resolve_running_threshold_pace_sec_per_km,
 )
@@ -36,12 +37,27 @@ TP_MAP: dict[int, float] = {
     24437481035: 91.0,
     24430006167: 15.0,
     24407524068: 175.0,
-    24398763300: 54.0,
+    24398763300: 104.0,
     24383422318: 21.0,
     24383043078: 42.0,
     24368377888: 76.0,
     24342674498: 135.0,
     24322094785: 261.7,
+}
+
+# Optional evidence map: populate from verified TP screenshots/exports.
+# Valid values expected: hrTSS, rTSS, TSS (or leave missing while pending verification).
+TP_UNIT_MAP: dict[int, str] = {
+    24398763300: "rTSS",
+}
+
+# Per-activity protocol overrides when TP evidence has already been verified externally.
+TP_STATUS_OVERRIDES: dict[int, dict[str, str]] = {
+    24398763300: {
+        "tp_source_status": "verified",
+        "protocol_outcome": "verified_but_wrong_activity_or_transcribed",
+        "evidence_next": "none_case_closed",
+    }
 }
 
 RATIO_LOW = 0.75
@@ -209,6 +225,40 @@ def _avg_speed(act: dict[str, Any]) -> float | None:
     return val if val > 0 else None
 
 
+def _avg_hr_bpm(act: dict[str, Any]) -> float | None:
+    summary = act.get("summaryDTO") if isinstance(act.get("summaryDTO"), dict) else {}
+    raw = (
+        act.get("averageHR")
+        or act.get("avgHr")
+        or act.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("averageHeartRate")
+    )
+    try:
+        val = float(raw)
+    except Exception:
+        return None
+    return val if val > 0 else None
+
+
+def _infer_kairos_branch(activity: dict[str, Any], tss_method: str, source_tag: str) -> str:
+    tk = _activity_type_key(activity).lower()
+    if "running" in tk and "trail" not in tk:
+        return "running_non_trail_pipeline"
+    if any(k in tk for k in ("trail", "hike", "hiking", "trek", "sender", "walk", "camin")):
+        if "walk" in tk or "hike" in tk or "hiking" in tk or "camin" in tk or "sender" in tk or "trek" in tk:
+            return "walk_hike_branch"
+        return "trail_branch"
+    if "strength" in tk or "gym" in tk or "workout" in tk:
+        return "strength_branch"
+    if "cycling" in tk or "bike" in tk or "biking" in tk:
+        return "cycling_branch"
+    if source_tag in ("native_tss", "hr_zones", "hr_avg_or_rpe", "hr_stream"):
+        return "generic_fallback_branch"
+    return f"generic_{tss_method.lower()}"
+
+
 def _pace_min_km(speed_ms: float | None) -> str:
     if not speed_ms or speed_ms <= 0:
         return ""
@@ -263,11 +313,13 @@ async def main() -> None:
             row: dict[str, Any] = {
                 "activity_id": activity_id,
                 "tp": tp,
+                "tp_unit": str(TP_UNIT_MAP.get(activity_id) or "pending_evidence"),
                 "tp_source_status": "manual_unverified",
                 "protocol_outcome": "pending_tp_source_evidence",
                 "evidence_next": "trainingpeaks_screenshot_or_export_required",
                 "error": "",
             }
+            row.update(TP_STATUS_OVERRIDES.get(activity_id, {}))
             try:
                 raw_activity = await _call_tool_with_retries(session, "get_activity", {"activity_id": activity_id})
                 if _looks_like_error(raw_activity):
@@ -293,6 +345,8 @@ async def main() -> None:
                 spd = _avg_speed(activity)
                 row["avg_speed_ms"] = round(spd, 3) if spd else None
                 row["avg_pace_min_km"] = _pace_min_km(spd)
+                avg_hr = _avg_hr_bpm(activity)
+                row["avg_hr_bpm"] = round(avg_hr, 1) if avg_hr is not None else None
 
                 raw_zones = await _call_tool_with_retries(session, "get_activity_hr_in_timezones", {"activity_id": activity_id})
                 zones_raw = None if _looks_like_error(raw_zones) else (raw_zones if isinstance(raw_zones, str) else json.dumps(raw_zones))
@@ -318,6 +372,11 @@ async def main() -> None:
                 ratio = kairos / float(tp) if tp > 0 else None
                 row["kairos"] = round(kairos, 3)
                 row["method"] = str(method)
+                row["kairos_tss_h"] = round((kairos / row["dur_h"]), 3) if row.get("dur_h") else None
+                row["tp_tss_h"] = round((float(tp) / row["dur_h"]), 3) if row.get("dur_h") else None
+                source_tag = infer_tss_source_tag(activity, tss_label=str(method), ftp=ftp, hr_zones_raw=zones_raw)
+                row["kairos_source_tag"] = str(source_tag)
+                row["kairos_branch"] = _infer_kairos_branch(activity, str(method), str(source_tag))
                 row["delta"] = round(kairos - float(tp), 3)
                 row["ratio"] = round(ratio, 3) if ratio is not None else None
                 row["is_outlier"] = bool(ratio is not None and (ratio < RATIO_LOW or ratio > RATIO_HIGH))
@@ -374,20 +433,27 @@ async def main() -> None:
     print("3) source_unverified -> pending evidence, do not assign blame")
 
     print("\n=== OUTLIERS (ratio outside [0.75, 1.35]) ===")
-    print("| activity_id | fecha | modalidad | TP | Kairos | ratio | delta | dur_h | avg_pace | run_if | tempo_det | short_reps_det | same_day_total | same_day_same_modality | tp_wrong_activity_risk | tp_source_status | protocol_outcome |")
-    print("|---:|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---|---|---|")
+    print("| activity_id | fecha | modalidad | TP | TP unit | Kairos | ratio | delta | dur_h | TP/h | Kairos/h | avg_pace | avg_hr | metodo | rama_kairos | source_tag | run_if | tempo_det | short_reps_det | same_day_total | same_day_same_modality | tp_wrong_activity_risk | tp_source_status | protocol_outcome |")
+    print("|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|---|---:|---|---|---|---:|---:|---:|---:|---:|---|---|---|")
     for r in sorted(outliers, key=lambda x: abs(float(x.get("delta") or 0.0)), reverse=True):
         print(
-            "| {activity_id} | {fecha} | {modalidad} | {tp:.3f} | {kairos} | {ratio} | {delta} | {dur_h} | {avg_pace} | {run_if} | {tempo} | {short} | {day_total} | {day_mod} | {risk} | {src} | {outcome} |".format(
+            "| {activity_id} | {fecha} | {modalidad} | {tp:.3f} | {tp_unit} | {kairos} | {ratio} | {delta} | {dur_h} | {tp_h} | {kairos_h} | {avg_pace} | {avg_hr} | {method} | {branch} | {source_tag} | {run_if} | {tempo} | {short} | {day_total} | {day_mod} | {risk} | {src} | {outcome} |".format(
                 activity_id=r.get("activity_id"),
                 fecha=r.get("fecha") or "",
                 modalidad=str(r.get("modalidad") or ""),
                 tp=float(r.get("tp") or 0.0),
+                tp_unit=str(r.get("tp_unit") or ""),
                 kairos=("" if r.get("kairos") is None else f"{float(r['kairos']):.3f}"),
                 ratio=("" if r.get("ratio") is None else f"{float(r['ratio']):.3f}"),
                 delta=("" if r.get("delta") is None else f"{float(r['delta']):.3f}"),
                 dur_h=("" if r.get("dur_h") is None else f"{float(r['dur_h']):.3f}"),
+                tp_h=("" if r.get("tp_tss_h") is None else f"{float(r['tp_tss_h']):.3f}"),
+                kairos_h=("" if r.get("kairos_tss_h") is None else f"{float(r['kairos_tss_h']):.3f}"),
                 avg_pace=str(r.get("avg_pace_min_km") or ""),
+                avg_hr=("" if r.get("avg_hr_bpm") is None else f"{float(r['avg_hr_bpm']):.1f}"),
+                method=str(r.get("method") or ""),
+                branch=str(r.get("kairos_branch") or ""),
+                source_tag=str(r.get("kairos_source_tag") or ""),
                 run_if=("" if r.get("run_if") is None else f"{float(r['run_if']):.3f}"),
                 tempo=("" if r.get("run_tempo_det") is None else ("1" if r.get("run_tempo_det") else "0")),
                 short=("" if r.get("run_short_reps_det") is None else ("1" if r.get("run_short_reps_det") else "0")),
