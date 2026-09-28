@@ -277,3 +277,37 @@ Cierre operativo en produccion (27/09/2026)
       de calibracion in-sample `[0.134744, 0.321826]` para detectar extrapolacion en tiempo real.
 - Estado fuerza: **CERRADO** en produccion, con watch-item de confirmacion out-of-sample por
       ventana calendario de 6-8 semanas.
+
+
+28/09/2026
+
+Aplicado. Ya incorporé el tercer desenlace en el protocolo y ejecuté la auditoría actividad por actividad sobre toda la lista.
+
+Ejecución:
+
+Script de auditoría: audit_outliers_since_0911.py
+Protocolo activo en la salida:
+verified_and_same_activity
+verified_but_wrong_activity_or_transcribed
+source_unverified
+Resultado actual de outliers (sin presuponer culpa de TP ni de código):
+
+activity_id	fecha	modalidad	TP	Kairos	ratio	delta	dur_h	avg_pace	run_if	tempo_det	short_reps_det	same_day_total	same_day_same_modality	tp_wrong_activity_risk	estado
+24492874850	2026-09-25	walking	18.000	121.015	6.723	103.015	3.418	19:17.41				2	1	medium	source_unverified
+24484006590	2026-09-24	walking	10.000	57.778	5.778	47.778	0.997	13:57.52				2	1	medium	source_unverified
+24398763300	2026-09-17	running	54.000	100.624	1.863	46.624	1.470	5:20.62	0.827	0	1	1	1	low	source_unverified
+24502427862	2026-09-26	walking	3.000	33.199	11.066	30.199	0.873	23:36.43				2	1	medium	source_unverified
+24383422318	2026-09-16	elliptical	21.000	47.744	2.274	26.744	0.525	6:59.82				2	1	medium	source_unverified
+24430006167	2026-09-20	walking	15.000	30.850	2.057	15.850	0.848	21:28.66				2	1	medium	source_unverified
+Lectura operativa:
+
+El protocolo queda aplicado como pediste: no se abre auditoría de código mientras la fuente TP no esté verificada.
+También queda cubierto el tercer desenlace: si TP real corresponde a otra actividad o está mal transcrito, se corrige referencia y se cierra sin tocar código.
+En este bloque, todos los outliers están en source_unverified, así que el siguiente paso es puramente de validación de fuente.
+Siguiente paso recomendado para cerrar rápido:
+
+Para cada activity_id outlier, pásame evidencia TP verificable (captura/export con fecha, nombre actividad y TSS).
+Yo los marco uno por uno en:
+verified_and_same_activity, o
+verified_but_wrong_activity_or_transcribed
+Solo los que queden en verified_and_same_activity con discrepancia pasan a auditoría técnica.
