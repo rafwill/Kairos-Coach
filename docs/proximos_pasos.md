@@ -462,3 +462,25 @@ Resultados (4 walking + 2 hiking):
 24013969366, hiking: TSS 45.285, TSS/h 22.828, avgHR 72.0, elev 245.12
 23478220005, hiking: TSS 55.935, TSS/h 19.789, avgHR 72.0, elev 277.78
 Esto ya sale de la resolución real de perfil + hidratación MCP, no de inyección manual de prueba.
+
+
+30/09/2026 00:52:08
+
+Actualizacion de tabla walking/hiking (ultimos 3 meses), recalculada con formula actual de Kairos y TP consolidado (rTSS + hrTSS).
+
+Anclajes efectivos en esta corrida:
+
+- hr_rest = 43.0
+- hr_threshold = 169.0
+- hr_max = None
+
+| fecha | activity_id | modalidad | actividad | dur_h | kairos_tss | metodo | tp_rTSS | tp_hrTSS | tp_status |
+|---|---:|---|---|---:|---:|---|---:|---:|---|
+| 2026-07-03 | 23468464527 | walking | Turismo. Vielha (Alto Aran - Lleida) | 2.818 | 5.771 | TSS | 4.0 | 84.0 | verified_and_same_activity |
+| 2026-07-04 | 23478220005 | hiking | Senderismo. Pla de Beret - Refugi de Mongarri i/v (Baqueira Beret - Lleida) | 2.827 | 27.110 | TSS | 4.0 | 87.0 | verified_and_same_activity |
+| 2026-08-02 | 23829149525 | walking | Turismo. Paseo Maritimo de Sanxenxo y Portonovo | 5.211 | 11.624 | TSS | 13.0 | 154.0 | verified_and_same_activity |
+| 2026-08-17 | 24013969366 | hiking | Senderismo. Ruta A Moa 1/2 con Hector (O Fieiro - A Coruna) | 1.984 | 20.757 | TSS | 7.0 | 61.0 | verified_and_same_activity |
+| 2026-09-20 | 24430006167 | walking | Caminata con Silvia y Yuma | 0.848 | 3.433 | TSS | 4.0 | 25.0 | verified_and_same_activity |
+| 2026-09-24 | 24484006590 | walking | Turismo. Del SH Valencia Palace a UPV ETSINF (Valencia) | 0.997 | 5.062 | TSS | 10.0 | 30.0 | verified_and_same_activity |
+| 2026-09-25 | 24492874850 | walking | Turismo. Valencia | 3.418 | 12.958 | TSS | 18.0 | 103.0 | verified_and_same_activity |
+| 2026-09-26 | 24502427862 | walking | Caminata con Silvia y Yuma | 0.873 | 2.021 | TSS | 3.0 | 26.0 | verified_and_same_activity |

@@ -50,7 +50,8 @@ TRAIL_NON_FAST_LOW_IF_MIN_BLOCK_SECONDS = 5 * 60
 TRAIL_NON_FAST_LOW_IF_APPLY_RATIO = 0.18
 
 # Walk/hike dedicated model: LTHR-anchored HR load + additive ascent component.
-WALK_HIKE_ASCENT_TSS_PER_M = 0.12
+# Spec target: 10 TSS per 300 m of ascent.
+WALK_HIKE_ASCENT_TSS_PER_M = 10.0 / 300.0
 
 
 def _is_cycling_activity(act_type: Any) -> bool:
