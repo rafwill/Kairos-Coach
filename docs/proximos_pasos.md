@@ -410,3 +410,55 @@ La elíptica de 90.9 TSS/h tampoco está “bien explicada por zonas”; es fall
 Siguiente paso natural:
 
 Puedo dejarte una versión del reporte que agregue dos columnas de diagnóstico en el audit: used_zones_effective (sí/no) y hr_fallback_inputs (avgHR, maxHR usado), para que este patrón se vea automáticamente en cada corrida.
+
+
+29/09/2026 16:24
+
+Confirmado y corregido en producción, no solo en el arnés.
+
+Qué confirmé exactamente
+
+La llamada real de producción sí pasa los parámetros a estimate_session_tss
+En trainer_agent.py:9671, trainer_agent.py:3759, trainer_agent.py:4312 y trainer_agent.py:4402 se pasan hr_rest_bpm y hr_threshold_bpm a _estimate_session_tss.
+
+El problema era que esos valores llegaban como None por falta de hidratación previa del perfil
+No era pérdida dentro de load_metrics, era ausencia de anclajes en el perfil de entrada en ese momento (mismo patrón que sospechabas).
+
+Fix aplicado en producción
+
+Añadí hidratación automática de anclajes cuando faltan:
+
+LTHR desde get_lactate_threshold
+HR reposo desde get_rhr_day
+Implementación:
+
+Nuevo extractor de HR reposo: trainer_agent.py:3270
+Nuevo hidratador asíncrono: trainer_agent.py:3331
+Integrado en rutas asíncronas que calculan TSS:
+trainer_agent.py:3759
+trainer_agent.py:4312
+trainer_agent.py:4402
+trainer_agent.py:9671
+También ajusté tests que dependían de la etiqueta antigua de hike/walk:
+
+test_trainer_agent.py:3443
+test_trainer_agent.py:3532
+Validación de tests tras el fix
+
+12 passed, 0 failed en bloque focal de trainer_agent.
+Desglose pedido, sin forzar manualmente (resolución real tras hidratación)
+
+Anclajes resueltos automáticamente:
+
+hr_rest = 37.0
+hr_threshold = 169.0
+hr_max = None
+Resultados (4 walking + 2 hiking):
+
+24492874850, walking: TSS 22.561, TSS/h 6.600, avgHR 64.0, elev 55.8
+24484006590, walking: TSS 7.760, TSS/h 7.781, avgHR 70.0, elev 12.33
+24502427862, walking: TSS 4.574, TSS/h 5.239, avgHR 58.0, elev 18.38
+24430006167, walking: TSS 8.744, TSS/h 10.310, avgHR 60.0, elev 49.39
+24013969366, hiking: TSS 45.285, TSS/h 22.828, avgHR 72.0, elev 245.12
+23478220005, hiking: TSS 55.935, TSS/h 19.789, avgHR 72.0, elev 277.78
+Esto ya sale de la resolución real de perfil + hidratación MCP, no de inyección manual de prueba.
