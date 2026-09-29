@@ -1403,6 +1403,8 @@ def _estimate_walk_hike_tss(
     hr_zones_raw: str | None,
     hr_rest_bpm: float | None,
     hr_max_bpm: float | None,
+    activity_details_raw: str | None = None,
+    hr_threshold_bpm: float | None = None,
 ) -> tuple[float | None, str | None]:
     return _load_metrics.estimate_walk_hike_tss(
         activity,
@@ -1410,6 +1412,8 @@ def _estimate_walk_hike_tss(
         hr_zones_raw,
         hr_rest_bpm,
         hr_max_bpm,
+        activity_details_raw,
+        hr_threshold_bpm,
     )
 
 
@@ -3263,6 +3267,124 @@ def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
     return _walk(payload)
 
 
+def _extract_resting_hr_from_payload(payload: Any) -> float | None:
+    """Busca FC en reposo en payloads JSON heterogéneos."""
+    target_keys = {
+        "restingheartrate",
+        "resting_heart_rate",
+        "resting_hr",
+        "hrrestingvalue",
+        "wellness_resting_heart_rate",
+    }
+
+    def _key_candidates(raw_key: Any) -> set[str]:
+        key = str(raw_key or "").strip().lower()
+        if not key:
+            return set()
+        snake = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
+        compact = re.sub(r"[^a-z0-9]", "", key)
+        return {snake, compact}
+
+    def _coerce(raw: Any) -> float | None:
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if 30.0 <= val <= 100.0:
+            return round(val, 1)
+        return None
+
+    def _walk(node: Any) -> float | None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if _key_candidates(key) & target_keys:
+                    if isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, dict):
+                                out = _coerce(item.get("value"))
+                                if out is not None:
+                                    return out
+                        out = _coerce(value[0] if value else None)
+                        if out is not None:
+                            return out
+                    elif isinstance(value, dict):
+                        out = _coerce(value.get("value"))
+                        if out is not None:
+                            return out
+                    else:
+                        out = _coerce(value)
+                        if out is not None:
+                            return out
+                nested = _walk(value)
+                if nested is not None:
+                    return nested
+        elif isinstance(node, list):
+            for item in node:
+                nested = _walk(item)
+                if nested is not None:
+                    return nested
+        return None
+
+    return _walk(payload)
+
+
+async def _hydrate_profile_hr_anchors_if_missing(mcp_session, profile: dict | None) -> tuple[float | None, float | None, float | None]:
+    """Hidrata hr_rest/lthr desde MCP cuando faltan en el perfil persistido."""
+    profile = profile if isinstance(profile, dict) else {}
+    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
+    hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
+
+    needs_rest = hr_rest_bpm is None
+    needs_lthr = hr_threshold_bpm is None
+    if not (needs_rest or needs_lthr):
+        return hr_rest_bpm, hr_max_bpm, hr_threshold_bpm
+
+    perf = profile.setdefault("performance", {}) if isinstance(profile, dict) else {}
+    updated = False
+    today_iso = date.today().isoformat()
+
+    if needs_lthr:
+        try:
+            raw_lthr = await call_tool(mcp_session, "get_lactate_threshold", {})
+            parsed_lthr = _try_parse_json(raw_lthr)
+            payload_lthr = parsed_lthr if parsed_lthr is not None else raw_lthr
+            live_lthr = _extract_hr_threshold_from_payload(payload_lthr)
+        except (TimeoutError, asyncio.TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError, AssertionError):
+            live_lthr = None
+
+        if live_lthr is not None:
+            perf["hr_threshold_bpm"] = int(round(float(live_lthr)))
+            if not _parse_iso_date_safe(perf.get("hr_threshold_date")):
+                perf["hr_threshold_date"] = today_iso
+            perf["performance_params_updated_at"] = today_iso
+            updated = True
+
+    if needs_rest:
+        try:
+            raw_rhr = await call_tool(mcp_session, "get_rhr_day", {"date": today_iso})
+            parsed_rhr = _try_parse_json(raw_rhr)
+            payload_rhr = parsed_rhr if parsed_rhr is not None else raw_rhr
+            live_rhr = _extract_resting_hr_from_payload(payload_rhr)
+        except (TimeoutError, asyncio.TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError, AssertionError):
+            live_rhr = None
+
+        if live_rhr is not None:
+            perf["hr_rest_bpm"] = float(live_rhr)
+            perf["performance_params_updated_at"] = today_iso
+            updated = True
+
+    if updated:
+        profile["performance"] = perf
+        try:
+            _save_user_profile(profile)
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            log.debug("No se pudo persistir anclajes HR en perfil: %s", exc)
+
+    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
+    hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
+    return hr_rest_bpm, hr_max_bpm, hr_threshold_bpm
+
+
 async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> str:
     """Respuesta determinista y rápida de FC umbral (LTHR)."""
     profile = profile if isinstance(profile, dict) else {}
@@ -3634,8 +3756,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     prev_week_end = comp_end
     prev_week_dates = comp_dates
     running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
-    hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
+    hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
 
     tss_by_day: dict[str, float] = {}
     tss_source_by_day: dict[str, str] = {}
@@ -4188,8 +4309,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
     # Fallback factual del TSS diario basado en actividades del día cuando
     # load_metrics/trend aún no reflejan la sesión.
     running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
-    hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
+    hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
     cycling_ftp = _extract_cycling_ftp_watts(profile)
     activity_tss_day = 0.0
     for act in activities:
@@ -4279,8 +4399,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         if primary_garmin_load is None:
             primary_garmin_load = _extract_training_load_tss(primary)
 
-        hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
-        hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
+        hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
         est_tss, _ = _estimate_session_tss(
             act_payload,
             ftp=_extract_cycling_ftp_watts(profile),
@@ -9549,8 +9668,10 @@ class TrainerAgent:
                     log.debug("compute_load: no se pudo enriquecer actividad %s: %s", _act_id, exc)
 
         # 4. TSS por día para las actividades nuevas
-        hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(self.user_profile)
-        hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(self.user_profile)
+        hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(
+            self.mcp_session,
+            self.user_profile,
+        )
         tss_by_day:   dict[str, float] = {}
         count_by_day: dict[str, int]   = {}
         running_mix_by_day: dict[str, dict[str, int]] = {}
