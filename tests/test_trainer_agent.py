@@ -3440,7 +3440,7 @@ class TestLoadFatigueModel:
             "maxHR": 165,
         }
         tss_hike_hr, label_hike_hr = _estimate_session_tss(act_hike_hr, running_threshold_pace_sec_per_km=320.0)
-        assert label_hike_hr == "hrTSS"
+        assert label_hike_hr == "TSS"
         assert tss_hike_hr > 0
 
         act_rpe = {"type": "walking", "duration": 3600, "rpe": 6}
@@ -3529,7 +3529,7 @@ class TestLoadFatigueModel:
             "maxHR": 180,
         }
         tss_hike_zones, label_hike_zones = _estimate_session_tss(hike_act, hr_zones_raw=hr_zones_raw)
-        assert label_hike_zones == "hrTSS"
+        assert label_hike_zones == "TSS"
         # En hike/walk se usa banda específica y blend con zonas (sin factor trail).
         assert 45.0 <= tss_hike_zones <= 60.0
 
@@ -3724,7 +3724,7 @@ class TestLoadFatigueModel:
         assert "hrTSS Kairos aplicado: 27.0" in out
         assert "Regla trail rapido activa (<6:00/km)" in out
 
-    def test_estimate_tss_walking_easy_band_caps_zones(self):
+    def test_estimate_tss_walking_easy_uses_dedicated_model(self):
         act = {
             "type": "walking",
             "duration": 3600,
@@ -3755,7 +3755,7 @@ class TestLoadFatigueModel:
 
         tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
 
-        assert label == "hrTSS"
+        assert label == "TSS"
         assert 15.0 <= tss <= 25.0
 
     def test_estimate_tss_walking_power_band(self):
@@ -3769,6 +3769,35 @@ class TestLoadFatigueModel:
 
         assert label == "TSS"
         assert 25.0 <= tss <= 40.0
+
+    def test_estimate_tss_elliptical_fallback_uses_profile_hr_max(self):
+        act_elliptical = {
+            "duration": 1890,
+            "averageHR": 113,
+            "maxHR": 124,
+            "name": "Eliptica. Z1 suave",
+        }
+        act_generic = {
+            "duration": 1890,
+            "averageHR": 113,
+            "maxHR": 124,
+            "name": "Indoor suave",
+        }
+
+        tss_elliptical, label_elliptical = _estimate_session_tss(
+            act_elliptical,
+            hr_rest_bpm=50,
+            hr_max_bpm=185,
+        )
+        tss_generic, _ = _estimate_session_tss(
+            act_generic,
+            hr_rest_bpm=50,
+            hr_max_bpm=185,
+        )
+
+        assert label_elliptical == "hrTSS"
+        assert 20.0 <= tss_elliptical <= 32.0
+        assert tss_generic > tss_elliptical
 
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
         act = {

@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 29
+TSS_FORMULA_VERSION = 31
 
 # Strength (LTHR-anchored) IF model calibrated in-sample on 2026-09-27.
 STRENGTH_LTHR_IF_INTERCEPT = 0.523104204
@@ -48,6 +48,9 @@ TRAIL_NON_FAST_LOW_IF_THRESHOLD = 0.58
 TRAIL_NON_FAST_LOW_IF_FLOOR = 0.58
 TRAIL_NON_FAST_LOW_IF_MIN_BLOCK_SECONDS = 5 * 60
 TRAIL_NON_FAST_LOW_IF_APPLY_RATIO = 0.18
+
+# Walk/hike dedicated model: LTHR-anchored HR load + additive ascent component.
+WALK_HIKE_ASCENT_TSS_PER_M = 0.12
 
 
 def _is_cycling_activity(act_type: Any) -> bool:
@@ -94,6 +97,26 @@ def _is_running_non_trail_activity(act_type: Any) -> bool:
         act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
     t = str(act_type or "").lower()
     return any(kw in t for kw in ("running", "run", "corr"))
+
+
+def _is_elliptical_activity(activity: dict, act_type: Any) -> bool:
+    t = ""
+    if isinstance(act_type, dict):
+        t = str(act_type.get("typeKey") or act_type.get("typeName") or "").lower()
+    else:
+        t = str(act_type or "").lower()
+
+    if any(kw in t for kw in ("ellipt", "cross_trainer", "cross trainer")):
+        return True
+
+    name = " ".join(
+        [
+            str(activity.get("name") or ""),
+            str(activity.get("activityName") or ""),
+            str(activity.get("description") or ""),
+        ]
+    ).lower()
+    return ("ellipt" in name) or ("elipt" in name)
 
 
 def _resolve_activity_type_for_routing(activity: dict) -> Any:
@@ -485,6 +508,7 @@ def _estimate_if_from_hr(
     cycling_formula: bool,
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
+    use_activity_hr_max: bool = True,
 ) -> float | None:
     summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
     avg_hr_raw = (
@@ -497,22 +521,26 @@ def _estimate_if_from_hr(
         or summary.get("avg_hr_bpm")
         or summary.get("averageHeartRate")
     )
-    max_hr_raw = (
-        activity.get("maxHR")
-        or activity.get("maxHr")
-        or activity.get("max_hr_bpm")
-        or activity.get("maxHeartRate")
-        or summary.get("maxHR")
-        or summary.get("maxHr")
-        or summary.get("max_hr_bpm")
-        or summary.get("maxHeartRate")
-    )
+    max_hr_raw = None
+    if use_activity_hr_max:
+        max_hr_raw = (
+            activity.get("maxHR")
+            or activity.get("maxHr")
+            or activity.get("max_hr_bpm")
+            or activity.get("maxHeartRate")
+            or summary.get("maxHR")
+            or summary.get("maxHr")
+            or summary.get("max_hr_bpm")
+            or summary.get("maxHeartRate")
+        )
     if avg_hr_raw is None:
         return None
     try:
         avg_hr = float(avg_hr_raw)
         hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
-        hr_max = float(max_hr_raw) if max_hr_raw else (float(hr_max_bpm) if hr_max_bpm else 185.0)
+        hr_max = float(hr_max_bpm) if hr_max_bpm else 185.0
+        if max_hr_raw is not None:
+            hr_max = float(max_hr_raw)
         if hr_rest <= 0:
             hr_rest = 50.0
         if hr_max <= 0:
@@ -2239,47 +2267,84 @@ def _estimate_walk_hike_tss(
     hr_zones_raw: str | None,
     hr_rest_bpm: float | None,
     hr_max_bpm: float | None,
+    activity_details_raw: str | None,
+    hr_threshold_bpm: float | None,
 ) -> tuple[float | None, str | None]:
     if hours <= 0:
         return None, None
 
-    cls = _classify_walk_hike_session_with_confidence(activity, hours)
-    band = str(cls.get("band") or "easy")
-    if_model = float(cls.get("if_model") or 0.45)
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
 
-    if band == "heavy":
-        min_h, max_h = 40.0, None
-    elif band == "brisk":
-        min_h, max_h = 25.0, 40.0
-    else:
-        min_h, max_h = 15.0, 25.0
+    def _first_float(*keys: str) -> float | None:
+        for key in keys:
+            raw = activity.get(key)
+            if raw is None:
+                raw = summary.get(key)
+            if raw is None:
+                continue
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                continue
+        return None
 
-    tss_model = max(0.0, hours * (if_model**2) * 100.0)
+    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+    hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+    if hr_rest <= 0:
+        hr_rest = 50.0
 
-    tss_zones = _estimate_hr_tss_from_zones(
-        activity,
-        hours=hours,
-        hr_zones_raw=hr_zones_raw,
-        hr_rest_bpm=hr_rest_bpm,
-        hr_max_bpm=hr_max_bpm,
-        apply_cap=False,
-        min_coverage_ratio=0.35,
-    )
+    if lthr is not None and lthr > 0 and hr_rest >= (float(lthr) - 5.0):
+        hr_rest = max(30.0, float(lthr) - 55.0)
 
-    if tss_zones is not None:
-        blended = (0.70 * float(tss_zones)) + (0.30 * float(tss_model))
-        tss = max(0.0, blended)
-        tss_h = tss / hours if hours > 0 else 0.0
-        if max_h is not None:
-            tss_h = min(max_h, tss_h)
-        tss_h = max(min_h, tss_h)
-        return max(0.0, tss_h * hours), "hrTSS"
+    tss_hr = 0.0
+    used_hr_series = False
+    duration_seconds = max(0.0, hours * 3600.0)
 
-    if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
-    if if_hr is not None:
-        return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
+    if lthr is not None and lthr > hr_rest and activity_details_raw:
+        samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
+        if len(samples) >= 5:
+            deltas = [
+                samples[idx + 1][0] - samples[idx][0]
+                for idx in range(len(samples) - 1)
+                if (samples[idx + 1][0] - samples[idx][0]) > 0
+            ]
+            step_guess = float(median(deltas)) if deltas else 1.0
+            step_guess = max(1.0, min(30.0, step_guess))
 
-    return tss_model, "TSS"
+            denom = max(1.0, float(lthr) - float(hr_rest))
+            covered_seconds = 0.0
+            for idx, (t_sec, hr) in enumerate(samples):
+                if idx + 1 < len(samples):
+                    dt = samples[idx + 1][0] - t_sec
+                    if dt <= 0:
+                        dt = step_guess
+                else:
+                    dt = step_guess
+
+                dt = max(1.0, min(30.0, float(dt)))
+                if_sec = max(0.0, (float(hr) - float(hr_rest)) / denom)
+                tss_hr += (dt / 3600.0) * (if_sec**2) * 100.0
+                covered_seconds += dt
+
+            if covered_seconds > 0:
+                used_hr_series = True
+
+    if not used_hr_series and lthr is not None and lthr > hr_rest:
+        avg_hr = _first_float("averageHR", "avgHr", "avg_hr_bpm", "averageHeartRate")
+        if avg_hr is not None:
+            denom = max(1.0, float(lthr) - float(hr_rest))
+            if_avg = max(0.0, (float(avg_hr) - float(hr_rest)) / denom)
+            tss_hr = max(0.0, hours * (if_avg**2) * 100.0)
+
+    if not used_hr_series and tss_hr <= 0.0:
+        cls = _classify_walk_hike_session_with_confidence(activity, hours)
+        if_model = float(cls.get("if_model") or 0.45)
+        tss_hr = max(0.0, hours * (if_model**2) * 100.0)
+
+    elev_gain_m = _first_float("elevationGain", "elevation_gain", "totalAscent", "total_ascent", "elev_gain")
+    tss_elev = max(0.0, float(elev_gain_m or 0.0)) * float(WALK_HIKE_ASCENT_TSS_PER_M)
+
+    return max(0.0, float(tss_hr) + float(tss_elev)), "TSS"
 
 
 def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
@@ -2888,6 +2953,7 @@ def _estimate_session_tss(
     is_trail = _is_trail_activity(act_type)
     is_hike_walk = _is_hike_walk_activity(act_type)
     is_running_non_trail = _is_running_non_trail_activity(act_type)
+    is_elliptical = _is_elliptical_activity(activity, act_type)
     tss_native = _extract_training_load_tss(activity)
 
     details_payload = (
@@ -3102,6 +3168,8 @@ def _estimate_session_tss(
                 hr_zones_raw=hr_zones_raw,
                 hr_rest_bpm=hr_rest_bpm,
                 hr_max_bpm=hr_max_bpm,
+                activity_details_raw=details_payload,
+                hr_threshold_bpm=hr_threshold_bpm,
             )
             if tss_walk is not None:
                 return max(0.0, float(tss_walk)), str(lbl_walk or "TSS")
@@ -3148,7 +3216,13 @@ def _estimate_session_tss(
     if tss_hr_zones_generic is not None:
         return tss_hr_zones_generic, "hrTSS"
 
-    if_hr_fallback = _estimate_if_from_hr(activity, cycling_formula=is_cycling, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
+    if_hr_fallback = _estimate_if_from_hr(
+        activity,
+        cycling_formula=is_cycling,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+        use_activity_hr_max=not is_elliptical,
+    )
     if if_hr_fallback is not None:
         return max(0.0, hours * (if_hr_fallback**2) * 100.0), "hrTSS"
 
@@ -3752,8 +3826,18 @@ def estimate_walk_hike_tss(
     hr_zones_raw: str | None,
     hr_rest_bpm: float | None,
     hr_max_bpm: float | None,
+    activity_details_raw: str | None = None,
+    hr_threshold_bpm: float | None = None,
 ) -> tuple[float | None, str | None]:
-    return _estimate_walk_hike_tss(activity, hours, hr_zones_raw, hr_rest_bpm, hr_max_bpm)
+    return _estimate_walk_hike_tss(
+        activity,
+        hours,
+        hr_zones_raw,
+        hr_rest_bpm,
+        hr_max_bpm,
+        activity_details_raw,
+        hr_threshold_bpm,
+    )
 
 
 def estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
