@@ -1417,6 +1417,12 @@ def _estimate_walk_hike_tss(
     )
 
 
+def _derive_walk_hike_threshold_speed_m_min_from_activities(
+    activities: list[dict],
+) -> float | None:
+    return _load_metrics.derive_walk_hike_threshold_speed_m_min_from_activities(activities)
+
+
 def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
     return _load_metrics.estimate_tss_from_power_ftp(activity, ftp, hours)
 
@@ -9679,6 +9685,47 @@ class TrainerAgent:
         _hr_zones_cache: dict[str, str | None] = {}
         _splits_cache: dict[str, str | None] = {}
         _activity_details_cache: dict[str, str | None] = {}
+
+        # Walk/Hike threshold calibration (Option A): derive from the most demanding
+        # real hike/walk sessions in the current computation window.
+        walk_hike_acts = [
+            a
+            for a in new_activities
+            if _is_hike_walk_activity(a.get("type") or a.get("activityType") or "")
+        ]
+        if walk_hike_acts:
+            for _act in walk_hike_acts:
+                _act_id = _act.get("id") or _act.get("activityId")
+                _act_id_key = str(_act_id) if _act_id is not None else ""
+                if not _act_id_key:
+                    continue
+                if _act_id_key in _activity_details_cache:
+                    _details = _activity_details_cache[_act_id_key]
+                else:
+                    try:
+                        _details = await call_tool(
+                            self.mcp_session,
+                            "get_activity_details",
+                            {"activity_id": int(_act_id)},
+                        )
+                    except (TimeoutError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                        log.debug("compute_load: no se pudo obtener detalle hike/walk %s: %s", _act_id, exc)
+                        _details = None
+                    _activity_details_cache[_act_id_key] = _details
+
+                if _details:
+                    _act["_activity_details_raw"] = _details
+
+            walk_hike_threshold_m_min = _derive_walk_hike_threshold_speed_m_min_from_activities(walk_hike_acts)
+            if walk_hike_threshold_m_min is not None:
+                for _act in walk_hike_acts:
+                    _act["_walk_hike_threshold_speed_m_min"] = float(walk_hike_threshold_m_min)
+                log.info(
+                    "compute_load: umbral marcha calibrado (Option A) = %.1f m/min (%d sesiones hike/walk)",
+                    float(walk_hike_threshold_m_min),
+                    len(walk_hike_acts),
+                )
+
         for act in new_activities:
             d_iso = _extract_activity_date_iso(act)
             if not d_iso:
