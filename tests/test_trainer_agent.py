@@ -12,7 +12,7 @@ Cubre:
 """
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1150,12 +1150,14 @@ class TestStartupProactive:
     def test_is_activity_in_last_48h_true_for_recent_day(self):
         today = date.today().isoformat()
         activity = {"startTimeLocal": f"{today}T08:00:00.0"}
-        assert _is_activity_in_last_48h(activity)
+        now = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
+        assert _is_activity_in_last_48h(activity, now=now)
 
     def test_is_activity_in_last_48h_true_for_recent_day_snake_case(self):
         today = date.today().isoformat()
         activity = {"start_time_local": f"{today}T08:00:00.0"}
-        assert _is_activity_in_last_48h(activity)
+        now = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
+        assert _is_activity_in_last_48h(activity, now=now)
 
     def test_build_proactive_status_markdown_contains_sections(self):
         payload = {

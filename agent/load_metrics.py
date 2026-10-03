@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import re
-from statistics import median
+from statistics import fmean, median
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 31
+TSS_FORMULA_VERSION = 32
 
 # Strength (LTHR-anchored) IF model calibrated in-sample on 2026-09-27.
 STRENGTH_LTHR_IF_INTERCEPT = 0.523104204
@@ -49,9 +49,24 @@ TRAIL_NON_FAST_LOW_IF_FLOOR = 0.58
 TRAIL_NON_FAST_LOW_IF_MIN_BLOCK_SECONDS = 5 * 60
 TRAIL_NON_FAST_LOW_IF_APPLY_RATIO = 0.18
 
-# Walk/hike dedicated model: LTHR-anchored HR load + additive ascent component.
-# Spec target: 10 TSS per 300 m of ascent.
-WALK_HIKE_ASCENT_TSS_PER_M = 10.0 / 300.0
+# Walk/hike metabolic model (ACSM + Minetti-walk).
+WALK_HIKE_ACSM_RESTING_VO2_MLKGMIN = 3.5
+WALK_HIKE_ACSM_SPEED_COEFF = 0.1
+WALK_HIKE_ACSM_GRADE_COEFF = 1.8
+WALK_HIKE_ACSM_POSITIVE_GRADE_MAX = 0.03
+WALK_HIKE_MINETTI_GRADE_MIN = -0.45
+WALK_HIKE_MINETTI_GRADE_MAX = 0.45
+WALK_HIKE_J_PER_ML_O2 = 20.9
+WALK_HIKE_MIN_MOVING_SPEED_MS = 0.25
+WALK_HIKE_EQUIV_SMOOTH_WINDOW_S = 30
+WALK_HIKE_EQUIV_SPEED_M_MIN_MAX = 350.0
+WALK_HIKE_THRESHOLD_ANCHOR_MIN_MOVING_SECONDS = 90 * 60
+
+# Personalized anchor when no explicit walk threshold is configured.
+# Main path should provide a calibrated threshold from real hike/walk sessions.
+WALK_HIKE_THRESHOLD_SPEED_M_MIN_DEFAULT = 122.0
+WALK_HIKE_THRESHOLD_SPEED_M_MIN_MIN = 90.0
+WALK_HIKE_THRESHOLD_SPEED_M_MIN_MAX = 145.0
 
 
 def _is_cycling_activity(act_type: Any) -> bool:
@@ -1016,6 +1031,473 @@ def _extract_hr_samples_from_activity_details(
 
     out = sorted((float(sec), hr) for sec, hr in dedup.items())
     return out
+
+
+def _extract_walk_samples_from_activity_details(
+    activity_details_raw: Any,
+) -> list[tuple[float, float, float, float | None]]:
+    """Extracts (t_seconds, speed_mps, elevation_m, distance_m_opt) for hike/walk metabolism."""
+    data = _decode_json_like(activity_details_raw)
+    if not isinstance(data, dict):
+        return []
+
+    descriptors = data.get("metricDescriptors")
+    rows = data.get("activityDetailMetrics")
+    if not isinstance(descriptors, list) or not isinstance(rows, list):
+        return []
+
+    by_key: dict[str, int] = {}
+    for desc in descriptors:
+        if not isinstance(desc, dict):
+            continue
+        key = str(desc.get("key") or "").strip()
+        try:
+            idx = int(desc.get("metricsIndex"))
+        except (TypeError, ValueError):
+            continue
+        if key:
+            by_key[key] = idx
+
+    time_keys = (
+        "directTimestamp",
+        "sumDuration",
+        "sumElapsedDuration",
+        "sumMovingDuration",
+        "elapsedDuration",
+        "timerDurationInSeconds",
+    )
+    speed_keys = ("directSpeed", "speed", "instantSpeed")
+    elev_keys = ("directElevation", "elevation", "altitude")
+    dist_keys = ("sumDistance", "distance", "directDistance")
+
+    time_idx = next((by_key[k] for k in time_keys if k in by_key), None)
+    speed_idx = next((by_key[k] for k in speed_keys if k in by_key), None)
+    elev_idx = next((by_key[k] for k in elev_keys if k in by_key), None)
+    dist_idx = next((by_key[k] for k in dist_keys if k in by_key), None)
+
+    if time_idx is None or speed_idx is None or elev_idx is None:
+        return []
+
+    out: list[tuple[float, float, float, float | None]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        metrics = row.get("metrics")
+        if not isinstance(metrics, list):
+            continue
+        if max(time_idx, speed_idx, elev_idx) >= len(metrics):
+            continue
+
+        try:
+            t_raw = float(metrics[time_idx])
+            v_raw = float(metrics[speed_idx])
+            e_raw = float(metrics[elev_idx])
+        except (TypeError, ValueError):
+            continue
+
+        d_val: float | None = None
+        if dist_idx is not None and 0 <= dist_idx < len(metrics):
+            try:
+                d_val = float(metrics[dist_idx])
+            except (TypeError, ValueError):
+                d_val = None
+
+        t_sec = (t_raw / 1000.0) if t_raw > 10_000_000_000 else t_raw
+        out.append((float(t_sec), max(0.0, float(v_raw)), float(e_raw), d_val))
+
+    if len(out) < 5:
+        return []
+
+    out.sort(key=lambda item: item[0])
+    if out[0][0] > 86_400 and (out[-1][0] - out[0][0]) > 0:
+        base_t = out[0][0]
+        out = [(t - base_t, v, e, d) for t, v, e, d in out]
+
+    dedup: dict[int, tuple[float, float, float | None]] = {}
+    for t, v, e, d in out:
+        dedup[int(round(max(0.0, t)))] = (v, e, d)
+
+    normalized = sorted((float(sec), vals[0], vals[1], vals[2]) for sec, vals in dedup.items())
+    return normalized
+
+
+def _walk_coste_minetti_j_kg_m(grade: float) -> float:
+    """Walking-specific Minetti polynomial (J·kg⁻¹·m⁻¹)."""
+    i = float(grade)
+    return (
+        280.5 * (i**5)
+        - 58.7 * (i**4)
+        - 76.8 * (i**3)
+        + 51.9 * (i**2)
+        + 19.6 * i
+        + 2.5
+    )
+
+
+def _walk_vo2_from_speed_grade_mlkgmin(speed_mps: float, grade: float) -> tuple[float, str]:
+    v_m_min = max(0.0, float(speed_mps)) * 60.0
+    g = max(WALK_HIKE_MINETTI_GRADE_MIN, min(WALK_HIKE_MINETTI_GRADE_MAX, float(grade)))
+    if 0.0 <= g <= WALK_HIKE_ACSM_POSITIVE_GRADE_MAX:
+        vo2_acsm = max(
+            WALK_HIKE_ACSM_RESTING_VO2_MLKGMIN,
+            (WALK_HIKE_ACSM_SPEED_COEFF * v_m_min)
+            + (WALK_HIKE_ACSM_GRADE_COEFF * v_m_min * g)
+            + WALK_HIKE_ACSM_RESTING_VO2_MLKGMIN,
+        )
+        return vo2_acsm, "acsm"
+
+    cost_j_kg_m = _walk_coste_minetti_j_kg_m(g)
+    vo2_minetti = max(
+        WALK_HIKE_ACSM_RESTING_VO2_MLKGMIN,
+        (cost_j_kg_m * v_m_min) / WALK_HIKE_J_PER_ML_O2,
+    )
+    return vo2_minetti, "minetti"
+
+
+def _walk_acsm_equiv_ceiling_from_minetti_cutoff(speed_mps: float) -> float:
+    """Upper bound for ACSM equivalent speed at low grades, anchored to Minetti at cutoff."""
+    v_m_min = max(0.0, float(speed_mps)) * 60.0
+    c0 = _walk_coste_minetti_j_kg_m(0.0)
+    c_cut = _walk_coste_minetti_j_kg_m(WALK_HIKE_ACSM_POSITIVE_GRADE_MAX)
+    if c0 <= 0:
+        return v_m_min
+    return max(0.0, v_m_min * (c_cut / c0))
+
+
+def _walk_equivalent_flat_speed_from_vo2_m_min(
+    vo2_mlkgmin: float,
+    source_model: str,
+    speed_mps: float | None = None,
+    grade: float | None = None,
+) -> float:
+    vo2 = max(0.0, float(vo2_mlkgmin))
+    model = str(source_model or "").strip().lower()
+
+    if model == "minetti":
+        c0 = _walk_coste_minetti_j_kg_m(0.0)
+        if c0 > 0:
+            v_m_min = (vo2 * WALK_HIKE_J_PER_ML_O2) / c0
+        else:
+            v_m_min = 0.0
+    else:
+        v_m_min = (vo2 - WALK_HIKE_ACSM_RESTING_VO2_MLKGMIN) / WALK_HIKE_ACSM_SPEED_COEFF
+
+    if model == "acsm" and speed_mps is not None and grade is not None and float(grade) > 0.0:
+        # Keep low-grade ACSM branch from overtaking Minetti geometry at the cutoff.
+        v_m_min = min(v_m_min, _walk_acsm_equiv_ceiling_from_minetti_cutoff(float(speed_mps)))
+
+    return max(0.0, min(WALK_HIKE_EQUIV_SPEED_M_MIN_MAX, float(v_m_min)))
+
+
+def _moving_average(values: list[float], window: int) -> list[float]:
+    if window <= 1 or not values:
+        return list(values)
+
+    out: list[float] = []
+    acc = 0.0
+    for idx, val in enumerate(values):
+        acc += val
+        if idx >= window:
+            acc -= values[idx - window]
+            out.append(acc / float(window))
+        else:
+            out.append(acc / float(idx + 1))
+    return out
+
+
+def _compute_normalized_walk_equivalent_speed_m_min(
+    equiv_speed_series_m_min: list[float],
+) -> float | None:
+    if len(equiv_speed_series_m_min) < 5:
+        return None
+
+    smoothed = _moving_average(equiv_speed_series_m_min, WALK_HIKE_EQUIV_SMOOTH_WINDOW_S)
+    p4 = [max(0.0, v) ** 4 for v in smoothed if v > 0]
+    if not p4:
+        return None
+    return fmean(p4) ** 0.25
+
+
+def _resolve_walk_threshold_speed_m_min(
+    activity: dict,
+    running_threshold_pace_sec_per_km: float | None,
+) -> float:
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+
+    def _coerce_speed_mps(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if 0.5 <= v <= 4.5:
+            return v
+        return None
+
+    def _coerce_speed_m_min(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if 30.0 <= v <= 220.0:
+            return v
+        return None
+
+    for key in (
+        "_walk_hike_threshold_speed_m_min",
+        "walk_hike_threshold_speed_m_min",
+        "walking_threshold_speed_m_min",
+        "hiking_threshold_speed_m_min",
+        "walkThresholdSpeedMMin",
+        "walkingThresholdSpeedMMin",
+        "hikingThresholdSpeedMMin",
+    ):
+        resolved_m_min = _coerce_speed_m_min(activity.get(key))
+        if resolved_m_min is None:
+            resolved_m_min = _coerce_speed_m_min(summary.get(key))
+        if resolved_m_min is not None:
+            return max(
+                WALK_HIKE_THRESHOLD_SPEED_M_MIN_MIN,
+                min(WALK_HIKE_THRESHOLD_SPEED_M_MIN_MAX, resolved_m_min),
+            )
+
+    for key in (
+        "walk_threshold_speed_mps",
+        "walking_threshold_speed_mps",
+        "hiking_threshold_speed_mps",
+        "walkThresholdSpeedMps",
+        "walkingThresholdSpeedMps",
+        "hikingThresholdSpeedMps",
+    ):
+        resolved_mps = _coerce_speed_mps(activity.get(key))
+        if resolved_mps is None:
+            resolved_mps = _coerce_speed_mps(summary.get(key))
+        if resolved_mps is not None:
+            resolved = resolved_mps * 60.0
+            return max(
+                WALK_HIKE_THRESHOLD_SPEED_M_MIN_MIN,
+                min(WALK_HIKE_THRESHOLD_SPEED_M_MIN_MAX, resolved),
+            )
+
+    return WALK_HIKE_THRESHOLD_SPEED_M_MIN_DEFAULT
+
+
+def _compute_walk_hike_metabolic_observables(
+    activity_details_raw: str,
+) -> dict[str, float] | None:
+    samples = _extract_walk_samples_from_activity_details(activity_details_raw)
+    if len(samples) < 5:
+        return None
+
+    equiv_speed_series: list[float] = []
+    moving_seconds = 0.0
+    prev_dist: float | None = None
+
+    for idx in range(1, len(samples)):
+        t_prev, _, e_prev, _ = samples[idx - 1]
+        t_cur, speed_mps, e_cur, dist_cur = samples[idx]
+
+        dt = max(0.0, float(t_cur - t_prev))
+        if dt <= 0:
+            continue
+        dt = min(dt, 30.0)
+
+        if speed_mps < WALK_HIKE_MIN_MOVING_SPEED_MS:
+            prev_dist = dist_cur if dist_cur is not None else prev_dist
+            continue
+
+        delta_dist = speed_mps * dt
+        if dist_cur is not None and prev_dist is not None:
+            inferred = dist_cur - prev_dist
+            if inferred > 0:
+                delta_dist = inferred
+        if delta_dist <= 0:
+            prev_dist = dist_cur if dist_cur is not None else prev_dist
+            continue
+
+        grade = (float(e_cur) - float(e_prev)) / max(0.1, float(delta_dist))
+        grade = max(WALK_HIKE_MINETTI_GRADE_MIN, min(WALK_HIKE_MINETTI_GRADE_MAX, grade))
+
+        vo2, vo2_source = _walk_vo2_from_speed_grade_mlkgmin(speed_mps, grade)
+        v_equiv_m_min = _walk_equivalent_flat_speed_from_vo2_m_min(
+            vo2,
+            vo2_source,
+            speed_mps=speed_mps,
+            grade=grade,
+        )
+
+        reps = max(1, int(round(dt)))
+        equiv_speed_series.extend([v_equiv_m_min] * reps)
+        moving_seconds += dt
+        prev_dist = dist_cur if dist_cur is not None else prev_dist
+
+    if moving_seconds <= 0 or len(equiv_speed_series) < 5:
+        return None
+
+    normalized_speed_m_min = _compute_normalized_walk_equivalent_speed_m_min(equiv_speed_series)
+    if normalized_speed_m_min is None or normalized_speed_m_min <= 0:
+        return None
+
+    return {
+        "moving_seconds": float(moving_seconds),
+        "normalized_equiv_speed_m_min": float(normalized_speed_m_min),
+    }
+
+
+def _derive_walk_hike_threshold_speed_m_min_from_activities(
+    activities: list[dict],
+) -> float | None:
+    """Option A: derive walk threshold from the most demanding real hike/walk session."""
+    if not isinstance(activities, list) or not activities:
+        return None
+
+    preferred_candidates: list[tuple[float, float, Any, float]] = []
+    fallback_candidates: list[tuple[float, float, Any, float]] = []
+    for activity in activities:
+        if not isinstance(activity, dict):
+            continue
+        act_type = _resolve_activity_type_for_routing(activity)
+        if not _is_hike_walk_activity(act_type):
+            continue
+
+        details_raw = (
+            activity.get("_activity_details_raw")
+            or activity.get("activity_details_raw")
+            or activity.get("activityDetailsRaw")
+        )
+        if not details_raw:
+            continue
+
+        obs = _compute_walk_hike_metabolic_observables(str(details_raw))
+        if not obs:
+            continue
+
+        moving_seconds = float(obs.get("moving_seconds") or 0.0)
+        normalized_equiv = float(obs.get("normalized_equiv_speed_m_min") or 0.0)
+        if moving_seconds <= 0.0 or normalized_equiv <= 0.0:
+            continue
+
+        # Reward sustained demanding sessions over short spikes.
+        sustained_weight = min(1.0, moving_seconds / (60.0 * 60.0))
+        demanding_score = normalized_equiv * (0.85 + (0.15 * sustained_weight))
+        activity_id = activity.get("id") or activity.get("activityId")
+        fallback_candidates.append((demanding_score, normalized_equiv, activity_id, moving_seconds))
+
+        if moving_seconds >= float(WALK_HIKE_THRESHOLD_ANCHOR_MIN_MOVING_SECONDS):
+            preferred_candidates.append((demanding_score, normalized_equiv, activity_id, moving_seconds))
+
+    chosen: tuple[float, float, Any, float] | None = None
+    if preferred_candidates:
+        chosen = max(preferred_candidates, key=lambda item: item[0])
+    elif fallback_candidates:
+        chosen = max(fallback_candidates, key=lambda item: item[0])
+        log.warning(
+            "walk_hike_anchor: selected fallback candidate below minimum moving time "
+            "(required=%ss, got=%.1fs, activity_id=%s)",
+            int(WALK_HIKE_THRESHOLD_ANCHOR_MIN_MOVING_SECONDS),
+            float(chosen[3]),
+            str(chosen[2]) if chosen[2] is not None else "unknown",
+        )
+
+    if chosen is None:
+        return None
+
+    _, best_norm_equiv, _, _ = chosen
+    threshold = max(
+        WALK_HIKE_THRESHOLD_SPEED_M_MIN_MIN,
+        min(WALK_HIKE_THRESHOLD_SPEED_M_MIN_MAX, best_norm_equiv),
+    )
+    return float(threshold)
+
+
+def _estimate_walk_hike_tss_metabolic(
+    activity: dict,
+    hours: float,
+    activity_details_raw: str | None,
+    running_threshold_pace_sec_per_km: float | None,
+) -> float | None:
+    if hours <= 0 or not activity_details_raw:
+        return None
+
+    obs = _compute_walk_hike_metabolic_observables(activity_details_raw)
+    if not obs:
+        return None
+
+    threshold_speed_m_min = _resolve_walk_threshold_speed_m_min(
+        activity,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+    )
+    if threshold_speed_m_min <= 0:
+        return None
+
+    moving_seconds = float(obs.get("moving_seconds") or 0.0)
+    normalized_speed_m_min = float(obs.get("normalized_equiv_speed_m_min") or 0.0)
+    if moving_seconds <= 0 or normalized_speed_m_min <= 0:
+        return None
+
+    if_val = max(0.0, normalized_speed_m_min / threshold_speed_m_min)
+    tss = (moving_seconds / 3600.0) * (if_val**2) * 100.0
+    return max(0.0, tss)
+
+
+def _estimate_walk_hike_tss_from_aggregates(
+    activity: dict,
+    hours: float,
+    running_threshold_pace_sec_per_km: float | None,
+) -> float | None:
+    if hours <= 0:
+        return None
+
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+
+    def _first_float(*keys: str) -> float | None:
+        for key in keys:
+            raw = activity.get(key)
+            if raw is None:
+                raw = summary.get(key)
+            if raw is None:
+                continue
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    distance_m = _first_float("distance", "distance_meters", "distanceMeters", "sumDistance")
+    if distance_m is None or distance_m <= 0:
+        return None
+
+    speed_mps = distance_m / max(1.0, hours * 3600.0)
+    elev_gain_m = _first_float("elevationGain", "elevation_gain", "totalAscent", "total_ascent", "elev_gain")
+    grade = 0.0
+    if elev_gain_m is not None and distance_m > 0:
+        grade = max(
+            WALK_HIKE_MINETTI_GRADE_MIN,
+            min(WALK_HIKE_MINETTI_GRADE_MAX, float(elev_gain_m) / float(distance_m)),
+        )
+
+    vo2, vo2_source = _walk_vo2_from_speed_grade_mlkgmin(speed_mps=speed_mps, grade=grade)
+    v_equiv_m_min = _walk_equivalent_flat_speed_from_vo2_m_min(
+        vo2,
+        vo2_source,
+        speed_mps=speed_mps,
+        grade=grade,
+    )
+    if v_equiv_m_min <= 0:
+        return None
+
+    threshold_speed_m_min = _resolve_walk_threshold_speed_m_min(
+        activity,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+    )
+    if threshold_speed_m_min <= 0:
+        return None
+
+    if_val = max(0.0, v_equiv_m_min / threshold_speed_m_min)
+    return max(0.0, hours * (if_val**2) * 100.0)
 
 
 def _estimate_hr_tss_from_activity_details(
@@ -2270,82 +2752,33 @@ def _estimate_walk_hike_tss(
     hr_max_bpm: float | None,
     activity_details_raw: str | None,
     hr_threshold_bpm: float | None,
+    running_threshold_pace_sec_per_km: float | None = None,
 ) -> tuple[float | None, str | None]:
     if hours <= 0:
         return None, None
 
-    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    tss_metabolic = _estimate_walk_hike_tss_metabolic(
+        activity,
+        hours=hours,
+        activity_details_raw=activity_details_raw,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+    )
+    if tss_metabolic is not None:
+        return max(0.0, float(tss_metabolic)), "TSS"
 
-    def _first_float(*keys: str) -> float | None:
-        for key in keys:
-            raw = activity.get(key)
-            if raw is None:
-                raw = summary.get(key)
-            if raw is None:
-                continue
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                continue
-        return None
+    tss_aggregate = _estimate_walk_hike_tss_from_aggregates(
+        activity,
+        hours=hours,
+        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+    )
+    if tss_aggregate is not None:
+        return max(0.0, float(tss_aggregate)), "TSS"
 
-    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
-    hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
-    if hr_rest <= 0:
-        hr_rest = 50.0
-
-    if lthr is not None and lthr > 0 and hr_rest >= (float(lthr) - 5.0):
-        hr_rest = max(30.0, float(lthr) - 55.0)
-
-    tss_hr = 0.0
-    used_hr_series = False
-    duration_seconds = max(0.0, hours * 3600.0)
-
-    if lthr is not None and lthr > hr_rest and activity_details_raw:
-        samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
-        if len(samples) >= 5:
-            deltas = [
-                samples[idx + 1][0] - samples[idx][0]
-                for idx in range(len(samples) - 1)
-                if (samples[idx + 1][0] - samples[idx][0]) > 0
-            ]
-            step_guess = float(median(deltas)) if deltas else 1.0
-            step_guess = max(1.0, min(30.0, step_guess))
-
-            denom = max(1.0, float(lthr) - float(hr_rest))
-            covered_seconds = 0.0
-            for idx, (t_sec, hr) in enumerate(samples):
-                if idx + 1 < len(samples):
-                    dt = samples[idx + 1][0] - t_sec
-                    if dt <= 0:
-                        dt = step_guess
-                else:
-                    dt = step_guess
-
-                dt = max(1.0, min(30.0, float(dt)))
-                if_sec = max(0.0, (float(hr) - float(hr_rest)) / denom)
-                tss_hr += (dt / 3600.0) * (if_sec**2) * 100.0
-                covered_seconds += dt
-
-            if covered_seconds > 0:
-                used_hr_series = True
-
-    if not used_hr_series and lthr is not None and lthr > hr_rest:
-        avg_hr = _first_float("averageHR", "avgHr", "avg_hr_bpm", "averageHeartRate")
-        if avg_hr is not None:
-            denom = max(1.0, float(lthr) - float(hr_rest))
-            if_avg = max(0.0, (float(avg_hr) - float(hr_rest)) / denom)
-            tss_hr = max(0.0, hours * (if_avg**2) * 100.0)
-
-    if not used_hr_series and tss_hr <= 0.0:
-        cls = _classify_walk_hike_session_with_confidence(activity, hours)
-        if_model = float(cls.get("if_model") or 0.45)
-        tss_hr = max(0.0, hours * (if_model**2) * 100.0)
-
-    elev_gain_m = _first_float("elevationGain", "elevation_gain", "totalAscent", "total_ascent", "elev_gain")
-    tss_elev = max(0.0, float(elev_gain_m or 0.0)) * float(WALK_HIKE_ASCENT_TSS_PER_M)
-
-    return max(0.0, float(tss_hr) + float(tss_elev)), "TSS"
+    # Safety fallback while historical activities are backfilled with details payloads.
+    cls = _classify_walk_hike_session_with_confidence(activity, hours)
+    if_model = float(cls.get("if_model") or 0.45)
+    tss_legacy = max(0.0, hours * (if_model**2) * 100.0)
+    return tss_legacy, "TSS"
 
 
 def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
@@ -3171,6 +3604,7 @@ def _estimate_session_tss(
                 hr_max_bpm=hr_max_bpm,
                 activity_details_raw=details_payload,
                 hr_threshold_bpm=hr_threshold_bpm,
+                running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
             )
             if tss_walk is not None:
                 return max(0.0, float(tss_walk)), str(lbl_walk or "TSS")
@@ -3829,6 +4263,7 @@ def estimate_walk_hike_tss(
     hr_max_bpm: float | None,
     activity_details_raw: str | None = None,
     hr_threshold_bpm: float | None = None,
+    running_threshold_pace_sec_per_km: float | None = None,
 ) -> tuple[float | None, str | None]:
     return _estimate_walk_hike_tss(
         activity,
@@ -3838,7 +4273,14 @@ def estimate_walk_hike_tss(
         hr_max_bpm,
         activity_details_raw,
         hr_threshold_bpm,
+        running_threshold_pace_sec_per_km,
     )
+
+
+def derive_walk_hike_threshold_speed_m_min_from_activities(
+    activities: list[dict],
+) -> float | None:
+    return _derive_walk_hike_threshold_speed_m_min_from_activities(activities)
 
 
 def estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
