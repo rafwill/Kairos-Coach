@@ -484,3 +484,39 @@ Anclajes efectivos en esta corrida:
 | 2026-09-24 | 24484006590 | walking | Turismo. Del SH Valencia Palace a UPV ETSINF (Valencia) | 0.997 | 5.062 | TSS | 10.0 | 30.0 | verified_and_same_activity |
 | 2026-09-25 | 24492874850 | walking | Turismo. Valencia | 3.418 | 12.958 | TSS | 18.0 | 103.0 | verified_and_same_activity |
 | 2026-09-26 | 24502427862 | walking | Caminata con Silvia y Yuma | 0.873 | 2.021 | TSS | 3.0 | 26.0 | verified_and_same_activity |
+
+
+
+04/10/2006 20:40
+
+PASO 1 completado. Solo medición, sin implementar ningún filtro.
+
+Resultado por actividad y umbral
+
+activity_id	umbral m/s²	transiciones totales	count sobre umbral	% sobre umbral	count pendiente >10%	% >10% dentro flagged	count moderada/plana	% moderada/plana dentro flagged	count coincidencia tope 350	% coincidencia tope 350 dentro flagged
+23468464527	1.5	8418	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+23468464527	2.0	8418	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+23478220005	1.5	10125	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+23478220005	2.0	10125	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+23829149525	1.5	12262	7	0.0571%	0	0.0%	7	100.0%	0	0.0%
+23829149525	2.0	12262	3	0.0245%	0	0.0%	3	100.0%	0	0.0%
+24013969366	1.5	6848	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+24013969366	2.0	6848	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+24430006167	1.5	2589	1	0.0386%	0	0.0%	1	100.0%	0	0.0%
+24430006167	2.0	2589	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+24484006590	1.5	3464	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+24484006590	2.0	3464	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+24492874850	1.5	10570	3	0.0284%	0	0.0%	3	100.0%	0	0.0%
+24492874850	2.0	10570	1	0.0095%	0	0.0%	1	100.0%	0	0.0%
+24502427862	1.5	2835	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+24502427862	2.0	2835	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
+Artefactos generados
+
+measure_walk_hike_accel_reach.py
+accel_reach_summary_8_activities.csv
+accel_reach_flagged_transitions_8_activities.csv
+Estado
+
+PASO 1 finalizado.
+No se implementó filtro.
+Quedo esperando tu confirmación del umbral para continuar con PASO 2.
