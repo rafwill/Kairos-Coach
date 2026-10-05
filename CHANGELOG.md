@@ -2,6 +2,29 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-05
+
+### Changed
+- Estado de fórmula actualizado hasta `TSS_FORMULA_VERSION=34`.
+- Walk/hike en producción consolidado sobre ruta metabólica por muestra (ACSM/Minetti + equivalente en llano + suavizado 30 s + tope de seguridad en 350 m/min), con documentación de validación temporal y contraste TP.
+- Gym cardio (`elliptical` + `rowing`) consolidado en rutas dedicadas con:
+	- fase 1 HR-anchored por modalidad (LTHR),
+	- fase 2 híbrida opcional (`0.75 HR + 0.25 mecánica`) cuando hay señal mecánica válida.
+
+### Added
+- Fixtures reales reutilizables para investigación walk/hike en `fixtures/real_payloads` para 8 actividades de referencia (payload de actividad, detalles y zonas HR), evitando dependencia de consultas MCP en vivo para revalidaciones.
+
+### Fixed
+- Cierre metodológico de hipótesis de ruido por aceleración en walk/hike: la medición en serie nativa de `activityDetailMetrics` no confirmó transiciones sobre umbrales `1.5`/`2.0 m/s²` en el set de referencia; se descartó activar filtro de aceleración con esa premisa.
+
+### Docs
+- `README.md` actualizado a estado vigente (v34 y cierre de bloques deportivos, incluyendo gym cardio).
+- `docs/proximos_pasos.md` actualizado con estado operativo vigente y cierre del sub-hilo de aceleración walk/hike.
+- Limpieza de artefactos intermedios de diagnóstico en `docs/walk_hike_temporal_profile` conservando comparativas finales (`tp_comparison_8_activities.csv`, `tp_comparison_8_summary.csv`).
+
+### Notes
+- Se retiraron scripts intermedios de diagnóstico ya narrados en documentación de cierre para reducir ruido operativo.
+
 ## 2026-09-16
 
 ### Changed

@@ -4,14 +4,15 @@
 
 La conversación con el coach tiene contexto real porque los números son reales. Antes de responder cualquier pregunta sobre estado, rendimiento o recomendaciones, el sistema consulta tus datos de Garmin. Nunca inventa, nunca generaliza.
 
-## Estado TSS final (2026-09-16)
+## Estado TSS vigente (2026-10-05)
 
-Estado validado con datos reales en corrida combinada junio-septiembre:
+Estado operativo actual, consolidando cierres previos y nuevas modalidades:
 
-- Formula activa: `TSS_FORMULA_VERSION=26`.
+- Formula activa: `TSS_FORMULA_VERSION=34`.
 - Trail: **CERRADO**.
 - Fuerza: **CERRADO**.
 - Running: **CERRADO** con excepción documentada de criterio de sesgo.
+- Gym Cardio (eliptica + remo): **Fase 1 + Fase 2 IMPLEMENTADAS** (anclaje LTHR + componente mecanico opcional).
 
 Resumen de cierre running:
 
@@ -22,21 +23,24 @@ Resumen de cierre running:
   - `repeticiones_cortas=1.077338`
 - Criterio final de sesgo aplicado: `±3.5` (ampliado desde `±3` como excepción explícita y justificada para evitar sobreajuste por margen residual).
 
-Cambios principales introducidos en v26:
+Cambios principales relevantes (v26 -> v34):
 
-- `tempo_detector`: bloque mínimo `400 s` y tolerancia de huecos cortos `20 s`.
-- Atenuación en bajadas: descuento Minetti parcial (`55%` de magnitud del descuento original solo para pendiente negativa).
-- Exclusión mutua entre detectores de running: si tempo activa, short reps no se evalúa.
+- Cierre running v26: `tempo_detector` a `400 s`, huecos cortos `20 s`, ajuste Minetti en bajada y exclusión mutua tempo/short-reps.
+- Cierre fuerza v29: Modelo B LTHR-anchored como principal para strength.
+- Cierre walk/hike metabólico v32: ruta metabólica por muestra (ACSM/Minetti + equivalente en llano + suavizado 30 s + tope 350 m/min).
+- Gym cardio v33-v34: rutas dedicadas para `elliptical` y `rowing`, con mezcla híbrida HR+mecánica cuando hay señal válida.
 
-Documento consolidado de cierre:
+Documentos consolidados de cierre y estado:
 
 - `docs/tss-cierre-definitivo-2026-09-16.md`.
+- `docs/proximos_pasos.md` (bitácora de investigación y estado operativo vigente).
 
-Limitaciones conocidas (documentadas y aceptadas):
+Limitaciones y decisiones recientes (documentadas y aceptadas):
 
 - Hiking con muestra corta (`n=2`).
 - `short_reps_detector` con cobertura parcial en datos reales.
 - Caso `24027714450` (tramo sostenido corto embebido en rodaje largo, bloque máximo ~`289 s`) no detectado por tempo.
+- Investigación de ruido por aceleración en walk/hike cerrada: en serie nativa no se confirmaron transiciones imposibles sobre umbrales `1.5`/`2.0 m/s²` en el set de referencia; no se activó filtro de aceleración.
 
 ---
 
