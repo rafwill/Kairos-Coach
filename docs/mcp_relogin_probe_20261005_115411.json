@@ -1,0 +1,43 @@
+{
+  "started_at": "2026-10-05T09:53:46Z",
+  "ended_at": "2026-10-05T09:54:11Z",
+  "relogin": {
+    "ok": true,
+    "note": "session_initialized",
+    "cooldown_seconds": 0.0
+  },
+  "probe": {
+    "ok": true,
+    "error": "",
+    "summary": {
+      "session_started_at": "2026-10-05T09:54:03Z",
+      "session_ended_at": "2026-10-05T09:54:10Z",
+      "first_403_session_age_seconds": null,
+      "first_429_session_age_seconds": null,
+      "calls_total": 5,
+      "calls_ok": 0,
+      "calls_error": 1
+    },
+    "events": [
+      {
+        "phase": "probe",
+        "call_index": 1,
+        "tool": "get_user_profile",
+        "args": {},
+        "ok": false,
+        "kind": "unknown_error",
+        "http_code": "",
+        "retry_after_seconds": "",
+        "session_age_seconds": 7.306,
+        "message_excerpt": "Error executing tool get_user_profile: Failed to retrieve social profile"
+      }
+    ]
+  },
+  "interpretation": {
+    "rate_limit_scope_hint": "unknown",
+    "escalation_429_to_403_possible": false,
+    "first_403_session_age_seconds": null,
+    "first_429_session_age_seconds": null,
+    "stop_on_first_error": true
+  }
+}

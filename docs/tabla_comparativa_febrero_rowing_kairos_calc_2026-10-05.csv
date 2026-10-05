@@ -1,0 +1,5 @@
+activity_id,date,name,modality,duration_h,avg_hr,max_hr,kairos_tss,kairos_method,tp_tss,tp_unit,delta_kairos_minus_tp,ratio_kairos_over_tp,calc_error
+21887549903,,Gimnasio. Cadena Posterior,,0.0,,,23.515,hrTSS,,,,,
+21887902894,,Remo indoor,,0.0,,,17.139,hrTSS,17.0,hrTSS,0.139,1.008,
+21971310877,,Gimnasio. Cadena posterior,,0.0,,,25.347,hrTSS,,,,,
+21971848782,,Remo. 30' complemento,,0.0,,,20.844,hrTSS,20.0,hrTSS,0.844,1.042,

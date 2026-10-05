@@ -1,0 +1,19 @@
+# Eliptica de la imagen - Kairos TSS (2026-10-05)
+
+Fuente: extraccion MCP paginada + calculo `estimate_session_tss`.
+
+| fecha | activity_id | actividad | modalidad | dur_h | avg_hr | max_hr | kairos_tss | kairos_method | calc_error |
+|---|---:|---|---|---:|---:|---:|---:|---|---|
+| 2024-11-07 | 17482667210 | Elíptica. 6 x (4'M + 2'S) |  | 0.0 |  |  | 45.37 | hrTSS |  |
+| 2024-11-11 | 17513660353 | Elíptica. 5 x (5'M + 2'S) |  | 0.0 |  |  | 41.853 | hrTSS |  |
+| 2024-11-14 | 17538266925 | Eliptica 4x1 + 4x4 |  | 0.0 |  |  | 51.566 | hrTSS |  |
+| 2025-06-26 | 19551313083 | Elíptica. 4x1' + 4x4' |  | 0.0 |  |  | 43.976 | hrTSS |  |
+| 2025-07-11 | 19699947346 | Elíptica. 4x1' + 4x4' |  | 0.0 |  |  | 45.357 | hrTSS |  |
+| 2026-01-19 | 21598838709 | Elíptica. 30' Z2 |  | 0.0 |  |  | 27.896 | hrTSS |  |
+| 2026-01-24 | 21647200281 | Elíptica. 30' Z2⬆️ Z3⬇️ |  | 0.0 |  |  | 32.0 | hrTSS |  |
+| 2026-02-02 | 21743599077 | Elíptica. 20' transferencia fuerza |  | 0.0 |  |  | 20.936 | hrTSS |  |
+| 2026-02-09 | 21816184776 | Gimnasio. Elíptica 20' |  | 0.0 |  |  | 17.443 | hrTSS |  |
+| 2026-02-14 | 21862322561 | Elíptica. 60' |  | 0.0 |  |  | 51.342 | hrTSS |  |
+| 2026-05-27 | 23031566741 | Elíptica. 35' transferencia Fuerza |  | 0.0 |  |  | 29.52 | hrTSS |  |
+| 2026-06-26 | 23385726742 | Elíptica. 20' Z1 |  | 0.0 |  |  | 16.323 | hrTSS |  |
+| 2026-06-29 | 23420585341 | Elíptica. 20' Z1 |  | 0.0 |  |  | 14.759 | hrTSS |  |

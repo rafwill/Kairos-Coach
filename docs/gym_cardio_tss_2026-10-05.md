@@ -1,0 +1,24 @@
+# gym_cardio - comparativa TP vs Kairos (2026-10-05)
+
+Fuente combinada:
+- `docs/eliptica_imagen_kairos_2026-10-05.md`
+- `docs/tabla_comparativa_febrero_rowing_2026-10-05.md`
+- TP TSS aportado por usuario en esta sesion.
+
+| fecha | activityid | nombre | TP TSS | kairos TSS |
+|---|---:|---|---:|---:|
+| 2024-11-07 | 17482667210 | Eliptica. 6 x (4'M + 2'S) | 35 | 45.370 |
+| 2024-11-11 | 17513660353 | Eliptica. 5 x (5'M + 2'S) | 34 | 41.853 |
+| 2024-11-14 | 17538266925 | Eliptica 4x1 + 4x4 | 44 | 51.566 |
+| 2025-06-26 | 19551313083 | Eliptica. 4x1' + 4x4' | 38 | 43.976 |
+| 2025-07-11 | 19699947346 | Eliptica. 4x1' + 4x4' | 39 | 45.357 |
+| 2026-01-19 | 21598838709 | Eliptica. 30' Z2 | 20 | 27.896 |
+| 2026-01-24 | 21647200281 | Eliptica. 30' Z2 subida Z3 bajada | 25 | 32.000 |
+| 2026-02-02 | 21743599077 | Eliptica. 20' transferencia fuerza | 14 | 20.936 |
+| 2026-02-09 | 21816184776 | Gimnasio. Eliptica 20' | 11 | 17.443 |
+| 2026-02-14 | 21862322561 | Eliptica. 60' | 40 | 51.342 |
+| 2026-02-16 | 21887902894 | Remo indoor | 17 | 17.139 |
+| 2026-02-24 | 21971848782 | Remo. 30' complemento | 20 | 20.844 |
+| 2026-05-27 | 23031566741 | Eliptica. 35' transferencia Fuerza |  | 29.520 |
+| 2026-06-26 | 23385726742 | Eliptica. 20' Z1 | 13 | 16.323 |
+| 2026-06-29 | 23420585341 | Eliptica. 20' Z1 | 13 | 14.759 |

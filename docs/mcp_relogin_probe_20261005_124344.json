@@ -1,0 +1,43 @@
+{
+  "started_at": "2026-10-05T10:42:05Z",
+  "ended_at": "2026-10-05T10:43:44Z",
+  "relogin": {
+    "ok": true,
+    "note": "session_initialized",
+    "cooldown_seconds": 0.0
+  },
+  "probe": {
+    "ok": true,
+    "error": "",
+    "summary": {
+      "session_started_at": "2026-10-05T10:42:09Z",
+      "session_ended_at": "2026-10-05T10:43:44Z",
+      "first_403_session_age_seconds": null,
+      "first_429_session_age_seconds": null,
+      "calls_total": 5,
+      "calls_ok": 0,
+      "calls_error": 1
+    },
+    "events": [
+      {
+        "phase": "probe",
+        "call_index": 1,
+        "tool": "get_user_profile",
+        "args": {},
+        "ok": false,
+        "kind": "auth_or_session",
+        "http_code": "",
+        "retry_after_seconds": "",
+        "session_age_seconds": 94.697,
+        "message_excerpt": "Error executing tool get_user_profile: Login failed: All login strategies exhausted: HTTPSConnectionPool(host='sso.garmin.com', port=443): Max retries exceeded with url: /portal/sso/en-US/sign-in?clientId=GarminConnect&s"
+      }
+    ]
+  },
+  "interpretation": {
+    "rate_limit_scope_hint": "unknown",
+    "escalation_429_to_403_possible": false,
+    "first_403_session_age_seconds": null,
+    "first_429_session_age_seconds": null,
+    "stop_on_first_error": true
+  }
+}

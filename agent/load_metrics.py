@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from statistics import fmean, median
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -131,12 +132,20 @@ def _is_running_non_trail_activity(act_type: Any) -> bool:
     return any(kw in t for kw in ("running", "run", "corr"))
 
 
+def _normalize_text_for_routing(value: Any) -> str:
+    text = str(value or "")
+    # Fold accents so names like "Elíptica" route consistently with "Eliptica".
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    ).lower()
+
+
 def _is_elliptical_activity(activity: dict, act_type: Any) -> bool:
     t = ""
     if isinstance(act_type, dict):
-        t = str(act_type.get("typeKey") or act_type.get("typeName") or "").lower()
+        t = _normalize_text_for_routing(act_type.get("typeKey") or act_type.get("typeName") or "")
     else:
-        t = str(act_type or "").lower()
+        t = _normalize_text_for_routing(act_type or "")
 
     if any(kw in t for kw in ("ellipt", "cross_trainer", "cross trainer")):
         return True
@@ -147,16 +156,17 @@ def _is_elliptical_activity(activity: dict, act_type: Any) -> bool:
             str(activity.get("activityName") or ""),
             str(activity.get("description") or ""),
         ]
-    ).lower()
+    )
+    name = _normalize_text_for_routing(name)
     return ("ellipt" in name) or ("elipt" in name)
 
 
 def _is_rowing_activity(activity: dict, act_type: Any) -> bool:
     t = ""
     if isinstance(act_type, dict):
-        t = str(act_type.get("typeKey") or act_type.get("typeName") or "").lower()
+        t = _normalize_text_for_routing(act_type.get("typeKey") or act_type.get("typeName") or "")
     else:
-        t = str(act_type or "").lower()
+        t = _normalize_text_for_routing(act_type or "")
 
     if any(kw in t for kw in ("rowing", "indoor_row", "indoor row", "rower", "ergometer", "erg")):
         return True
@@ -167,7 +177,8 @@ def _is_rowing_activity(activity: dict, act_type: Any) -> bool:
             str(activity.get("activityName") or ""),
             str(activity.get("description") or ""),
         ]
-    ).lower()
+    )
+    name = _normalize_text_for_routing(name)
     return ("rowing" in name) or ("remo" in name) or ("erg" in name)
 
 
@@ -3712,6 +3723,20 @@ def _estimate_session_tss(
         if if_hr is not None:
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
 
+    elif is_elliptical or is_rowing:
+        modality = "rowing" if is_rowing else "elliptical"
+        tss_gym, gym_source = _estimate_gym_cardio_tss(
+            activity,
+            hours=hours,
+            modality=modality,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            hr_threshold_bpm=hr_threshold_bpm,
+        )
+        if tss_gym is not None:
+            activity["_kairos_tss_source_tag"] = gym_source
+            return max(0.0, float(tss_gym)), "hrTSS"
+
     elif is_running_non_trail:
         running_model = _resolve_running_tss_model(activity)
         if running_model == "legacy":
@@ -3752,20 +3777,6 @@ def _estimate_session_tss(
                     )
         if tss_running is not None:
             return tss_running, "TSS"
-
-    elif is_elliptical or is_rowing:
-        modality = "rowing" if is_rowing else "elliptical"
-        tss_gym, gym_source = _estimate_gym_cardio_tss(
-            activity,
-            hours=hours,
-            modality=modality,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            hr_threshold_bpm=hr_threshold_bpm,
-        )
-        if tss_gym is not None:
-            activity["_kairos_tss_source_tag"] = gym_source
-            return max(0.0, float(tss_gym)), "hrTSS"
 
     elif is_trail_hike_walk:
         if is_trail:
