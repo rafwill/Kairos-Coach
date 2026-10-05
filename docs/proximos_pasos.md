@@ -561,3 +561,56 @@ Estado de cierre del sub-hilo
 
 - Investigacion de ruido/aceleracion: REALIZADO y CERRADO.
 - No abrir PASO 2 de filtro de aceleracion salvo nueva evidencia empirica que contradiga esta medicion nativa.
+
+
+05/10/2026 - Apertura bloque Gym Cardio (eliptica + remo)
+
+Contexto
+
+- Se abre rama dedicada `feature/gym-cardio-design` para preparar el siguiente bloque antes de ciclismo.
+- Se agrupa eliptica + remo bajo el dominio `gym_cardio` para evitar tratamiento generico opaco.
+
+Decision de diseno (faseado)
+
+1. Fase 1: modelo HR-anchored por modalidad (eliptica/remo) con clamps y source tags.
+2. Fase 2: componente mecanico opcional (si hay senal fiable de potencia/ritmo/cadencia/resistencia).
+3. Validacion principal: consistencia fisiologica interna (monotonia/coherencia), no ajuste forzado a TP.
+
+Artefacto de diseno
+
+- Documento base para implementacion: `docs/gym_cardio_tss_design_2026-10-05.md`.
+
+Estado
+
+- Diseno Gym Cardio: REALIZADO.
+- Implementacion Gym Cardio en codigo: PENDIENTE (siguiente paso).
+
+
+05/10/2026 - Implementacion Gym Cardio Fase 1 (eliptica + remo)
+
+Aplicado en codigo
+
+- `agent/load_metrics.py` incorpora ruta dedicada para `elliptical` y `rowing` dentro de `estimate_session_tss`.
+- Modelo fase 1 activado por modalidad con anclaje LTHR:
+      - eliptica: `IF = 0.50 + 0.30 * z`
+      - remo: `IF = 0.52 + 0.34 * z`
+      - con `z` clamp en `[0.0, 1.15]` e `IF` clamp en `[0.45, 0.90]`.
+- Fallback cuando no hay LTHR:
+      - HR media con anclajes de perfil (sin `maxHR` de actividad) y, si falta senal HR util, IF nominal conservador por modalidad.
+- Source tags operativos en actividad:
+      - `gym_cardio:lthr`
+      - `gym_cardio:fallback_hr`
+  y exposicion via `_infer_tss_source_tag`.
+- Gobernanza de formula: `TSS_FORMULA_VERSION` incrementada `32 -> 33`.
+
+Validacion
+
+- Tests focales en `tests/test_trainer_agent.py` actualizados y en verde:
+      - routing dedicado de remo sobre zonas HR.
+      - eliptica mantiene uso de anclajes de perfil (evita sesgo por `maxHR` de actividad).
+      - source tag correcto para `gym_cardio:lthr` y `gym_cardio:fallback_hr`.
+
+Estado
+
+- Implementacion Gym Cardio fase 1 (eliptica + remo): REALIZADO.
+- Fase 2 (componente mecanico opcional): PENDIENTE.

@@ -2785,7 +2785,7 @@ class TestLoadFatigueModel:
         expected = 0.68 ** 2 * 100
         assert abs(tss - expected) < 1.0
 
-    def test_estimate_tss_other_modalities_prioritize_hr_zones(self):
+    def test_estimate_tss_rowing_uses_gym_cardio_route_over_hr_zones(self):
         act = {"type": "rowing", "duration": 3600, "averageHR": 150, "maxHR": 185}
         hr_zones_raw = json.dumps(
             [
@@ -2825,8 +2825,8 @@ class TestLoadFatigueModel:
         tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw, hr_rest_bpm=50, hr_max_bpm=185)
 
         assert label == "hrTSS"
-        # Con 1h íntegra en Z1, el mapeo por HRR da IF≈0.725 => ~52.56 TSS
-        assert abs(tss - 52.56) < 0.3
+        # Dedicated gym-cardio fallback (avg HR + profile anchors) should override zones in rowing.
+        assert 76.0 <= tss <= 80.0
 
     def test_estimate_tss_strength_ignores_native_and_uses_calibrated_hr_formula(self):
         act = {
@@ -3800,6 +3800,45 @@ class TestLoadFatigueModel:
         assert label_elliptical == "hrTSS"
         assert 20.0 <= tss_elliptical <= 32.0
         assert tss_generic > tss_elliptical
+
+    def test_estimate_tss_rowing_lthr_sets_gym_cardio_source_tag(self):
+        act = {
+            "type": "rowing",
+            "duration": 3600,
+            "averageHR": 145,
+            "maxHR": 172,
+        }
+
+        tss, label = _estimate_session_tss(
+            act,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=169,
+        )
+        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+
+        assert label == "hrTSS"
+        assert 60.0 <= tss <= 66.0
+        assert source == "gym_cardio:lthr"
+
+    def test_estimate_tss_rowing_fallback_sets_gym_cardio_source_tag(self):
+        act = {
+            "type": "rowing",
+            "duration": 3600,
+            "averageHR": 145,
+        }
+
+        tss, label = _estimate_session_tss(
+            act,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=None,
+        )
+        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+
+        assert label == "hrTSS"
+        assert 68.0 <= tss <= 74.0
+        assert source == "gym_cardio:fallback_hr"
 
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
         act = {
