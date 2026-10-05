@@ -614,3 +614,33 @@ Estado
 
 - Implementacion Gym Cardio fase 1 (eliptica + remo): REALIZADO.
 - Fase 2 (componente mecanico opcional): PENDIENTE.
+
+
+05/10/2026 - Implementacion Gym Cardio Fase 2 (componente mecanico opcional)
+
+Aplicado en codigo
+
+- `agent/load_metrics.py` actualizado con mezcla hibrida para gym cardio:
+      - `tss_h_final = 0.75 * tss_h_hr + 0.25 * tss_h_mech`
+      - activacion solo cuando hay senal mecanica valida por modalidad.
+- Senales mecanicas incorporadas:
+      - `rowing`: prioridad `power` -> `pace500` -> `cadence`.
+      - `elliptical`: `cadence`, y combinacion `cadence+resistance` cuando ambas existen.
+- Se mantiene comportamiento conservador cuando no hay senal mecanica util:
+      - salida HR-only (LTHR o fallback) sin mezcla.
+- Source tags operativos:
+      - `gym_cardio:lthr` (HR-only con LTHR)
+      - `gym_cardio:lthr_plus_mech` (mezcla activa sobre base LTHR)
+      - `gym_cardio:fallback_hr` (sin LTHR, con o sin mezcla en fallback)
+- Gobernanza de formula: `TSS_FORMULA_VERSION` incrementada `33 -> 34`.
+
+Validacion
+
+- Tests focales en verde (`6 passed`) para rutas gym cardio en `tests/test_trainer_agent.py`.
+- Cobertura explicita de casos con mezcla mecanica:
+      - remo con potencia (activa `lthr_plus_mech`).
+      - eliptica con cadencia (activa `lthr_plus_mech`).
+
+Estado
+
+- Implementacion Gym Cardio fase 2 (componente mecanico opcional): REALIZADO.

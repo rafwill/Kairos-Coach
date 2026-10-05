@@ -3840,6 +3840,76 @@ class TestLoadFatigueModel:
         assert 68.0 <= tss <= 74.0
         assert source == "gym_cardio:fallback_hr"
 
+    def test_estimate_tss_rowing_lthr_with_power_blends_mechanical_component(self):
+        act_base = {
+            "type": "rowing",
+            "duration": 3600,
+            "averageHR": 145,
+        }
+        act_power = {
+            "type": "rowing",
+            "duration": 3600,
+            "averageHR": 145,
+            "avgPower": 260,
+        }
+
+        tss_base, label_base = _estimate_session_tss(
+            act_base,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=169,
+        )
+        tss_power, label_power = _estimate_session_tss(
+            act_power,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=169,
+        )
+
+        source_base = _infer_tss_source_tag(act_base, label_base, ftp=None, hr_zones_raw=None)
+        source_power = _infer_tss_source_tag(act_power, label_power, ftp=None, hr_zones_raw=None)
+
+        assert label_base == "hrTSS"
+        assert label_power == "hrTSS"
+        assert source_base == "gym_cardio:lthr"
+        assert source_power == "gym_cardio:lthr_plus_mech"
+        assert tss_power > tss_base
+
+    def test_estimate_tss_elliptical_lthr_with_cadence_blends_mechanical_component(self):
+        act_base = {
+            "type": "elliptical",
+            "duration": 1800,
+            "averageHR": 120,
+        }
+        act_cad = {
+            "type": "elliptical",
+            "duration": 1800,
+            "averageHR": 120,
+            "avgCadence": 78,
+        }
+
+        tss_base, label_base = _estimate_session_tss(
+            act_base,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=169,
+        )
+        tss_cad, label_cad = _estimate_session_tss(
+            act_cad,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=169,
+        )
+
+        source_base = _infer_tss_source_tag(act_base, label_base, ftp=None, hr_zones_raw=None)
+        source_cad = _infer_tss_source_tag(act_cad, label_cad, ftp=None, hr_zones_raw=None)
+
+        assert label_base == "hrTSS"
+        assert label_cad == "hrTSS"
+        assert source_base == "gym_cardio:lthr"
+        assert source_cad == "gym_cardio:lthr_plus_mech"
+        assert tss_cad > tss_base
+
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
         act = {
             "type": "trail_running",

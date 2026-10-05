@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 33
+TSS_FORMULA_VERSION = 34
 
 # Gym cardio (elliptical + rowing) phase-1 IF model.
 GYM_CARDIO_Z_CLAMP_MIN = 0.0
@@ -39,6 +39,8 @@ GYM_CARDIO_FALLBACK_IF = {
     "elliptical": 0.62,
     "rowing": 0.66,
 }
+GYM_CARDIO_BLEND_WEIGHT_HR = 0.75
+GYM_CARDIO_BLEND_WEIGHT_MECH = 0.25
 
 # Strength (LTHR-anchored) IF model calibrated in-sample on 2026-09-27.
 STRENGTH_LTHR_IF_INTERCEPT = 0.523104204
@@ -761,6 +763,149 @@ def _estimate_gym_cardio_if_from_lthr(
         return None
 
 
+def _extract_gym_pace500_sec(raw: Any) -> float | None:
+    if raw is None:
+        return None
+
+    if isinstance(raw, (int, float)):
+        v = float(raw)
+        if v <= 0:
+            return None
+        if v < 10.0:
+            return v * 60.0
+        if 40.0 <= v <= 360.0:
+            return v
+        return None
+
+    text = str(raw).strip().lower()
+    if not text:
+        return None
+
+    mmss = re.search(r"(\d{1,2})\s*[:m]\s*(\d{1,2})", text)
+    if mmss:
+        mm = int(mmss.group(1))
+        ss = int(mmss.group(2))
+        if mm >= 0 and 0 <= ss < 60:
+            return (mm * 60.0) + float(ss)
+
+    number = re.search(r"(\d+(?:[\.,]\d+)?)", text)
+    if not number:
+        return None
+    try:
+        v = float(number.group(1).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    if v <= 0:
+        return None
+    if v < 10.0:
+        return v * 60.0
+    if 40.0 <= v <= 360.0:
+        return v
+    return None
+
+
+def _extract_gym_metric_float(activity: dict, keys: tuple[str, ...]) -> float | None:
+    if not isinstance(activity, dict):
+        return None
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+
+    for key in keys:
+        raw = activity.get(key)
+        if raw is None:
+            raw = summary.get(key)
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _extract_gym_cardio_mech_if(activity: dict, modality: str) -> tuple[float | None, str]:
+    if modality == "rowing":
+        power_w = _extract_gym_metric_float(
+            activity,
+            (
+                "normalizedPower",
+                "normalized_power_watts",
+                "avgPower",
+                "averagePower",
+                "avg_power_watts",
+                "average_power_watts",
+            ),
+        )
+        if power_w is not None and 30.0 <= power_w <= 1200.0:
+            norm = max(0.0, min(1.0, (float(power_w) - 60.0) / 220.0))
+            if_mech = 0.45 + (0.45 * norm)
+            return max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_mech)), "power"
+
+        pace500_raw = None
+        for key in (
+            "averagePace500",
+            "avgPace500",
+            "pace500",
+            "avgPacePer500m",
+            "averagePacePer500m",
+        ):
+            pace500_raw = activity.get(key)
+            if pace500_raw is None and isinstance(activity.get("summaryDTO"), dict):
+                pace500_raw = activity.get("summaryDTO", {}).get(key)
+            if pace500_raw is not None:
+                break
+        pace500_sec = _extract_gym_pace500_sec(pace500_raw)
+        if pace500_sec is not None and 70.0 <= pace500_sec <= 260.0:
+            norm = max(0.0, min(1.0, (200.0 - float(pace500_sec)) / 80.0))
+            if_mech = 0.45 + (0.45 * norm)
+            return max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_mech)), "pace500"
+
+        cadence = _extract_gym_metric_float(activity, ("avgCadence", "averageCadence", "cadence"))
+        if cadence is not None and 12.0 <= cadence <= 60.0:
+            norm = max(0.0, min(1.0, (float(cadence) - 16.0) / 20.0))
+            if_mech = 0.45 + (0.45 * norm)
+            return max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_mech)), "cadence"
+
+        return None, "none"
+
+    # Elliptical branch.
+    cadence = _extract_gym_metric_float(activity, ("avgCadence", "averageCadence", "cadence"))
+    resistance = _extract_gym_metric_float(
+        activity,
+        (
+            "resistance",
+            "avgResistance",
+            "averageResistance",
+            "resistanceLevel",
+            "avgResistanceLevel",
+            "averageResistanceLevel",
+        ),
+    )
+
+    cadence_norm: float | None = None
+    resistance_norm: float | None = None
+
+    if cadence is not None and 20.0 <= cadence <= 140.0:
+        cadence_norm = max(0.0, min(1.0, (float(cadence) - 40.0) / 70.0))
+    if resistance is not None and 0.0 <= resistance <= 100.0:
+        resistance_norm = max(0.0, min(1.0, (float(resistance) - 1.0) / 24.0))
+
+    if cadence_norm is None and resistance_norm is None:
+        return None, "none"
+
+    if cadence_norm is not None and resistance_norm is not None:
+        mech_norm = (0.70 * cadence_norm) + (0.30 * resistance_norm)
+        signal_type = "cadence+resistance"
+    elif cadence_norm is not None:
+        mech_norm = cadence_norm
+        signal_type = "cadence"
+    else:
+        mech_norm = float(resistance_norm)
+        signal_type = "resistance"
+
+    if_mech = 0.45 + (0.45 * float(mech_norm))
+    return max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_mech)), signal_type
+
+
 def _estimate_gym_cardio_tss(
     activity: dict,
     hours: float,
@@ -778,23 +923,42 @@ def _estimate_gym_cardio_tss(
         hr_rest_bpm=hr_rest_bpm,
         hr_threshold_bpm=hr_threshold_bpm,
     )
+    base_if: float | None = None
+    source_tag = "gym_cardio:fallback_hr"
     if if_lthr is not None:
-        return max(0.0, hours * (if_lthr**2) * 100.0), "gym_cardio:lthr"
+        base_if = float(if_lthr)
+        source_tag = "gym_cardio:lthr"
 
-    if_hr = _estimate_if_from_hr(
-        activity,
-        cycling_formula=False,
-        hr_rest_bpm=hr_rest_bpm,
-        hr_max_bpm=hr_max_bpm,
-        use_activity_hr_max=False,
-    )
-    if if_hr is not None:
-        if_hr_c = max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, float(if_hr)))
-        return max(0.0, hours * (if_hr_c**2) * 100.0), "gym_cardio:fallback_hr"
+    if base_if is None:
+        if_hr = _estimate_if_from_hr(
+            activity,
+            cycling_formula=False,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            use_activity_hr_max=False,
+        )
+        if if_hr is not None:
+            base_if = max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, float(if_hr)))
 
-    if_nominal = float(GYM_CARDIO_FALLBACK_IF.get(modality, 0.64))
-    if_nominal = max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_nominal))
-    return max(0.0, hours * (if_nominal**2) * 100.0), "gym_cardio:fallback_hr"
+    if base_if is None:
+        if_nominal = float(GYM_CARDIO_FALLBACK_IF.get(modality, 0.64))
+        base_if = max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_nominal))
+
+    tss_h_hr = (float(base_if) ** 2) * 100.0
+    mech_if, mech_signal_type = _extract_gym_cardio_mech_if(activity, modality=modality)
+    if mech_if is None:
+        activity["_kairos_gym_uses_mech_component"] = False
+        activity["_kairos_gym_mech_signal_type"] = "none"
+        return max(0.0, hours * tss_h_hr), source_tag
+
+    tss_h_mech = (float(mech_if) ** 2) * 100.0
+    tss_h_final = (GYM_CARDIO_BLEND_WEIGHT_HR * tss_h_hr) + (GYM_CARDIO_BLEND_WEIGHT_MECH * tss_h_mech)
+    activity["_kairos_gym_uses_mech_component"] = True
+    activity["_kairos_gym_mech_signal_type"] = mech_signal_type
+
+    if source_tag == "gym_cardio:lthr":
+        source_tag = "gym_cardio:lthr_plus_mech"
+    return max(0.0, hours * tss_h_final), source_tag
 
 
 def _find_hr_zones_in_json(data: Any) -> list[dict] | None:
