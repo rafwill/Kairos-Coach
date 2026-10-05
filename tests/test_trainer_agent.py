@@ -3910,6 +3910,48 @@ class TestLoadFatigueModel:
         assert source_cad == "gym_cardio:lthr_plus_mech"
         assert tss_cad > tss_base
 
+    def test_estimate_tss_elliptical_name_overrides_running_type_for_routing(self):
+        act = {
+            "type": "running",
+            "name": "Eliptica. 60'",
+            "duration": 3600,
+            "averageHR": 136,
+            "maxHR": 150,
+        }
+
+        tss, label = _estimate_session_tss(
+            act,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=169,
+        )
+        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+
+        assert label == "hrTSS"
+        assert source.startswith("gym_cardio:")
+        assert tss > 0.0
+
+    def test_estimate_tss_elliptical_accented_name_overrides_running_type_for_routing(self):
+        act = {
+            "type": "running",
+            "name": "Elíptica. 60'",
+            "duration": 3600,
+            "averageHR": 136,
+            "maxHR": 150,
+        }
+
+        tss, label = _estimate_session_tss(
+            act,
+            hr_rest_bpm=50,
+            hr_max_bpm=190,
+            hr_threshold_bpm=169,
+        )
+        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+
+        assert label == "hrTSS"
+        assert source.startswith("gym_cardio:")
+        assert tss > 0.0
+
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
         act = {
             "type": "trail_running",

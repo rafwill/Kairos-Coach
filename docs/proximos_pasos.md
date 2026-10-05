@@ -668,3 +668,54 @@ Nota tecnica
 Estado
 
 - Tabla historica Gym Cardio (eliptica + remo): REALIZADO.
+
+
+05/10/2026 - Correccion de cobertura (remo febrero)
+
+Actualizacion reportada por usuario
+
+- 2026-02-24 contiene 3 actividades: gimnasio, remo y rodaje.
+- 2026-02-16 contiene 2 actividades: remo y gimnasio.
+
+Verificacion local disponible
+
+- Solo aparecen en CSV local las filas de gimnasio:
+      - `21971310877` (2026-02-24)
+      - `21887549903` (2026-02-16)
+- Las filas de remo (y el rodaje de 2026-02-24) quedan pendientes de identificacion por `activity_id` via MCP.
+
+Bloqueo tecnico vigente
+
+- MCP Garmin sigue fallando por TLS/certificado (`unable to get local issuer certificate`).
+
+Estado
+
+- Correccion de cobertura de febrero en documento: REALIZADO.
+- Confirmacion de IDs de remo via MCP: PENDIENTE.
+
+
+05/10/2026 - Revalidacion MCP y cierre de IDs de remo (febrero)
+
+Resultado de revalidacion
+
+- Extraccion local por ventana MCP (`2026-02-15` a `2026-02-25`) completada.
+- Artefactos generados:
+      - `docs/rowing_window_20260215_to_20260225.csv`
+      - `docs/rowing_window_20260215_to_20260225.json`
+- Total en ventana: `14` actividades.
+- Remo en ventana: `2` actividades.
+
+IDs verificados (remo)
+
+- `21887902894` (2026-02-16) - `indoor_rowing` - "Remo indoor".
+- `21971848782` (2026-02-24) - `indoor_rowing` - "Remo. 30' complemento".
+
+Cruce de contexto del 24/02
+
+- Gimnasio: `21971310877`.
+- Remo: `21971848782`.
+- Rodaje: `21975471848`.
+
+Estado
+
+- Confirmacion de IDs de remo via MCP: REALIZADO.
