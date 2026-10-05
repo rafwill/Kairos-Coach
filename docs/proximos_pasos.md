@@ -1,6 +1,27 @@
 # Proximos pasos - Kairos Coach
 
-Ultima actualizacion: 2026-09-16 (cierre final)
+Ultima actualizacion: 2026-10-05 (estado vigente)
+
+## Estado vigente (2026-10-05)
+
+Resumen ejecutivo del estado actual tras cierre de bloques deportivos y validaciones cruzadas:
+
+1. Formula activa en codigo: `TSS_FORMULA_VERSION=34`.
+2. Estado por bloque:
+      - Trail: **CERRADO**.
+      - Fuerza: **CERRADO**.
+      - Running: **CERRADO** con excepcion de sesgo documentada.
+      - Gym cardio (eliptica + remo): **IMPLEMENTADO** (fase 1 HR-anchored + fase 2 mecanica opcional).
+3. Walk/hike metabolico:
+      - Ruta de produccion consolidada por muestra (ACSM/Minetti, equivalente en llano, suavizado 30s, tope 350).
+      - Comparativas finales preservadas en:
+            - `docs/walk_hike_temporal_profile/tp_comparison_8_activities.csv`
+            - `docs/walk_hike_temporal_profile/tp_comparison_8_summary.csv`
+4. Investigacion de aceleracion (walk/hike): **CERRADA**.
+      - En serie nativa de `activityDetailMetrics` no se confirmaron transiciones sobre umbral `1.5/2.0 m/s2` en el set de referencia.
+      - Decision: no abrir filtro de aceleracion con la evidencia actual.
+5. Reproducibilidad / fixtures:
+      - Se preservan payloads reales para 8 actividades de referencia en `fixtures/real_payloads` (actividad, detalles y zonas HR).
 
 ## Actualizacion de estado (2026-09-16) - CIERRE FINAL
 
