@@ -719,3 +719,41 @@ Cruce de contexto del 24/02
 Estado
 
 - Confirmacion de IDs de remo via MCP: REALIZADO.
+
+
+
+05/10/2026
+
+
+Correcto, esta vez sí hicimos la comprobación por existencia real de archivos (no por estado limpio). Contraste contra tu criterio:
+
+Conservar encontrados (8)
+
+walking_hiking_metabolic_design.md
+validate_walk_hike_8_activities.py
+compare_walk_hike_8_vs_tp.py
+analyze_walk_hike_temporal_profile.py
+audit_outliers_since_0911.py
+test_walk_hike_metabolic_model.py
+test_walk_hike_anchor_selection.py
+tp_comparison_8_activities.csv
+Borrar encontrados (7)
+
+diagnose_activity_24398763300.py
+analyze_walk_hike_clipping.py
+analyze_walk_hike_cap_sensitivity.py
+analyze_walk_hike_residuals.py
+analyze_walk_hike_distribution_and_smoothing.py
+rederive_anchor_compare_8.py
+measure_walk_hike_accel_reach.py
+CSV intermedios detectados
+
+Hay 33 archivos en walk_hike_temporal_profile que encajan con tus patrones:
+blocks_60s_*, zones_*, zones_smoothed_30s_*, top5_windows_5min_*, elevation_jumps_bins_*, smoothed_streak_*, accel_reach_*, comparison_summary.csv
+Payloads reales
+
+En real_payloads ahora mismo hay estos trackeados:
+.gitkeep
+activity_24301501111_20260924_strength_probe.json
+activity_24301501111_20260924_strength_probe_summary.txt
+Aún no he borrado nada. Si confirmas, ejecuto limpieza curada con git rm para los 7 scripts + los 33 CSV intermedios, dejando intacto todo lo de conservar.
