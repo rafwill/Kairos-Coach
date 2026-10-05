@@ -24,7 +24,21 @@ log = logging.getLogger(__name__)
 
 
 # Increase when TSS formula behavior changes.
-TSS_FORMULA_VERSION = 32
+TSS_FORMULA_VERSION = 33
+
+# Gym cardio (elliptical + rowing) phase-1 IF model.
+GYM_CARDIO_Z_CLAMP_MIN = 0.0
+GYM_CARDIO_Z_CLAMP_MAX = 1.15
+GYM_CARDIO_IF_MIN = 0.45
+GYM_CARDIO_IF_MAX = 0.90
+GYM_CARDIO_ELLIPTICAL_IF_INTERCEPT = 0.50
+GYM_CARDIO_ELLIPTICAL_IF_SLOPE = 0.30
+GYM_CARDIO_ROWING_IF_INTERCEPT = 0.52
+GYM_CARDIO_ROWING_IF_SLOPE = 0.34
+GYM_CARDIO_FALLBACK_IF = {
+    "elliptical": 0.62,
+    "rowing": 0.66,
+}
 
 # Strength (LTHR-anchored) IF model calibrated in-sample on 2026-09-27.
 STRENGTH_LTHR_IF_INTERCEPT = 0.523104204
@@ -133,6 +147,26 @@ def _is_elliptical_activity(activity: dict, act_type: Any) -> bool:
         ]
     ).lower()
     return ("ellipt" in name) or ("elipt" in name)
+
+
+def _is_rowing_activity(activity: dict, act_type: Any) -> bool:
+    t = ""
+    if isinstance(act_type, dict):
+        t = str(act_type.get("typeKey") or act_type.get("typeName") or "").lower()
+    else:
+        t = str(act_type or "").lower()
+
+    if any(kw in t for kw in ("rowing", "indoor_row", "indoor row", "rower", "ergometer", "erg")):
+        return True
+
+    name = " ".join(
+        [
+            str(activity.get("name") or ""),
+            str(activity.get("activityName") or ""),
+            str(activity.get("description") or ""),
+        ]
+    ).lower()
+    return ("rowing" in name) or ("remo" in name) or ("erg" in name)
 
 
 def _resolve_activity_type_for_routing(activity: dict) -> Any:
@@ -679,6 +713,88 @@ def _estimate_strength_if_from_lthr(
         return max(STRENGTH_LTHR_IF_MIN, min(STRENGTH_LTHR_IF_MAX, if_strength))
     except (TypeError, ValueError, ZeroDivisionError):
         return None
+
+
+def _estimate_gym_cardio_if_from_lthr(
+    activity: dict,
+    modality: str,
+    hr_rest_bpm: float | None = None,
+    hr_threshold_bpm: float | None = None,
+) -> float | None:
+    summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
+    avg_hr_raw = (
+        activity.get("averageHR")
+        or activity.get("avgHr")
+        or activity.get("avg_hr_bpm")
+        or activity.get("averageHeartRate")
+        or summary.get("averageHR")
+        or summary.get("avgHr")
+        or summary.get("avg_hr_bpm")
+        or summary.get("averageHeartRate")
+    )
+    if avg_hr_raw is None:
+        return None
+
+    lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+    if lthr is None or lthr <= 0:
+        return None
+
+    try:
+        avg_hr = float(avg_hr_raw)
+        hr_rest = float(hr_rest_bpm) if hr_rest_bpm else 50.0
+        if hr_rest <= 0:
+            hr_rest = 50.0
+        if hr_rest >= lthr - 5.0:
+            hr_rest = max(30.0, float(lthr) - 55.0)
+
+        denom = max(1.0, float(lthr) - float(hr_rest))
+        z = (float(avg_hr) - float(hr_rest)) / denom
+        z_c = max(GYM_CARDIO_Z_CLAMP_MIN, min(GYM_CARDIO_Z_CLAMP_MAX, z))
+
+        if modality == "rowing":
+            if_raw = GYM_CARDIO_ROWING_IF_INTERCEPT + (GYM_CARDIO_ROWING_IF_SLOPE * z_c)
+        else:
+            if_raw = GYM_CARDIO_ELLIPTICAL_IF_INTERCEPT + (GYM_CARDIO_ELLIPTICAL_IF_SLOPE * z_c)
+
+        return max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_raw))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _estimate_gym_cardio_tss(
+    activity: dict,
+    hours: float,
+    modality: str,
+    hr_rest_bpm: float | None = None,
+    hr_max_bpm: float | None = None,
+    hr_threshold_bpm: float | None = None,
+) -> tuple[float | None, str]:
+    if hours <= 0:
+        return None, ""
+
+    if_lthr = _estimate_gym_cardio_if_from_lthr(
+        activity,
+        modality=modality,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_threshold_bpm=hr_threshold_bpm,
+    )
+    if if_lthr is not None:
+        return max(0.0, hours * (if_lthr**2) * 100.0), "gym_cardio:lthr"
+
+    if_hr = _estimate_if_from_hr(
+        activity,
+        cycling_formula=False,
+        hr_rest_bpm=hr_rest_bpm,
+        hr_max_bpm=hr_max_bpm,
+        use_activity_hr_max=False,
+    )
+    if if_hr is not None:
+        if_hr_c = max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, float(if_hr)))
+        return max(0.0, hours * (if_hr_c**2) * 100.0), "gym_cardio:fallback_hr"
+
+    if_nominal = float(GYM_CARDIO_FALLBACK_IF.get(modality, 0.64))
+    if_nominal = max(GYM_CARDIO_IF_MIN, min(GYM_CARDIO_IF_MAX, if_nominal))
+    return max(0.0, hours * (if_nominal**2) * 100.0), "gym_cardio:fallback_hr"
 
 
 def _find_hr_zones_in_json(data: Any) -> list[dict] | None:
@@ -3380,6 +3496,8 @@ def _estimate_session_tss(
     if not isinstance(activity, dict):
         return 0.0, "hrTSS"
 
+    activity.pop("_kairos_tss_source_tag", None)
+
     act_type = _resolve_activity_type_for_routing(activity)
     is_cycling = _is_cycling_activity(act_type)
     is_strength = _is_strength_activity(act_type)
@@ -3388,6 +3506,7 @@ def _estimate_session_tss(
     is_hike_walk = _is_hike_walk_activity(act_type)
     is_running_non_trail = _is_running_non_trail_activity(act_type)
     is_elliptical = _is_elliptical_activity(activity, act_type)
+    is_rowing = _is_rowing_activity(activity, act_type)
     tss_native = _extract_training_load_tss(activity)
 
     details_payload = (
@@ -3469,6 +3588,20 @@ def _estimate_session_tss(
                     )
         if tss_running is not None:
             return tss_running, "TSS"
+
+    elif is_elliptical or is_rowing:
+        modality = "rowing" if is_rowing else "elliptical"
+        tss_gym, gym_source = _estimate_gym_cardio_tss(
+            activity,
+            hours=hours,
+            modality=modality,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            hr_threshold_bpm=hr_threshold_bpm,
+        )
+        if tss_gym is not None:
+            activity["_kairos_tss_source_tag"] = gym_source
+            return max(0.0, float(tss_gym)), "hrTSS"
 
     elif is_trail_hike_walk:
         if is_trail:
@@ -3672,6 +3805,10 @@ def _estimate_session_tss(
 def _infer_tss_source_tag(activity: dict, tss_label: str, ftp: float | None, hr_zones_raw: str | None) -> str:
     if not isinstance(activity, dict):
         return "unknown"
+
+    source_tag = activity.get("_kairos_tss_source_tag")
+    if source_tag:
+        return str(source_tag)
 
     act_type = _resolve_activity_type_for_routing(activity)
     is_cycling = _is_cycling_activity(act_type)
