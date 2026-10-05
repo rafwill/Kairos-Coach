@@ -520,3 +520,44 @@ Estado
 PASO 1 finalizado.
 No se implementó filtro.
 Quedo esperando tu confirmación del umbral para continuar con PASO 2.
+
+
+05/10/2026
+
+Revalidacion de discrepancia antes de elegir umbral (PASO 1)
+
+Resumen ejecutivo
+
+- Se confirmo que la transicion conocida `1.204 -> 2.902` existe en la traza derivada por segundo y da `1.698 m/s2`.
+- Se detecto la causa de la discrepancia: esa deteccion salia de una serie reconstruida con expansion temporal por segundos.
+- En la serie nativa de `activityDetailMetrics` (sin remuestreo), esa misma subida ocurre en `2 s` (`t=2 -> t=4`), por lo que su aceleracion efectiva es `0.849 m/s2` y no supera umbral `1.5`.
+
+Detalle tecnico validado
+
+- Fuente anterior (diagnostico por segundo): stream expandido por `dt` para tener continuidad por segundo.
+- Fuente corregida para medicion de aceleracion: serie nativa (`activity_details_native`), sin dedup por segundo ni expansion.
+- Adicionalmente se corrigio el writer de artefactos para que, si no hay filas flagged, el CSV se sobrescriba igualmente y no queden filas historicas obsoletas.
+
+Resultado de la rerun (serie nativa)
+
+- Umbral `1.5`: `0` transiciones flagged en `8/8` actividades.
+- Umbral `2.0`: `0` transiciones flagged en `8/8` actividades.
+- Artefactos regenerados con trazabilidad de fuente (`series_source=activity_details_native`):
+      - `docs/walk_hike_temporal_profile/accel_reach_summary_8_activities.csv`
+      - `docs/walk_hike_temporal_profile/accel_reach_flagged_transitions_8_activities.csv`
+
+Estado actualizado
+
+- PASO 1 queda CERRADO por hipotesis descartada: no se confirma la premisa de "saltos imposibles" al medir aceleracion en cadencia nativa.
+- Decision: no implementar filtro de aceleracion fisica en walking/hiking con el planteamiento actual.
+- Regla metodologica explicita: cualquier analisis de aceleracion/derivada temporal en este proyecto debe hacerse sobre serie nativa de `activityDetailMetrics`; la serie reconstruida 1Hz puede usarse para observables energeticos (IF/pendiente normalizada), pero no para inferir aceleracion fisica entre muestras.
+
+Implicacion para casos clave
+
+- `24484006590` y `24430006167` no quedan explicados por ruido de sensor ni por artefacto fisico imposible.
+- La lectura vigente se mantiene: patron real de rafagas (compatible con marcha con perro) capturado por el modelo y parcialmente subrepresentado por hrTSS de TP en esfuerzos breves.
+
+Estado de cierre del sub-hilo
+
+- Investigacion de ruido/aceleracion: REALIZADO y CERRADO.
+- No abrir PASO 2 de filtro de aceleracion salvo nueva evidencia empirica que contradiga esta medicion nativa.

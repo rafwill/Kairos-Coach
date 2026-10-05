@@ -67,8 +67,98 @@ def _compute_equiv_and_grade(speed_mps: float, grade: float) -> tuple[float, flo
     return float(equiv), float(grade_clamped)
 
 
+def _extract_walk_samples_raw_from_details(
+    details_text: str,
+) -> list[tuple[float, float, float, float | None]]:
+    """Extract native walk/hike samples without second-rounding or deduplication."""
+    data = _safe_json(details_text)
+    if not isinstance(data, dict):
+        return []
+
+    descriptors = data.get("metricDescriptors")
+    rows = data.get("activityDetailMetrics")
+    if not isinstance(descriptors, list) or not isinstance(rows, list):
+        return []
+
+    by_key: dict[str, int] = {}
+    for desc in descriptors:
+        if not isinstance(desc, dict):
+            continue
+        key = str(desc.get("key") or "").strip()
+        try:
+            idx = int(desc.get("metricsIndex"))
+        except (TypeError, ValueError):
+            continue
+        if key:
+            by_key[key] = idx
+
+    time_keys = (
+        "directTimestamp",
+        "sumDuration",
+        "sumElapsedDuration",
+        "sumMovingDuration",
+        "elapsedDuration",
+        "timerDurationInSeconds",
+    )
+    speed_keys = ("directSpeed", "speed", "instantSpeed")
+    elev_keys = ("directElevation", "elevation", "altitude")
+    dist_keys = ("sumDistance", "distance", "directDistance")
+
+    time_idx = next((by_key[k] for k in time_keys if k in by_key), None)
+    speed_idx = next((by_key[k] for k in speed_keys if k in by_key), None)
+    elev_idx = next((by_key[k] for k in elev_keys if k in by_key), None)
+    dist_idx = next((by_key[k] for k in dist_keys if k in by_key), None)
+
+    if time_idx is None or speed_idx is None or elev_idx is None:
+        return []
+
+    out: list[tuple[float, float, float, float | None]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        metrics = row.get("metrics")
+        if not isinstance(metrics, list):
+            continue
+        if max(time_idx, speed_idx, elev_idx) >= len(metrics):
+            continue
+
+        try:
+            t_raw = float(metrics[time_idx])
+            v_raw = float(metrics[speed_idx])
+            e_raw = float(metrics[elev_idx])
+        except (TypeError, ValueError):
+            continue
+
+        d_val: float | None = None
+        if dist_idx is not None and 0 <= dist_idx < len(metrics):
+            try:
+                d_val = float(metrics[dist_idx])
+            except (TypeError, ValueError):
+                d_val = None
+
+        t_sec = (t_raw / 1000.0) if t_raw > 10_000_000_000 else t_raw
+        out.append((float(t_sec), max(0.0, float(v_raw)), float(e_raw), d_val))
+
+    if len(out) < 2:
+        return []
+
+    out.sort(key=lambda item: item[0])
+    if out[0][0] > 86_400 and (out[-1][0] - out[0][0]) > 0:
+        base_t = out[0][0]
+        out = [(t - base_t, v, e, d) for t, v, e, d in out]
+    return out
+
+
 def _rows_for_activity(activity_id: int, name: str, details_text: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    samples = lm._extract_walk_samples_from_activity_details(details_text)
+    # IMPORTANT: acceleration must be measured on native sample cadence.
+    # A reconstructed 1Hz stream is acceptable for energetic observables, but it can
+    # distort dv/dt by splitting one real multi-second change into synthetic 1-second steps.
+    samples = _extract_walk_samples_raw_from_details(details_text)
+    series_source = "activity_details_native"
+    if len(samples) < 2:
+        # Fallback only if native extraction is unavailable.
+        samples = lm._extract_walk_samples_from_activity_details(details_text)
+        series_source = "activity_details_rounded_1hz"
     if len(samples) < 2:
         return [], []
 
@@ -99,17 +189,14 @@ def _rows_for_activity(activity_id: int, name: str, details_text: str) -> tuple[
         grade_raw = (float(elev_cur) - float(elev_prev)) / max(0.1, float(delta_dist))
         equiv_cur, grade_clamped = _compute_equiv_and_grade(float(speed_cur), grade_raw)
 
-        reps = max(1, int(round(dt)))
-        t_start = int(round(max(0.0, float(t_cur) - dt)))
-        for off in range(reps):
-            sec_points.append(
-                {
-                    "t_sec": float(t_start + off),
-                    "speed_mps": float(speed_cur),
-                    "grade": float(grade_clamped),
-                    "equiv_m_min": float(equiv_cur),
-                }
-            )
+        sec_points.append(
+            {
+                "t_sec": float(t_cur),
+                "speed_mps": float(speed_cur),
+                "grade": float(grade_clamped),
+                "equiv_m_min": float(equiv_cur),
+            }
+        )
 
         prev_dist = dist_cur if dist_cur is not None else prev_dist
 
@@ -180,6 +267,7 @@ def _rows_for_activity(activity_id: int, name: str, details_text: str) -> tuple[
                 "moderate_or_flat_pct_of_flagged": (100.0 * moderate_or_flat / flagged_n) if flagged_n > 0 else 0.0,
                 "cap350_overlap_count": len(cap_hits),
                 "cap350_overlap_pct_of_flagged": (100.0 * len(cap_hits) / flagged_n) if flagged_n > 0 else 0.0,
+                "series_source": series_source,
             }
         )
 
@@ -201,21 +289,20 @@ def _rows_for_activity(activity_id: int, name: str, details_text: str) -> tuple[
                     "cap350_hit": t["cap350_hit"],
                     "equiv_prev_m_min": t["equiv_prev_m_min"],
                     "equiv_cur_m_min": t["equiv_cur_m_min"],
+                    "series_source": series_source,
                 }
             )
 
     return summary_rows, transition_rows
 
 
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        return
+def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = list(rows[0].keys())
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        if rows:
+            writer.writerows(rows)
 
 
 async def main() -> None:
@@ -253,8 +340,42 @@ async def main() -> None:
 
     out_dir = Path("docs") / "walk_hike_temporal_profile"
     out_dir.mkdir(parents=True, exist_ok=True)
-    _write_csv(out_dir / "accel_reach_summary_8_activities.csv", all_summary)
-    _write_csv(out_dir / "accel_reach_flagged_transitions_8_activities.csv", all_flagged)
+    summary_fields = [
+        "activity_id",
+        "name",
+        "threshold_mps2",
+        "total_transitions",
+        "flagged_count",
+        "flagged_pct",
+        "strong_pos_grade_count",
+        "strong_pos_grade_pct_of_flagged",
+        "moderate_or_flat_count",
+        "moderate_or_flat_pct_of_flagged",
+        "cap350_overlap_count",
+        "cap350_overlap_pct_of_flagged",
+        "series_source",
+    ]
+    flagged_fields = [
+        "activity_id",
+        "name",
+        "threshold_mps2",
+        "t_prev",
+        "t_cur",
+        "dt",
+        "speed_prev_mps",
+        "speed_cur_mps",
+        "accel_mps2",
+        "accel_abs_mps2",
+        "grade",
+        "grade_strong_positive",
+        "cap350_hit",
+        "equiv_prev_m_min",
+        "equiv_cur_m_min",
+        "series_source",
+    ]
+
+    _write_csv(out_dir / "accel_reach_summary_8_activities.csv", all_summary, summary_fields)
+    _write_csv(out_dir / "accel_reach_flagged_transitions_8_activities.csv", all_flagged, flagged_fields)
     print(f"artifacts_dir={out_dir.as_posix()}")
 
 

@@ -2,11 +2,79 @@
 
 ## Estado final
 
-- Formula vigente: `TSS_FORMULA_VERSION=29`.
+- Formula vigente en codigo: `TSS_FORMULA_VERSION=32`.
 - Bloques principales:
   - Trail: **CERRADO**.
   - Fuerza: **CERRADO** (actualizado 2026-09-27 con Modelo B en produccion).
   - Running: **CERRADO** con excepción de sesgo documentada.
+
+## Actualizacion walking/hiking (2026-10-05) - CIERRE EJECUTIVO AUTOCONTENIDO
+
+### Veredicto
+
+1. La hipotesis de "saltos fisicamente imposibles" queda descartada con evidencia.
+2. No se implementa filtro de aceleracion fisica para walking/hiking en el estado actual.
+3. La validacion se cierra por consistencia fisica interna del modelo, no por ajuste a TP.
+
+### Causas reales corregidas (resumen cronologico)
+
+1. Funcion antigua seguia activa pese a "implementar" la nueva ruta.
+2. `LTHR` y FC reposo llegaban en `None` por falta de hidratacion desde `trainer_agent.py`.
+   - Corregido con hidratacion automatica via `get_lactate_threshold` y `get_rhr_day`.
+3. Constante de desnivel implementada a `3.6x` de lo especificado.
+4. Inversion `VO2 -> velocidad equivalente` usaba ACSM en muestras calculadas con Minetti,
+   con extrapolacion fuera del rango valido de ACSM.
+5. Zona de mezcla ACSM/Minetti generaba no-monotonia real (mas pendiente podia bajar coste).
+6. Tope de seguridad previo (`140`) capaba terreno de montana normal.
+   - Ajustado a `350` con base en percentiles reales observados.
+
+### Aclaracion sobre ancla minima de 90 minutos
+
+1. El umbral minimo de ancla no resolvio la hipotesis puntual para la que se introdujo
+   (los casos sospechosos subieron en bloque, no selectivamente).
+2. Aun asi, se mantiene como regla de diseno correcta por robustez metodologica,
+   en el mismo principio de umbral minimo temporal usado en running.
+3. Conclusion: cambio util y valido de gobernanza, aunque no fuese la causa raiz de ese subcaso.
+
+### Hipotesis investigada y descartada (con evidencia)
+
+1. El patron "nervioso" de caminatas con perro no era ruido de sensor.
+2. La discrepancia venia de medir aceleracion sobre serie reconstruida a `1 Hz`.
+3. En cadencia nativa Garmin (`activityDetailMetrics`), el salto clave de `24430006167`
+   ocurre en `2 s` (`t=2 -> t=4`), con aceleracion efectiva `0.849 m/s2`.
+4. Regla metodologica cerrada:
+   - Derivadas temporales (aceleracion) solo en serie nativa.
+   - Serie 1Hz reconstruida solo para observables energeticos (IF/pendiente normalizada).
+
+### Criterio de validacion aplicado
+
+1. El modelo no se calibro para "copiar" TP en walking/hiking.
+2. `rTSS`/`hrTSS` no se tomaron como verdad externa unica para esta modalidad
+   (hay casos con divergencia fuerte entre ambos en la misma actividad).
+3. Criterio usado para cierre: consistencia fisica interna y explicabilidad mecanica:
+   - montana: intensidad alta explicada por pendiente/terreno real,
+   - marcha con perro: picos explicados por aceleracion real de ritmo, poco visible en FC.
+
+### Tabla final (8 actividades, base consolidada)
+
+| fecha | activity_id | modalidad | actividad | dur_h | kairos_tss | metodo | tp_rTSS | tp_hrTSS | tp_status |
+|---|---:|---|---|---:|---:|---|---:|---:|---|
+| 2026-07-03 | 23468464527 | walking | Turismo. Vielha (Alto Aran - Lleida) | 2.818 | 5.771 | TSS | 4.0 | 84.0 | verified_and_same_activity |
+| 2026-07-04 | 23478220005 | hiking | Senderismo. Pla de Beret - Refugi de Mongarri i/v (Baqueira Beret - Lleida) | 2.827 | 27.110 | TSS | 4.0 | 87.0 | verified_and_same_activity |
+| 2026-08-02 | 23829149525 | walking | Turismo. Paseo Maritimo de Sanxenxo y Portonovo | 5.211 | 11.624 | TSS | 13.0 | 154.0 | verified_and_same_activity |
+| 2026-08-17 | 24013969366 | hiking | Senderismo. Ruta A Moa 1/2 con Hector (O Fieiro - A Coruna) | 1.984 | 20.757 | TSS | 7.0 | 61.0 | verified_and_same_activity |
+| 2026-09-20 | 24430006167 | walking | Caminata con Silvia y Yuma | 0.848 | 3.433 | TSS | 4.0 | 25.0 | verified_and_same_activity |
+| 2026-09-24 | 24484006590 | walking | Turismo. Del SH Valencia Palace a UPV ETSINF (Valencia) | 0.997 | 5.062 | TSS | 10.0 | 30.0 | verified_and_same_activity |
+| 2026-09-25 | 24492874850 | walking | Turismo. Valencia | 3.418 | 12.958 | TSS | 18.0 | 103.0 | verified_and_same_activity |
+| 2026-09-26 | 24502427862 | walking | Caminata con Silvia y Yuma | 0.873 | 2.021 | TSS | 3.0 | 26.0 | verified_and_same_activity |
+
+### Control de version de formula (cierre)
+
+1. Version actual en codigo: `agent/load_metrics.py` fija `TSS_FORMULA_VERSION=32`.
+2. Trazabilidad Git inspeccionada en `agent/load_metrics.py`:
+   - salto `31 -> 32` en commit `350d5e7`.
+   - no hay commits posteriores en ese archivo con cambios de formula sin incremento de version.
+3. Estado de control: **OK** para cierre (sin evidencia de cambios de formula post-32 no versionados).
 
 ## Actualizacion de fuerza (2026-09-27)
 
