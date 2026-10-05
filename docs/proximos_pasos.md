@@ -644,3 +644,27 @@ Validacion
 Estado
 
 - Implementacion Gym Cardio fase 2 (componente mecanico opcional): REALIZADO.
+
+
+05/10/2026 - Tabla historica Gym Cardio (eliptica + remo)
+
+Objetivo
+
+- Buscar el maximo historial disponible hacia atras para modalidades de eliptica y remo, y dejar tabla consolidada al estilo del resto de deportes.
+
+Resultado
+
+- Artefacto generado: `docs/tss_gym_cardio_historico_hasta_2026-09-16.md`.
+- Actividades encontradas en dataset local consolidado:
+      - eliptica: `3`
+      - remo: `0`
+- Rango temporal efectivo en local para eliptica: `2026-06-26` -> `2026-09-09`.
+
+Nota tecnica
+
+- La consulta MCP en vivo para ampliar mas alla del corte local fallo en esta sesion por TLS/certificado local (`unable to get local issuer certificate`).
+- Mientras ese bloqueo exista, la tabla historica queda limitada al consolidado local de junio-septiembre.
+
+Estado
+
+- Tabla historica Gym Cardio (eliptica + remo): REALIZADO.
