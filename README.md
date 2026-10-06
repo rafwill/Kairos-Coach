@@ -193,6 +193,11 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - Serie diaria de carga/fatiga por usuario: `TSS`, `ATL`, `CTL`, `TSB`, `activities_count`
   - Base para análisis histórico y cálculo incremental
 
+- **`wellness_daily`**
+  - Snapshot diario por usuario de wellness: Body Battery y HRV
+  - Campos principales: nivel/cargado/drenado/max/min de Body Battery + HRV nocturno/media semanal/estado
+  - `pulled_at` permite política de frescura (TTL) para evitar llamadas continuas al MCP
+
 **Importante:** hoy Kairos no persiste una tabla propia con todas las actividades Garmin crudas. La persistencia principal está centrada en perfil, contexto, planes y métricas derivadas.
 
 ---
@@ -286,6 +291,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
 * **�🚦 Estado proactivo al iniciar (48h):**
   - Tras seleccionar modelo y conectar herramientas, muestra un briefing automático de últimas 48h.
   - Incluye estado de Body Battery, HRV, sueño y entrenamientos recientes.
+   - Body Battery y HRV se resuelven en modo DB-first: primero `wellness_daily`; si falta dato o está vencido por TTL, se refresca desde MCP y se hace upsert.
   - Muestra fechas analizadas en formato `DD/MM/AAAA`.
   - Si detecta cambio de fórmula de carga (`formula_version`), informa al usuario de recálculo completo y posible latencia mayor al arranque.
   - Tras calcular carga, informa si el cálculo fue incremental o recálculo completo.
@@ -601,6 +607,34 @@ El modo actual del agente es DB-first multiusuario: sin Supabase no arranca.
 1. Crea proyecto en [supabase.com](https://supabase.com)
 2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql)
 3. Copia URL y anon key a `.env`
+
+### Migraciones incrementales de esquema (proyectos ya existentes)
+
+Si tu proyecto de Supabase ya estaba creado y ya tenía tablas previas de Kairos,
+aplica también las migraciones nuevas desde `supabase/migrations/`.
+
+Para esta versión, la creación de wellness diario se hace con:
+
+- `supabase/migrations/003_wellness_daily.sql`
+
+Qué crea esta migración:
+
+- Tabla `wellness_daily` por `app_user_id + metric_date`
+- Campos de Body Battery (`body_battery_level`, `bb_charged`, `bb_drained`, `bb_highest`, `bb_lowest`)
+- Campos de HRV (`hrv_last_night_avg_ms`, `hrv_weekly_avg_ms`, `hrv_status`)
+- `source_payload`, `pulled_at`, `updated_at`
+- Índice por usuario/fecha y trigger de `updated_at`
+
+Validación rápida tras ejecutar la migración (SQL Editor):
+
+```sql
+select table_name
+from information_schema.tables
+where table_schema = 'public'
+  and table_name = 'wellness_daily';
+```
+
+Si devuelve una fila, la migración quedó aplicada correctamente.
 
 ---
 

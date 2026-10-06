@@ -859,3 +859,44 @@ test_walk_hike_anchor_selection.py
 tp_comparison_8_activities.csv
 
 Si quieres, hago ahora mismo el commit y push de esta limpieza + preservación de payloads.
+
+
+06/10/2026 17:27
+Implementé la política que pediste: sin fallback a BD cuando falla MCP para wellness/readiness, mensaje explícito de no disponibilidad, y reutilización en sesión de lo ya obtenido por MCP.
+
+Cambios aplicados:
+
+Política MCP-first por sesión en startup snapshot
+Añadí caché en memoria por sesión para wellness en trainer_agent.py:10231.
+En trainer_agent.py:10231:
+Si hay dato en caché de sesión, se reutiliza.
+Si no hay dato, se consulta MCP.
+Si MCP no trae dato usable, no se toma BD histórica para rellenar.
+Solo se persiste en BD cuando MCP devuelve métricas reales válidas.
+Añadí trazabilidad de fuente mcp_unavailable cuando no hubo dato real en MCP:
+trainer_agent.py:10413
+trainer_agent.py:10415
+trainer_agent.py:10417
+trainer_agent.py:10419
+Mensaje explícito “No disponible en este momento”
+En el bloque proactivo normalicé cualquier resumen genérico sin dato real para mostrar exactamente ese texto:
+trainer_agent.py:2052
+trainer_agent.py:2058
+trainer_agent.py:2130
+trainer_agent.py:2131
+trainer_agent.py:2132
+Corrección de extractor para evitar falsos “datos válidos”
+Los extractores de snapshot ahora devuelven None si todos los campos vienen vacíos (por ejemplo respuesta tipo { "ok": true }):
+trainer_agent.py:5126
+trainer_agent.py:5146
+trainer_agent.py:5169
+Tests actualizados y nuevo test de regresión
+Ajusté el test de refresh para verificar que usa MCP y no valor viejo de BD:
+test_trainer_agent.py:1539
+Añadí test específico para validar que, si MCP no entrega wellness, no se usa BD y aparece “No disponible en este momento”:
+test_trainer_agent.py:1613
+Validación ejecutada:
+
+Comando: pytest focalizado de startup/proactive/readiness.
+Resultado final: 16 passed, 0 failed (354 deselected).
+También dejé la lección registrada en memoria del repo para mantener esta regla en próximos cambios.

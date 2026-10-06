@@ -38,6 +38,9 @@ from agent.trainer_agent import (
     _classify_running_session_with_confidence,
     _classify_strength_session_with_confidence,
     _classify_walk_hike_session_with_confidence,
+    _format_body_battery_day,
+    _format_hrv_day,
+    _pick_day_payload,
     _estimate_session_tss,
     _compute_load_fatigue_metrics,
     _format_load_fatigue_summary,
@@ -566,6 +569,17 @@ class TestCompactToolResult:
         result = _compact_tool_result(json.dumps(data), tool_name="get_activity")
         result_dict = json.loads(result)
         assert result_dict["distance_km"] == 10.0
+
+    def test_get_body_battery_prefers_item_with_level_when_multiple_entries(self):
+        data = [
+            {"date": "2026-10-06", "charged": 58, "drained": 31},
+            {"date": "2026-10-06", "bodyBatteryLevel": 69, "charged": 58, "drained": 31},
+        ]
+        result = _compact_tool_result(json.dumps(data), tool_name="get_body_battery")
+        parsed = json.loads(result)
+        assert parsed.get("level") == 69
+        assert parsed.get("charged") == 58
+        assert parsed.get("drained") == 31
 
 
 # ─── Base de conocimiento del atleta (RAG) ──────────────────────────────────
@@ -1182,6 +1196,43 @@ class TestStartupProactive:
         assert "Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma))" in out
         assert "No tienes plan asignado" in out
 
+    def test_format_body_battery_day_prefers_level_from_most_informative_entry(self):
+        payload = [
+            {"date": date.today().isoformat(), "charged": 58, "drained": 31},
+            {"date": date.today().isoformat(), "bodyBatteryLevel": 69, "charged": 58, "drained": 31},
+        ]
+        out = _format_body_battery_day(payload, date.today().isoformat())
+        assert "nivel 69" in out
+        assert "cargado/drenado +58/-31" in out
+
+    def test_pick_day_payload_supports_nested_data_envelopes(self):
+        target = date.today().isoformat()
+        payload = {
+            "ok": True,
+            "data": {
+                "items": [
+                    {"date": "2026-01-01", "value": 10},
+                    {"date": target, "value": 55},
+                ]
+            },
+        }
+        picked = _pick_day_payload(payload, target)
+        assert picked is not None
+        assert picked.get("value") == 55
+
+    def test_format_hrv_day_with_nested_envelope(self):
+        target = date.today().isoformat()
+        payload = {
+            "result": {
+                "measurements": [
+                    {"date": target, "lastNightAvg": 51, "weeklyAvg": 55, "status": "balanced"}
+                ]
+            }
+        }
+        out = _format_hrv_day(payload, target)
+        assert "51.0 ms" in out
+        assert "7d 55.0 ms" in out
+
     def test_build_proactive_status_markdown_shows_plan_recommendation_when_assigned(self):
         payload = {
             "plan_assigned": True,
@@ -1483,6 +1534,119 @@ class TestStartupProactive:
         assert all("start_date" in args and "end_date" in args for args in hist_calls)
         # Una llamada debe ser el rango corto de 48h para entrenamientos recientes.
         assert any(args.get("page_size") == 100 for args in hist_calls)
+
+    @pytest.mark.asyncio
+    async def test_collect_startup_snapshot_refreshes_today_wellness_from_mcp(self):
+        from agent.trainer_agent import TrainerAgent
+        captured_calls: list[tuple[str, dict]] = []
+
+        now_iso = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        today = date.today().isoformat()
+        yday = (date.today() - timedelta(days=1)).isoformat()
+
+        async def _fake_call_tool(_session, tool_name, _arguments):
+            captured_calls.append((tool_name, dict(_arguments or {})))
+            if tool_name == "get_body_battery":
+                req_start = (_arguments or {}).get("start_date")
+                if req_start == today:
+                    return json.dumps([
+                        {
+                            "date": today,
+                            "bodyBatteryLevel": 66,
+                            "charged": 58,
+                            "drained": 31,
+                        }
+                    ])
+                return json.dumps([
+                    {
+                        "date": yday,
+                        "bodyBatteryLevel": 61,
+                        "charged": 61,
+                        "drained": 58,
+                    }
+                ])
+            if tool_name == "get_hrv_data":
+                req_date = (_arguments or {}).get("date")
+                if req_date == today:
+                    return json.dumps({"date": today, "lastNightAvg": 42, "weeklyAvg": 48, "status": "balanced"})
+                return json.dumps({"date": yday, "lastNightAvg": 74, "weeklyAvg": 73, "status": "balanced"})
+            if tool_name == "get_activities_by_date":
+                return json.dumps({
+                    "activities": [
+                        {"activityId": 901, "name": "Rodaje", "startTimeLocal": f"{today}T07:30:00.0", "trainingLoad": 50.0}
+                    ],
+                    "has_more": False,
+                })
+            if tool_name == "get_training_load_trend":
+                return json.dumps({"dailyTrainingLoadAcute": []})
+            return json.dumps({"ok": True})
+
+        def _fake_get_wellness(metric_date: str):
+            return {
+                "metric_date": metric_date,
+                "body_battery_level": 69,
+                "bb_charged": 58,
+                "bb_drained": 31,
+                "hrv_last_night_avg_ms": 51,
+                "hrv_weekly_avg_ms": 55,
+                "hrv_status": "balanced",
+                "pulled_at": now_iso,
+            }
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+
+        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool), \
+             patch("agent.trainer_agent._storage.get_wellness_daily", side_effect=_fake_get_wellness), \
+             patch("agent.trainer_agent._storage.upsert_wellness_daily") as upsert_mock:
+            snapshot = await TrainerAgent.collect_startup_snapshot_48h(agent)
+
+        assert "nivel 66" in snapshot["body_battery"]["summary"]
+        assert "42.0 ms" in snapshot["hrv"]["summary"]
+        assert any(name == "get_body_battery" for name, _ in captured_calls)
+        assert any(name == "get_hrv_data" for name, _ in captured_calls)
+        assert snapshot.get("wellness_sources", {}).get("body_today") == "mcp"
+        assert snapshot.get("wellness_sources", {}).get("hrv_today") == "mcp"
+        upsert_mock.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_collect_startup_snapshot_no_db_fallback_when_mcp_unavailable(self):
+        from agent.trainer_agent import TrainerAgent
+
+        async def _fake_call_tool(_session, tool_name, _arguments):
+            if tool_name in {"get_body_battery", "get_hrv_data", "get_sleep_data"}:
+                return json.dumps({"ok": True})
+            if tool_name == "get_activities_by_date":
+                return json.dumps({"activities": [], "has_more": False})
+            if tool_name == "get_training_load_trend":
+                return json.dumps({"dailyTrainingLoadAcute": []})
+            return json.dumps({"ok": True})
+
+        def _fake_get_wellness(_metric_date: str):
+            return {
+                "metric_date": date.today().isoformat(),
+                "body_battery_level": 77,
+                "bb_charged": 50,
+                "bb_drained": 20,
+                "hrv_last_night_avg_ms": 55,
+                "hrv_weekly_avg_ms": 58,
+                "hrv_status": "balanced",
+            }
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+
+        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool), \
+             patch("agent.trainer_agent._storage.get_wellness_daily", side_effect=_fake_get_wellness):
+            snapshot = await TrainerAgent.collect_startup_snapshot_48h(agent)
+
+        assert "nivel 77" not in snapshot["body_battery"]["summary"]
+        assert "55.0 ms" not in snapshot["hrv"]["summary"]
+        assert snapshot.get("wellness_sources", {}).get("body_today") == "mcp_unavailable"
+        assert snapshot.get("wellness_sources", {}).get("hrv_today") == "mcp_unavailable"
+
+        status_md = _build_proactive_status_markdown(snapshot)
+        assert "No disponible en este momento" in status_md
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_fallback_when_by_date_unavailable(self):
@@ -4845,6 +5009,8 @@ class TestMcpReadOnlyPolicy:
 class TestWeekTssDeterministicRoute:
     def test_is_week_tss_intent_detects_weekly_tss_queries(self):
         assert _is_week_tss_intent("Cuanto TSS llevo esta semana?")
+        assert _is_week_tss_intent("Cuanto TSS hice esta semana?")
+        assert _is_week_tss_intent("¿Cuánto TSS hice esta semana?")
         assert _is_week_tss_intent("Cuales son los TSS de esta semana?")
         assert _is_week_tss_intent("Dame el acumulado semanal de TSS")
         assert _is_week_tss_intent("Compárame esta semana vs la semana pasada: TSS total, diferencia porcentual y si hay spike >20%")
@@ -6203,6 +6369,10 @@ class TestMcpFactualDeterministicRoute:
     def test_is_daily_readiness_intent_detects_me_toca_hoy_queries(self):
         assert _is_daily_readiness_intent("y que me toca hoy?")
         assert _is_daily_readiness_intent("que me toca hoy")
+
+    def test_is_daily_readiness_intent_detects_me_encuentro_hoy_queries(self):
+        assert _is_daily_readiness_intent("Como me encuentro hoy?")
+        assert _is_daily_readiness_intent("¿Cómo me encuentro hoy?")
 
     @pytest.mark.asyncio
     async def test_build_mcp_factual_query_markdown_resolves_last_trail_activity_without_explicit_date(self):
