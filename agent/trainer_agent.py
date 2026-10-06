@@ -3839,35 +3839,24 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
         tss_source = "sin datos"
         tss_label: str | None = None
-        act_type = act.get("type") or act.get("activityType") or ""
-        act_tss = None if _is_strength_activity(act_type) else _extract_training_load_tss(act)
-        if act_tss is None:
-            est_tss, est_label = _estimate_session_tss(
-                act,
-                ftp=_extract_cycling_ftp_watts(profile),
-                running_threshold_pace_sec_per_km=running_threshold_pace,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                hr_zones_raw=None,
-                hr_threshold_bpm=hr_threshold_bpm,
-            )
-            if est_tss > 0:
-                act_tss = float(est_tss)
-                tss_label = str(est_label or "")
-                tss_source = "estimado"
-        else:
-            tss_source = "estimado"
-            est_tss, est_label = _estimate_session_tss(
-                act,
-                ftp=_extract_cycling_ftp_watts(profile),
-                running_threshold_pace_sec_per_km=running_threshold_pace,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                hr_zones_raw=None,
-                hr_threshold_bpm=hr_threshold_bpm,
-            )
-            if est_tss > 0:
-                tss_label = str(est_label or "")
+        native_tss = _extract_training_load_tss(act)
+        est_tss, est_label = _estimate_session_tss(
+            act,
+            ftp=_extract_cycling_ftp_watts(profile),
+            running_threshold_pace_sec_per_km=running_threshold_pace,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            hr_zones_raw=None,
+            hr_threshold_bpm=hr_threshold_bpm,
+        )
+        act_tss = None
+        if est_tss > 0:
+            act_tss = float(est_tss)
+            tss_label = str(est_label or "")
+            tss_source = "kairos_formula"
+        elif native_tss is not None:
+            act_tss = float(native_tss)
+            tss_source = "garmin_activity_load_fallback"
         if week_start <= d_obj <= week_end:
             bucket = _resolve_tss_bucket(act, tss_label)
             act_rows.append((
@@ -4398,15 +4387,14 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         te_value, te_source = _format_training_effect(te_payload, act_payload)
 
         # TSS de la actividad principal:
-        # - Para fuerza, priorizar TSS estimado y mostrar activity load de Garmin por separado
-        #   (no es directamente equivalente a TSS y puede parecer irrealmente bajo).
-        # - Para el resto, mantener preferencia por carga factual de Garmin y fallback estimado.
+        # - Prioridad absoluta: fórmula Kairos (_estimate_session_tss).
+        # - Fallback: activity load de Garmin solo si no hay cálculo Kairos disponible.
         primary_garmin_load = _extract_training_load_tss(act_payload)
         if primary_garmin_load is None:
             primary_garmin_load = _extract_training_load_tss(primary)
 
         hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
-        est_tss, _ = _estimate_session_tss(
+        est_tss, est_label = _estimate_session_tss(
             act_payload,
             ftp=_extract_cycling_ftp_watts(profile),
             running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(profile),
@@ -4428,29 +4416,13 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
 
         primary_tss_value: float | None = None
         primary_tss_source = "no disponible"
-        if _is_strength_activity(primary_act_type):
-            if est_tss <= 0:
-                # Fallback robusto para fuerza cuando Garmin solo expone
-                # activityTrainingLoad (no equivalente a TSS) y faltan señales
-                # para estimar IF/RPE. Usamos una intensidad moderada por duración.
-                hours = _extract_activity_duration_hours(act_payload)
-                if hours <= 0:
-                    hours = _extract_activity_duration_hours(primary)
-                if hours > 0:
-                    est_tss = round(max(0.0, hours * (0.60**2) * 100.0), 1)
-            if est_tss > 0:
-                primary_tss_value = float(est_tss)
-                primary_tss_source = "estimación determinista (fuerza por duración)"
-            elif primary_garmin_load is not None:
-                primary_tss_value = float(primary_garmin_load)
-                primary_tss_source = "Garmin activity load (aprox.)"
-        else:
-            if primary_garmin_load is not None:
-                primary_tss_value = float(primary_garmin_load)
-                primary_tss_source = "Garmin activity load"
-            elif est_tss > 0:
-                primary_tss_value = float(est_tss)
-                primary_tss_source = "estimación determinista"
+        if est_tss > 0:
+            primary_tss_value = float(est_tss)
+            lbl = str(est_label or "").strip() or "TSS"
+            primary_tss_source = f"Kairos formula ({lbl})"
+        elif primary_garmin_load is not None:
+            primary_tss_value = float(primary_garmin_load)
+            primary_tss_source = "Garmin activity load (fallback sin cálculo Kairos)"
         tss_display = f"{float(primary_tss_value):.1f}" if primary_tss_value is not None else "sin datos"
 
         raw_hr_zones = None
