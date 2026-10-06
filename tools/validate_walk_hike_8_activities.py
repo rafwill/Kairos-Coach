@@ -20,6 +20,10 @@ REF_IDS = [
     24502427862,
 ]
 
+# Operational safeguard: when this workflow captures fresh fixtures in
+# fixtures/real_payloads, stage and commit those payload files in the same
+# commit as the dependent analysis/docs changes (do not leave them only on disk).
+
 
 def _safe_json(raw: Any) -> Any:
     if isinstance(raw, (dict, list)):

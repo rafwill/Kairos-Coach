@@ -1,0 +1,149 @@
+{
+  "activityId": 24430006167,
+  "activityUUID": {
+    "uuid": "884aa40e-e621-4ccf-929c-7ce2f67792cb"
+  },
+  "activityName": "Caminata con Silvia y Yuma",
+  "userProfileId": 3252512,
+  "isMultiSportParent": false,
+  "activityTypeDTO": {
+    "typeId": 9,
+    "typeKey": "walking",
+    "parentTypeId": 17,
+    "isHidden": false,
+    "restricted": false,
+    "trimmable": true
+  },
+  "eventTypeDTO": {
+    "typeId": 9,
+    "typeKey": "uncategorized",
+    "sortOrder": 10
+  },
+  "accessControlRuleDTO": {
+    "typeId": 2,
+    "typeKey": "private"
+  },
+  "timeZoneUnitDTO": {
+    "unitId": 124,
+    "unitKey": "Europe/Paris",
+    "factor": 0.0,
+    "timeZone": "Europe/Paris"
+  },
+  "metadataDTO": {
+    "isOriginal": true,
+    "deviceApplicationInstallationId": 992087,
+    "agentApplicationInstallationId": null,
+    "agentString": null,
+    "fileFormat": {
+      "formatId": 7,
+      "formatKey": "fit"
+    },
+    "associatedCourseId": null,
+    "lastUpdateDate": "2026-09-22T15:55:42.0",
+    "uploadedDate": "2026-09-20T10:27:26.0",
+    "videoUrl": null,
+    "hasPolyline": true,
+    "hasChartData": true,
+    "hasHrTimeInZones": true,
+    "hasPowerTimeInZones": false,
+    "userInfoDto": {
+      "userProfilePk": 3252512,
+      "displayname": "rafwill",
+      "fullname": "Rafael Fernández Sánchez",
+      "profileImageUrlLarge": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/232b077b-79d1-414c-b5d0-193d101bfd90-3252512.jpg",
+      "profileImageUrlMedium": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/bdfa169d-64dd-4840-9f86-e8f012fca559-3252512.jpg",
+      "profileImageUrlSmall": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/151a0eec-9d3c-4ea2-a6f5-10d866d51eea-3252512.jpg",
+      "userPro": false
+    },
+    "childIds": [],
+    "childActivityTypes": [],
+    "sensors": null,
+    "activityImages": [],
+    "manufacturer": "GARMIN",
+    "diveNumber": null,
+    "lapCount": 3,
+    "associatedWorkoutId": null,
+    "isAtpActivity": null,
+    "deviceMetaDataDTO": {
+      "deviceId": "3393214462",
+      "deviceTypePk": 36680,
+      "deviceVersionPk": 992087
+    },
+    "hasIntensityIntervals": false,
+    "hasSplits": false,
+    "eBikeMaxAssistModes": null,
+    "eBikeBatteryUsage": null,
+    "eBikeBatteryRemaining": null,
+    "eBikeAssistModeInfoDTOList": null,
+    "hasRunPowerWindData": null,
+    "calendarEventInfo": null,
+    "groupRideUUID": null,
+    "hasHeatMap": false,
+    "sessionResultType": "ORIGINAL",
+    "hasMultiDayActivities": true,
+    "personalRecord": false,
+    "gcj02": false,
+    "runPowerWindDataEnabled": null,
+    "trimmed": false,
+    "elevationCorrected": false,
+    "manualActivity": false,
+    "autoCalcCalories": false,
+    "favorite": false
+  },
+  "summaryDTO": {
+    "startTimeLocal": "2026-09-20T11:06:00.0",
+    "startTimeGMT": "2026-09-20T09:06:00.0",
+    "startLatitude": 40.37541995756328,
+    "startLongitude": -3.725825361907482,
+    "distance": 2368.76,
+    "duration": 3053.125,
+    "movingDuration": 2245.0,
+    "elapsedDuration": 3053.125,
+    "elevationGain": 49.39,
+    "elevationLoss": 26.46,
+    "maxElevation": 631.4,
+    "minElevation": 601.2,
+    "avgElevation": 614.01,
+    "averageSpeed": 0.7760000228881836,
+    "averageMovingSpeed": 1.055126953125,
+    "maxSpeed": 2.9019999504089355,
+    "calories": 146.0,
+    "bmrCalories": 66.0,
+    "averageHR": 60.0,
+    "maxHR": 82.0,
+    "minHR": 45.0,
+    "averageRunCadence": 64.53125,
+    "maxRunCadence": 222.0,
+    "averageTemperature": 30.90283560964688,
+    "maxTemperature": 33.0,
+    "minTemperature": 28.0,
+    "trainingEffect": 0.10000000149011612,
+    "anaerobicTrainingEffect": 0.0,
+    "aerobicTrainingEffectMessage": "NO_AEROBIC_BENEFIT_18",
+    "anaerobicTrainingEffectMessage": "NO_ANAEROBIC_BENEFIT_0",
+    "endLatitude": 40.37477840669453,
+    "endLongitude": -3.7270719185471535,
+    "maxVerticalSpeed": 1.20001220703125,
+    "waterEstimated": 353.0,
+    "trainingEffectLabel": "UNKNOWN",
+    "activityTrainingLoad": 2.1285552978515625,
+    "minActivityLapDuration": 678.211,
+    "moderateIntensityMinutes": 5,
+    "vigorousIntensityMinutes": 0,
+    "steps": 3930,
+    "recoveryHeartRate": 9
+  },
+  "connectIQMeasurements": [
+    {
+      "appID": "5a3e2cda-12f0-4afd-88ed-000e67a68d84",
+      "developerFieldNumber": 6,
+      "value": "98.0"
+    },
+    {
+      "appID": "5a3e2cda-12f0-4afd-88ed-000e67a68d84",
+      "developerFieldNumber": 7,
+      "value": "93.0"
+    }
+  ],
+  "locationName": "Madrid"
+}

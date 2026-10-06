@@ -1,0 +1,150 @@
+{
+  "activityId": 24492874850,
+  "activityUUID": {
+    "uuid": "7a2ead0c-efd9-4c90-b081-edbe5d72c892"
+  },
+  "activityName": "Turismo. Valencia ",
+  "description": "",
+  "userProfileId": 3252512,
+  "isMultiSportParent": false,
+  "activityTypeDTO": {
+    "typeId": 9,
+    "typeKey": "walking",
+    "parentTypeId": 17,
+    "isHidden": false,
+    "restricted": false,
+    "trimmable": true
+  },
+  "eventTypeDTO": {
+    "typeId": 9,
+    "typeKey": "uncategorized",
+    "sortOrder": 10
+  },
+  "accessControlRuleDTO": {
+    "typeId": 2,
+    "typeKey": "private"
+  },
+  "timeZoneUnitDTO": {
+    "unitId": 124,
+    "unitKey": "Europe/Paris",
+    "factor": 0.0,
+    "timeZone": "Europe/Paris"
+  },
+  "metadataDTO": {
+    "isOriginal": true,
+    "deviceApplicationInstallationId": 992087,
+    "agentApplicationInstallationId": null,
+    "agentString": null,
+    "fileFormat": {
+      "formatId": 7,
+      "formatKey": "fit"
+    },
+    "associatedCourseId": null,
+    "lastUpdateDate": "2026-09-27T13:32:07.0",
+    "uploadedDate": "2026-09-25T12:18:41.0",
+    "videoUrl": null,
+    "hasPolyline": true,
+    "hasChartData": true,
+    "hasHrTimeInZones": true,
+    "hasPowerTimeInZones": false,
+    "userInfoDto": {
+      "userProfilePk": 3252512,
+      "displayname": "rafwill",
+      "fullname": "Rafael Fernández Sánchez",
+      "profileImageUrlLarge": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/232b077b-79d1-414c-b5d0-193d101bfd90-3252512.jpg",
+      "profileImageUrlMedium": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/bdfa169d-64dd-4840-9f86-e8f012fca559-3252512.jpg",
+      "profileImageUrlSmall": "https://s3.amazonaws.com/garmin-connect-prod/profile_images/151a0eec-9d3c-4ea2-a6f5-10d866d51eea-3252512.jpg",
+      "userPro": false
+    },
+    "childIds": [],
+    "childActivityTypes": [],
+    "sensors": null,
+    "activityImages": [],
+    "manufacturer": "GARMIN",
+    "diveNumber": null,
+    "lapCount": 11,
+    "associatedWorkoutId": null,
+    "isAtpActivity": null,
+    "deviceMetaDataDTO": {
+      "deviceId": "3393214462",
+      "deviceTypePk": 36680,
+      "deviceVersionPk": 992087
+    },
+    "hasIntensityIntervals": false,
+    "hasSplits": false,
+    "eBikeMaxAssistModes": null,
+    "eBikeBatteryUsage": null,
+    "eBikeBatteryRemaining": null,
+    "eBikeAssistModeInfoDTOList": null,
+    "hasRunPowerWindData": null,
+    "calendarEventInfo": null,
+    "groupRideUUID": null,
+    "hasHeatMap": false,
+    "sessionResultType": "ORIGINAL",
+    "hasMultiDayActivities": true,
+    "personalRecord": false,
+    "gcj02": false,
+    "runPowerWindDataEnabled": null,
+    "manualActivity": false,
+    "elevationCorrected": false,
+    "trimmed": false,
+    "autoCalcCalories": false,
+    "favorite": false
+  },
+  "summaryDTO": {
+    "startTimeLocal": "2026-09-25T10:26:23.0",
+    "startTimeGMT": "2026-09-25T08:26:23.0",
+    "startLatitude": 39.467501509934664,
+    "startLongitude": -0.36000441759824753,
+    "distance": 10630.02,
+    "duration": 12305.747,
+    "movingDuration": 7864.0,
+    "elapsedDuration": 13707.186,
+    "elevationGain": 55.8,
+    "elevationLoss": 52.47,
+    "maxElevation": 33.6,
+    "minElevation": 4.2,
+    "avgElevation": 22.73,
+    "averageSpeed": 0.8640000224113464,
+    "averageMovingSpeed": 1.3517318834244658,
+    "maxSpeed": 2.6029999256134033,
+    "calories": 585.0,
+    "bmrCalories": 266.0,
+    "averageHR": 64.0,
+    "maxHR": 98.0,
+    "minHR": 46.0,
+    "averageRunCadence": 65.453125,
+    "maxRunCadence": 228.0,
+    "averageTemperature": 31.93592254095503,
+    "maxTemperature": 36.0,
+    "minTemperature": 28.0,
+    "trainingEffect": 0.20000000298023224,
+    "anaerobicTrainingEffect": 0.0,
+    "aerobicTrainingEffectMessage": "NO_AEROBIC_BENEFIT_18",
+    "anaerobicTrainingEffectMessage": "NO_ANAEROBIC_BENEFIT_0",
+    "endLatitude": 39.46740394458175,
+    "endLongitude": -0.36014548502862453,
+    "maxVerticalSpeed": 0.40000152587890625,
+    "waterEstimated": 1621.0,
+    "trainingEffectLabel": "UNKNOWN",
+    "activityTrainingLoad": 3.07177734375,
+    "minActivityLapDuration": 848.128,
+    "moderateIntensityMinutes": 47,
+    "vigorousIntensityMinutes": 0,
+    "steps": 15934,
+    "recoveryHeartRate": 16
+  },
+  "connectIQMeasurements": [
+    {
+      "appID": "5a3e2cda-12f0-4afd-88ed-000e67a68d84",
+      "developerFieldNumber": 6,
+      "value": "218.0"
+    },
+    {
+      "appID": "5a3e2cda-12f0-4afd-88ed-000e67a68d84",
+      "developerFieldNumber": 7,
+      "value": "114.0"
+    }
+  ],
+  "locationName": "Valencia"
+}
