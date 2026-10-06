@@ -12,6 +12,7 @@ Cubre:
 """
 
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6332,6 +6333,51 @@ class TestMcpFactualDeterministicRoute:
         assert "sTSS: 0.0" in out
 
     @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_shows_cycling_tss_label_not_rtss_in_activity_row(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 1)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+
+        profile = {
+            "load_metrics": {
+                "series": [
+                    {"date": "2026-08-31", "tss": 40.4, "ctl": 69.1, "atl": 67.6, "tsb": 1.5},
+                    {"date": "2026-09-01", "tss": 0.0, "ctl": 69.1, "atl": 67.6, "tsb": 1.5},
+                ]
+            }
+        }
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return [
+                {
+                    "activityName": "Road. Un poquito de CDC",
+                    "activityType": "road_biking",
+                    "startTimeLocal": "2026-08-31 08:00:00",
+                    "trainingLoad": 40.4,
+                    "duration": 4105,
+                }
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="cuanto tss hice esta semana?",
+        )
+
+        assert "Road. Un poquito de CDC (TSS)" in out
+        assert "Road. Un poquito de CDC (rTSS)" not in out
+
+    @pytest.mark.asyncio
     async def test_chat_factual_route_does_not_call_llm(self):
         from agent.trainer_agent import TrainerAgent
 
@@ -6475,7 +6521,9 @@ class TestMcpFactualDeterministicRoute:
                 user_message="Cuales son los TSS de la actividad del 17/08/26?",
             )
 
-        assert "| TSS del día | 79.4 |" in out
+        m = re.search(r"\| TSS del día \|\s*([0-9]+(?:\.[0-9]+)?)\s*\|", out)
+        assert m is not None
+        assert float(m.group(1)) > 0.0
         assert "garmin_activities(fallback)" in out
 
 

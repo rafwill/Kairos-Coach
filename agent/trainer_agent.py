@@ -1903,19 +1903,22 @@ def _compute_effective_week_tss_from_series_and_activities(
         if not d_iso:
             continue
 
-        act_tss = _extract_training_load_tss(act)
-        if act_tss is None:
-            est_tss, _ = _estimate_session_tss(
-                act,
-                ftp=_extract_cycling_ftp_watts(profile),
-                running_threshold_pace_sec_per_km=running_threshold_pace,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                hr_zones_raw=None,
-                hr_threshold_bpm=hr_threshold_bpm,
-            )
-            if est_tss > 0:
-                act_tss = float(est_tss)
+        act_tss = None
+        est_tss, _ = _estimate_session_tss(
+            act,
+            ftp=_extract_cycling_ftp_watts(profile),
+            running_threshold_pace_sec_per_km=running_threshold_pace,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            hr_zones_raw=None,
+            hr_threshold_bpm=hr_threshold_bpm,
+        )
+        if est_tss > 0:
+            act_tss = float(est_tss)
+        else:
+            native_tss = _extract_training_load_tss(act)
+            if native_tss is not None:
+                act_tss = float(native_tss)
 
         if act_tss is None:
             continue
@@ -3859,6 +3862,11 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             tss_source = "garmin_activity_load_fallback"
         if week_start <= d_obj <= week_end:
             bucket = _resolve_tss_bucket(act, tss_label)
+            display_bucket = bucket
+            act_type_raw = act.get("type") or act.get("activityType") or ""
+            if _is_cycling_activity(act_type_raw) and str(tss_label or "").strip().upper() == "TSS":
+                # Evita confusión visual: en ciclismo, TSS no debe mostrarse como rTSS.
+                display_bucket = "TSS"
             act_rows.append((
                 d_obj,
                 sport,
@@ -3867,6 +3875,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
                 tss_source,
                 tss_label,
                 bucket,
+                display_bucket,
             ))
         if act_tss is not None:
             activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
@@ -4004,9 +4013,9 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     if act_rows:
         lines.append("Actividades:")
         rows_by_day: dict[str, list[tuple[date, str, str, float | None, str]]] = {}
-        for d_obj, sport, name, tss_val, _tss_src, _tss_label, tss_bucket in act_rows:
+        for d_obj, sport, name, tss_val, _tss_src, _tss_label, _tss_bucket, display_bucket in act_rows:
             d_iso = d_obj.isoformat()
-            rows_by_day.setdefault(d_iso, []).append((d_obj, sport, name, tss_val, tss_bucket))
+            rows_by_day.setdefault(d_iso, []).append((d_obj, sport, name, tss_val, display_bucket))
 
         for d_iso in sorted(rows_by_day.keys()):
             d_obj = rows_by_day[d_iso][0][0]
@@ -4310,19 +4319,22 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
     for act in activities:
         if not isinstance(act, dict):
             continue
-        act_tss = _extract_training_load_tss(act)
-        if act_tss is None:
-            est_tss, _ = _estimate_session_tss(
-                act,
-                ftp=cycling_ftp,
-                running_threshold_pace_sec_per_km=running_threshold_pace,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                hr_zones_raw=None,
-                hr_threshold_bpm=hr_threshold_bpm,
-            )
-            if est_tss > 0:
-                act_tss = float(est_tss)
+        act_tss = None
+        est_tss, _ = _estimate_session_tss(
+            act,
+            ftp=cycling_ftp,
+            running_threshold_pace_sec_per_km=running_threshold_pace,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            hr_zones_raw=None,
+            hr_threshold_bpm=hr_threshold_bpm,
+        )
+        if est_tss > 0:
+            act_tss = float(est_tss)
+        else:
+            native_tss = _extract_training_load_tss(act)
+            if native_tss is not None:
+                act_tss = float(native_tss)
         if act_tss is not None and float(act_tss) > 0:
             activity_tss_day += float(act_tss)
     activity_tss_day = round(activity_tss_day, 1)
@@ -9425,14 +9437,35 @@ class TrainerAgent:
                 )
                 return False, "falló verificación incremental", None
 
+            running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(self.user_profile)
+            hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(self.user_profile)
+            hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(self.user_profile)
+            cycling_ftp = _extract_cycling_ftp_watts(self.user_profile)
+
             garmin_by_day: dict[str, tuple[float, int]] = {}
             for act in window_activities or []:
                 d_iso = _extract_activity_date_iso(act)
                 if not d_iso or d_iso < anchor_iso:
                     continue
+                act_tss = None
+                est_tss, _ = _estimate_session_tss(
+                    act,
+                    ftp=cycling_ftp,
+                    running_threshold_pace_sec_per_km=running_threshold_pace,
+                    hr_rest_bpm=hr_rest_bpm,
+                    hr_max_bpm=hr_max_bpm,
+                    hr_zones_raw=None,
+                    hr_threshold_bpm=hr_threshold_bpm,
+                )
+                if est_tss > 0:
+                    act_tss = float(est_tss)
+                else:
+                    native_tss = _extract_training_load_tss(act)
+                    if native_tss is not None:
+                        act_tss = float(native_tss)
                 prev_load, prev_count = garmin_by_day.get(d_iso, (0.0, 0))
                 garmin_by_day[d_iso] = (
-                    prev_load + float(_extract_training_load_tss(act) or 0.0),
+                    prev_load + float(act_tss or 0.0),
                     prev_count + 1,
                 )
 

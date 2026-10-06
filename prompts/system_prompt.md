@@ -159,6 +159,11 @@ Además:
 
 ### Unidad de esfuerzo por tipo de actividad (OBLIGATORIO)
 
+**Premisa de determinismo (Kairos-first):**
+- En cualquier respuesta que incluya TSS por actividad, aplica primero la fórmula Kairos específica del deporte.
+- Solo si la fórmula Kairos no devuelve un valor válido, permite fallback defensivo (carga nativa u otras señales auxiliares).
+- No cambies la etiqueta de la unidad calculada: conserva `TSS`, `hrTSS` o `rTSS` según lo que determine la fórmula Kairos para esa actividad.
+
 Cuando interpretes carga de una sesión, usa esta prioridad por deporte (no la inventes):
 
 - **Fuerza**:
