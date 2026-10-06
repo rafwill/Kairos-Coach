@@ -468,15 +468,31 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
         # Procesado específico para body battery: extrae campos clave antes del truncado
         if tool_name == "get_body_battery" and isinstance(data, (dict, list)):
             _bb_list = data if isinstance(data, list) else [data]
-            if _bb_list and isinstance(_bb_list[0], dict):
-                _bb = _bb_list[0]
+
+            def _bb_score(item: dict) -> int:
+                score = 0
+                if item.get("body_battery_level") is not None or item.get("bodyBatteryLevel") is not None or item.get("bodyBatteryMostRecentValue") is not None or item.get("current") is not None:
+                    score += 100
+                if item.get("highestBodyBattery") is not None or item.get("highest") is not None or item.get("body_battery_highest") is not None:
+                    score += 10
+                if item.get("lowestBodyBattery") is not None or item.get("lowest") is not None or item.get("body_battery_lowest") is not None:
+                    score += 10
+                if item.get("charged") is not None or item.get("body_battery_charged") is not None or item.get("bodyBatteryCharged") is not None:
+                    score += 1
+                if item.get("drained") is not None or item.get("body_battery_drained") is not None or item.get("bodyBatteryDrained") is not None:
+                    score += 1
+                return score
+
+            _bb_candidates = [x for x in _bb_list if isinstance(x, dict)]
+            if _bb_candidates:
+                _bb = max(_bb_candidates, key=_bb_score)
                 _bb_out = {}
                 for _k, _aliases in (
                     ("charged",  ["charged", "body_battery_charged", "bodyBatteryCharged"]),
                     ("drained",  ["drained", "body_battery_drained", "bodyBatteryDrained"]),
                     ("highest",  ["highestBodyBattery", "highest", "body_battery_highest"]),
                     ("lowest",   ["lowestBodyBattery", "lowest", "body_battery_lowest"]),
-                    ("level",    ["body_battery_level", "bodyBatteryLevel", "bodyBatteryMostRecentValue", "current"]),
+                    ("level",    ["body_battery_level", "bodyBatteryLevel", "bodyBatteryMostRecentValue", "bodyBatteryValue", "current", "value"]),
                 ):
                     for _a in _aliases:
                         _v = _bb.get(_a)
@@ -1065,25 +1081,113 @@ def _is_activity_in_last_48h(activity: dict, now: datetime | None = None) -> boo
 
 def _pick_day_payload(payload: Any, target_date: str) -> dict | None:
     """Intenta extraer el bloque de datos del día objetivo desde payloads heterogéneos."""
+    def _date_match(item: dict) -> bool:
+        if not target_date:
+            return False
+        day = str(item.get("date") or item.get("calendarDate") or item.get("measurementDate") or "")
+        return day == target_date
+
+    def _walk(node: Any) -> dict | None:
+        if isinstance(node, list):
+            # 1) Priorizar coincidencia exacta por fecha.
+            for item in node:
+                if isinstance(item, dict) and _date_match(item):
+                    return item
+            # 2) Buscar recursivamente en elementos envueltos.
+            for item in node:
+                nested = _walk(item)
+                if nested is not None:
+                    return nested
+            # 3) Fallback al primer dict disponible.
+            for item in node:
+                if isinstance(item, dict):
+                    return item
+            return None
+
+        if isinstance(node, dict):
+            if _date_match(node):
+                return node
+
+            # Claves contenedoras comunes en respuestas MCP/Garmin.
+            for key in (
+                "data",
+                "result",
+                "items",
+                "values",
+                "measurements",
+                "records",
+                "dailySummary",
+                "summaries",
+                "stressValues",
+                "allDayStressValues",
+            ):
+                if key in node:
+                    nested = _walk(node.get(key))
+                    if nested is not None:
+                        return nested
+
+            # Último recurso: explorar recursivo cualquier valor dict/list.
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    nested = _walk(value)
+                    if nested is not None:
+                        return nested
+
+            # Si no hay nada mejor, conservar dict raíz.
+            return node
+
+        return None
+
+    return _walk(payload)
+
+
+def _pick_body_battery_day_payload(payload: Any, target_date: str) -> dict | None:
+    """Selecciona el registro de body battery más informativo del día objetivo."""
     if isinstance(payload, dict):
         return payload
-    if isinstance(payload, list):
-        # Priorizar coincidencia por fecha cuando exista.
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            day = str(item.get("date") or item.get("calendarDate") or "")
-            if day == target_date:
-                return item
-        for item in payload:
-            if isinstance(item, dict):
-                return item
-    return None
+    if not isinstance(payload, list):
+        return None
+
+    candidates: list[dict] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        day = str(item.get("date") or item.get("calendarDate") or "")
+        if day == target_date:
+            candidates.append(item)
+
+    if not candidates:
+        candidates = [item for item in payload if isinstance(item, dict)]
+    if not candidates:
+        return None
+
+    def _score(day: dict) -> int:
+        score = 0
+        if (
+            day.get("body_battery_level") is not None
+            or day.get("bodyBatteryLevel") is not None
+            or day.get("bodyBatteryMostRecentValue") is not None
+            or day.get("bodyBatteryValue") is not None
+            or day.get("current") is not None
+            or day.get("value") is not None
+        ):
+            score += 100
+        if day.get("highestBodyBattery") is not None or day.get("highest") is not None or day.get("body_battery_highest") is not None:
+            score += 10
+        if day.get("lowestBodyBattery") is not None or day.get("lowest") is not None or day.get("body_battery_lowest") is not None:
+            score += 10
+        if day.get("charged") is not None or day.get("body_battery_charged") is not None or day.get("bodyBatteryCharged") is not None:
+            score += 1
+        if day.get("drained") is not None or day.get("body_battery_drained") is not None or day.get("bodyBatteryDrained") is not None:
+            score += 1
+        return score
+
+    return max(candidates, key=_score)
 
 
 def _format_body_battery_day(payload: Any, target_date: str) -> str:
     """Formatea Body Battery con datos reales del día si están disponibles."""
-    day = _pick_day_payload(payload, target_date)
+    day = _pick_body_battery_day_payload(payload, target_date)
     if not day:
         return "sin datos"
 
@@ -1091,7 +1195,9 @@ def _format_body_battery_day(payload: Any, target_date: str) -> str:
         day.get("body_battery_level")
         or day.get("bodyBatteryLevel")
         or day.get("bodyBatteryMostRecentValue")
+        or day.get("bodyBatteryValue")
         or day.get("current")
+        or day.get("value")
     )
     highest = day.get("highestBodyBattery") or day.get("highest") or day.get("body_battery_highest")
     lowest = day.get("lowestBodyBattery") or day.get("lowest") or day.get("body_battery_lowest")
@@ -1104,7 +1210,7 @@ def _format_body_battery_day(payload: Any, target_date: str) -> str:
     if highest is not None and lowest is not None:
         parts.append(f"max {int(highest)}/min {int(lowest)}")
     if charged is not None and drained is not None:
-        parts.append(f"+{int(charged)}/-{int(drained)}")
+        parts.append(f"cargado/drenado +{int(charged)}/-{int(drained)}")
 
     if parts:
         return " · ".join(parts)
@@ -1943,9 +2049,19 @@ def _compute_effective_week_tss_from_series_and_activities(
 
 def _build_proactive_status_markdown(snapshot: dict) -> str:
     """Genera un bloque Markdown con estado proactivo de últimas 48h."""
+    unavailable_label = "No disponible en este momento"
+
     def _is_generic_ok_summary(text: str) -> bool:
         lowered = (text or "").strip().lower()
         return "hoy=ok" in lowered or "ayer=ok" in lowered or "hoy=no" in lowered or "ayer=no" in lowered
+
+    def _normalize_wellness_text(text: str | None) -> str:
+        t = str(text or "").strip().lower()
+        if t in {"", "sin datos", "datos disponibles", "sin datos recientes"}:
+            return unavailable_label
+        if ("datos disponibles" in t or "sin datos" in t) and not re.search(r"\d", t):
+            return unavailable_label
+        return str(text or "").strip()
 
     def _to_ddmmyyyy(value: str) -> str:
         try:
@@ -1961,6 +2077,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     body_battery = snapshot.get("body_battery", {}) or {}
     hrv = snapshot.get("hrv", {}) or {}
     sleep = snapshot.get("sleep", {}) or {}
+    wellness_sources = snapshot.get("wellness_sources", {}) or {}
     load_fatigue = snapshot.get("load_fatigue") or {}
     trainings = snapshot.get("trainings", []) or []
     dates = snapshot.get("dates", {}) or {}
@@ -1990,7 +2107,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             f"ayer={_format_body_battery_day(body_battery.get('yesterday'), yesterday_iso)}"
         )
     elif _is_generic_ok_summary(body_summary):
-        body_summary = "sin datos recientes"
+        body_summary = unavailable_label
 
     hrv_summary = hrv.get("summary") or ""
     if hrv.get("today") is not None or hrv.get("yesterday") is not None:
@@ -1999,7 +2116,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             f"ayer={_format_hrv_day(hrv.get('yesterday'), yesterday_iso)}"
         )
     elif _is_generic_ok_summary(hrv_summary):
-        hrv_summary = "sin datos recientes"
+        hrv_summary = unavailable_label
 
     sleep_summary = sleep.get("summary") or ""
     if sleep.get("today") is not None or sleep.get("yesterday") is not None:
@@ -2008,11 +2125,17 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             f"ayer={_format_sleep_day(sleep.get('yesterday'), yesterday_iso)}"
         )
     elif _is_generic_ok_summary(sleep_summary):
-        sleep_summary = "sin datos recientes"
+        sleep_summary = unavailable_label
 
-    lines.append("- Body Battery: " + (body_summary or "sin datos recientes"))
-    lines.append("- HRV: " + (hrv_summary or "sin datos recientes"))
-    lines.append("- Sueno: " + (sleep_summary or "sin datos recientes"))
+    lines.append("- Body Battery: " + _normalize_wellness_text(body_summary))
+    lines.append("- HRV: " + _normalize_wellness_text(hrv_summary))
+    lines.append("- Sueno: " + _normalize_wellness_text(sleep_summary))
+    if wellness_sources:
+        lines.append(
+            "- Wellness origen: "
+            f"hoy(body={wellness_sources.get('body_today', 'n/d')}, hrv={wellness_sources.get('hrv_today', 'n/d')})"
+            f" · ayer(body={wellness_sources.get('body_yday', 'n/d')}, hrv={wellness_sources.get('hrv_yday', 'n/d')})"
+        )
     lines.append("- Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)): " + _format_load_fatigue_summary(load_fatigue))
 
     if load_fatigue and load_fatigue.get("latest"):
@@ -2312,14 +2435,25 @@ def _is_week_tss_intent(user_message: str) -> bool:
     Esta intención evita respuestas generativas ambiguas y fuerza una salida
     basada en semana natural (lunes→domingo), acumulada hasta hoy.
     """
-    text = (user_message or "").strip().lower()
-    if not text:
+    text_raw = (user_message or "").strip().lower()
+    if not text_raw:
         return False
-    if "tss" not in text:
+
+    # Normalización robusta para tolerar acentos y artefactos de encoding
+    # (ej.: "cu├ánto") que pueden llegar desde capturas de consola/pipeline.
+    text_ascii = "".join(
+        ch for ch in unicodedata.normalize("NFD", text_raw) if unicodedata.category(ch) != "Mn"
+    )
+    text_norm = re.sub(r"[^a-z0-9 ]+", " ", text_ascii)
+    text_norm = re.sub(r"\s+", " ", text_norm).strip()
+
+    if "tss" not in text_norm:
         return False
+
     # Consulta explícita de datos/cifras/comparativa semanal: priorizar respuesta directa.
     data_markers = [
         "cuanto", "cuánto", "cual", "cuál", "cuales", "cuáles", "dime", "consulta", "datos", "acumulado", "llevo",
+        "hice", "he hecho", "total",
         "compara", "comparame", "compárame", "comparativa", "diferencia", "porcentaje", "porcentual", "vs",
         "spike", "semana pasada", "anterior",
         "contribuye", "contribuido", "contribucion", "contribución",
@@ -2328,7 +2462,9 @@ def _is_week_tss_intent(user_message: str) -> bool:
     week_markers = [
         "esta semana", "semana", "semanal", "acumulado semanal", "week",
     ]
-    return any(marker in text for marker in week_markers) and any(marker in text for marker in data_markers)
+    has_week = any(marker in text_raw for marker in week_markers) or any(marker in text_norm for marker in week_markers)
+    has_data = any(marker in text_raw for marker in data_markers) or any(marker in text_norm for marker in data_markers)
+    return has_week and has_data
 
 
 def _is_week_tss_followup_intent(user_message: str, history: list[dict] | None = None) -> bool:
@@ -3535,6 +3671,10 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         "cómo estoy hoy para entrenar",
         "como estoy",
         "cómo estoy",
+        "como me encuentro",
+        "cómo me encuentro",
+        "como me encuentro hoy",
+        "cómo me encuentro hoy",
         "que me toca hoy",
         "qué me toca hoy",
         "me toca hoy",
@@ -3567,6 +3707,8 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
     status_markers = (
         "como estoy",
         "cómo estoy",
+        "como me encuentro",
+        "cómo me encuentro",
         "estado",
         "recuperacion",
         "recuperación",
@@ -4112,7 +4254,7 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
             log.debug("_build_week_activities_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
 
-    rows: list[tuple[date, str, str, int | None]] = []
+    rows: list[tuple[date, str, str, int | None, str | None]] = []
     for act in activities:
         if not isinstance(act, dict):
             continue
@@ -4127,6 +4269,9 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
             continue
         name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
+        act_id = None
+        if act.get("activityId") is not None:
+            act_id = str(act.get("activityId")).strip() or None
         dur = act.get("duration") or act.get("duration_seconds") or act.get("movingDuration")
         dur_min = None
         try:
@@ -4134,7 +4279,7 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
                 dur_min = int(round(float(dur) / 60.0))
         except (TypeError, ValueError):
             dur_min = None
-        rows.append((d_obj, sport, name, dur_min))
+        rows.append((d_obj, sport, name, dur_min, act_id))
 
     rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
 
@@ -4152,11 +4297,12 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
     ]
 
     if rows:
-        for d_obj, sport, name, dur_min in rows:
+        for d_obj, sport, name, dur_min, act_id in rows:
+            id_suffix = f" [id:{act_id}]" if act_id else ""
             if dur_min is not None and dur_min > 0:
-                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} ({dur_min} min)")
+                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name} ({dur_min} min){id_suffix}")
             else:
-                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name}")
+                lines.append(f"- {d_obj.strftime('%d/%m')}: {sport} — {name}{id_suffix}")
     else:
         lines.append("- Sin actividades en el rango consultado.")
 
@@ -4169,7 +4315,7 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
     lines.append("")
     lines.append("## 🎯 Próximo paso")
     lines.append("- Si quieres, te calculo el TSS estimado de esta misma semana a partir de estas actividades.")
-    lines.append("- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")
+    lines.append("- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad; IDs Garmin incluidos para trazabilidad).")
     return "\n".join(lines)
 
 
@@ -4517,6 +4663,20 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         ),
     )
 
+    # Fallback DB-first para wellness diario (Body Battery/HRV) cuando MCP no trae detalle útil.
+    body_fmt_probe = _format_body_battery_day(body_payload, target_iso)
+    hrv_fmt_probe = _format_hrv_day(hrv_payload, target_iso)
+    if body_fmt_probe in {"sin datos", "datos disponibles"} or hrv_fmt_probe in {"sin datos", "datos disponibles"}:
+        try:
+            _wellness_row = _storage.get_wellness_daily(target_iso)
+        except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+            _wellness_row = None
+        db_body_payload, db_hrv_payload = _build_wellness_payloads_from_row(_wellness_row, target_iso)
+        if body_fmt_probe in {"sin datos", "datos disponibles"} and db_body_payload is not None:
+            body_payload = db_body_payload
+        if hrv_fmt_probe in {"sin datos", "datos disponibles"} and db_hrv_payload is not None:
+            hrv_payload = db_hrv_payload
+
     # TSS del día: priorizar tendencia MCP; fallback a serie local calculada desde Garmin.
     tss_day: float | None = None
     trend_points = _extract_training_load_points(trend_payload)
@@ -4544,6 +4704,15 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         tss_day = activity_tss_day
         tss_source = "garmin_activities(fallback)"
 
+    rhr_display = _format_rhr_day(rhr_payload, target_iso)
+    if rhr_display == "sin datos":
+        profile_rhr, _ = _resolve_hr_profile_values(profile)
+        if profile_rhr is not None:
+            try:
+                rhr_display = f"{int(round(float(profile_rhr)))} bpm"
+            except (TypeError, ValueError):
+                pass
+
     def _duration_min(activity: dict) -> int | None:
         dur = activity.get("duration") or activity.get("duration_seconds") or activity.get("movingDuration")
         if dur is None:
@@ -4562,7 +4731,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         "|---|---|---|",
         f"| Fecha consultada | {target_d.strftime('%d/%m/%Y')} | consulta factual MCP |",
         f"| TSS del día | {f'{tss_day:.1f}' if tss_day is not None else 'sin datos'} | {tss_source if tss_day is not None else 'no disponible'} |",
-        f"| FC en reposo | {_format_rhr_day(rhr_payload, target_iso)} | Garmin RHR |",
+        f"| FC en reposo | {rhr_display} | Garmin RHR |",
         f"| Sueño | {_format_sleep_day(sleep_payload, target_iso)} | Garmin sleep |",
         f"| Estrés | {_format_stress_day(stress_summary_payload, all_day_stress_payload, target_iso)} | Garmin stress_summary/all_day_stress |",
         f"| Eventos diarios | {_format_all_day_events(all_day_events_payload, target_iso)} | Garmin all_day_events |",
@@ -4937,19 +5106,115 @@ def _build_startup_plan_recommendation(plan: dict) -> str:
 
 def _extract_body_battery_level(payload: Any, target_date: str) -> float | None:
     """Extrae nivel de Body Battery del día objetivo."""
-    day = _pick_day_payload(payload, target_date)
+    day = _pick_body_battery_day_payload(payload, target_date)
     if not isinstance(day, dict):
         return None
     value = (
         day.get("body_battery_level")
         or day.get("bodyBatteryLevel")
         or day.get("bodyBatteryMostRecentValue")
+        or day.get("bodyBatteryValue")
         or day.get("current")
+        or day.get("value")
     )
     try:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _extract_body_battery_snapshot(payload: Any, target_date: str) -> dict | None:
+    """Extrae campos normalizados de Body Battery para persistencia diaria."""
+    day = _pick_body_battery_day_payload(payload, target_date)
+    if not isinstance(day, dict):
+        return None
+
+    def _first(*keys: str):
+        for key in keys:
+            value = day.get(key)
+            if value is not None:
+                return value
+        return None
+
+    snapshot = {
+        "level": _first("body_battery_level", "bodyBatteryLevel", "bodyBatteryMostRecentValue", "bodyBatteryValue", "current", "value"),
+        "charged": _first("charged", "body_battery_charged", "bodyBatteryCharged"),
+        "drained": _first("drained", "body_battery_drained", "bodyBatteryDrained"),
+        "highest": _first("highestBodyBattery", "highest", "body_battery_highest"),
+        "lowest": _first("lowestBodyBattery", "lowest", "body_battery_lowest"),
+    }
+    if all(value is None for value in snapshot.values()):
+        return None
+    return snapshot
+
+
+def _extract_hrv_snapshot(payload: Any, target_date: str) -> dict | None:
+    """Extrae campos normalizados de HRV para persistencia diaria."""
+    day = _pick_day_payload(payload, target_date)
+    if not isinstance(day, dict):
+        return None
+
+    def _first(*keys: str):
+        for key in keys:
+            value = day.get(key)
+            if value is not None:
+                return value
+        return None
+
+    snapshot = {
+        "last_night_avg_ms": _first("last_night_avg_hrv_ms", "lastNightAvg", "avgOvernightHrv", "avgHrv"),
+        "weekly_avg_ms": _first("weekly_avg_hrv_ms", "weeklyAvg"),
+        "status": _first("status"),
+    }
+    if all(value is None for value in snapshot.values()):
+        return None
+    return snapshot
+
+
+def _build_wellness_payloads_from_row(row: dict | None, metric_date: str) -> tuple[dict | None, dict | None]:
+    """Convierte una fila de wellness_daily en payloads compatibles con los formateadores."""
+    if not isinstance(row, dict):
+        return (None, None)
+
+    body_payload = {
+        "date": metric_date,
+        "body_battery_level": row.get("body_battery_level"),
+        "body_battery_charged": row.get("bb_charged"),
+        "body_battery_drained": row.get("bb_drained"),
+        "body_battery_highest": row.get("bb_highest"),
+        "body_battery_lowest": row.get("bb_lowest"),
+    }
+    hrv_payload = {
+        "date": metric_date,
+        "last_night_avg_hrv_ms": row.get("hrv_last_night_avg_ms"),
+        "weekly_avg_hrv_ms": row.get("hrv_weekly_avg_ms"),
+        "status": row.get("hrv_status"),
+    }
+
+    has_body = any(v is not None for k, v in body_payload.items() if k != "date")
+    has_hrv = any(v is not None for k, v in hrv_payload.items() if k != "date")
+    return (body_payload if has_body else None, hrv_payload if has_hrv else None)
+
+
+def _is_wellness_row_fresh(row: dict | None, *, max_age_hours: float) -> bool:
+    """Evalúa frescura de un snapshot wellness en DB."""
+    if not isinstance(row, dict):
+        return False
+    if max_age_hours <= 0:
+        return False
+
+    stamp_raw = row.get("pulled_at") or row.get("updated_at")
+    if not stamp_raw:
+        return False
+    try:
+        stamp = datetime.fromisoformat(str(stamp_raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+
+    age_hours = (datetime.now(tz=timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds() / 3600.0
+    return age_hours <= max_age_hours
 
 
 def _extract_sleep_inputs(payload: Any, target_date: str) -> tuple[float | None, float | None]:
@@ -9963,6 +10228,9 @@ class TrainerAgent:
         two_days_ago_iso = (date.today() - timedelta(days=2)).isoformat()
         _pf = prefetch_today or {}
         _t_snap = time.perf_counter()
+        if not hasattr(self, "_session_wellness_cache") or not isinstance(getattr(self, "_session_wellness_cache", None), dict):
+            self._session_wellness_cache = {}
+        _session_wellness_cache: dict[str, dict[str, Any]] = self._session_wellness_cache
 
         async def _tool_json(tool_name: str, args: dict) -> Any:
             try:
@@ -9998,12 +10266,113 @@ class TrainerAgent:
                 return _try_parse_json(compact) or compact
             return await _tool_json(tool_name, args)
 
+        def _wellness_ttl_hours() -> float:
+            raw = str(os.environ.get("KAIROS_WELLNESS_TTL_HOURS", "6") or "6").strip()
+            try:
+                value = float(raw)
+            except ValueError:
+                return 6.0
+            return max(0.0, value)
+
+        def _wellness_refresh_on_startup() -> bool:
+            raw = str(os.environ.get("KAIROS_WELLNESS_REFRESH_ON_STARTUP", "true") or "true").strip().lower()
+            return raw not in {"0", "false", "no", "off"}
+
+        def _safe_get_wellness_row(metric_date: str) -> dict | None:
+            try:
+                return _storage.get_wellness_daily(metric_date)
+            except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+                log.debug("collect_startup_snapshot_48h: wellness DB read fallo (%s): %s", metric_date, exc)
+                return None
+
+        def _safe_upsert_wellness(
+            metric_date: str,
+            *,
+            body_payload: Any = None,
+            hrv_payload: Any = None,
+            source_payload: dict | None = None,
+        ) -> None:
+            body = _extract_body_battery_snapshot(body_payload, metric_date)
+            hrv = _extract_hrv_snapshot(hrv_payload, metric_date)
+            if not body and not hrv:
+                return
+            try:
+                _storage.upsert_wellness_daily(
+                    metric_date,
+                    body_battery=body,
+                    hrv=hrv,
+                    source_payload=source_payload,
+                )
+            except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+                log.debug("collect_startup_snapshot_48h: wellness DB upsert fallo (%s): %s", metric_date, exc)
+
+        async def _return(value: Any) -> Any:
+            return value
+
+        ttl_hours = _wellness_ttl_hours()
+        force_refresh_today = _wellness_refresh_on_startup()
+
+        def _session_get(metric_date: str, metric_key: str) -> Any:
+            day_bucket = _session_wellness_cache.get(metric_date) or {}
+            return day_bucket.get(metric_key)
+
+        def _session_set(metric_date: str, metric_key: str, payload: Any) -> None:
+            day_bucket = _session_wellness_cache.setdefault(metric_date, {})
+            day_bucket[metric_key] = payload
+
+        use_session_body_today = (
+            ("body_today" not in _pf)
+            and (not force_refresh_today)
+            and _session_get(today_iso, "body") is not None
+        )
+        use_session_hrv_today = (
+            ("hrv_today" not in _pf)
+            and (not force_refresh_today)
+            and _session_get(today_iso, "hrv") is not None
+        )
+        use_session_body_yday = (
+            ("body_yday" not in _pf)
+            and _session_get(yesterday_iso, "body") is not None
+        )
+        use_session_hrv_yday = (
+            ("hrv_yday" not in _pf)
+            and _session_get(yesterday_iso, "hrv") is not None
+        )
+
+        body_today_task: Awaitable[Any]
+        if "body_today" in _pf:
+            body_today_task = _cached_or_fetch("body_today", "get_body_battery", {"start_date": today_iso, "end_date": today_iso})
+        elif use_session_body_today:
+            body_today_task = _return(_session_get(today_iso, "body"))
+        else:
+            body_today_task = _tool_json("get_body_battery", {"start_date": today_iso, "end_date": today_iso})
+
+        body_yday_task = (
+            _return(_session_get(yesterday_iso, "body"))
+            if use_session_body_yday
+            else _tool_json("get_body_battery", {"start_date": yesterday_iso, "end_date": yesterday_iso})
+        )
+
+        hrv_today_task: Awaitable[Any]
+        if "hrv_today" in _pf:
+            hrv_today_task = _cached_or_fetch("hrv_today", "get_hrv_data", {"date": today_iso})
+        elif use_session_hrv_today:
+            hrv_today_task = _return(_session_get(today_iso, "hrv"))
+        else:
+            hrv_today_task = _tool_json("get_hrv_data", {"date": today_iso})
+
+        hrv_yday_task = (
+            _return(_session_get(yesterday_iso, "hrv"))
+            if use_session_hrv_yday
+            else _tool_json("get_hrv_data", {"date": yesterday_iso})
+        )
+
         body_today, body_yday, hrv_today, hrv_yday, sleep_today, sleep_yday, activities_raw = (
             await asyncio.gather(
-                _cached_or_fetch("body_today", "get_body_battery", {"start_date": today_iso, "end_date": today_iso}),
-                _tool_json("get_body_battery", {"start_date": yesterday_iso, "end_date": yesterday_iso}),
-                _cached_or_fetch("hrv_today", "get_hrv_data", {"date": today_iso}),
-                _tool_json("get_hrv_data", {"date": yesterday_iso}),
+                body_today_task,
+                body_yday_task,
+                hrv_today_task,
+                hrv_yday_task,
                 _tool_json("get_sleep_summary", {"date": today_iso}),
                 _tool_json("get_sleep_summary", {"date": yesterday_iso}),
                 _tool_json(
@@ -10017,6 +10386,68 @@ class TrainerAgent:
                 ),
             )
         )
+
+        # Política por sesión: si MCP trae dato válido, persistirlo y cachearlo en memoria.
+        # Si falla MCP, no usar DB histórica para cálculos actuales (evita reutilizar datos viejos).
+        body_today_from_mcp = _extract_body_battery_snapshot(body_today, today_iso)
+        hrv_today_from_mcp = _extract_hrv_snapshot(hrv_today, today_iso)
+        body_yday_from_mcp = _extract_body_battery_snapshot(body_yday, yesterday_iso)
+        hrv_yday_from_mcp = _extract_hrv_snapshot(hrv_yday, yesterday_iso)
+
+        if body_today_from_mcp is not None:
+            _session_set(today_iso, "body", body_today)
+        if hrv_today_from_mcp is not None:
+            _session_set(today_iso, "hrv", hrv_today)
+        if body_yday_from_mcp is not None:
+            _session_set(yesterday_iso, "body", body_yday)
+        if hrv_yday_from_mcp is not None:
+            _session_set(yesterday_iso, "hrv", hrv_yday)
+
+        wellness_sources = {
+            "body_today": "session" if use_session_body_today else "mcp",
+            "hrv_today": "session" if use_session_hrv_today else "mcp",
+            "body_yday": "session" if use_session_body_yday else "mcp",
+            "hrv_yday": "session" if use_session_hrv_yday else "mcp",
+        }
+        if (not use_session_body_today) and (body_today_from_mcp is None):
+            wellness_sources["body_today"] = "mcp_unavailable"
+        if (not use_session_hrv_today) and (hrv_today_from_mcp is None):
+            wellness_sources["hrv_today"] = "mcp_unavailable"
+        if (not use_session_body_yday) and (body_yday_from_mcp is None):
+            wellness_sources["body_yday"] = "mcp_unavailable"
+        if (not use_session_hrv_yday) and (hrv_yday_from_mcp is None):
+            wellness_sources["hrv_yday"] = "mcp_unavailable"
+
+        # Persistir/actualizar wellness diario con datos nuevos de MCP o prefetch.
+        if ("body_today" in _pf or not use_session_body_today) and body_today_from_mcp is not None:
+            _safe_upsert_wellness(
+                today_iso,
+                body_payload=body_today,
+                hrv_payload=hrv_today if (("hrv_today" in _pf or not use_session_hrv_today) and hrv_today_from_mcp is not None) else None,
+                source_payload={
+                    "body": body_today,
+                    "hrv": hrv_today if (("hrv_today" in _pf or not use_session_hrv_today) and hrv_today_from_mcp is not None) else None,
+                },
+            )
+        elif ("hrv_today" in _pf or not use_session_hrv_today) and hrv_today_from_mcp is not None:
+            _safe_upsert_wellness(
+                today_iso,
+                hrv_payload=hrv_today,
+                source_payload={"hrv": hrv_today},
+            )
+
+        if ((not use_session_body_yday and body_yday_from_mcp is not None) or
+            (not use_session_hrv_yday and hrv_yday_from_mcp is not None)):
+            _safe_upsert_wellness(
+                yesterday_iso,
+                body_payload=body_yday if (not use_session_body_yday and body_yday_from_mcp is not None) else None,
+                hrv_payload=hrv_yday if (not use_session_hrv_yday and hrv_yday_from_mcp is not None) else None,
+                source_payload={
+                    "body": body_yday if (not use_session_body_yday and body_yday_from_mcp is not None) else None,
+                    "hrv": hrv_yday if (not use_session_hrv_yday and hrv_yday_from_mcp is not None) else None,
+                },
+            )
+
         log.info("[SNAPSHOT] ⏱ gather_7_calls=%.1fs (cached: body=%s hrv=%s)",
                  time.perf_counter() - _t_snap,
                  "body_today" in _pf, "hrv_today" in _pf)
@@ -10257,6 +10688,7 @@ class TrainerAgent:
         return {
             "window_hours": 48,
             "dates": {"today": today_iso, "yesterday": yesterday_iso},
+            "wellness_sources": wellness_sources,
             "body_battery": {"today": body_today, "yesterday": body_yday, "summary": body_summary},
             "hrv": {"today": hrv_today, "yesterday": hrv_yday, "summary": hrv_summary},
             "sleep": {"today": sleep_today, "yesterday": sleep_yday, "summary": sleep_summary},

@@ -156,6 +156,30 @@ alter table load_metrics_daily disable row level security;
 create index if not exists idx_load_metrics_daily_user_date
     on load_metrics_daily (app_user_id, metric_date desc);
 
+-- ─── wellness_daily ─────────────────────────────────────────────────────────
+-- Snapshot diario de bienestar por usuario (Body Battery + HRV).
+create table if not exists wellness_daily (
+    app_user_id            text          not null references app_user(id) on delete cascade,
+    metric_date            date          not null,
+    body_battery_level     numeric(6,2),
+    bb_charged             numeric(6,2),
+    bb_drained             numeric(6,2),
+    bb_highest             numeric(6,2),
+    bb_lowest              numeric(6,2),
+    hrv_last_night_avg_ms  numeric(8,2),
+    hrv_weekly_avg_ms      numeric(8,2),
+    hrv_status             text,
+    source_payload         jsonb         not null default '{}',
+    pulled_at              timestamptz   not null default now(),
+    updated_at             timestamptz   not null default now(),
+    primary key (app_user_id, metric_date)
+);
+
+alter table wellness_daily disable row level security;
+
+create index if not exists idx_wellness_daily_user_date
+    on wellness_daily (app_user_id, metric_date desc);
+
 -- ─── Triggers updated_at ────────────────────────────────────────────────────
 drop trigger if exists trg_user_profile_updated_at on user_profile;
 create trigger trg_user_profile_updated_at
@@ -195,6 +219,11 @@ create trigger trg_training_plan_session_updated_at
 drop trigger if exists trg_load_metrics_daily_updated_at on load_metrics_daily;
 create trigger trg_load_metrics_daily_updated_at
     before update on load_metrics_daily
+    for each row execute function _set_updated_at();
+
+drop trigger if exists trg_wellness_daily_updated_at on wellness_daily;
+create trigger trg_wellness_daily_updated_at
+    before update on wellness_daily
     for each row execute function _set_updated_at();
 
 commit;

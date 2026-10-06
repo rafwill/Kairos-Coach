@@ -79,6 +79,12 @@ CRITICAL_CACHEABLE_TOOLS: set[str] = {
     "get_personal_record",
 }
 
+# Estas tools deben consultarse al MCP siempre como ruta primaria.
+# El caché solo se usa como fallback ante error de transporte/ejecución.
+NO_FASTPATH_CACHE_TOOLS: set[str] = {
+    "get_activities_by_date",
+}
+
 
 def get_contract_registry() -> dict[str, dict]:
     """Devuelve copia del registro de contratos v1 por tool."""
@@ -227,6 +233,9 @@ def validate_min_input_contract(tool_name: str, arguments: dict) -> str | None:
 def resolve_local_fastpath_response(tool_name: str, arguments: dict, backend_effective: str | None) -> str | None:
     """Devuelve respuesta local para tools críticas en backend frozen, o None para usar MCP."""
     if str(backend_effective or "").strip().lower() != "frozen":
+        return None
+
+    if tool_name in NO_FASTPATH_CACHE_TOOLS:
         return None
 
     if tool_name != "get_training_load_trend":
