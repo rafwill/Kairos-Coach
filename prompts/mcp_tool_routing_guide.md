@@ -142,7 +142,8 @@ Cuando el usuario pida actividades/entrenamientos de una semana (actual o histó
 Secuencia prioritaria:
 1. Resolver ventana semanal (lunes-domingo) según texto del usuario.
 2. `get_activities_by_date` para ese rango.
-3. Si hay consulta asociada de TSS semanal y falta cierre en serie diaria, usar fallback de carga por actividad.
+3. Si hay consulta asociada de TSS semanal y falta cierre en serie diaria, calcular primero TSS por actividad con fórmula Kairos según deporte (determinismo Kairos-first).
+4. Solo si no hay valor válido por fórmula Kairos para alguna actividad, usar fallback de carga por actividad nativa.
 
 Salida esperada:
 - Listado por día (`DD/MM`) con tipo y nombre de actividad, una línea por actividad.
