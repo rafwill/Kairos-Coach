@@ -533,7 +533,7 @@ activity_id	umbral m/s²	transiciones totales	count sobre umbral	% sobre umbral	
 24502427862	2.0	2835	0	0.0000%	0	0.0%	0	0.0%	0	0.0%
 Artefactos generados
 
-measure_walk_hike_accel_reach.py
+measure_walk_hike_accel_reach.py (historico; eliminado en limpieza del 05/10/2026)
 accel_reach_summary_8_activities.csv
 accel_reach_flagged_transitions_8_activities.csv
 Estado
