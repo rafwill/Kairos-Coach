@@ -788,14 +788,18 @@ class ToolRouter:
             return "today_load_status"
         if _is_activity_details_query_intent(user_message):
             return "activity_details"
+        if _is_recent_tss_by_sport_intent(user_message):
+            return "recent_tss_by_sport"
+        # Priorizar PRs antes de la ruta factual genérica para evitar
+        # respuestas de "sin acceso" en consultas de récords personales.
+        if _is_personal_records_intent(user_message) or _is_personal_records_followup_intent(user_message, history):
+            return "personal_records"
         if _is_mcp_factual_query_intent(user_message):
             return "mcp_factual"
         if _is_daily_readiness_intent(user_message):
             return "daily_readiness"
         if _is_planning_intent(user_message, history) and _has_goal_in_profile(profile):
             return "planning"
-        if _is_personal_records_intent(user_message) or _is_personal_records_followup_intent(user_message, history):
-            return "personal_records"
         return None
 
 
@@ -972,6 +976,141 @@ def _build_athlete_knowledge_context(query: str, chunks: list[dict[str, str]]) -
         lines.append(f"- Fuente: {source}\\n{trimmed}{ellipsis}")
     return "\n".join(lines)
 
+async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_message: str) -> str:
+    """Devuelve TSS de las últimas N actividades para un deporte concreto."""
+    sport, limit = _parse_recent_tss_sport_request(user_message)
+    if not sport:
+        return "No pude identificar el deporte solicitado (trail/running/fuerza/ciclismo)."
+
+    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
+    hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
+
+    activities: list[dict] = []
+    end_d = date.today()
+    start_d = end_d - timedelta(days=540)
+    req_variants = [
+        {
+            "start_date": start_d.isoformat(),
+            "end_date": end_d.isoformat(),
+            "page": 0,
+            "page_size": 500,
+        },
+        {
+            "startdate": start_d.isoformat(),
+            "enddate": end_d.isoformat(),
+        },
+    ]
+    for args in req_variants:
+        try:
+            raw = await call_tool(mcp_session, "get_activities_by_date", args)
+            parsed = _try_parse_json(raw)
+            if parsed is None:
+                parsed = raw
+            acts = _extract_activities_list(parsed)
+            if acts:
+                activities = acts
+                break
+        except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
+            log.debug("_build_recent_tss_by_sport_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
+            continue
+
+    def _matches_sport(act: dict) -> bool:
+        act_type = act.get("type") or act.get("activityType") or ""
+        if sport == "trail":
+            return _is_trail_activity(act_type)
+        if sport == "running":
+            return _is_running_non_trail_activity(act_type)
+        if sport == "strength":
+            return _is_strength_activity(act_type)
+        if sport == "cycling":
+            return _is_cycling_activity(act_type)
+        return False
+
+    rows: list[tuple[date, str, str, float, str]] = []
+    for act in activities:
+        if not isinstance(act, dict) or not _matches_sport(act):
+            continue
+        d_iso = _extract_activity_date_iso(act)
+        if not d_iso:
+            continue
+        try:
+            d_obj = date.fromisoformat(d_iso)
+        except ValueError:
+            continue
+
+        name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
+        native_tss = _extract_training_load_tss(act)
+        source = "garmin_activity_load"
+        tss_val = None
+        if native_tss is not None and float(native_tss) > 0.0:
+            tss_val = float(native_tss)
+        else:
+            est_tss, _est_label = _estimate_session_tss(
+                act,
+                ftp=_extract_cycling_ftp_watts(profile),
+                running_threshold_pace_sec_per_km=running_threshold_pace,
+                hr_rest_bpm=hr_rest_bpm,
+                hr_max_bpm=hr_max_bpm,
+                hr_zones_raw=None,
+                hr_threshold_bpm=hr_threshold_bpm,
+            )
+            if est_tss > 0.0:
+                tss_val = float(est_tss)
+                source = "kairos_formula"
+
+        if tss_val is None:
+            continue
+        rows.append((d_obj, d_iso, name, round(tss_val, 1), source))
+
+    rows.sort(key=lambda x: (x[0], x[2].lower()), reverse=True)
+    rows = rows[:limit]
+
+    sport_label = {
+        "trail": "trail",
+        "running": "running",
+        "strength": "fuerza",
+        "cycling": "ciclismo",
+    }.get(sport, sport)
+
+    if not rows:
+        return "\n".join([
+            "## 🧭 Resumen",
+            f"No encontré actividades de {sport_label} con TSS calculable en Garmin para ese criterio.",
+            "",
+            "## 🎯 Próximo paso",
+            "- Si quieres, amplío la ventana y te saco las últimas actividades sin filtrar por deporte.",
+        ])
+
+    avg_tss = round(sum(r[3] for r in rows) / max(1, len(rows)), 1)
+    max_tss = max(r[3] for r in rows)
+
+    lines = [
+        "## 🧭 Resumen",
+        f"Estos son los TSS de tus últimas {len(rows)} actividades de {sport_label}.",
+        "",
+        "## 📊 Métricas clave",
+        "| Métrica | Valor |",
+        "|---|---:|",
+        f"| Actividades listadas | {len(rows)} |",
+        f"| TSS medio | {avg_tss:.1f} |",
+        f"| TSS máximo | {max_tss:.1f} |",
+        "",
+        "| Fecha | Actividad | TSS | Fuente |",
+        "|---|---|---:|---|",
+    ]
+    for _d_obj, d_iso, name, tss_val, source in rows:
+        lines.append(f"| {d_iso} | {name} | {tss_val:.1f} | {source} |")
+
+    lines.extend([
+        "",
+        "## ✅ Recomendación",
+        "- Usa esta serie para comparar consistencia de carga por deporte.",
+        "",
+        "## 🎯 Próximo paso",
+        "- Si quieres, te comparo esta lista con TP/Kairos y te marco outliers.",
+        "- Fuente: respuesta determinista (Garmin MCP + fórmula Kairos cuando falta training load).",
+    ])
+    return "\n".join(lines)
 
 def _try_parse_json(raw: str | None) -> Any:
     """Parsea JSON de forma tolerante; devuelve None si no aplica."""
@@ -2869,6 +3008,7 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         "hoy" in text
         or "ayer" in text
         or "anteayer" in text
+        or re.search(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", text) is not None
         or _extract_iso_date_from_text(user_message) is not None
         or _extract_weekday_index_from_text(user_message) is not None
     )
@@ -2884,7 +3024,56 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         )
     )
     has_temporal_reference = has_day or has_last_marker
-    return has_temporal_reference and any(m in text for m in activity_markers) and any(m in text for m in detail_markers)
+    has_activity_word = any(m in text for m in activity_markers)
+    has_detail_word = any(m in text for m in detail_markers)
+
+    # Si hay referencia explícita a fecha + actividad, tratarlo como detalle
+    # aunque "cómo/como" llegue con codificación degradada.
+    if has_activity_word and has_temporal_reference and re.search(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", text):
+        return True
+
+    return has_temporal_reference and has_activity_word and has_detail_word
+
+
+def _parse_recent_tss_sport_request(user_message: str) -> tuple[str | None, int]:
+    """Extrae deporte y tamaño N para consultas tipo
+    'TSS de mis 20 últimas actividades de trail/running/fuerza/ciclismo'.
+    """
+    text = (user_message or "").strip().lower()
+    if not text:
+        return None, 20
+
+    sport: str | None = None
+    if re.search(r"\btrail\b", text):
+        sport = "trail"
+    elif re.search(r"\brunning\b|\bcorrer\b|\bcarrera\b", text):
+        sport = "running"
+    elif re.search(r"\bfuerza\b|\bstrength\b|\bgym\b|\bpesas\b", text):
+        sport = "strength"
+    elif re.search(r"\bciclismo\b|\bcycling\b|\bbici\b|\bbike\b", text):
+        sport = "cycling"
+
+    n_match = re.search(r"\b(\d{1,3})\b", text)
+    n = int(n_match.group(1)) if n_match else 20
+    n = max(1, min(n, 50))
+    return sport, n
+
+
+def _is_recent_tss_by_sport_intent(user_message: str) -> bool:
+    """Detecta petición de TSS de últimas N actividades filtradas por deporte."""
+    text = (user_message or "").strip().lower()
+    if not text:
+        return False
+
+    if "tss" not in text:
+        return False
+    if not re.search(r"\bultim|\búltim|\brecientes?\b", text):
+        return False
+    if "activ" not in text:
+        return False
+
+    sport, _ = _parse_recent_tss_sport_request(user_message)
+    return sport is not None
 
 
 def _is_running_threshold_query_intent(user_message: str) -> bool:
@@ -10643,6 +10832,14 @@ class TrainerAgent:
             )
             assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="activity_details")
             return await self._finalize_chat_reply(user_message, assistant_reply, route="activity_details")
+
+        if route_key == "recent_tss_by_sport":
+            assistant_reply = await _build_recent_tss_by_sport_markdown(
+                self.mcp_session,
+                self.user_profile,
+                user_message,
+            )
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="recent_tss_by_sport")
 
         # Ruta determinista para consultas de conteo de actividades en DB
         _count_query = bool(re.search(
