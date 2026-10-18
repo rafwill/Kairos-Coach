@@ -1,0 +1,33 @@
+Ejecuta docs/bateria_p55_preguntas_base.txt
+Eres autonomo
+Si necesitas credenciales puedes tomarlas del fichero .env
+Revisa las respuestas una por una y si encuentras incoherencias busca la solución, arreglalo y vuelve a lanzar la pregunta. Itera tantas veces como sea necesario para que kairos muestre una respuesta correcta y coherente
+Muestra los resultados por pantalla como si estuvieramos interactuando con Kairos. 
+El formato de salida tiene que ser legible como si lo sacara kairos. Fuera caracteres raros
+
+Pruebas:
+¿Cómo está mi forma física hoy?
+¿Cuál es mi tendencia de carga de las últimas 4 semanas?
+¿Cuánto TSS hice esta semana?
+¿Qué actividades hice esta semana?
+Analiza mi última actividad
+¿Cómo fue mi actividad del 30 de agosto?
+Analiza mi ultima actividad de trail
+¿Puedo entrenar fuerte mañana o necesito recuperar?
+¿Qué tipo de sesión me recomiendas para esta semana dado mi estado?
+¿Cuántas actividades tienes registradas en tu base de datos?
+¿Cuánto TSS hice en la semana del 27/07 al 02/08?
+¿Qué actividades hice entre 25/08 y 30/08?
+¿Cuánto TSS hice la semana pasada?
+¿Y la semana del 17/08/2026?
+¿Cómo fue mi actividad del 30/08?
+¿Cuál es mi ritmo umbral?
+¿Cuál es mi FC umbral?
+¿Tengo plan activo?
+¿Y qué me toca hoy?
+¿Cuáles son mis récords personales de running?
+¿Cuál es mi objetivo principal ahora?
+¿Dime los TSS de mis 20 ultimas actividades de Trail?
+¿Dime los TSS de mis 20 ultimas actividades de Running?
+¿Dime los TSS de mis 20 ultimas actividades de Fuerza?
+¿Dime los TSS de mis 20 ultimas actividades de Ciclismo?

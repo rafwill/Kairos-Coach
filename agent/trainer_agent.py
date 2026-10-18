@@ -3004,10 +3004,16 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         "como fue",
         "cómo fue",
     )
+    has_month_name_date = re.search(
+        r"\b\d{1,2}\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:\s+de\s+\d{2,4})?\b",
+        text,
+    ) is not None
+
     has_day = (
         "hoy" in text
         or "ayer" in text
         or "anteayer" in text
+        or has_month_name_date
         or re.search(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", text) is not None
         or _extract_iso_date_from_text(user_message) is not None
         or _extract_weekday_index_from_text(user_message) is not None
@@ -3027,9 +3033,12 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
     has_activity_word = any(m in text for m in activity_markers)
     has_detail_word = any(m in text for m in detail_markers)
 
+    has_slash_date = re.search(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", text) is not None
+    has_textual_day_month = re.search(r"\b\d{1,2}\s+de\s+[a-záéíóúñ]+(?:\s+de\s+\d{2,4})?\b", text) is not None
+
     # Si hay referencia explícita a fecha + actividad, tratarlo como detalle
     # aunque "cómo/como" llegue con codificación degradada.
-    if has_activity_word and has_temporal_reference and re.search(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", text):
+    if has_activity_word and has_temporal_reference and (has_slash_date or has_textual_day_month):
         return True
 
     return has_temporal_reference and has_activity_word and has_detail_word
@@ -3726,6 +3735,10 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         "me toca hoy",
         "que me recomiendas hoy",
         "qué me recomiendas hoy",
+        "que tipo de sesion me recomiendas para esta semana",
+        "qué tipo de sesión me recomiendas para esta semana",
+        "tipo de sesion me recomiendas para esta semana",
+        "tipo de sesión me recomiendas para esta semana",
         "que hago hoy",
         "qué hago hoy",
         "puedo entrenar hoy",
@@ -3747,6 +3760,15 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         "tsb",
     ]
     if any(marker in text for marker in explicit_markers):
+        return True
+
+    # Heurística robusta para prompts de recomendación semanal aunque
+    # "sesión/situación" llegue con codificación degradada.
+    if "recom" in text and "semana" in text and "estado" in text:
+        return True
+
+    # Heurística robusta para "forma física hoy".
+    if "hoy" in text and "forma" in text:
         return True
 
     today_markers = (" hoy", "hoy ", " hoy?", "today")
@@ -10842,10 +10864,15 @@ class TrainerAgent:
             return await self._finalize_chat_reply(user_message, assistant_reply, route="recent_tss_by_sport")
 
         # Ruta determinista para consultas de conteo de actividades en DB
+        _message_lc = (user_message or "").lower()
         _count_query = bool(re.search(
             r'\b(cu[aá]ntas?\s+actividades|total\s+actividades|actividades\s+registradas|actividades\s+en\s+(la\s+)?(base|bbdd|db)|cuantos\s+entrenos)\b',
-            (user_message or "").lower()
+            _message_lc
         ))
+        if not _count_query and "actividades" in _message_lc and (
+            "base de datos" in _message_lc or "db" in _message_lc or "bbdd" in _message_lc
+        ):
+            _count_query = True
         if _count_query:
             _series_count = (self.user_profile.get("load_metrics") or {}).get("series") or []
             if not _series_count:
