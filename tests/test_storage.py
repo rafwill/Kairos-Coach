@@ -266,7 +266,7 @@ class _MemoryTable:
         self._payload = payload
         return self
 
-    def upsert(self, payload):
+    def upsert(self, payload, *_args, **_kwargs):
         self._mode = "upsert"
         self._payload = payload
         return self
@@ -540,3 +540,47 @@ def test_get_active_training_plan_returns_none_when_table_missing(monkeypatch):
     monkeypatch.setattr(storage, "_require_supabase", lambda: _MissingTrainingPlanSupabase())
 
     assert storage.get_active_training_plan() is None
+
+
+def test_wellness_daily_roundtrip(monkeypatch):
+    fake_sb = _MemorySupabase()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: fake_sb)
+
+    storage.upsert_wellness_daily(
+        "2026-10-06",
+        body_battery={
+            "level": 69,
+            "charged": 58,
+            "drained": 31,
+            "highest": 100,
+            "lowest": 42,
+        },
+        hrv={
+            "last_night_avg_ms": 51,
+            "weekly_avg_ms": 55,
+            "status": "balanced",
+        },
+        source_payload={"source": "mcp"},
+    )
+
+    row = storage.get_wellness_daily("2026-10-06")
+    assert row is not None
+    assert float(row.get("body_battery_level")) == 69.0
+    assert float(row.get("bb_charged")) == 58.0
+    assert float(row.get("bb_drained")) == 31.0
+    assert float(row.get("hrv_last_night_avg_ms")) == 51.0
+    assert float(row.get("hrv_weekly_avg_ms")) == 55.0
+    assert row.get("hrv_status") == "balanced"
+    assert isinstance(row.get("pulled_at"), str)
+
+
+def test_upsert_wellness_daily_ignores_empty_payload(monkeypatch):
+    fake_sb = _MemorySupabase()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: fake_sb)
+
+    storage.upsert_wellness_daily("2026-10-06")
+    assert fake_sb.rows.get("wellness_daily", []) == []

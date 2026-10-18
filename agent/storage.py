@@ -15,7 +15,8 @@ import hmac
 import logging
 import os
 import time
-from datetime import date
+from datetime import date, datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -906,3 +907,100 @@ def upsert_load_metrics_series(series: list[dict]) -> None:
         log.info("upsert_load_metrics_series: %d filas persistidas", len(rows))
     except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.warning("upsert_load_metrics_series: %s", exc)
+
+
+# ─── wellness_daily (Body Battery + HRV) ─────────────────────────────────────
+
+def _to_float_or_none(value) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def get_wellness_daily(metric_date: str) -> dict | None:
+    """Carga snapshot diario de wellness para el usuario activo."""
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb or not metric_date:
+        return None
+    try:
+        resp = (
+            sb.table("wellness_daily")
+            .select(
+                "metric_date,body_battery_level,bb_charged,bb_drained,bb_highest,bb_lowest,"
+                "hrv_last_night_avg_ms,hrv_weekly_avg_ms,hrv_status,pulled_at,updated_at,source_payload"
+            )
+            .eq("app_user_id", uid)
+            .eq("metric_date", metric_date)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return dict(rows[0]) if rows else None
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+        log.warning("get_wellness_daily: %s", exc)
+        return None
+
+
+def upsert_wellness_daily(
+    metric_date: str,
+    *,
+    body_battery: dict | None = None,
+    hrv: dict | None = None,
+    source_payload: dict | None = None,
+) -> None:
+    """Persiste snapshot wellness (Body Battery/HRV) por fecha y usuario."""
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb or not metric_date:
+        return
+
+    payload: dict[str, Any] = {
+        "app_user_id": uid,
+        "metric_date": metric_date,
+        "pulled_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+    }
+
+    if isinstance(body_battery, dict):
+        payload.update(
+            {
+                "body_battery_level": _to_float_or_none(body_battery.get("level")),
+                "bb_charged": _to_float_or_none(body_battery.get("charged")),
+                "bb_drained": _to_float_or_none(body_battery.get("drained")),
+                "bb_highest": _to_float_or_none(body_battery.get("highest")),
+                "bb_lowest": _to_float_or_none(body_battery.get("lowest")),
+            }
+        )
+
+    if isinstance(hrv, dict):
+        payload.update(
+            {
+                "hrv_last_night_avg_ms": _to_float_or_none(hrv.get("last_night_avg_ms")),
+                "hrv_weekly_avg_ms": _to_float_or_none(hrv.get("weekly_avg_ms")),
+                "hrv_status": (str(hrv.get("status") or "").strip() or None),
+            }
+        )
+
+    if isinstance(source_payload, dict):
+        payload["source_payload"] = source_payload
+
+    # Evitar escrituras vacías: requiere al menos una métrica además de PK/timestamp.
+    metric_keys = {
+        "body_battery_level",
+        "bb_charged",
+        "bb_drained",
+        "bb_highest",
+        "bb_lowest",
+        "hrv_last_night_avg_ms",
+        "hrv_weekly_avg_ms",
+        "hrv_status",
+        "source_payload",
+    }
+    if not any(k in payload for k in metric_keys):
+        return
+
+    try:
+        sb.table("wellness_daily").upsert(payload, on_conflict="app_user_id,metric_date").execute()
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+        log.warning("upsert_wellness_daily: %s", exc)

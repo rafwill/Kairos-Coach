@@ -78,6 +78,7 @@ Fuente de verdad TSS/ATL/CTL/TSB (OBLIGATORIO):
 - Aunque el runtime pueda enriquecer actividades recientes con `trainingStressScore` para cálculo interno, en la capa LLM no derives TSS desde endpoints de actividades.
 
 Unidad de esfuerzo por tipo de actividad (OBLIGATORIO):
+- Premisa determinista Kairos-first: calcular siempre primero con fórmula Kairos por deporte; solo si no hay valor válido, usar fallback defensivo. Mantener la etiqueta devuelta por Kairos (`TSS`, `hrTSS`, `rTSS`).
 - Fuerza: hrTSS por FC; si no hay FC, hrTSS por RPE.
 - Running (no Trail): TSS por ritmo umbral; fallback hrTSS por FC.
 - Trail/Senderismo/Hike/Caminar: hrTSS por FC; si no hay FC, TSS por ritmo umbral; si tampoco hay umbral, hrTSS por RPE.
