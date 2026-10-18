@@ -900,3 +900,126 @@ Validación ejecutada:
 Comando: pytest focalizado de startup/proactive/readiness.
 Resultado final: 16 passed, 0 failed (354 deselected).
 También dejé la lección registrada en memoria del repo para mantener esta regla en próximos cambios.
+
+
+
+18/10/2026 22:53
+
+Hecho. Ejecuté todo en modo lectura/ejecución y paro aquí.
+
+Golden vs validados (solo los 2 IDs pedidos)
+Fuente golden ejecutado:
+
+tss_activity_golden_2026-10-18.json
+Fuente validados:
+tss_independiente_desde_2026-07-01_hasta_2026-09-13.csv
+Tabla:
+
+activity_id	golden tss	golden label	golden method	validado	delta
+24172582627	228.3	hrTSS	hr_zones	210.0	+18.3
+24398763300	106.5	TSS	pace_or_model	100.6	+5.9
+Si difieren, de dónde salen:
+
+24172582627: el golden sale de ejecución actual con la rama hr_zones en el estado actual del código y anclajes de perfil actuales (ver anclajes en tss_activity_golden_2026-10-18.json).
+24398763300: el golden sale del fallback de running en la ruta actual (método pace_or_model) con el payload y anclajes actuales; el validado histórico 100.6 proviene del flujo de validación con detalles de la investigación previa.
+Réplica fiel con compute_and_persist_load_metrics real, sin escribir en Supabase
+Ejecución trazada:
+
+tss_trace_compute_load_realpath_2026-10-18.json
+Qué hice:
+
+Ejecuté compute_and_persist_load_metrics con persistencia anulada por monkeypatch de upsert/save (sin escritura).
+Intercepté llamadas reales a _estimate_session_tss y registré argumentos para 24172582627, 24227364808 y 24398763300.
+Argumentos reales observados:
+
+24398763300
+
+hr_rest: 37.0
+lthr (hr_threshold_bpm): 169.0
+hr_max: null
+umbral running: 252.0
+details not None: false
+zones not None: false
+splits not None: false
+use_trail_splits: true
+resultado: 118.471 TSS
+24227364808
+
+hr_rest: 37.0
+lthr: 169.0
+hr_max: null
+umbral running: 252.0
+details not None: false
+zones not None: false
+splits not None: false
+use_trail_splits: true
+resultado: 91.996 TSS
+24172582627
+
+hr_rest: 37.0
+lthr: 169.0
+hr_max: null
+umbral running: 252.0
+details not None: true
+zones not None: true
+splits not None: true
+use_trail_splits: true
+resultado: 228.266 hrTSS
+Comparación contra dry-run anterior:
+
+Referencia dry-run: tss_repro_compute_load_path_2026-10-18.json
+Diferencias:
+24172582627: 228.266 vs 228.3 (redondeo).
+24227364808: 91.996 vs 104.5.
+24398763300: 118.471 vs 134.6.
+Causa de diferencia en running:
+El cálculo fiel de compute_load parte de objetos de get_activities_by_date y luego enriquece parcial; el dry-run previo usaba otra reconstrucción no idéntica del objeto base. Por eso cambian señales efectivas de fallback.
+Running: fallback activo y función exacta usada. ¿90.02 coincide con tp_like_adjusted?
+Constante/modelo:
+
+Resolución de fallback en código: load_metrics.py:3313
+Selección de función en estimate_session_tss: load_metrics.py:3748
+Ejecución:
+
+KAIROS_RUNNING_TSS_FALLBACK_MODEL en entorno: None
+modelo resuelto: legacy
+por tanto la función usada es tp_like_adjusted.
+Comprobación para 24227364808 con payload tipo compute_load (get_activities_by_date):
+
+tp_like_adjusted: 91.996
+estimate_session_tss: 91.996 TSS
+salida: de ejecución en compare_running_bydate_vs_tp.py
+Respuesta a tu pregunta:
+
+90.02 no coincide exacto con tp_like_adjusted, pero sí está muy cerca del mismo orden (91.996). La diferencia es ~1.98.
+Sensibilidad para 24172582627 (mismo cálculo, variando hr_rest)
+Ejecución real:
+
+hr_rest 37.0 -> 228.266 hrTSS
+hr_rest 40.7 -> 222.387 hrTSS
+hr_rest 50.0 -> 206.696 hrTSS
+Resumen:
+
+subir hr_rest baja el TSS en este caso.
+git log -S de TSS_FORMULA_VERSION 33 y 34
+Comandos ejecutados:
+
+log -S "TSS_FORMULA_VERSION = 33"
+log -S "TSS_FORMULA_VERSION = 34"
+Resultado:
+
+1a957e3: subida a 33
+Mensaje: Add gym cardio phase-1 TSS model for elliptical and rowing
+Cambios: introduce detección rowing y modelo gym cardio fase 1 (parámetros IF y fuente gym_cardio:lthr/fallback).
+ec433ef: subida a 34
+Mensaje: Implement gym cardio phase-2 mechanical blend
+Cambios: añade blend mecánico + HR en gym cardio (pesos HR/mech), nuevas señales mecánicas (power/pace500/cadence/resistance), y etiquetas de fuente extendidas.
+Referencias de código:
+
+Versión y fallback running: load_metrics.py:3313
+Rama running en estimate: load_metrics.py:3748
+Artefactos generados en esta ejecución:
+
+tss_trace_compute_load_realpath_2026-10-18.json
+tss_repro_compute_load_path_2026-10-18.json
+tss_activity_golden_2026-10-18.json
