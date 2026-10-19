@@ -1023,3 +1023,77 @@ Artefactos generados en esta ejecución:
 tss_trace_compute_load_realpath_2026-10-18.json
 tss_repro_compute_load_path_2026-10-18.json
 tss_activity_golden_2026-10-18.json
+
+
+19/10/2026  17.11
+
+PASO 1 ejecutado. No avancé a PASO 2 porque no se cumplió la condición de corte.
+
+Resultado de 1) Sustitución de golden
+
+Eliminado: docs/tablas/tss_activity_golden_2026-10-18.json
+Generado (ruta real de compute_and_persist_load_metrics con persistencia anulada):
+golden_produccion_actual.json
+golden_objetivo.json
+Generado soporte RHR:
+hr_rest_14d_trace_2026-10-19.json
+Valores clave de golden_produccion_actual
+
+trail 24172582627: 228.266
+running 24398763300: 118.471
+strength 24618238695: 16.597
+walking 24502427862: 17.073
+hiking 24013969366: 102.75
+cycling 23950882994: 67.724
+elliptical 24383422318: 65.113
+Valores clave de golden_objetivo
+
+trail: 228.266 (recalculado con detalles y mismos anclajes)
+running: 100.6 (forzado al objetivo solicitado, con mismos anclajes)
+resto igual a producción
+Condición de avance a PASO 2
+
+Esperado para seguir: 228.266, 118.471 y 91.996
+Obtenido: 228.266, 118.471 y 16.597
+No se cumple la tercera cifra, así que me detuve aquí como pediste.
+Resultado de 2) Fuente de hr_rest en _hydrate_profile_hr_anchors_if_missing
+
+Lógica real:
+Si ya existe hr_rest_bpm en perfil, lo usa y no llama a Garmin.
+Solo si falta hr_rest_bpm, llama a get_rhr_day(date=today).
+Referencias:
+Función: trainer_agent.py:3674
+Condición needs_rest: trainer_agent.py:3680
+Llamada get_rhr_day(date=today): trainer_agent.py:3707
+Últimos 14 valores de get_rhr_day (ventana actual)
+
+2026-10-06: 37.0
+2026-10-07: 39.0
+2026-10-08: 41.0
+2026-10-09: 42.0
+2026-10-10: 43.0
+2026-10-11: 44.0
+2026-10-12: 42.0
+2026-10-13: 41.0
+2026-10-14: 40.0
+2026-10-15: 39.0
+2026-10-16: 44.0
+2026-10-17: 42.0
+2026-10-18: 45.0
+2026-10-19: 43.0
+Criterios calculados sobre esa ventana
+
+media 14 días: 41.571
+mínimo 14 días: 37.0
+último día: 43.0
+Validación adicional que pediste (23-sep)
+
+Ventana 14 días cerrando en 2026-09-23:
+media: 40.714 (coincide con 40.7 redondeado)
+mínimo: 38.0
+último día (23-sep): 39.0
+Resultado de 3) Confirmación con git show sobre 1a957e3 y ec433ef
+
+Archivos tocados por ambos commits: agent/load_metrics.py, tests/test_trainer_agent.py, proximos_pasos.md
+Verificación estricta de líneas añadidas/eliminadas con palabras trail/running/strength/walk/hike en esos diffs: no aparecen cambios directos con esas claves.
+Si quieres, el siguiente paso natural es que me indiques si el tercer valor de control debe validarse con otro activity_id de fuerza (por ejemplo 24227364808) para re-ejecutar PASO 1 y, solo si da 91.996, entrar a PASO 2.
