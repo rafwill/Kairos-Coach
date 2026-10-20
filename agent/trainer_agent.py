@@ -1146,6 +1146,14 @@ def _is_activity_details_payload(raw: Any) -> bool:
     return isinstance(raw, str) and raw.lstrip().startswith("{")
 
 
+def _activity_id_int(activity: dict) -> int | None:
+    raw = activity.get("id") or activity.get("activityId") if isinstance(activity, dict) else None
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_activities_list(payload: Any) -> list[dict]:
     """Extrae una lista de actividades desde distintas formas de respuesta."""
     if isinstance(payload, list):
@@ -9436,9 +9444,16 @@ async def _fetch_activities_for_load_calc(
         if not activities:
             break
 
+        page_dates: list = []
         for act in activities:
             if not isinstance(act, dict):
                 continue
+            page_d_iso = _extract_activity_date_iso(act)
+            if page_d_iso:
+                try:
+                    page_dates.append(_date.fromisoformat(page_d_iso))
+                except ValueError:
+                    pass
             act_id = act.get("activityId") or act.get("id") or act.get("activity_id")
             if act_id is not None and act_id in seen_ids:
                 continue
@@ -9462,7 +9477,12 @@ async def _fetch_activities_for_load_calc(
             result.append(act)
 
         if not has_more:
-            break
+            # Con lista simple el parser no informa has_more: una página llena indica que puede
+            # haber más, salvo que la página entera ya sea anterior al rango.
+            if len(activities) < limit:
+                break
+            if page_dates and max(page_dates) < start_d:
+                break
         new_start = next_start if next_start > start_idx else start_idx + limit
         if new_start <= start_idx:
             break
@@ -9845,16 +9865,24 @@ class TrainerAgent:
 
         return result
 
-    async def compute_and_persist_load_metrics(self, force_full_recalc: bool = False) -> None:
+    async def compute_and_persist_load_metrics(
+        self,
+        force_full_recalc: bool = False,
+        rebuild_from: str | None = None,
+    ) -> None:
         """Calcula TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) de forma incremental y los persiste en load_metrics_daily.
 
         Flujo:
         1. Lee la serie existente de DB (últimos 120 días).
         2. Si ya está al día, recarga el perfil y sale.
         3. Obtiene actividades de Garmin solo para los días nuevos (incremental).
-        4. Calcula TSS día a día y re-corre el EWMA sembrando desde el último registro.
-        5. Persiste las nuevas filas en DB (upsert).
+        4. TSS por actividad: si ya está en activity_tss se reutiliza (nunca se recalcula hacia
+           atrás); si es nueva se calcula una vez con hr_rest vigente en su fecha y se guarda.
+        5. Re-corre el EWMA sembrando desde la fila de la víspera en DB y persiste (upsert).
         6. Actualiza self.user_profile["load_metrics"] con la serie completa.
+
+        rebuild_from (ISO) reconstruye la línea base desde esa fecha: recalcula todos los TSS,
+        recalibra el umbral de marcha y siembra el EWMA en 0. Solo para tools/rebuild_tss_baseline.py.
         """
         from datetime import date as _date, timedelta
 
@@ -9989,7 +10017,7 @@ class TrainerAgent:
         existing_series = _storage.get_load_metrics_series(days=full_window_days)
         last_date_str   = _storage.get_load_metrics_last_date()
 
-        if not force_full_recalc and last_date_str:
+        if not force_full_recalc and not rebuild_from and last_date_str:
             try:
                 last_d = _date.fromisoformat(last_date_str)
             except ValueError:
@@ -10071,7 +10099,34 @@ class TrainerAgent:
                     )
                     fetch_from = effective_iso
 
+        if rebuild_from:
+            fetch_from = str(rebuild_from)
+            bypass_effective_clamp = True
+            compute_mode = "baseline_rebuild"
+            compute_reason = f"línea base desde {fetch_from}"
+
         log.info("compute_load: fetch incremental desde %s", fetch_from)
+
+        # 1b. TSS ya guardados: nunca se recalculan (salvo reconstrucción de línea base).
+        stored_tss: dict[int, dict] = {}
+        if not rebuild_from:
+            try:
+                stored_map = _storage.get_activity_tss_map(fetch_from)
+            except RuntimeError as exc:
+                log.warning("compute_load: no se pudo leer activity_tss: %s", exc)
+                stored_map = None
+            if stored_map is None:
+                log.warning("compute_load: activity_tss ilegible — se conserva la serie sin recalcular el histórico")
+                self._apply_series_to_profile(existing_series, today)
+                self._last_load_compute_meta = {
+                    "mode": "skipped_activity_tss_unreadable",
+                    "reason": "lectura de activity_tss fallida",
+                    "fetch_from": fetch_from,
+                    "bypass_effective_clamp": bool(bypass_effective_clamp),
+                    "formula_version": _TSS_FORMULA_VERSION,
+                }
+                return
+            stored_tss = stored_map
 
         # 2. FTP de ciclismo: primero perfil/DB; si falta, consultar MCP y persistir.
         cycling_ftp = None
@@ -10128,6 +10183,7 @@ class TrainerAgent:
                 if (_extract_activity_date_iso(a) or "") >= _enrich_cutoff
             ]
 
+        _to_enrich = [a for a in _to_enrich if _activity_id_int(a) not in stored_tss]
         if _to_enrich:
             log.info(
                 "compute_load: enriqueciendo %d actividades con detalle (trainingStressScore/potencia)",
@@ -10180,15 +10236,50 @@ class TrainerAgent:
         _splits_cache: dict[str, str | None] = {}
         _activity_details_cache: dict[str, str | None] = {}
         activity_tss_rows: list[dict[str, Any]] = []
+        _rhr_by_day: dict[str, float | None] = {}
 
-        # Walk/Hike threshold calibration (Option A): derive from the most demanding
-        # real hike/walk sessions in the current computation window.
+        async def _hr_rest_for_date(d_iso: str) -> float | None:
+            """hr_rest vigente en la fecha: media del RHR de los 14 días previos (perfil si no hay datos)."""
+            values: list[float] = []
+            d0 = _date.fromisoformat(d_iso)
+            for back in range(1, 15):
+                day_iso = (d0 - timedelta(days=back)).isoformat()
+                if day_iso not in _rhr_by_day:
+                    try:
+                        raw_rhr = await call_tool(self.mcp_session, "get_rhr_day", {"date": day_iso})
+                        parsed_rhr = _try_parse_json(raw_rhr)
+                        _rhr_by_day[day_iso] = _extract_resting_hr_from_payload(
+                            parsed_rhr if parsed_rhr is not None else raw_rhr
+                        )
+                    except (TimeoutError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                        log.debug("compute_load: RHR no disponible %s: %s", day_iso, exc)
+                        _rhr_by_day[day_iso] = None
+                value = _rhr_by_day[day_iso]
+                if value:
+                    values.append(float(value))
+            if not values:
+                return hr_rest_bpm
+            return round(sum(values) / len(values), 3)
+
+        # Walk/Hike threshold (Option A): anclaje del perfil calibrado en la línea base.
+        # Solo se recalibra al reconstruir la línea base; sin anclaje se calibra en la ventana.
+        perf_profile = self.user_profile.setdefault("performance", {}) if isinstance(self.user_profile, dict) else {}
+        walk_hike_threshold_m_min: float | None = None
+        if not rebuild_from:
+            try:
+                walk_hike_threshold_m_min = float(perf_profile.get("walk_hike_threshold_speed_m_min") or 0) or None
+            except (TypeError, ValueError):
+                walk_hike_threshold_m_min = None
         walk_hike_acts = [
             a
             for a in new_activities
             if _is_hike_walk_activity(a.get("type") or a.get("activityType") or "")
+            and _activity_id_int(a) not in stored_tss
         ]
-        if walk_hike_acts:
+        if walk_hike_acts and walk_hike_threshold_m_min is not None:
+            for _act in walk_hike_acts:
+                _act["_walk_hike_threshold_speed_m_min"] = float(walk_hike_threshold_m_min)
+        elif walk_hike_acts:
             for _act in walk_hike_acts:
                 _act_id = _act.get("id") or _act.get("activityId")
                 _act_id_key = str(_act_id) if _act_id is not None else ""
@@ -10222,12 +10313,45 @@ class TrainerAgent:
                     float(walk_hike_threshold_m_min),
                     len(walk_hike_acts),
                 )
+                if rebuild_from:
+                    perf_profile["walk_hike_threshold_speed_m_min"] = round(float(walk_hike_threshold_m_min), 3)
+                    perf_profile["walk_hike_threshold_date"] = today.isoformat()
 
         for act in new_activities:
             d_iso = _extract_activity_date_iso(act)
             if not d_iso:
                 continue
             act_type = act.get("type") or act.get("activityType") or ""
+
+            if _is_running_non_trail_activity(act_type):
+                cls = _classify_running_session_with_confidence(act)
+                kind = str(cls.get("session_kind") or "calidad")
+                conf = str(cls.get("confidence") or "low")
+                mix = running_mix_by_day.setdefault(
+                    d_iso,
+                    {"rodaje": 0, "fartlek": 0, "series": 0, "calidad": 0},
+                )
+                if kind not in mix:
+                    mix[kind] = 0
+                mix[kind] += 1
+                running_inference_samples.append(
+                    {
+                        "date": d_iso,
+                        "activity_id": act.get("id") or act.get("activityId"),
+                        "name": act.get("name") or act.get("activityName") or "running",
+                        "session_kind": kind,
+                        "confidence": conf,
+                    }
+                )
+
+            stored_row = stored_tss.get(_activity_id_int(act))
+            if stored_row is not None:
+                stored_value = float(stored_row.get("tss") or 0.0)
+                if stored_value > 0:
+                    tss_by_day[d_iso] = tss_by_day.get(d_iso, 0.0) + stored_value
+                    count_by_day[d_iso] = count_by_day.get(d_iso, 0) + 1
+                continue
+
             hr_zones_raw: str | None = None
             should_fetch_hr_zones = _is_trail_hike_walk_activity(act_type) or _is_strength_activity(act_type)
             if _is_cycling_activity(act_type):
@@ -10299,31 +10423,12 @@ class TrainerAgent:
                 if activity_details_raw:
                     act["_activity_details_raw"] = activity_details_raw
 
-            if _is_running_non_trail_activity(act_type):
-                cls = _classify_running_session_with_confidence(act)
-                kind = str(cls.get("session_kind") or "calidad")
-                conf = str(cls.get("confidence") or "low")
-                mix = running_mix_by_day.setdefault(
-                    d_iso,
-                    {"rodaje": 0, "fartlek": 0, "series": 0, "calidad": 0},
-                )
-                if kind not in mix:
-                    mix[kind] = 0
-                mix[kind] += 1
-                running_inference_samples.append(
-                    {
-                        "date": d_iso,
-                        "activity_id": act.get("id") or act.get("activityId"),
-                        "name": act.get("name") or act.get("activityName") or "running",
-                        "session_kind": kind,
-                        "confidence": conf,
-                    }
-                )
+            hr_rest_for_activity = await _hr_rest_for_date(d_iso)
             tss, tss_label = _estimate_session_tss(
                 act,
                 ftp=cycling_ftp,
                 running_threshold_pace_sec_per_km=running_threshold_pace,
-                hr_rest_bpm=hr_rest_bpm,
+                hr_rest_bpm=hr_rest_for_activity,
                 hr_max_bpm=hr_max_bpm,
                 hr_zones_raw=hr_zones_raw,
                 splits_raw=splits_raw,
@@ -10368,10 +10473,11 @@ class TrainerAgent:
                         "model": str(model_tag or "unknown"),
                         "native_load": native_load,
                         "formula_version": int(_TSS_FORMULA_VERSION),
-                        "hr_rest_used": hr_rest_bpm,
+                        "hr_rest_used": hr_rest_for_activity,
                         "lthr_used": hr_threshold_bpm,
                         "ftp_used": cycling_ftp,
                         "threshold_pace_used": running_threshold_pace,
+                        "walk_threshold_used": act.get("_walk_hike_threshold_speed_m_min"),
                         "computed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
                     }
                 )
@@ -10410,10 +10516,21 @@ class TrainerAgent:
         alpha_atl = 1.0 / float(tau_atl)
         alpha_ctl = 1.0 / float(tau_ctl)
 
-        # 7. Semilla: último valor de ATL/CTL en DB antes del rango a calcular
+        # 7. Semilla: ATL/CTL de la víspera del rango en DB (0 al reconstruir la línea base)
         atl_prev = 0.0
         ctl_prev = 0.0
-        if existing_series:
+        seed_row = None
+        if not rebuild_from:
+            seed_day_iso = (_date.fromisoformat(fetch_from) - timedelta(days=1)).isoformat()
+            try:
+                seed_row = _storage.get_load_metrics_row(seed_day_iso)
+            except RuntimeError as exc:
+                log.debug("compute_load: semilla no disponible para %s: %s", seed_day_iso, exc)
+        if seed_row is not None:
+            atl_prev = float(seed_row.get("atl") or 0.0)
+            ctl_prev = float(seed_row.get("ctl") or 0.0)
+            log.info("compute_load: semilla ATL=%.1f CTL=%.1f desde %s", atl_prev, ctl_prev, seed_row["date"])
+        elif existing_series and not rebuild_from:
             for row in sorted(existing_series, key=lambda x: x["date"], reverse=True):
                 if row["date"] < fetch_from:
                     atl_prev = float(row.get("atl") or 0.0)

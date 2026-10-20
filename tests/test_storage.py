@@ -248,6 +248,10 @@ class _MemoryTable:
         self._filters.append(("neq", field, value))
         return self
 
+    def gte(self, field, value):
+        self._filters.append(("gte", field, value))
+        return self
+
     def order(self, field, desc=False):
         self._order = (field, bool(desc))
         return self
@@ -283,6 +287,8 @@ class _MemoryTable:
             if op == "eq" and row.get(field) != value:
                 return False
             if op == "neq" and row.get(field) == value:
+                return False
+            if op == "gte" and not (row.get(field) is not None and row.get(field) >= value):
                 return False
         return True
 
@@ -584,3 +590,71 @@ def test_upsert_wellness_daily_ignores_empty_payload(monkeypatch):
 
     storage.upsert_wellness_daily("2026-10-06")
     assert fake_sb.rows.get("wellness_daily", []) == []
+
+
+def test_get_activity_tss_map_returns_rows_from_start_date(monkeypatch):
+    fake_sb = _MemorySupabase()
+    fake_sb.rows["activity_tss"] = [
+        {"app_user_id": "user-1", "activity_id": 1, "start_date": "2026-10-01", "sport": "running", "tss": 55.5, "method": "TSS", "model": "running:pipeline_fisico"},
+        {"app_user_id": "user-1", "activity_id": 2, "start_date": "2026-09-01", "sport": "running", "tss": 40.0, "method": "TSS", "model": "x"},
+        {"app_user_id": "user-2", "activity_id": 3, "start_date": "2026-10-02", "sport": "running", "tss": 1.0, "method": "TSS", "model": "x"},
+    ]
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: fake_sb)
+
+    result = storage.get_activity_tss_map("2026-09-15")
+
+    assert list(result) == [1]
+    assert result[1]["tss"] == 55.5
+    assert result[1]["model"] == "running:pipeline_fisico"
+
+
+def test_get_activity_tss_map_missing_table_means_no_baseline(monkeypatch):
+    class _MissingActivityTssTable(_MissingTrainingPlanTable):
+        def gte(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            raise _MissingTableError(
+                {"message": "Could not find the table 'public.activity_tss' in the schema cache", "code": "PGRST205"}
+            )
+
+    class _MissingActivityTssSupabase:
+        def table(self, _name):
+            return _MissingActivityTssTable()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: _MissingActivityTssSupabase())
+
+    assert storage.get_activity_tss_map("2026-09-15") == {}
+
+
+def test_get_activity_tss_map_read_error_returns_none(monkeypatch):
+    class _BrokenTable(_MissingTrainingPlanTable):
+        def gte(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            raise Exception("connection reset")
+
+    class _BrokenSupabase:
+        def table(self, _name):
+            return _BrokenTable()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: _BrokenSupabase())
+
+    assert storage.get_activity_tss_map("2026-09-15") is None
+
+
+def test_get_load_metrics_row_returns_day_or_none(monkeypatch):
+    fake_sb = _MemorySupabase()
+    fake_sb.rows["load_metrics_daily"] = [
+        {"app_user_id": "user-1", "metric_date": "2026-10-19", "tss": 10, "atl": 40.5, "ctl": 58.25, "tsb": 17.75, "activities_count": 1},
+    ]
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: fake_sb)
+
+    row = storage.get_load_metrics_row("2026-10-19")
+    assert row["ctl"] == 58.25 and row["atl"] == 40.5
+    assert storage.get_load_metrics_row("2026-10-18") is None

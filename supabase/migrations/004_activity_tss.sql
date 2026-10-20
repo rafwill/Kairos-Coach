@@ -20,6 +20,7 @@ create table if not exists activity_tss (
     lthr_used            numeric(8,3),
     ftp_used             numeric(10,3),
     threshold_pace_used  numeric(10,3),
+    walk_threshold_used  numeric(8,3),
     computed_at          timestamptz   not null default now(),
     updated_at           timestamptz   not null default now(),
     primary key (app_user_id, activity_id)

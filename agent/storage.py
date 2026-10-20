@@ -909,6 +909,77 @@ def upsert_load_metrics_series(series: list[dict]) -> None:
         log.warning("upsert_load_metrics_series: %s", exc)
 
 
+def get_load_metrics_row(metric_date: str) -> dict | None:
+    """Devuelve la fila de load_metrics_daily de un día concreto (semilla del EWMA), o None."""
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb:
+        return None
+    try:
+        resp = (
+            sb.table("load_metrics_daily")
+            .select("metric_date, tss, atl, ctl, tsb, activities_count")
+            .eq("app_user_id", uid)
+            .eq("metric_date", metric_date)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            return None
+        r = rows[0]
+        return {
+            "date": str(r["metric_date"]),
+            "tss": round(float(r.get("tss") or 0), 2),
+            "atl": round(float(r.get("atl") or 0), 2),
+            "ctl": round(float(r.get("ctl") or 0), 2),
+            "tsb": round(float(r.get("tsb") or 0), 2),
+            "activities_count": int(r.get("activities_count") or 0),
+        }
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+        log.warning("get_load_metrics_row: %s", exc)
+        return None
+
+
+def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
+    """TSS ya guardados por actividad desde start_date.
+
+    Devuelve {} si la tabla aún no existe (migración pendiente: no hay línea base) y
+    None si la lectura falla por otro motivo; el llamador no debe recalcular el histórico
+    en ese caso.
+    """
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb:
+        return None
+    try:
+        resp = (
+            sb.table("activity_tss")
+            .select("activity_id, start_date, sport, tss, method, model")
+            .eq("app_user_id", uid)
+            .gte("start_date", start_date)
+            .execute()
+        )
+        return {
+            int(r["activity_id"]): {
+                "activity_id": int(r["activity_id"]),
+                "start_date": str(r.get("start_date") or ""),
+                "sport": str(r.get("sport") or "unknown"),
+                "tss": float(r.get("tss") or 0.0),
+                "method": str(r.get("method") or "unknown"),
+                "model": str(r.get("model") or "unknown"),
+            }
+            for r in (resp.data or [])
+            if r.get("activity_id") is not None
+        }
+    except Exception as exc:  # postgrest APIError no hereda de los tipos habituales
+        if _is_missing_table_error(exc, "activity_tss"):
+            log.info("get_activity_tss_map: tabla activity_tss no disponible (migración pendiente)")
+            return {}
+        log.warning("get_activity_tss_map: %s", exc)
+        return None
+
+
 def upsert_activity_tss_rows(rows: list[dict]) -> None:
     """Persiste una fila por actividad con el TSS calculado para trazabilidad."""
     sb = _supabase()
@@ -956,6 +1027,11 @@ def upsert_activity_tss_rows(rows: list[dict]) -> None:
                     "threshold_pace_used": (
                         round(float(row.get("threshold_pace_used")), 3)
                         if row.get("threshold_pace_used") is not None
+                        else None
+                    ),
+                    "walk_threshold_used": (
+                        round(float(row.get("walk_threshold_used")), 3)
+                        if row.get("walk_threshold_used") is not None
                         else None
                     ),
                     "computed_at": str(

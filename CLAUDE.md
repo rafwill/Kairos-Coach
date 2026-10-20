@@ -23,6 +23,13 @@ Cada actividad tiene UN TSS, calculado una vez con el mejor método, guardado en
 - Migración `supabase/migrations/004_activity_tss.sql` NO aplicada en Supabase (se puede editar en sitio). Hasta aplicarla, el upsert a activity_tss falla y se ignora (compute_load continúa).
 - Payloads de running 24398763300 y 24227364808 capturados el 2026-10-20 (`fixtures/real_payloads/*_20261020_0951*.json`, carpeta en .gitignore → `git add -f` en el commit del golden). Captura: `python -m tools.capture_running_payloads [ids]`.
 
+## Línea base de TSS (decisión del usuario, 2026-10-20)
+Un recálculo completo hoy con fórmulas y anclajes nuevos = línea base. Después, el TSS **nunca** se recalcula hacia atrás: solo se calculan actividades nuevas y ATL/CTL/TSB a diario desde los TSS guardados.
+- `compute_and_persist_load_metrics`: si una actividad ya está en `activity_tss`, se usa su TSS (sin descargas ni recálculo). Si la lectura de activity_tss falla (no por tabla ausente), no toca nada. hr_rest = media del RHR de los 14 días previos (perfil si no hay datos). Umbral de marcha = anclaje del perfil (`performance.walk_hike_threshold_speed_m_min`). Semilla del EWMA = fila de la víspera en load_metrics_daily. `rebuild_from=ISO` solo para la línea base.
+- `tools/rebuild_tss_baseline.py --username U --start ISO [--apply]`: ruta de producción con escrituras interceptadas, reintentos, validación (bloquea si algún running no usa detalles o hay errores de detalles) y comprobación de que la tabla existe.
+- Arreglado: `_fetch_activities_for_load_calc` solo leía 100 actividades (lista simple sin has_more).
+- Inicio elegido: 2026-02-22 (240 d; el arranque en 0 deja ~0.3 % de error en el CTL de hoy, frente a ~6 % con 120 d).
+
 ## Pendiente (en orden)
 1. DECISIÓN DEL USUARIO (bloquea commit 2): política de anclajes. Recomendación: histórico por fecha de efecto. Afecta a hr_rest, LTHR, FTP, umbral de carrera **y al umbral de marcha (Option A)**. hr_rest "vigente" = media de los 14 días previos (probado frente a TP: no empeora nada y mejora trail un poco).
 2. golden_objetivo.json: calcular offline con `procesar_actividad` (hr_rest 37.0, LTHR 169, umbral de carrera 252 s/km). Referencias solo para comparar: 24398763300 ≈ 100.6; 24227364808 ≈ 78.7.
