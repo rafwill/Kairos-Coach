@@ -10331,6 +10331,8 @@ class TrainerAgent:
             native_load = _extract_activity_native_load(act)
             act_id = act.get("id") or act.get("activityId")
             act_type = act.get("type") or act.get("activityType") or "unknown"
+            if isinstance(act_type, dict):
+                act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "unknown")
             log.info(
                 "compute_load: actividad id=%s fecha=%s tipo=%s tss=%.2f label=%s source=%s model=%s native_load=%s ftp=%s has_power=%s",
                 act_id,

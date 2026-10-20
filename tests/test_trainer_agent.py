@@ -1833,8 +1833,10 @@ class TestComputeAndPersistLoadMetrics:
         persisted_rows = upsert_activity_tss_mock.call_args[0][0]
         by_id = {int(r["activity_id"]): r for r in persisted_rows}
         assert len(by_id) == 8
+        type_key_by_id = {int(a["activityId"]): a["type"]["typeKey"] for a in activities}
         for aid, (tss, label, source, model, native_load) in expected.items():
             assert aid in by_id
+            assert by_id[aid]["sport"] == type_key_by_id[aid]
             assert by_id[aid]["start_date"] == today_iso
             assert by_id[aid]["method"] == label
             assert by_id[aid]["tss_source"] == source
