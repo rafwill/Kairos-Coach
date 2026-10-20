@@ -1577,6 +1577,10 @@ def _extract_training_load_tss(activity: dict) -> float | None:
     return _load_metrics.extract_training_load_tss(activity)
 
 
+def _extract_activity_native_load(activity: dict) -> float | None:
+    return _load_metrics.extract_activity_native_load(activity)
+
+
 def _estimate_if_from_hr(
     activity: dict,
     cycling_formula: bool,
@@ -1787,6 +1791,10 @@ def _infer_tss_source_tag(
         ftp=ftp,
         hr_zones_raw=hr_zones_raw,
     )
+
+
+def _infer_tss_model_tag(activity: dict) -> str:
+    return _load_metrics.infer_tss_model_tag(activity)
 
 
 def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
@@ -10166,6 +10174,7 @@ class TrainerAgent:
         _hr_zones_cache: dict[str, str | None] = {}
         _splits_cache: dict[str, str | None] = {}
         _activity_details_cache: dict[str, str | None] = {}
+        activity_tss_rows: list[dict[str, Any]] = []
 
         # Walk/Hike threshold calibration (Option A): derive from the most demanding
         # real hike/walk sessions in the current computation window.
@@ -10318,25 +10327,60 @@ class TrainerAgent:
                 ftp=cycling_ftp,
                 hr_zones_raw=hr_zones_raw,
             )
+            model_tag = _infer_tss_model_tag(act)
+            native_load = _extract_activity_native_load(act)
             act_id = act.get("id") or act.get("activityId")
             act_type = act.get("type") or act.get("activityType") or "unknown"
             log.info(
-                "compute_load: actividad id=%s fecha=%s tipo=%s tss=%.2f label=%s source=%s ftp=%s has_power=%s",
+                "compute_load: actividad id=%s fecha=%s tipo=%s tss=%.2f label=%s source=%s model=%s native_load=%s ftp=%s has_power=%s",
                 act_id,
                 d_iso,
                 act_type,
                 float(tss or 0.0),
                 tss_label,
                 tss_source,
+                model_tag,
+                f"{native_load:.3f}" if native_load is not None else "none",
                 f"{cycling_ftp:.1f}" if cycling_ftp else "none",
                 _has_activity_power_data(act),
             )
+
+            if act_id is not None and d_iso:
+                activity_tss_rows.append(
+                    {
+                        "activity_id": int(act_id),
+                        "sport": str(act_type or "unknown"),
+                        "start_date": d_iso,
+                        "tss": round(float(tss or 0.0), 3),
+                        "tss_source": str(tss_source or "unknown"),
+                        "method": str(tss_label or "unknown"),
+                        "model": str(model_tag or "unknown"),
+                        "native_load": native_load,
+                        "formula_version": int(_TSS_FORMULA_VERSION),
+                        "hr_rest_used": hr_rest_bpm,
+                        "lthr_used": hr_threshold_bpm,
+                        "ftp_used": cycling_ftp,
+                        "threshold_pace_used": running_threshold_pace,
+                        "computed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+                    }
+                )
+
             if tss > 0:
                 tss_by_day[d_iso]   = tss_by_day.get(d_iso, 0.0) + tss
                 count_by_day[d_iso] = count_by_day.get(d_iso, 0) + 1
 
         log.info("compute_load: %d días con TSS desde %s (actividades=%d)",
                  len(tss_by_day), fetch_from, len(new_activities))
+
+        if activity_tss_rows:
+            try:
+                _storage.upsert_activity_tss_rows(activity_tss_rows)
+            except Exception as exc:  # pragma: no cover - hard failure should never stop load metrics
+                log.warning(
+                    "compute_load: fallo al persistir activity_tss (%d filas): %s",
+                    len(activity_tss_rows),
+                    exc,
+                )
 
         if running_inference_samples:
             running_inference_samples.sort(key=lambda item: str(item.get("date") or ""), reverse=True)

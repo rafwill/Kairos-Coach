@@ -909,6 +909,74 @@ def upsert_load_metrics_series(series: list[dict]) -> None:
         log.warning("upsert_load_metrics_series: %s", exc)
 
 
+def upsert_activity_tss_rows(rows: list[dict]) -> None:
+    """Persiste una fila por actividad con el TSS calculado para trazabilidad."""
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb or not rows:
+        return
+    try:
+        payload_rows: list[dict[str, Any]] = []
+        for row in rows:
+            activity_id = row.get("activity_id")
+            start_date = row.get("start_date")
+            if activity_id is None or not start_date:
+                continue
+            payload_rows.append(
+                {
+                    "app_user_id": uid,
+                    "activity_id": int(activity_id),
+                    "sport": str(row.get("sport") or "unknown"),
+                    "start_date": str(start_date),
+                    "tss": round(float(row.get("tss") or 0.0), 3),
+                    "tss_source": str(row.get("tss_source") or "unknown"),
+                    "method": str(row.get("method") or "unknown"),
+                    "model": str(row.get("model") or "unknown"),
+                    "native_load": (
+                        round(float(row.get("native_load")), 3)
+                        if row.get("native_load") is not None
+                        else None
+                    ),
+                    "formula_version": int(row.get("formula_version") or 0),
+                    "hr_rest_used": (
+                        round(float(row.get("hr_rest_used")), 3)
+                        if row.get("hr_rest_used") is not None
+                        else None
+                    ),
+                    "lthr_used": (
+                        round(float(row.get("lthr_used")), 3)
+                        if row.get("lthr_used") is not None
+                        else None
+                    ),
+                    "ftp_used": (
+                        round(float(row.get("ftp_used")), 3)
+                        if row.get("ftp_used") is not None
+                        else None
+                    ),
+                    "threshold_pace_used": (
+                        round(float(row.get("threshold_pace_used")), 3)
+                        if row.get("threshold_pace_used") is not None
+                        else None
+                    ),
+                    "computed_at": str(
+                        row.get("computed_at")
+                        or datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+                    ),
+                }
+            )
+
+        if not payload_rows:
+            return
+
+        for i in range(0, len(payload_rows), 200):
+            sb.table("activity_tss").upsert(
+                payload_rows[i:i + 200], on_conflict="app_user_id,activity_id"
+            ).execute()
+        log.info("upsert_activity_tss_rows: %d filas persistidas", len(payload_rows))
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+        log.warning("upsert_activity_tss_rows: %s", exc)
+
+
 # ─── wellness_daily (Body Battery + HRV) ─────────────────────────────────────
 
 def _to_float_or_none(value) -> float | None:

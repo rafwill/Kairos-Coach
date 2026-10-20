@@ -3656,6 +3656,32 @@ def _estimate_if_from_training_effect(activity: dict) -> float | None:
         return None
 
 
+def _set_tss_resolution_meta(
+    activity: dict,
+    *,
+    model_tag: str,
+    used_native_tss: bool = False,
+) -> None:
+    if not isinstance(activity, dict):
+        return
+    activity["_kairos_model_tag"] = str(model_tag or "unknown")
+    activity["_kairos_used_native_tss"] = bool(used_native_tss)
+
+
+def _extract_activity_native_load(activity: dict) -> float | None:
+    if not isinstance(activity, dict):
+        return None
+    for key in ("activityTrainingLoad", "activity_training_load"):
+        raw = activity.get(key)
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _estimate_session_tss(
     activity: dict,
     ftp: float | None = None,
@@ -3671,7 +3697,8 @@ def _estimate_session_tss(
     if not isinstance(activity, dict):
         return 0.0, "hrTSS"
 
-    activity.pop("_kairos_tss_source_tag", None)
+    activity.pop("_kairos_model_tag", None)
+    activity.pop("_kairos_used_native_tss", None)
 
     act_type = _resolve_activity_type_for_routing(activity)
     is_cycling = _is_cycling_activity(act_type)
@@ -3699,14 +3726,22 @@ def _estimate_session_tss(
     if hours <= 0:
         if is_strength:
             # Fuerza: no usar carga nativa; sin duración no se puede aplicar fórmula HR.
+            _set_tss_resolution_meta(activity, model_tag="strength:no_duration")
             return 0.0, "hrTSS"
         if tss_native is not None:
+            _set_tss_resolution_meta(
+                activity,
+                model_tag="garmin:native_load",
+                used_native_tss=True,
+            )
             return tss_native, "TSS"
+        _set_tss_resolution_meta(activity, model_tag="generic:no_duration")
         return 0.0, "hrTSS"
 
     if is_cycling:
         tss_pow = _estimate_tss_from_power_ftp(activity, ftp=ftp, hours=hours)
         if tss_pow is not None:
+            _set_tss_resolution_meta(activity, model_tag="cycling:power_ftp")
             return tss_pow, "TSS"
 
         tss_hr_zones = _estimate_hr_tss_from_zones(
@@ -3717,10 +3752,12 @@ def _estimate_session_tss(
             hr_max_bpm=hr_max_bpm,
         )
         if tss_hr_zones is not None:
+            _set_tss_resolution_meta(activity, model_tag="cycling:hr_zones")
             return tss_hr_zones, "hrTSS"
 
         if_hr = _estimate_if_from_hr(activity, cycling_formula=True, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
         if if_hr is not None:
+            _set_tss_resolution_meta(activity, model_tag="cycling:hr_avg")
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
 
     elif is_elliptical or is_rowing:
@@ -3734,12 +3771,14 @@ def _estimate_session_tss(
             hr_threshold_bpm=hr_threshold_bpm,
         )
         if tss_gym is not None:
-            activity["_kairos_tss_source_tag"] = gym_source
+            _set_tss_resolution_meta(activity, model_tag=str(gym_source or "gym_cardio:unknown"))
             return max(0.0, float(tss_gym)), "hrTSS"
 
     elif is_running_non_trail:
         running_model = _resolve_running_tss_model(activity)
+        running_resolution = "running:unknown"
         if running_model == "legacy":
+            running_resolution = "running:legacy"
             tss_running = _estimate_running_tss_examined(
                 activity,
                 hours=hours,
@@ -3756,6 +3795,8 @@ def _estimate_session_tss(
                 hr_max_bpm=hr_max_bpm,
                 hr_threshold_bpm=hr_threshold_bpm,
             )
+            if tss_running is not None:
+                running_resolution = "running:pipeline_fisico"
             if tss_running is None:
                 fallback_model = _resolve_running_fallback_model(activity)
                 if fallback_model == "v2":
@@ -3767,6 +3808,7 @@ def _estimate_session_tss(
                         hr_rest_bpm=hr_rest_bpm,
                         hr_max_bpm=hr_max_bpm,
                     )
+                    running_resolution = "running:tp_like_v2"
                 else:
                     tss_running = _estimate_running_tss_tp_like_adjusted(
                         activity,
@@ -3775,7 +3817,9 @@ def _estimate_session_tss(
                         hr_rest_bpm=hr_rest_bpm,
                         hr_max_bpm=hr_max_bpm,
                     )
+                    running_resolution = "running:tp_like_adjusted"
         if tss_running is not None:
+            _set_tss_resolution_meta(activity, model_tag=running_resolution)
             return tss_running, "TSS"
 
     elif is_trail_hike_walk:
@@ -3792,6 +3836,7 @@ def _estimate_session_tss(
                         splits_raw=splits_raw,
                     )
                     if tss_trail_precise is not None:
+                        _set_tss_resolution_meta(activity, model_tag="trail:high_precision_splits")
                         return max(0.0, float(tss_trail_precise)), "TSS"
 
                 tss_hr_stream = _estimate_hr_tss_from_activity_details(
@@ -3803,6 +3848,7 @@ def _estimate_session_tss(
                     min_coverage_ratio=0.40,
                 )
                 if tss_hr_stream is not None:
+                    _set_tss_resolution_meta(activity, model_tag="trail:hr_stream")
                     return max(0.0, float(tss_hr_stream)), "hrTSS"
 
                 tss_trail_tp_like = _estimate_trail_hr_tss_tp_like(
@@ -3811,6 +3857,7 @@ def _estimate_session_tss(
                     hr_zones_raw=hr_zones_raw,
                 )
                 if tss_trail_tp_like is not None:
+                    _set_tss_resolution_meta(activity, model_tag="trail:tp_like")
                     return max(0.0, float(tss_trail_tp_like)), "hrTSS"
 
                 tss_hr_zones = _estimate_hr_tss_from_zones(
@@ -3822,6 +3869,7 @@ def _estimate_session_tss(
                     apply_cap=False,
                 )
                 if tss_hr_zones is not None:
+                    _set_tss_resolution_meta(activity, model_tag="trail:hr_zones")
                     return max(0.0, float(tss_hr_zones)), "hrTSS"
             else:
                 # TP-like for non-fast trail: prefer LTHR-based hrTSS, then fallback to pace-based TSS.
@@ -3837,6 +3885,7 @@ def _estimate_session_tss(
                         min_coverage_ratio=0.40,
                     )
                     if tss_hr_stream_lthr is not None:
+                        _set_tss_resolution_meta(activity, model_tag="trail:lthr_details")
                         return max(0.0, float(tss_hr_stream_lthr)), "hrTSS"
 
                     tss_hr_zones_lthr = _estimate_hr_tss_from_zones_lthr(
@@ -3848,6 +3897,7 @@ def _estimate_session_tss(
                         min_coverage_ratio=0.35,
                     )
                     if tss_hr_zones_lthr is not None:
+                        _set_tss_resolution_meta(activity, model_tag="trail:lthr_zones")
                         return max(0.0, float(tss_hr_zones_lthr)), "hrTSS"
 
                     tss_trail_pace = _estimate_tss_from_threshold_pace(
@@ -3858,6 +3908,7 @@ def _estimate_session_tss(
                         if_pace_ceiling=1.50,
                     )
                     if tss_trail_pace is not None:
+                        _set_tss_resolution_meta(activity, model_tag="trail:pace_threshold")
                         return max(0.0, float(tss_trail_pace)), "TSS"
                 else:
                     # No LTHR available: keep legacy non-fast trail behavior.
@@ -3871,6 +3922,7 @@ def _estimate_session_tss(
                             splits_raw=splits_raw,
                         )
                         if tss_trail_precise is not None:
+                            _set_tss_resolution_meta(activity, model_tag="trail:high_precision_splits")
                             return max(0.0, float(tss_trail_precise)), "TSS"
 
                     tss_hr_stream = _estimate_hr_tss_from_activity_details(
@@ -3882,6 +3934,7 @@ def _estimate_session_tss(
                         min_coverage_ratio=0.40,
                     )
                     if tss_hr_stream is not None:
+                        _set_tss_resolution_meta(activity, model_tag="trail:hr_stream")
                         return max(0.0, float(tss_hr_stream)), "hrTSS"
 
                     tss_trail_tp_like = _estimate_trail_hr_tss_tp_like(
@@ -3890,6 +3943,7 @@ def _estimate_session_tss(
                         hr_zones_raw=hr_zones_raw,
                     )
                     if tss_trail_tp_like is not None:
+                        _set_tss_resolution_meta(activity, model_tag="trail:tp_like")
                         return max(0.0, float(tss_trail_tp_like)), "hrTSS"
 
                     tss_hr_zones = _estimate_hr_tss_from_zones(
@@ -3901,6 +3955,7 @@ def _estimate_session_tss(
                         apply_cap=False,
                     )
                     if tss_hr_zones is not None:
+                        _set_tss_resolution_meta(activity, model_tag="trail:hr_zones")
                         return max(0.0, float(tss_hr_zones)), "hrTSS"
 
         if is_hike_walk:
@@ -3915,10 +3970,12 @@ def _estimate_session_tss(
                 running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
             )
             if tss_walk is not None:
+                _set_tss_resolution_meta(activity, model_tag="walk_hike:metabolico")
                 return max(0.0, float(tss_walk)), str(lbl_walk or "TSS")
 
         if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
         if if_hr is not None:
+            _set_tss_resolution_meta(activity, model_tag="walk_hike:hr_avg")
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
         tss_pace = _estimate_tss_from_threshold_pace(
             activity,
@@ -3926,9 +3983,11 @@ def _estimate_session_tss(
             running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
         )
         if tss_pace is not None:
+            _set_tss_resolution_meta(activity, model_tag="walk_hike:pace_threshold")
             return tss_pace, "TSS"
         if_rpe = _estimate_if_from_rpe(activity)
         if if_rpe is not None:
+            _set_tss_resolution_meta(activity, model_tag="walk_hike:rpe")
             return max(0.0, hours * (if_rpe**2) * 100.0), "hrTSS"
 
     elif is_strength:
@@ -3938,15 +3997,23 @@ def _estimate_session_tss(
             hr_threshold_bpm=hr_threshold_bpm,
         )
         if if_lthr is not None:
+            _set_tss_resolution_meta(activity, model_tag="strength:modelo_B")
             return max(0.0, hours * (if_lthr**2) * 100.0), "hrTSS"
 
         if_hr = _estimate_strength_if_from_hr(activity, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
         if if_hr is not None:
+            _set_tss_resolution_meta(activity, model_tag="strength:modelo_A_fallback")
             return max(0.0, hours * (if_hr**2) * 100.0), "hrTSS"
         # Sin señal HR usable en fuerza no se estima carga.
+        _set_tss_resolution_meta(activity, model_tag="strength:insufficient_signal")
         return 0.0, "hrTSS"
 
     if tss_native is not None:
+        _set_tss_resolution_meta(
+            activity,
+            model_tag="garmin:native_load",
+            used_native_tss=True,
+        )
         return tss_native, "TSS"
 
     tss_hr_zones_generic = _estimate_hr_tss_from_zones(
@@ -3957,6 +4024,7 @@ def _estimate_session_tss(
         hr_max_bpm=hr_max_bpm,
     )
     if tss_hr_zones_generic is not None:
+        _set_tss_resolution_meta(activity, model_tag="generic:hr_zones")
         return tss_hr_zones_generic, "hrTSS"
 
     if_hr_fallback = _estimate_if_from_hr(
@@ -3967,56 +4035,38 @@ def _estimate_session_tss(
         use_activity_hr_max=not is_elliptical,
     )
     if if_hr_fallback is not None:
+        _set_tss_resolution_meta(activity, model_tag="generic:hr_avg")
         return max(0.0, hours * (if_hr_fallback**2) * 100.0), "hrTSS"
 
     if_te = _estimate_if_from_training_effect(activity)
     if if_te is not None:
+        _set_tss_resolution_meta(activity, model_tag="generic:training_effect")
         return max(0.0, hours * (if_te**2) * 100.0), "hrTSS"
 
     if_default = 0.60 if is_cycling else 0.68
+    _set_tss_resolution_meta(activity, model_tag="generic:default_if")
     return max(0.0, hours * (if_default**2) * 100.0), "hrTSS"
 
 
 def _infer_tss_source_tag(activity: dict, tss_label: str, ftp: float | None, hr_zones_raw: str | None) -> str:
+    """garmin_native solo si el TSS final es el campo nativo de Garmin; kairos_model en el resto.
+
+    El detalle de la rama de cálculo vive en `_infer_tss_model_tag`.
+    """
+    del ftp, hr_zones_raw
     if not isinstance(activity, dict):
         return "unknown"
-
-    source_tag = activity.get("_kairos_tss_source_tag")
-    if source_tag:
-        return str(source_tag)
-
-    act_type = _resolve_activity_type_for_routing(activity)
-    is_cycling = _is_cycling_activity(act_type)
-
-    if is_cycling:
-        if tss_label == "TSS" and ftp and ftp > 0 and _has_activity_power_data(activity):
-            return "power_ftp"
-        if tss_label == "hrTSS" and hr_zones_raw:
-            return "hr_zones"
-        if tss_label == "hrTSS":
-            return "hr_avg"
-        native_tss = _extract_training_load_tss(activity)
-        if native_tss is not None:
-            return "native_tss"
-        return "cycling_fallback"
-
-    if tss_label == "TSS":
-        native_tss = _extract_training_load_tss(activity)
-        if native_tss is not None:
-            return "native_tss"
-        return "pace_or_model"
-    if tss_label == "hrTSS" and (
-        activity.get("_activity_details_raw")
-        or activity.get("activity_details_raw")
-        or activity.get("activityDetailsRaw")
-    ):
-        return "hr_stream"
-
-    if tss_label == "hrTSS" and hr_zones_raw:
-        return "hr_zones"
-    if tss_label == "hrTSS":
-        return "hr_avg_or_rpe"
+    if activity.get("_kairos_used_native_tss"):
+        return "garmin_native"
+    if activity.get("_kairos_model_tag") or tss_label in {"TSS", "hrTSS"}:
+        return "kairos_model"
     return "unknown"
+
+
+def _infer_tss_model_tag(activity: dict) -> str:
+    if not isinstance(activity, dict):
+        return "unknown"
+    return str(activity.get("_kairos_model_tag") or "unknown")
 
 
 def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
@@ -4506,6 +4556,10 @@ def extract_training_load_tss(activity: dict) -> float | None:
     return _extract_training_load_tss(activity)
 
 
+def extract_activity_native_load(activity: dict) -> float | None:
+    return _extract_activity_native_load(activity)
+
+
 def estimate_if_from_hr(
     activity: dict,
     cycling_formula: bool,
@@ -4736,6 +4790,10 @@ def infer_tss_source_tag(activity: dict, tss_label: str, ftp: float | None, hr_z
     return _infer_tss_source_tag(activity, tss_label, ftp, hr_zones_raw)
 
 
+def infer_tss_model_tag(activity: dict) -> str:
+    return _infer_tss_model_tag(activity)
+
+
 def resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
     return _resolve_running_threshold_pace_sec_per_km(profile)
 
@@ -4787,6 +4845,7 @@ __all__ = [
     "extract_running_effective_pace_sec_per_km",
     "should_use_raw_hr_tss_for_fast_trail",
     "extract_training_load_tss",
+    "extract_activity_native_load",
     "estimate_if_from_hr",
     "estimate_hr_tss_from_zones",
     "resolve_hr_profile_values",
@@ -4811,6 +4870,7 @@ __all__ = [
     "estimate_if_from_training_effect",
     "estimate_session_tss",
     "infer_tss_source_tag",
+    "infer_tss_model_tag",
     "resolve_running_threshold_pace_sec_per_km",
     "percentile",
     "resolve_sport_model_cfg",

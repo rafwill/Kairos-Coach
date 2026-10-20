@@ -156,6 +156,33 @@ alter table load_metrics_daily disable row level security;
 create index if not exists idx_load_metrics_daily_user_date
     on load_metrics_daily (app_user_id, metric_date desc);
 
+-- ─── activity_tss ────────────────────────────────────────────────────────────
+-- TSS por actividad para trazabilidad y diagnóstico por sesión.
+create table if not exists activity_tss (
+    app_user_id          text          not null references app_user(id) on delete cascade,
+    activity_id          bigint        not null,
+    sport                text          not null,
+    start_date           date          not null,
+    tss                  numeric(10,3) not null default 0,
+    tss_source           text          not null default 'unknown',
+    method               text          not null default 'unknown',
+    model                text          not null default 'unknown',
+    native_load          numeric(10,3),
+    formula_version      integer       not null default 0,
+    hr_rest_used         numeric(8,3),
+    lthr_used            numeric(8,3),
+    ftp_used             numeric(10,3),
+    threshold_pace_used  numeric(10,3),
+    computed_at          timestamptz   not null default now(),
+    updated_at           timestamptz   not null default now(),
+    primary key (app_user_id, activity_id)
+);
+
+alter table activity_tss disable row level security;
+
+create index if not exists idx_activity_tss_user_date
+    on activity_tss (app_user_id, start_date desc);
+
 -- ─── wellness_daily ─────────────────────────────────────────────────────────
 -- Snapshot diario de bienestar por usuario (Body Battery + HRV).
 create table if not exists wellness_daily (
@@ -219,6 +246,11 @@ create trigger trg_training_plan_session_updated_at
 drop trigger if exists trg_load_metrics_daily_updated_at on load_metrics_daily;
 create trigger trg_load_metrics_daily_updated_at
     before update on load_metrics_daily
+    for each row execute function _set_updated_at();
+
+drop trigger if exists trg_activity_tss_updated_at on activity_tss;
+create trigger trg_activity_tss_updated_at
+    before update on activity_tss
     for each row execute function _set_updated_at();
 
 drop trigger if exists trg_wellness_daily_updated_at on wellness_daily;

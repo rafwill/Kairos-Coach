@@ -54,6 +54,7 @@ from agent.trainer_agent import (
     _extract_activities_list,
     _fetch_activities_for_load_calc,
     _extract_cycling_ftp_watts,
+    _infer_tss_model_tag,
     _infer_tss_source_tag,
     _extract_threshold_pace_sec_per_km,
     _resolve_running_threshold_pace_sec_per_km,
@@ -1734,6 +1735,154 @@ class TestStartupProactive:
 
 
 class TestComputeAndPersistLoadMetrics:
+    @pytest.mark.asyncio
+    async def test_compute_persists_activity_tss_rows_matching_golden_controls(self):
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        today_iso = today.isoformat()
+
+        activities = [
+            {
+                "activityId": 24172582627,
+                "type": {"typeKey": "trail_running"},
+                "startTimeLocal": f"{today_iso}T07:00:00",
+            },
+            {
+                "activityId": 24398763300,
+                "type": {"typeKey": "running"},
+                "startTimeLocal": f"{today_iso}T08:00:00",
+                "activityTrainingLoad": 118.471,
+            },
+            {
+                "activityId": 24227364808,
+                "type": {"typeKey": "running"},
+                "startTimeLocal": f"{today_iso}T09:00:00",
+            },
+            {
+                "activityId": 24618238695,
+                "type": {"typeKey": "strength_training"},
+                "startTimeLocal": f"{today_iso}T10:00:00",
+            },
+            {
+                "activityId": 24502427862,
+                "type": {"typeKey": "walking"},
+                "startTimeLocal": f"{today_iso}T11:00:00",
+                "activityTrainingLoad": 17.073,
+            },
+            {
+                "activityId": 24013969366,
+                "type": {"typeKey": "hiking"},
+                "startTimeLocal": f"{today_iso}T12:00:00",
+                "activityTrainingLoad": 102.75,
+            },
+            {
+                "activityId": 23950882994,
+                "type": {"typeKey": "gravel_cycling"},
+                "startTimeLocal": f"{today_iso}T13:00:00",
+            },
+            {
+                "activityId": 24383422318,
+                "type": {"typeKey": "elliptical"},
+                "startTimeLocal": f"{today_iso}T14:00:00",
+            },
+        ]
+        expected = {
+            24172582627: (228.266, "hrTSS", "kairos_model", "trail:lthr_details", None),
+            24398763300: (118.471, "TSS", "garmin_native", "garmin:native_load", 118.471),
+            24227364808: (91.996, "TSS", "kairos_model", "running:tp_like_adjusted", None),
+            24618238695: (16.597, "hrTSS", "kairos_model", "strength:modelo_B", None),
+            24502427862: (17.073, "TSS", "kairos_model", "walk_hike:metabolico", 17.073),
+            24013969366: (102.75, "TSS", "kairos_model", "walk_hike:metabolico", 102.75),
+            23950882994: (50.825, "TSS", "kairos_model", "cycling:power_ftp", None),
+            24383422318: (23.772, "hrTSS", "kairos_model", "gym_cardio:lthr", None),
+        }
+
+        async def _fake_fetch(_session, _start_date, _end_date):
+            return activities
+
+        def _fake_estimate(act, **_kwargs):
+            aid = int(act.get("activityId") or 0)
+            tss, label, source, model, _native_load = expected[aid]
+            act["_kairos_model_tag"] = model
+            act["_kairos_used_native_tss"] = source == "garmin_native"
+            if model.startswith("gym_cardio:"):
+                act["_kairos_tss_source_tag"] = model
+            return tss, label
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {
+            "goals": {"primary": "running"},
+            "performance": {"running_threshold_pace_sec_per_km": 252.0},
+        }
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[[], []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=None), \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series"), \
+             patch("agent.trainer_agent._storage.upsert_activity_tss_rows") as upsert_activity_tss_mock, \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch("agent.trainer_agent._estimate_session_tss", side_effect=_fake_estimate), \
+             patch("agent.trainer_agent._hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=205.0)), \
+             patch.object(TrainerAgent, "_apply_series_to_profile"):
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
+
+        upsert_activity_tss_mock.assert_called_once()
+        persisted_rows = upsert_activity_tss_mock.call_args[0][0]
+        by_id = {int(r["activity_id"]): r for r in persisted_rows}
+        assert len(by_id) == 8
+        for aid, (tss, label, source, model, native_load) in expected.items():
+            assert aid in by_id
+            assert by_id[aid]["start_date"] == today_iso
+            assert by_id[aid]["method"] == label
+            assert by_id[aid]["tss_source"] == source
+            assert by_id[aid]["model"] == model
+            if native_load is None:
+                assert by_id[aid]["native_load"] is None
+            else:
+                assert by_id[aid]["native_load"] == pytest.approx(native_load, abs=0.001)
+            assert by_id[aid]["tss"] == pytest.approx(tss, abs=0.001)
+
+    @pytest.mark.asyncio
+    async def test_compute_continues_when_activity_tss_persistence_fails(self):
+        from agent.trainer_agent import TrainerAgent
+
+        today = date.today()
+        today_iso = today.isoformat()
+
+        async def _fake_fetch(_session, _start_date, _end_date):
+            return [
+                {
+                    "activityId": 123,
+                    "type": {"typeKey": "running"},
+                    "startTimeLocal": f"{today_iso}T07:00:00",
+                }
+            ]
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {
+            "goals": {"primary": "running"},
+            "performance": {"running_threshold_pace_sec_per_km": 252.0},
+        }
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[[], []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=None), \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_daily_mock, \
+             patch("agent.trainer_agent._storage.upsert_activity_tss_rows", side_effect=RuntimeError("boom")), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch("agent.trainer_agent._estimate_session_tss", return_value=(50.0, "TSS")), \
+             patch("agent.trainer_agent._infer_tss_source_tag", return_value="kairos_model"), \
+             patch("agent.trainer_agent._hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=205.0)), \
+             patch.object(TrainerAgent, "_apply_series_to_profile"):
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
+
+        upsert_daily_mock.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_force_full_recalc_fetches_full_window_for_new_user(self):
         from agent.trainer_agent import TrainerAgent
@@ -3980,11 +4129,11 @@ class TestLoadFatigueModel:
             hr_max_bpm=190,
             hr_threshold_bpm=169,
         )
-        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+        model = _infer_tss_model_tag(act)
 
         assert label == "hrTSS"
         assert 60.0 <= tss <= 66.0
-        assert source == "gym_cardio:lthr"
+        assert model == "gym_cardio:lthr"
 
     def test_estimate_tss_rowing_fallback_sets_gym_cardio_source_tag(self):
         act = {
@@ -3999,11 +4148,11 @@ class TestLoadFatigueModel:
             hr_max_bpm=190,
             hr_threshold_bpm=None,
         )
-        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+        model = _infer_tss_model_tag(act)
 
         assert label == "hrTSS"
         assert 68.0 <= tss <= 74.0
-        assert source == "gym_cardio:fallback_hr"
+        assert model == "gym_cardio:fallback_hr"
 
     def test_estimate_tss_rowing_lthr_with_power_blends_mechanical_component(self):
         act_base = {
@@ -4031,13 +4180,13 @@ class TestLoadFatigueModel:
             hr_threshold_bpm=169,
         )
 
-        source_base = _infer_tss_source_tag(act_base, label_base, ftp=None, hr_zones_raw=None)
-        source_power = _infer_tss_source_tag(act_power, label_power, ftp=None, hr_zones_raw=None)
+        model_base = _infer_tss_model_tag(act_base)
+        model_power = _infer_tss_model_tag(act_power)
 
         assert label_base == "hrTSS"
         assert label_power == "hrTSS"
-        assert source_base == "gym_cardio:lthr"
-        assert source_power == "gym_cardio:lthr_plus_mech"
+        assert model_base == "gym_cardio:lthr"
+        assert model_power == "gym_cardio:lthr_plus_mech"
         assert tss_power > tss_base
 
     def test_estimate_tss_elliptical_lthr_with_cadence_blends_mechanical_component(self):
@@ -4066,13 +4215,13 @@ class TestLoadFatigueModel:
             hr_threshold_bpm=169,
         )
 
-        source_base = _infer_tss_source_tag(act_base, label_base, ftp=None, hr_zones_raw=None)
-        source_cad = _infer_tss_source_tag(act_cad, label_cad, ftp=None, hr_zones_raw=None)
+        model_base = _infer_tss_model_tag(act_base)
+        model_cad = _infer_tss_model_tag(act_cad)
 
         assert label_base == "hrTSS"
         assert label_cad == "hrTSS"
-        assert source_base == "gym_cardio:lthr"
-        assert source_cad == "gym_cardio:lthr_plus_mech"
+        assert model_base == "gym_cardio:lthr"
+        assert model_cad == "gym_cardio:lthr_plus_mech"
         assert tss_cad > tss_base
 
     def test_estimate_tss_elliptical_name_overrides_running_type_for_routing(self):
@@ -4090,10 +4239,10 @@ class TestLoadFatigueModel:
             hr_max_bpm=190,
             hr_threshold_bpm=169,
         )
-        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+        model = _infer_tss_model_tag(act)
 
         assert label == "hrTSS"
-        assert source.startswith("gym_cardio:")
+        assert model.startswith("gym_cardio:")
         assert tss > 0.0
 
     def test_estimate_tss_elliptical_accented_name_overrides_running_type_for_routing(self):
@@ -4111,10 +4260,10 @@ class TestLoadFatigueModel:
             hr_max_bpm=190,
             hr_threshold_bpm=169,
         )
-        source = _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None)
+        model = _infer_tss_model_tag(act)
 
         assert label == "hrTSS"
-        assert source.startswith("gym_cardio:")
+        assert model.startswith("gym_cardio:")
         assert tss > 0.0
 
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
@@ -4314,20 +4463,87 @@ class TestCyclingFtpResolution:
 
 
 class TestTssSourceTagging:
-    def test_infer_tss_source_tag_cycling_power_ftp(self):
-        act = {"type": "gravel_cycling", "normalizedPower": 180, "duration": 3600}
-        src = _infer_tss_source_tag(act, tss_label="TSS", ftp=260.0, hr_zones_raw=None)
-        assert src == "power_ftp"
+    def test_cycling_power_ftp_is_kairos_model(self):
+        act = {"type": "gravel_cycling", "normalizedPower": 180, "duration": 3600, "activityTrainingLoad": 140.0}
+        tss, label = _estimate_session_tss(act, ftp=260.0)
+        assert label == "TSS"
+        assert tss > 0.0
+        assert _infer_tss_source_tag(act, label, ftp=260.0, hr_zones_raw=None) == "kairos_model"
+        assert _infer_tss_model_tag(act) == "cycling:power_ftp"
 
-    def test_infer_tss_source_tag_cycling_hr_zones_without_ftp(self):
-        act = {"type": "road_cycling", "normalizedPower": 180, "duration": 3600}
-        src = _infer_tss_source_tag(act, tss_label="hrTSS", ftp=None, hr_zones_raw='[{"zoneNumber":1,"secsInZone":1200}]')
-        assert src == "hr_zones"
-
-    def test_infer_tss_source_tag_cycling_hr_avg_without_ftp(self):
+    def test_cycling_hr_avg_without_ftp_is_kairos_model(self):
         act = {"type": "mountain_biking", "averageHR": 150, "duration": 3600}
-        src = _infer_tss_source_tag(act, tss_label="hrTSS", ftp=None, hr_zones_raw=None)
-        assert src == "hr_avg"
+        _tss, label = _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190)
+        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) == "kairos_model"
+        assert _infer_tss_model_tag(act) == "cycling:hr_avg"
+
+    @pytest.mark.parametrize(
+        ("act", "expected_model"),
+        [
+            (
+                {
+                    "type": "running",
+                    "duration": 3600,
+                    "distance": 12000.0,
+                    "averageHR": 150,
+                    "maxHR": 170,
+                    "activityTrainingLoad": 250.0,
+                },
+                "running:tp_like_adjusted",
+            ),
+            (
+                {
+                    "type": "walking",
+                    "duration": 3600,
+                    "distance": 5500.0,
+                    "averageHR": 105,
+                    "activityTrainingLoad": 40.0,
+                },
+                "walk_hike:metabolico",
+            ),
+            (
+                {
+                    "type": "hiking",
+                    "duration": 3 * 3600,
+                    "distance": 12000.0,
+                    "elevationGain": 900.0,
+                    "averageHR": 125,
+                    "activityTrainingLoad": 180.0,
+                },
+                "walk_hike:metabolico",
+            ),
+        ],
+        ids=["running", "walking", "hiking"],
+    )
+    def test_native_load_present_but_kairos_computes_is_not_garmin_native(self, act, expected_model):
+        tss, label = _estimate_session_tss(
+            act,
+            hr_rest_bpm=37.0,
+            hr_max_bpm=190.0,
+            hr_threshold_bpm=169.0,
+            running_threshold_pace_sec_per_km=252.0,
+        )
+        assert tss > 0.0
+        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) == "kairos_model"
+        assert _infer_tss_model_tag(act) == expected_model
+        assert tss != pytest.approx(act["activityTrainingLoad"])
+
+    def test_native_used_only_when_it_is_the_final_tss(self):
+        act = {"type": "other", "duration": 0, "activityTrainingLoad": 42.0}
+        tss, label = _estimate_session_tss(act)
+        assert tss == pytest.approx(42.0)
+        assert label == "TSS"
+        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) == "garmin_native"
+        assert _infer_tss_model_tag(act) == "garmin:native_load"
+
+    def test_tags_reset_between_estimates_on_same_dict(self):
+        act = {"type": "other", "duration": 0, "activityTrainingLoad": 42.0}
+        _estimate_session_tss(act)
+        act["duration"] = 3600
+        act["averageHR"] = 140
+        del act["activityTrainingLoad"]
+        _tss, label = _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190)
+        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) != "garmin_native"
 
     def test_estimate_tss_double_session_same_day_accumulates(self):
         """Dos sesiones en el mismo día deben sumar sus TSS en el modelo."""
@@ -6691,10 +6907,14 @@ class TestMcpFactualDeterministicRoute:
                 user_message="Cuales son los TSS de la actividad del 17/08/26?",
             )
 
-        m = re.search(r"\| TSS del día \|\s*([0-9]+(?:\.[0-9]+)?)\s*\|", out)
+        m = re.search(r"\| (?:TSS \(actividad\)|TSS del día) \|\s*([0-9]+(?:\.[0-9]+)?)\s*\|", out)
         assert m is not None
         assert float(m.group(1)) > 0.0
-        assert "garmin_activities(fallback)" in out
+        assert (
+            "garmin_activities(fallback)" in out
+            or "activity_tss_fallback" in out
+            or "Kairos formula" in out
+        )
 
 
 class TestRunningThresholdDeterministicRoute:
