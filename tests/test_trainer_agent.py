@@ -1885,6 +1885,73 @@ class TestComputeAndPersistLoadMetrics:
 
         upsert_daily_mock.assert_called_once()
 
+    async def _run_compute_capturing_details(self, activities, details_by_id):
+        """Ejecuta compute_and_persist_load_metrics y devuelve {activity_id: activity_details_raw pasado}."""
+        from agent.trainer_agent import TrainerAgent
+
+        async def _fake_fetch(_session, _start_date, _end_date):
+            return activities
+
+        async def _fake_call_tool(_session, tool_name, args):
+            if tool_name == "get_activity_details":
+                return details_by_id.get(int(args["activity_id"]), "")
+            return ""
+
+        passed: dict[int, str | None] = {}
+
+        def _fake_estimate(act, **kwargs):
+            passed[int(act.get("activityId") or 0)] = kwargs.get("activity_details_raw")
+            return 50.0, "TSS"
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {
+            "goals": {"primary": "running"},
+            "performance": {"running_threshold_pace_sec_per_km": 252.0},
+        }
+
+        with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[[], []]), \
+             patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=None), \
+             patch("agent.trainer_agent._storage.upsert_load_metrics_series"), \
+             patch("agent.trainer_agent._storage.upsert_activity_tss_rows"), \
+             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch("agent.trainer_agent._estimate_session_tss", side_effect=_fake_estimate), \
+             patch("agent.trainer_agent._hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
+             patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=_fake_call_tool)) as call_mock, \
+             patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=205.0)), \
+             patch.object(TrainerAgent, "_apply_series_to_profile"):
+            await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
+
+        details_calls = [
+            int(c.args[2]["activity_id"]) for c in call_mock.await_args_list if c.args[1] == "get_activity_details"
+        ]
+        return passed, details_calls
+
+    @pytest.mark.asyncio
+    async def test_compute_passes_activity_details_to_running_non_trail(self):
+        today_iso = date.today().isoformat()
+        details = '{"activityId": 1, "metricDescriptors": []}'
+        passed, details_calls = await self._run_compute_capturing_details(
+            [
+                {"activityId": 1, "type": {"typeKey": "running"}, "startTimeLocal": f"{today_iso}T07:00:00"},
+                {"activityId": 2, "type": {"typeKey": "strength_training"}, "startTimeLocal": f"{today_iso}T18:00:00"},
+            ],
+            {1: details, 2: '{"activityId": 2}'},
+        )
+        assert passed[1] == details
+        assert 2 not in details_calls
+        assert passed[2] is None
+
+    @pytest.mark.asyncio
+    async def test_compute_ignores_error_text_as_activity_details(self):
+        today_iso = date.today().isoformat()
+        passed, details_calls = await self._run_compute_capturing_details(
+            [{"activityId": 1, "type": {"typeKey": "running"}, "startTimeLocal": f"{today_iso}T07:00:00"}],
+            {1: "Error executing tool get_activity_details: 429 Too Many Requests"},
+        )
+        assert details_calls == [1]
+        assert passed[1] is None
+
     @pytest.mark.asyncio
     async def test_force_full_recalc_fetches_full_window_for_new_user(self):
         from agent.trainer_agent import TrainerAgent

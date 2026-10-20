@@ -1141,6 +1141,11 @@ def _try_parse_json(raw: str | None) -> Any:
         return None
 
 
+def _is_activity_details_payload(raw: Any) -> bool:
+    """True si es un payload JSON de get_activity_details; call_tool devuelve los errores como texto."""
+    return isinstance(raw, str) and raw.lstrip().startswith("{")
+
+
 def _extract_activities_list(payload: Any) -> list[dict]:
     """Extrae una lista de actividades desde distintas formas de respuesta."""
     if isinstance(payload, list):
@@ -10201,6 +10206,8 @@ class TrainerAgent:
                     except (TimeoutError, OSError, RuntimeError, TypeError, ValueError) as exc:
                         log.debug("compute_load: no se pudo obtener detalle hike/walk %s: %s", _act_id, exc)
                         _details = None
+                    if not _is_activity_details_payload(_details):
+                        _details = None
                     _activity_details_cache[_act_id_key] = _details
 
                 if _details:
@@ -10270,7 +10277,7 @@ class TrainerAgent:
                     act["_splits_raw"] = splits_raw
 
             activity_details_raw: str | None = None
-            if _is_trail_hike_walk_activity(act_type):
+            if _is_trail_hike_walk_activity(act_type) or _is_running_non_trail_activity(act_type):
                 act_id = act.get("id") or act.get("activityId")
                 act_id_key = str(act_id) if act_id is not None else ""
                 if act_id_key:
@@ -10285,6 +10292,8 @@ class TrainerAgent:
                             )
                         except (TimeoutError, OSError, RuntimeError, TypeError, ValueError) as exc:
                             log.debug("compute_load: no se pudo obtener detalle de actividad %s: %s", act_id, exc)
+                            activity_details_raw = None
+                        if not _is_activity_details_payload(activity_details_raw):
                             activity_details_raw = None
                         _activity_details_cache[act_id_key] = activity_details_raw
                 if activity_details_raw:

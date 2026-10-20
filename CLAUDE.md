@@ -12,7 +12,7 @@ Cada actividad tiene UN TSS, calculado una vez con el mejor método, guardado en
 
 ## Plan en 4 commits
 1. Persistir TSS por actividad (`activity_tss`) SIN cambiar números. **Hecho en local: 94dc1fb + fix b20be03.**
-2. Pasar `activity_details` a running en `compute_load` (único paso que cambia el CTL). Exige tabla antes/después.
+2. Pasar `activity_details` a running en `compute_load` (único paso que cambia el CTL). **Hecho en local.** Tabla antes/después: docs/tablas/commit2_ctl_antes_despues_2026-10-20.csv. Solo cambian las 38 sesiones de running (todas `pipeline_fisico`, mediana ×0.865). TSS en 121 días -4.5 %; CTL a 20/10 de 61.1 a 58.3 (Δ entre -0.5 y -3.8 en toda la serie).
 3. Migrar listas, consulta por fecha y bloque de resumen a leer de la tabla.
 4. Carga nativa solo como columna aparte ("Carga Garmin"), nunca como TSS.
 
