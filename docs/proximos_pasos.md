@@ -1097,3 +1097,57 @@ Resultado de 3) Confirmación con git show sobre 1a957e3 y ec433ef
 Archivos tocados por ambos commits: agent/load_metrics.py, tests/test_trainer_agent.py, proximos_pasos.md
 Verificación estricta de líneas añadidas/eliminadas con palabras trail/running/strength/walk/hike en esos diffs: no aparecen cambios directos con esas claves.
 Si quieres, el siguiente paso natural es que me indiques si el tercer valor de control debe validarse con otro activity_id de fuerza (por ejemplo 24227364808) para re-ejecutar PASO 1 y, solo si da 91.996, entrar a PASO 2.
+
+
+
+
+20/10/2026
+
+Commit 3 terminado (código y tests, 542 en verde), pendiente solo de firmar. Esta es la respuesta real de Kairos a tu pregunta original:
+
+Deporte	n	Kairos/TP (mediana)	MAPE	Dentro de ±10 %
+Running	13	1.01	5.5 %	12/13
+Trail	4	1.06	8.7 %	2/4
+Fuerza	3	1.00	0.5 %	3/3
+Total	20	1.00	5.4 %	17/20
+Qué incluye el commit 3 (y con él el punto 4 del plan):
+
+Todas las rutas del chat leen el TSS de activity_tss: últimos N, semana, consulta por fecha, bloque de análisis y adherencia al plan. Si una actividad no tiene fila, sale "pendiente de cálculo"; nunca se usa la carga de Garmin.
+Tu pregunta se reconoce tal cual: "entrenamientos" y varios deportes a la vez. Antes caía en el resumen diario.
+La carga de Garmin solo aparece como "Carga Garmin (no TSS)". He quitado una clasificación "Carga ALTA/MUY ALTA" con umbrales de escala TSS que se aplicaba a la carga de Garmin.
+Quitado un parche que reescalaba los TSS por actividad en la vista semanal para que cuadraran con el total del día.
+Prompts del LLM corregidos: decían que aceptara el Training Load nativo como recurso.
+Para commitear necesito que desbloquees GPG otra vez en PowerShell:
+
+
+"test" | & "C:\Program Files\Git\usr\bin\gpg.exe" --clearsign | Out-Null
+La caché dura 10 minutos. Si quieres evitar repetirlo, puedo añadir default-cache-ttl 3600 en el gpg-agent.conf del gpg de Git, pero solo si me lo pides.
+
+Después del commit quedan:
+
+el push de los 7 commits, cuando tú digas;
+el trail, que va un +6 % de mediana (+13–17 % en salidas largas), como paso aparte;
+el walk/hike, fuera de alcance por ahora.
+
+
+Hecho: el commit 3 está creado y firmado (2f4a9a3), y los 6 commits ya están en origin/main (651cb77..2f4a9a3). Antes del push comprobé que el remoto no tenía cambios nuevos. Tests: 542 pasan.
+
+Commit	Contenido
+94dc1fb	Tabla activity_tss (TSS por actividad, de dónde sale, modelo usado y carga Garmin aparte)
+b20be03	Arreglo: la columna sport guardaba el tipo de actividad entero en vez de solo su nombre
+037c575	Comparación con TrainingPeaks, tu workouts.csv y CLAUDE.md
+ef8bdd7	Commit 2: running calculado con los detalles de la actividad
+9bd5fcf	Línea base: un TSS por actividad que no se recalcula, hr_rest según la fecha y arreglo de la paginación
+2f4a9a3	Commit 3: el chat lee el TSS guardado y la carga Garmin nunca se usa como TSS
+docs/workouts.csv (tu export de TP, con RPE y comentarios) y los datos de Garmin ya están subidos a GitHub. No he podido comprobar si el repositorio es público; si lo es, tenlo en cuenta.
+
+Cómo queda Kairos:
+
+La línea base empieza el 22/02, con 221 actividades. Hoy: Estado físico 62.1, Fatiga 35.5, Forma +26.6. TP marca 63 / 41 / 26.
+A partir de ahora solo se calcula el TSS de las actividades nuevas, y ATL, CTL y TSB se actualizan cada día con los TSS guardados. El histórico ya no se toca.
+Tu pregunta original da TSS muy cercanos a TP: en 17 de 20 sesiones la diferencia es menor del 10 %, con un error medio del 5.4 %.
+Pendiente, cuando quieras:
+
+Trail: sale un 6 % por encima de TP de mediana, y un 13–17 % en las salidas largas. Lo haría como paso aparte, fijando el criterio de éxito antes de mirar los resultados.
+Caminatas y senderismo: no se parecen a los valores de TP, y los propios valores de TP son incoherentes entre sí. Por ahora lo dejo fuera.
+Sesiones con nombre de elíptica: el running del 13/08 se calculó como elíptica porque su nombre la manda por esa vía. Conviene revisarlo.
