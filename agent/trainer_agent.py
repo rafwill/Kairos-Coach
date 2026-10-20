@@ -993,13 +993,10 @@ def _build_athlete_knowledge_context(query: str, chunks: list[dict[str, str]]) -
     return "\n".join(lines)
 
 async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_message: str) -> str:
-    """Devuelve TSS de las últimas N actividades para un deporte concreto."""
-    sport, limit = _parse_recent_tss_sport_request(user_message)
-    if not sport:
+    """Devuelve el TSS guardado (activity_tss) de las últimas N actividades de uno o varios deportes."""
+    sports, limit = _parse_recent_tss_sports_request(user_message)
+    if not sports:
         return "No pude identificar el deporte solicitado (trail/running/fuerza/ciclismo)."
-
-    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
 
     activities: list[dict] = []
     end_d = date.today()
@@ -1030,101 +1027,97 @@ async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_m
             log.debug("_build_recent_tss_by_sport_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
 
-    def _matches_sport(act: dict) -> bool:
+    def _sport_of(act: dict) -> str | None:
         act_type = act.get("type") or act.get("activityType") or ""
-        if sport == "trail":
-            return _is_trail_activity(act_type)
-        if sport == "running":
-            return _is_running_non_trail_activity(act_type)
-        if sport == "strength":
-            return _is_strength_activity(act_type)
-        if sport == "cycling":
-            return _is_cycling_activity(act_type)
-        return False
+        if _is_trail_activity(act_type):
+            return "trail"
+        if _is_running_non_trail_activity(act_type):
+            return "running"
+        if _is_strength_activity(act_type):
+            return "strength"
+        if _is_cycling_activity(act_type):
+            return "cycling"
+        return None
 
-    rows: list[tuple[date, str, str, float, str]] = []
+    stored = _load_stored_activity_tss(start_d.isoformat())
+    last_stored_iso = max((str(r.get("start_date") or "") for r in stored.values()), default="")
+
+    rows: list[dict[str, Any]] = []
     for act in activities:
-        if not isinstance(act, dict) or not _matches_sport(act):
+        if not isinstance(act, dict):
+            continue
+        sport = _sport_of(act)
+        if sport not in sports:
             continue
         d_iso = _extract_activity_date_iso(act)
         if not d_iso:
             continue
-        try:
-            d_obj = date.fromisoformat(d_iso)
-        except ValueError:
-            continue
+        stored_row = stored.get(_activity_id_int(act))
+        if stored_row is None and d_iso < last_stored_iso:
+            continue  # anterior a la línea base: sin TSS guardado, no se inventa
+        native_load = _extract_training_load_tss(act)
+        rows.append({
+            "date": d_iso,
+            "sport": sport,
+            "name": str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad",
+            "tss": float(stored_row["tss"]) if stored_row is not None else None,
+            "native_load": float(native_load) if native_load is not None else None,
+        })
 
-        name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
-        native_tss = _extract_training_load_tss(act)
-        source = "garmin_activity_load"
-        tss_val = None
-        if native_tss is not None and float(native_tss) > 0.0:
-            tss_val = float(native_tss)
-        else:
-            est_tss, _est_label = _estimate_session_tss(
-                act,
-                ftp=_extract_cycling_ftp_watts(profile),
-                running_threshold_pace_sec_per_km=running_threshold_pace,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                hr_zones_raw=None,
-                hr_threshold_bpm=hr_threshold_bpm,
-            )
-            if est_tss > 0.0:
-                tss_val = float(est_tss)
-                source = "kairos_formula"
-
-        if tss_val is None:
-            continue
-        rows.append((d_obj, d_iso, name, round(tss_val, 1), source))
-
-    rows.sort(key=lambda x: (x[0], x[2].lower()), reverse=True)
+    rows.sort(key=lambda r: (r["date"], r["name"].lower()), reverse=True)
     rows = rows[:limit]
 
-    sport_label = {
-        "trail": "trail",
-        "running": "running",
-        "strength": "fuerza",
-        "cycling": "ciclismo",
-    }.get(sport, sport)
+    sport_labels = {"trail": "trail", "running": "running", "strength": "fuerza", "cycling": "ciclismo"}
+    sports_label = ", ".join(sport_labels.get(s, s) for s in sports)
 
     if not rows:
         return "\n".join([
             "## 🧭 Resumen",
-            f"No encontré actividades de {sport_label} con TSS calculable en Garmin para ese criterio.",
+            f"No encontré actividades de {sports_label} con TSS calculado por Kairos.",
             "",
             "## 🎯 Próximo paso",
-            "- Si quieres, amplío la ventana y te saco las últimas actividades sin filtrar por deporte.",
+            "- Si acabas de sincronizar, espera a que Kairos calcule la carga y vuelve a preguntar.",
         ])
 
-    avg_tss = round(sum(r[3] for r in rows) / max(1, len(rows)), 1)
-    max_tss = max(r[3] for r in rows)
+    calculated = [r for r in rows if r["tss"] is not None]
+    pending = len(rows) - len(calculated)
 
     lines = [
         "## 🧭 Resumen",
-        f"Estos son los TSS de tus últimas {len(rows)} actividades de {sport_label}.",
+        f"TSS calculado por Kairos de tus últimas {len(rows)} actividades de {sports_label}.",
         "",
         "## 📊 Métricas clave",
-        "| Métrica | Valor |",
-        "|---|---:|",
-        f"| Actividades listadas | {len(rows)} |",
-        f"| TSS medio | {avg_tss:.1f} |",
-        f"| TSS máximo | {max_tss:.1f} |",
-        "",
-        "| Fecha | Actividad | TSS | Fuente |",
-        "|---|---|---:|---|",
+        "| Deporte | Actividades | TSS medio | TSS máximo |",
+        "|---|---:|---:|---:|",
     ]
-    for _d_obj, d_iso, name, tss_val, source in rows:
-        lines.append(f"| {d_iso} | {name} | {tss_val:.1f} | {source} |")
+    for sport in sports:
+        values = [r["tss"] for r in calculated if r["sport"] == sport]
+        if values:
+            lines.append(
+                f"| {sport_labels.get(sport, sport)} | {len(values)} | {sum(values) / len(values):.1f} | {max(values):.1f} |"
+            )
+    lines.extend([
+        "",
+        "| Fecha | Deporte | Actividad | TSS | Carga Garmin |",
+        "|---|---|---|---:|---:|",
+    ])
+    for r in rows:
+        tss_txt = f"{r['tss']:.1f}" if r["tss"] is not None else "pendiente"
+        load_txt = f"{r['native_load']:.1f}" if r["native_load"] is not None else "—"
+        lines.append(f"| {r['date']} | {sport_labels.get(r['sport'], r['sport'])} | {r['name']} | {tss_txt} | {load_txt} |")
 
     lines.extend([
         "",
         "## ✅ Recomendación",
-        "- Usa esta serie para comparar consistencia de carga por deporte.",
+        "- La columna TSS es la carga de Kairos (la que alimenta ATL/CTL/TSB). La carga Garmin es solo informativa: no es TSS.",
+    ])
+    if pending:
+        lines.append(f"- {pending} actividad(es) recientes aún sin TSS: se calculan en la próxima sincronización de carga.")
+    lines.extend([
         "",
         "## 🎯 Próximo paso",
-        "- Si quieres, te comparo esta lista con TP/Kairos y te marco outliers.",
-        "- Fuente: respuesta determinista (Garmin MCP + fórmula Kairos cuando falta training load).",
+        "- Si quieres, te comparo esta lista con TP y te marco las sesiones que más se desvían.",
+        "- Fuente: TSS guardado por actividad (activity_tss) + listado de Garmin MCP.",
     ])
     return "\n".join(lines)
 
@@ -1152,6 +1145,20 @@ def _activity_id_int(activity: dict) -> int | None:
         return int(raw) if raw is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _load_stored_activity_tss(start_iso: str) -> dict[int, dict]:
+    """TSS guardados en activity_tss desde start_iso; {} si no hay o no se pueden leer.
+
+    Es la única fuente de TSS por actividad para el chat: nunca se recalcula al vuelo
+    ni se sustituye por la carga nativa de Garmin.
+    """
+    try:
+        stored = _storage.get_activity_tss_map(start_iso)
+    except RuntimeError as exc:
+        log.debug("_load_stored_activity_tss: %s", exc)
+        stored = None
+    return stored or {}
 
 
 def _extract_activities_list(payload: Any) -> list[dict]:
@@ -2157,9 +2164,9 @@ def _compute_effective_week_tss_from_series_and_activities(
             continue
         tss_by_day[d_iso] = round(float((row or {}).get("tss") or 0.0), 1)
 
-    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
-    hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
+    # TSS por actividad: solo el guardado en activity_tss (no se recalcula ni se usa la carga nativa).
+    week_start_iso = min((d.isoformat() for d in week_dates), default=date.today().isoformat())
+    stored_tss = _load_stored_activity_tss(week_start_iso)
 
     activity_tss_by_day: dict[str, float] = {}
     for act in activities or []:
@@ -2168,28 +2175,10 @@ def _compute_effective_week_tss_from_series_and_activities(
         d_iso = _extract_activity_date_iso(act)
         if not d_iso:
             continue
-
-        act_tss = None
-        est_tss, _ = _estimate_session_tss(
-            act,
-            ftp=_extract_cycling_ftp_watts(profile),
-            running_threshold_pace_sec_per_km=running_threshold_pace,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            hr_zones_raw=None,
-            hr_threshold_bpm=hr_threshold_bpm,
-        )
-        if est_tss > 0:
-            act_tss = float(est_tss)
-        else:
-            native_tss = _extract_training_load_tss(act)
-            if native_tss is not None:
-                act_tss = float(native_tss)
-
-        if act_tss is None:
+        stored_row = stored_tss.get(_activity_id_int(act))
+        if stored_row is None:
             continue
-
-        activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
+        activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(stored_row.get("tss") or 0.0), 1)
 
     used_activity_fallback = False
     for d in week_dates:
@@ -3204,32 +3193,38 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
     return has_temporal_reference and has_activity_word and has_detail_word
 
 
-def _parse_recent_tss_sport_request(user_message: str) -> tuple[str | None, int]:
-    """Extrae deporte y tamaño N para consultas tipo
-    'TSS de mis 20 últimas actividades de trail/running/fuerza/ciclismo'.
+_RECENT_TSS_SPORT_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("trail", r"\btrail\b"),
+    ("running", r"\brunning\b|\bcorrer\b|\bcarrera\b"),
+    ("strength", r"\bfuerza\b|\bstrength\b|\bgym\b|\bpesas\b"),
+    ("cycling", r"\bciclismo\b|\bcycling\b|\bbici\b|\bbike\b"),
+)
+
+
+def _parse_recent_tss_sports_request(user_message: str) -> tuple[list[str], int]:
+    """Extrae deportes (uno o varios) y tamaño N para consultas tipo
+    'TSS de mis 20 últimos entrenamientos de trail, fuerza y running'.
     """
     text = (user_message or "").strip().lower()
     if not text:
-        return None, 20
+        return [], 20
 
-    sport: str | None = None
-    if re.search(r"\btrail\b", text):
-        sport = "trail"
-    elif re.search(r"\brunning\b|\bcorrer\b|\bcarrera\b", text):
-        sport = "running"
-    elif re.search(r"\bfuerza\b|\bstrength\b|\bgym\b|\bpesas\b", text):
-        sport = "strength"
-    elif re.search(r"\bciclismo\b|\bcycling\b|\bbici\b|\bbike\b", text):
-        sport = "cycling"
+    sports = [sport for sport, pattern in _RECENT_TSS_SPORT_PATTERNS if re.search(pattern, text)]
 
     n_match = re.search(r"\b(\d{1,3})\b", text)
     n = int(n_match.group(1)) if n_match else 20
     n = max(1, min(n, 50))
-    return sport, n
+    return sports, n
+
+
+def _parse_recent_tss_sport_request(user_message: str) -> tuple[str | None, int]:
+    """Compatibilidad: primer deporte detectado y tamaño N."""
+    sports, n = _parse_recent_tss_sports_request(user_message)
+    return (sports[0] if sports else None), n
 
 
 def _is_recent_tss_by_sport_intent(user_message: str) -> bool:
-    """Detecta petición de TSS de últimas N actividades filtradas por deporte."""
+    """Detecta petición de TSS de las últimas N actividades/entrenamientos de uno o varios deportes."""
     text = (user_message or "").strip().lower()
     if not text:
         return False
@@ -3238,11 +3233,11 @@ def _is_recent_tss_by_sport_intent(user_message: str) -> bool:
         return False
     if not re.search(r"\bultim|\búltim|\brecientes?\b", text):
         return False
-    if "activ" not in text:
+    if not re.search(r"activ|entren|sesion|sesión", text):
         return False
 
-    sport, _ = _parse_recent_tss_sport_request(user_message)
-    return sport is not None
+    sports, _ = _parse_recent_tss_sports_request(user_message)
+    return bool(sports)
 
 
 def _is_running_threshold_query_intent(user_message: str) -> bool:
@@ -4138,8 +4133,6 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     prev_week_start = comp_start
     prev_week_end = comp_end
     prev_week_dates = comp_dates
-    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
 
     tss_by_day: dict[str, float] = {}
     tss_source_by_day: dict[str, str] = {}
@@ -4182,6 +4175,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             log.debug("_build_current_week_tss_markdown: get_activities_by_date fallo con args=%s: %s", args, exc)
             continue
 
+    stored_tss = _load_stored_activity_tss(range_start.isoformat())
     act_rows: list[tuple[date, str, str, float | None, str, str | None, str]] = []
     activity_tss_by_day: dict[str, float] = {}
     activity_type_tss_by_day: dict[str, dict[str, float]] = {}
@@ -4214,26 +4208,14 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             continue
         name = str(act.get("name") or act.get("activityName") or "Actividad").strip() or "Actividad"
         sport = _get_activity_name_es(act.get("type") or act.get("activityType") or "") or "Actividad"
-        tss_source = "sin datos"
+        tss_source = "pendiente de cálculo"
         tss_label: str | None = None
-        native_tss = _extract_training_load_tss(act)
-        est_tss, est_label = _estimate_session_tss(
-            act,
-            ftp=_extract_cycling_ftp_watts(profile),
-            running_threshold_pace_sec_per_km=running_threshold_pace,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            hr_zones_raw=None,
-            hr_threshold_bpm=hr_threshold_bpm,
-        )
         act_tss = None
-        if est_tss > 0:
-            act_tss = float(est_tss)
-            tss_label = str(est_label or "")
-            tss_source = "kairos_formula"
-        elif native_tss is not None:
-            act_tss = float(native_tss)
-            tss_source = "garmin_activity_load_fallback"
+        stored_row = stored_tss.get(_activity_id_int(act))
+        if stored_row is not None:
+            act_tss = float(stored_row.get("tss") or 0.0)
+            tss_label = str(stored_row.get("method") or "")
+            tss_source = "activity_tss"
         if week_start <= d_obj <= week_end:
             bucket = _resolve_tss_bucket(act, tss_label)
             display_bucket = bucket
@@ -4401,33 +4383,14 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             day_rows = rows_by_day[d_iso]
             show_activity_tss = len(day_rows) > 1
 
-            # Mantiene consistencia visual: si el TSS diario canónico difiere de la
-            # suma por actividad, reescala el detalle de actividades para ese día.
-            normalized_tss_by_idx: dict[int, float] = {}
-            raw_vals: list[tuple[int, float]] = [
-                (idx, float(row[3])) for idx, row in enumerate(day_rows) if row[3] is not None
-            ]
-            raw_sum = round(sum(v for _, v in raw_vals), 1)
-            day_tss_f = float(day_tss) if day_tss is not None else 0.0
-            if raw_vals and day_tss_f > 0.0 and raw_sum > 0.0 and abs(day_tss_f - raw_sum) >= 0.1:
-                scale = day_tss_f / raw_sum
-                for idx, raw_v in raw_vals:
-                    normalized_tss_by_idx[idx] = round(raw_v * scale, 1)
-                drift = round(day_tss_f - sum(normalized_tss_by_idx.values()), 1)
-                if abs(drift) > 0.0:
-                    idx_max = max(raw_vals, key=lambda x: x[1])[0]
-                    normalized_tss_by_idx[idx_max] = round(normalized_tss_by_idx.get(idx_max, 0.0) + drift, 1)
-
-            for idx, (_d_obj, sport, name, act_tss, tss_bucket) in enumerate(day_rows):
-                act_tss_display = normalized_tss_by_idx.get(idx)
+            # TSS por actividad = valor guardado en activity_tss, sin reescalar.
+            for _d_obj, sport, name, act_tss, tss_bucket in day_rows:
                 if show_activity_tss and act_tss is not None:
-                    if act_tss_display is None:
-                        act_tss_display = float(act_tss)
-                    lines.append(f"  - {sport} — {name} · TSS {act_tss_display:.1f} ({tss_bucket})")
+                    lines.append(f"  - {sport} — {name} · TSS {float(act_tss):.1f} ({tss_bucket})")
                 elif act_tss is not None:
                     lines.append(f"  - {sport} — {name} ({tss_bucket})")
                 else:
-                    lines.append(f"  - {sport} — {name}")
+                    lines.append(f"  - {sport} — {name} · TSS pendiente de cálculo")
     else:
         lines.append("- Actividades fuente (Garmin): sin datos en el rango consultado.")
 
@@ -4688,33 +4651,16 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             activities_source_tool = f"Garmin {tool_name}"
             break
 
-    # Fallback factual del TSS diario basado en actividades del día cuando
-    # load_metrics/trend aún no reflejan la sesión.
-    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
-    cycling_ftp = _extract_cycling_ftp_watts(profile)
+    # Fallback factual del TSS diario con los TSS guardados de las actividades del día
+    # cuando load_metrics/trend aún no reflejan la sesión.
+    stored_tss = _load_stored_activity_tss(target_d.isoformat())
     activity_tss_day = 0.0
     for act in activities:
         if not isinstance(act, dict):
             continue
-        act_tss = None
-        est_tss, _ = _estimate_session_tss(
-            act,
-            ftp=cycling_ftp,
-            running_threshold_pace_sec_per_km=running_threshold_pace,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            hr_zones_raw=None,
-            hr_threshold_bpm=hr_threshold_bpm,
-        )
-        if est_tss > 0:
-            act_tss = float(est_tss)
-        else:
-            native_tss = _extract_training_load_tss(act)
-            if native_tss is not None:
-                act_tss = float(native_tss)
-        if act_tss is not None and float(act_tss) > 0:
-            activity_tss_day += float(act_tss)
+        stored_row = stored_tss.get(_activity_id_int(act))
+        if stored_row is not None and float(stored_row.get("tss") or 0.0) > 0:
+            activity_tss_day += float(stored_row["tss"])
     activity_tss_day = round(activity_tss_day, 1)
 
     if wants_activity_details:
@@ -4776,44 +4722,20 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         te_payload = _try_parse_json(raw_training_effect) if raw_training_effect else None
         te_value, te_source = _format_training_effect(te_payload, act_payload)
 
-        # TSS de la actividad principal:
-        # - Prioridad absoluta: fórmula Kairos (_estimate_session_tss).
-        # - Fallback: activity load de Garmin solo si no hay cálculo Kairos disponible.
+        # TSS de la actividad principal: el guardado en activity_tss. La carga de Garmin
+        # se muestra aparte y nunca sustituye al TSS.
         primary_garmin_load = _extract_training_load_tss(act_payload)
         if primary_garmin_load is None:
             primary_garmin_load = _extract_training_load_tss(primary)
-
-        hr_rest_bpm, hr_max_bpm, hr_threshold_bpm = await _hydrate_profile_hr_anchors_if_missing(mcp_session, profile)
-        est_tss, est_label = _estimate_session_tss(
-            act_payload,
-            ftp=_extract_cycling_ftp_watts(profile),
-            running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(profile),
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            hr_zones_raw=None,
-            hr_threshold_bpm=hr_threshold_bpm,
-        )
-
-        primary_act_type = (
-            act_payload.get("activityType")
-            or act_payload.get("activityTypeDTO")
-            or primary.get("activityType")
-            or primary.get("activityTypeDTO")
-            or act_payload.get("type")
-            or primary.get("type")
-            or ""
-        )
+        primary_stored = stored_tss.get(_activity_id_int(primary)) if primary_id is not None else None
 
         primary_tss_value: float | None = None
-        primary_tss_source = "no disponible"
-        if est_tss > 0:
-            primary_tss_value = float(est_tss)
-            lbl = str(est_label or "").strip() or "TSS"
-            primary_tss_source = f"Kairos formula ({lbl})"
-        elif primary_garmin_load is not None:
-            primary_tss_value = float(primary_garmin_load)
-            primary_tss_source = "Garmin activity load (fallback sin cálculo Kairos)"
-        tss_display = f"{float(primary_tss_value):.1f}" if primary_tss_value is not None else "sin datos"
+        primary_tss_source = "pendiente de cálculo"
+        if primary_stored is not None:
+            primary_tss_value = float(primary_stored.get("tss") or 0.0)
+            lbl = str(primary_stored.get("method") or "").strip() or "TSS"
+            primary_tss_source = f"Kairos ({lbl}, guardado)"
+        tss_display = f"{float(primary_tss_value):.1f}" if primary_tss_value is not None else "pendiente de cálculo"
 
         raw_hr_zones = None
         embedded = _find_hr_zones_in_json(act_payload)
@@ -4843,6 +4765,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             hr_zones_raw=raw_hr_zones,
             ftp=_extract_cycling_ftp_watts(profile),
             running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(profile),
+            stored_tss_row=primary_stored,
         )
         analysis_md = _format_activity_analysis_for_markdown(analysis)
 
@@ -4855,10 +4778,10 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             "|---|---|---|",
             f"| Fecha consultada | {target_d.strftime('%d/%m/%Y')} | consulta factual MCP |",
             f"| Actividades detectadas | {len(activities)} | {activities_source_tool} |",
-            f"| TSS (actividad) | {tss_display} | {primary_tss_source if primary_tss_value is not None else 'no disponible'} |",
+            f"| TSS (actividad) | {tss_display} | {primary_tss_source} |",
             f"| Training Effect | {te_value} | {te_source} |",
         ]
-        if _is_strength_activity(primary_act_type) and primary_garmin_load is not None:
+        if primary_garmin_load is not None:
             metrics_lines.append(
                 f"| Carga Garmin (no TSS) | {float(primary_garmin_load):.1f} | activityTrainingLoad/trainingLoad |"
             )
@@ -4934,7 +4857,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
 
     if activity_tss_day > 0 and (tss_day is None or float(tss_day) <= 0.0):
         tss_day = activity_tss_day
-        tss_source = "garmin_activities(fallback)"
+        tss_source = "activity_tss (suma de actividades del día)"
 
     rhr_display = _format_rhr_day(rhr_payload, target_iso)
     if rhr_display == "sin datos":
@@ -5973,7 +5896,13 @@ def _compute_plan_execution_feedback(
     hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
     hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
     cycling_ftp = _extract_cycling_ftp_watts(profile)
+    stored_tss = _load_stored_activity_tss(target_date_iso) if executed else {}
     for a in executed:
+        stored_row = stored_tss.get(_activity_id_int(a))
+        if stored_row is not None:
+            actual_tss_acc += max(0.0, float(stored_row.get("tss") or 0.0))
+            continue
+        # Provisional solo si la actividad aún no tiene TSS guardado (evita penalizar adherencia).
         try:
             tss_val, _ = _estimate_session_tss(
                 a,
@@ -8716,6 +8645,7 @@ def _build_activity_analysis_block(
     ftp: float | None = None,
     running_threshold_pace_sec_per_km: float | None = None,
     hr_zones_raw: str | None = None,
+    stored_tss_row: dict | None = None,
 ) -> str:
     """Construye un bloque de análisis pre-computado en Python para inyectar al LLM.
 
@@ -8795,32 +8725,12 @@ def _build_activity_analysis_block(
         lines.append(f"Desnivel negativo: {float(elev_loss):.0f} m")
     if calories:
         lines.append(f"Calorias: {float(calories):.0f} kcal")
-    # TSS o hrTSS calculado para este entrenamiento
-    _tss_val, _tss_lbl = _estimate_session_tss(
-        act,
-        ftp=ftp,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-        hr_zones_raw=hr_zones_raw,
-    )
-    _trail_raw_hr_tss: float | None = None
-    _is_trail_fast_raw = False
-    if _is_trail_activity(act_type):
-        _trail_raw_hr_tss = _estimate_hr_tss_from_zones(
-            act,
-            hours=_extract_activity_duration_hours(act),
-            hr_zones_raw=hr_zones_raw,
-            apply_cap=False,
-        )
-        _is_trail_fast_raw = _trail_raw_hr_tss is not None and _should_use_raw_hr_tss_for_fast_trail(act)
-
-    if _tss_val > 0:
-        if _trail_raw_hr_tss is not None:
-            lines.append(f"hrTSS bruto zonas: {_trail_raw_hr_tss:.1f}")
-            lines.append(f"hrTSS Kairos aplicado: {_tss_val:.1f}")
-            if _is_trail_fast_raw:
-                lines.append("Regla trail rapido activa (<6:00/km): Kairos usa hrTSS bruto por zonas.")
-        else:
-            lines.append(f"{_tss_lbl}: {_tss_val:.1f}")
+    # TSS de este entrenamiento: el guardado en activity_tss (único TSS por actividad).
+    if stored_tss_row is not None:
+        _tss_lbl = str(stored_tss_row.get("method") or "TSS")
+        lines.append(f"{_tss_lbl} (Kairos): {float(stored_tss_row.get('tss') or 0.0):.1f}")
+    else:
+        lines.append("TSS (Kairos): pendiente de cálculo")
 
     # ── Sección 2: Zonas de FC ─────────────────────────────────────────────
     # Prioridad 1: datos reales del dispositivo (get_activity_hr_zones)
@@ -8922,14 +8832,8 @@ def _build_activity_analysis_block(
             friendly = _effect_labels_es.get(str(effect_label), str(effect_label).replace("_", " ").lower())
             lines.append(f"Tipo de entrenamiento: {friendly}")
         if train_load is not None:
-            lines.append(f"Carga de entrenamiento: {float(train_load):.1f}")
-            tl = float(train_load)
-            if tl > 300:
-                lines.append("  -> Carga MUY ALTA (>300): tipica de ultras o sesiones de maximo esfuerzo")
-            elif tl > 150:
-                lines.append("  -> Carga ALTA (150-300): sesion exigente, requiere varios dias de recuperacion")
-            else:
-                lines.append("  -> Carga moderada")
+            # Carga nativa de Garmin: informativa, en su propia escala; no es TSS.
+            lines.append(f"Carga Garmin (no TSS): {float(train_load):.1f}")
 
     # ── Sección 4: Hidratación estimada ───────────────────────────────────
     if dur_s:
@@ -11931,6 +11835,11 @@ class TrainerAgent:
                     ftp=cycling_ftp_for_analysis,
                     running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(self.user_profile),
                     hr_zones_raw=raw_hr_zones,
+                    stored_tss_row=(
+                        _load_stored_activity_tss(str(user_date)).get(_activity_id_int({"activityId": pre_id}))
+                        if pre_id is not None and user_date
+                        else None
+                    ),
                 )
                 analysis_block_for_rescue = analysis_block
                 prefetch_date_for_rescue = user_date

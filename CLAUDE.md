@@ -13,8 +13,9 @@ Cada actividad tiene UN TSS, calculado una vez con el mejor método, guardado en
 ## Plan en 4 commits
 1. Persistir TSS por actividad (`activity_tss`) SIN cambiar números. **Hecho en local: 94dc1fb + fix b20be03.**
 2. Pasar `activity_details` a running en `compute_load` (único paso que cambia el CTL). **Hecho en local.** Tabla antes/después: docs/tablas/commit2_ctl_antes_despues_2026-10-20.csv. Solo cambian las 38 sesiones de running (todas `pipeline_fisico`, mediana ×0.865). TSS en 121 días -4.5 %; CTL a 20/10 de 61.1 a 58.3 (Δ entre -0.5 y -3.8 en toda la serie).
-3. Migrar listas, consulta por fecha y bloque de resumen a leer de la tabla.
-4. Carga nativa solo como columna aparte ("Carga Garmin"), nunca como TSS.
+3. Migrar listas, consulta por fecha y bloque de resumen a leer de la tabla. **Hecho en local.** Rutas: últimos N (varios deportes, "entrenamientos"), semana, TSS semanal efectivo, consulta por fecha, bloque de análisis, adherencia al plan (provisional solo si no hay fila). Sin TSS guardado → "pendiente de cálculo"; nunca la carga nativa. Eliminado el reescalado de TSS por actividad en la ruta semanal.
+4. Carga nativa solo como columna aparte ("Carga Garmin"), nunca como TSS. **Hecho junto con el 3** (rutas + bloque de análisis sin umbrales tipo TSS + prompts).
+   Verificación 2026-10-20 con la pregunta original: 20 sesiones, mediana Kairos/TP 1.00, MAPE 5.4 %, 17/20 dentro de ±10 %.
 
 ## Estado a 2026-10-20
 - `main` va 2 commits por delante de `origin/main` (94dc1fb, b20be03), sin push. 523 passed / 6 skipped.

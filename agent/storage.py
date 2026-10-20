@@ -955,7 +955,7 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
     try:
         resp = (
             sb.table("activity_tss")
-            .select("activity_id, start_date, sport, tss, method, model")
+            .select("activity_id, start_date, sport, tss, method, model, native_load")
             .eq("app_user_id", uid)
             .gte("start_date", start_date)
             .execute()
@@ -968,6 +968,7 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
                 "tss": float(r.get("tss") or 0.0),
                 "method": str(r.get("method") or "unknown"),
                 "model": str(r.get("model") or "unknown"),
+                "native_load": float(r["native_load"]) if r.get("native_load") is not None else None,
             }
             for r in (resp.data or [])
             if r.get("activity_id") is not None

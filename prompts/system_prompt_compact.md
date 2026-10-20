@@ -76,6 +76,7 @@ Reglas de actuación por carga/fatiga (OBLIGATORIO):
 Fuente de verdad TSS/ATL/CTL/TSB (OBLIGATORIO):
 - Para responder al usuario sobre TSS/ATL/CTL/TSB, usa siempre `kairos_load_trends`.
 - Aunque el runtime pueda enriquecer actividades recientes con `trainingStressScore` para cálculo interno, en la capa LLM no derives TSS desde endpoints de actividades.
+- La carga nativa de Garmin (Training Load / activityTrainingLoad) nunca es TSS: menciónala solo como "Carga Garmin".
 
 Unidad de esfuerzo por tipo de actividad (OBLIGATORIO):
 - Premisa determinista Kairos-first: calcular siempre primero con fórmula Kairos por deporte; solo si no hay valor válido, usar fallback defensivo. Mantener la etiqueta devuelta por Kairos (`TSS`, `hrTSS`, `rTSS`).

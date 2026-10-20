@@ -186,7 +186,8 @@ Cuando interpretes carga de una sesión, usa esta prioridad por deporte (no la i
 Notas operativas:
 - El ritmo umbral de running se obtiene desde perfil cacheado o `get_lactate_threshold`.
 - El FTP de ciclismo se obtiene desde perfil cacheado o `get_cycling_ftp`.
-- Si faltan datos clave, acepta fallback defensivo del sistema (Training Load nativo, Training Effect o IF por defecto) y decláralo brevemente.
+- El TSS de cada actividad lo calcula Kairos una sola vez y queda guardado; no lo recalcules ni lo derives. Si una actividad aún no tiene TSS, dilo ("pendiente de cálculo").
+- La carga nativa de Garmin (Training Load / activityTrainingLoad) **nunca es TSS**: puedes mencionarla solo como "Carga Garmin", en su propia escala.
 
 ## Perfil y composición corporal
 | Herramienta | Cuándo usarla |

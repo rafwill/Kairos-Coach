@@ -4251,7 +4251,7 @@ class TestLoadFatigueModel:
         # El umbral de zonas ya define el resultado: no hay calibración adicional.
         assert abs(tss_zones - tss_raw_fast) < 0.05
 
-    def test_activity_analysis_block_trail_shows_raw_and_applied_hrtss(self):
+    def test_activity_analysis_block_shows_stored_tss_only(self):
         activity_raw = json.dumps(
             {
                 "type": "trail_running",
@@ -4262,75 +4262,36 @@ class TestLoadFatigueModel:
                 "name": "Trail test",
             }
         )
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 115,
-                    "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
-            ]
+
+        out = _build_activity_analysis_block(
+            activity_raw=activity_raw,
+            stored_tss_row={"activity_id": 1, "tss": 123.4, "method": "hrTSS"},
         )
 
-        out = _build_activity_analysis_block(activity_raw=activity_raw, hr_zones_raw=hr_zones_raw)
+        assert "hrTSS (Kairos): 123.4" in out
+        assert "hrTSS bruto zonas" not in out
+        assert "hrTSS Kairos aplicado" not in out
 
-        assert "hrTSS bruto zonas: 56.2" in out
-        assert "hrTSS Kairos aplicado: 27.0" in out
-        assert "Factor calibracion trail aplicado" not in out
-
-    def test_activity_analysis_block_trail_fast_shows_special_rule_note(self):
+    def test_activity_analysis_block_without_stored_tss_is_pending_not_estimated(self):
         activity_raw = json.dumps(
             {
                 "type": "trail_running",
                 "duration": 3600,
                 "distance": 10000,
-                "averagePaceSecPerKm": 330,
                 "averageHR": 170,
                 "maxHR": 180,
-                "name": "Trail rapido",
+                "activityTrainingLoad": 250.0,
+                "name": "Trail sin línea base",
             }
         )
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 115,
-                    "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
-            ]
-        )
 
-        out = _build_activity_analysis_block(activity_raw=activity_raw, hr_zones_raw=hr_zones_raw)
+        with patch("agent.trainer_agent._estimate_session_tss") as estimate_mock:
+            out = _build_activity_analysis_block(activity_raw=activity_raw)
 
-        assert "hrTSS bruto zonas: 56.2" in out
-        assert "hrTSS Kairos aplicado: 27.0" in out
-        assert "Regla trail rapido activa (<6:00/km)" in out
+        estimate_mock.assert_not_called()
+        assert "TSS (Kairos): pendiente de cálculo" in out
+        assert "Carga Garmin (no TSS): 250.0" in out
+        assert "Carga ALTA" not in out
 
     def test_estimate_tss_walking_easy_uses_dedicated_model(self):
         act = {
@@ -5864,6 +5825,7 @@ class TestGoalStatusDeterministicRoute:
 
         monkeypatch.setattr(ta, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {501: {"activity_id": 501, "start_date": "2026-08-15", "tss": 82.49, "method": "TSS"}})
 
         profile = {
             "load_metrics": {
@@ -5879,6 +5841,7 @@ class TestGoalStatusDeterministicRoute:
 
         activities_payload = [
             {
+                "activityId": 501,
                 "activityName": "Rodaje sábado",
                 "activityType": "running",
                 "startTimeLocal": "2026-08-15 08:00:00",
@@ -6019,6 +5982,7 @@ class TestGoalStatusDeterministicRoute:
 
         monkeypatch.setattr(ta, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {502: {"activity_id": 502, "start_date": "2026-08-17", "tss": 79.4, "method": "TSS"}})
 
         profile = {
             "load_metrics": {
@@ -6033,6 +5997,7 @@ class TestGoalStatusDeterministicRoute:
             assert tool_name == "get_activities_by_date"
             return [
                 {
+                    "activityId": 502,
                     "activityName": "Senderismo",
                     "activityType": "hiking",
                     "startTimeLocal": "2026-08-17 08:00:00",
@@ -6051,6 +6016,51 @@ class TestGoalStatusDeterministicRoute:
         assert "lunes 17/08: 79.4" in out
         assert "| TSS acumulado | 79.4 |" in out
         assert "fallback" in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_never_uses_garmin_load_as_tss(self, monkeypatch):
+        import agent.trainer_agent as ta
+
+        class _FakeDate:
+            @staticmethod
+            def today():
+                from datetime import date as _Date
+
+                return _Date(2026, 8, 18)
+
+            @staticmethod
+            def fromisoformat(value):
+                from datetime import date as _Date
+
+                return _Date.fromisoformat(value)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {})
+
+        profile = {"load_metrics": {"series": [{"date": "2026-08-17", "tss": 0.0}, {"date": "2026-08-18", "tss": 0.0}]}}
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            return [
+                {
+                    "activityId": 507,
+                    "activityName": "Senderismo",
+                    "activityType": "hiking",
+                    "startTimeLocal": "2026-08-17 08:00:00",
+                    "trainingLoad": 79.4,
+                }
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+
+        out = await ta._build_current_week_tss_markdown(
+            mcp_session=object(),
+            profile=profile,
+            user_message="Dime los TSSs de esta semana",
+        )
+
+        assert "79.4" not in out
+        assert "Senderismo · TSS pendiente de cálculo" in out
 
     @pytest.mark.asyncio
     async def test_build_current_week_tss_markdown_includes_weekly_comparison_and_spike(self, monkeypatch):
@@ -6173,6 +6183,7 @@ class TestGoalStatusDeterministicRoute:
 
         monkeypatch.setattr(ta, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {503: {"activity_id": 503, "start_date": "2026-08-30", "tss": 220.4, "method": "hrTSS"}, 504: {"activity_id": 504, "start_date": "2026-09-01", "tss": 20.0, "method": "TSS"}})
 
         profile = {
             "load_metrics": {
@@ -6199,12 +6210,14 @@ class TestGoalStatusDeterministicRoute:
             captured_args.append(dict(args))
             return [
                 {
+                    "activityId": 503,
                     "activityName": "Trail largo domingo",
                     "activityType": "trail_running",
                     "startTimeLocal": "2026-08-30 07:30:00",
                     "trainingLoad": 220.4,
                 },
                 {
+                    "activityId": 504,
                     "activityName": "Rodaje martes actual",
                     "activityType": "running",
                     "startTimeLocal": "2026-09-01 18:00:00",
@@ -6234,7 +6247,7 @@ class TestGoalStatusDeterministicRoute:
         assert "Trail largo domingo" in out
 
     @pytest.mark.asyncio
-    async def test_build_current_week_tss_markdown_estimates_strength_tss_when_training_load_missing(self, monkeypatch):
+    async def test_build_current_week_tss_markdown_uses_stored_strength_tss_without_training_load(self, monkeypatch):
         import agent.trainer_agent as ta
 
         class _FakeDate:
@@ -6252,6 +6265,7 @@ class TestGoalStatusDeterministicRoute:
 
         monkeypatch.setattr(ta, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {505: {"activity_id": 505, "start_date": "2026-08-17", "tss": 45.0, "method": "hrTSS"}})
 
         profile = {
             "load_metrics": {
@@ -6266,6 +6280,7 @@ class TestGoalStatusDeterministicRoute:
             assert tool_name == "get_activities_by_date"
             return [
                 {
+                    "activityId": 505,
                     "activityName": "Fuerza tren inferior",
                     "activityType": "strength_training",
                     "startTimeLocal": "2026-08-17 19:00:00",
@@ -6283,8 +6298,8 @@ class TestGoalStatusDeterministicRoute:
             user_message="Dime los TSSs de esta semana",
         )
 
-        assert "lunes 17/08: 0.0" not in out
-        assert "TSS acumulado: 0.0" not in out
+        assert "lunes 17/08: 45.0" in out
+        assert "| TSS acumulado | 45.0 |" in out
 
 
 class TestHrThresholdDeterministicRoute:
@@ -6928,7 +6943,9 @@ class TestMcpFactualDeterministicRoute:
                 return []
             return {}
 
-        with patch("agent.trainer_agent.call_tool", _fake_call_tool):
+        stored = {123: {"activity_id": 123, "start_date": "2026-08-30", "tss": 140.0, "method": "hrTSS"}}
+        with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
+             patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
             out = await ta._build_mcp_factual_query_markdown(
                 mcp_session=object(),
                 profile={"load_metrics": {"series": []}},
@@ -6937,7 +6954,9 @@ class TestMcpFactualDeterministicRoute:
 
         assert "| Fecha consultada | 30/08/2026 |" in out
         assert "Trail Running" in out
-        assert "TSS: 120.0" in out
+        assert "| TSS (actividad) | 140.0 | Kairos (hrTSS, guardado) |" in out
+        assert "| Carga Garmin (no TSS) | 120.0 |" in out
+        assert "hrTSS (Kairos): 140.0" in out
 
     @pytest.mark.asyncio
     async def test_chat_returns_controlled_message_on_llm_forbidden(self):
@@ -7022,6 +7041,7 @@ class TestMcpFactualDeterministicRoute:
 
         monkeypatch.setattr(ta, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {506: {"activity_id": 506, "start_date": "2026-08-31", "tss": 40.4, "method": "TSS"}})
 
         profile = {
             "load_metrics": {
@@ -7036,6 +7056,7 @@ class TestMcpFactualDeterministicRoute:
             assert tool_name == "get_activities_by_date"
             return [
                 {
+                    "activityId": 506,
                     "activityName": "Road. Un poquito de CDC",
                     "activityType": "road_biking",
                     "startTimeLocal": "2026-08-31 08:00:00",
@@ -7171,6 +7192,7 @@ class TestMcpFactualDeterministicRoute:
             if tool_name == "get_activities_by_date":
                 return [
                     {
+                        "activityId": 601,
                         "activityName": "Senderismo",
                         "activityType": "hiking",
                         "startTimeLocal": f"{target_iso} 08:00:00",
@@ -7190,9 +7212,10 @@ class TestMcpFactualDeterministicRoute:
             }
         }
 
+        stored = {601: {"activity_id": 601, "start_date": target_iso, "tss": 70.5, "method": "TSS"}}
         with patch("agent.trainer_agent.call_tool", _fake_call_tool), patch(
             "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
-        ):
+        ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
             out = await ta._build_mcp_factual_query_markdown(
                 mcp_session=object(),
                 profile=profile,
@@ -7201,12 +7224,8 @@ class TestMcpFactualDeterministicRoute:
 
         m = re.search(r"\| (?:TSS \(actividad\)|TSS del día) \|\s*([0-9]+(?:\.[0-9]+)?)\s*\|", out)
         assert m is not None
-        assert float(m.group(1)) > 0.0
-        assert (
-            "garmin_activities(fallback)" in out
-            or "activity_tss_fallback" in out
-            or "Kairos formula" in out
-        )
+        assert float(m.group(1)) == pytest.approx(70.5)
+        assert "79.4" not in out.split("Carga Garmin")[0]
 
 
 class TestRunningThresholdDeterministicRoute:
@@ -7445,3 +7464,62 @@ class TestMcpTransparencyAndLatencyRegression:
             "Analiza mi última actividad",
         )
         assert "TSS (actividad)" in out
+
+
+class TestRecentTssBySportRoute:
+    QUESTION = (
+        "Obten los ultimos 20 entrenamientos de trail, fuerza y running y dime los TSSs que calcula kairos"
+    )
+
+    def test_original_question_routes_to_recent_tss_with_three_sports(self):
+        import agent.trainer_agent as ta
+
+        assert ta.ToolRouter(enabled=True).route_key(self.QUESTION, [], {}) == "recent_tss_by_sport"
+        sports, n = ta._parse_recent_tss_sports_request(self.QUESTION)
+        assert set(sports) == {"trail", "strength", "running"}
+        assert n == 20
+
+    def test_single_sport_activities_phrasing_still_routes(self):
+        import agent.trainer_agent as ta
+
+        assert ta.ToolRouter(enabled=True).route_key("TSS de mis 10 últimas actividades de trail", [], {}) == "recent_tss_by_sport"
+        assert ta._parse_recent_tss_sport_request("TSS de mis 10 últimas actividades de trail") == ("trail", 10)
+
+    @pytest.mark.asyncio
+    async def test_lists_stored_tss_with_garmin_load_apart(self):
+        import agent.trainer_agent as ta
+
+        activities = [
+            {"activityId": 1, "activityName": "Rodaje", "activityType": "running", "startTimeLocal": "2026-10-18 08:00:00", "activityTrainingLoad": 256.2},
+            {"activityId": 2, "activityName": "Trail largo", "activityType": "trail_running", "startTimeLocal": "2026-10-09 07:00:00", "activityTrainingLoad": 419.4},
+            {"activityId": 3, "activityName": "Fuerza", "activityType": "strength_training", "startTimeLocal": "2026-10-05 19:00:00", "activityTrainingLoad": 0.1},
+            {"activityId": 4, "activityName": "Bici", "activityType": "road_biking", "startTimeLocal": "2026-10-04 09:00:00"},
+            {"activityId": 5, "activityName": "Rodaje nuevo", "activityType": "running", "startTimeLocal": "2026-10-20 07:00:00"},
+            {"activityId": 6, "activityName": "Rodaje antiguo", "activityType": "running", "startTimeLocal": "2026-01-10 07:00:00"},
+        ]
+        stored = {
+            1: {"activity_id": 1, "start_date": "2026-10-18", "tss": 54.4, "method": "TSS"},
+            2: {"activity_id": 2, "start_date": "2026-10-09", "tss": 543.1, "method": "hrTSS"},
+            3: {"activity_id": 3, "start_date": "2026-10-05", "tss": 16.6, "method": "hrTSS"},
+            4: {"activity_id": 4, "start_date": "2026-10-04", "tss": 60.0, "method": "TSS"},
+        }
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            assert tool_name == "get_activities_by_date"
+            return activities
+
+        with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
+             patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored), \
+             patch("agent.trainer_agent._estimate_session_tss") as estimate_mock:
+            out = await ta._build_recent_tss_by_sport_markdown(object(), {}, self.QUESTION)
+
+        estimate_mock.assert_not_called()
+        assert "| Fecha | Deporte | Actividad | TSS | Carga Garmin |" in out
+        assert "| 2026-10-18 | running | Rodaje | 54.4 | 256.2 |" in out
+        assert "| 2026-10-09 | trail | Trail largo | 543.1 | 419.4 |" in out
+        assert "| 2026-10-05 | fuerza | Fuerza | 16.6 | 0.1 |" in out
+        assert "| 2026-10-20 | running | Rodaje nuevo | pendiente | — |" in out
+        assert "Bici" not in out
+        assert "Rodaje antiguo" not in out
+        rows = [line for line in out.splitlines() if line.startswith("| 2026-")]
+        assert [r.split(" | ")[0] for r in rows] == ["| 2026-10-20", "| 2026-10-18", "| 2026-10-09", "| 2026-10-05"]
