@@ -272,6 +272,37 @@ def test_garmin_client_logs_in_with_per_user_tokenstore(monkeypatch, tmp_path):
     server._invalidate_client_cache()
 
 
+def test_rejected_saved_tokens_at_login_fall_back_to_password(monkeypatch, tmp_path):
+    # Caso real (21/10): tras cambiar la contraseña, Garmin rechaza los tokens guardados
+    # dentro de login() ("Failed to retrieve social profile").
+    store = tmp_path / "tokens"
+    store.mkdir()
+    (store / "garmin_tokens.json").write_text("{}")
+    monkeypatch.setenv("GARMIN_EMAIL", "atleta@example.com")
+    monkeypatch.setenv("GARMIN_PASSWORD", "nueva")
+    monkeypatch.setenv("GARMINTOKENS", str(store))
+    logins = []
+
+    class _StaleTokensGarmin:
+        def __init__(self, email, password):
+            pass
+
+        def login(self, tokenstore=None):
+            had_tokens = (server.Path(tokenstore) / "garmin_tokens.json").exists()
+            logins.append(had_tokens)
+            if had_tokens:
+                raise GarminConnectAuthenticationError("Failed to retrieve social profile")
+            (server.Path(tokenstore) / "garmin_tokens.json").write_text('{"nuevo": true}')
+
+    monkeypatch.setattr(server, "Garmin", _StaleTokensGarmin)
+    server._invalidate_client_cache()
+
+    assert server._garmin_client() is not None
+    assert logins == [True, False]
+    assert (store / "garmin_tokens.json").read_text() == '{"nuevo": true}'
+    server._invalidate_client_cache()
+
+
 def test_auth_error_clears_saved_tokens_before_retry(monkeypatch, tmp_path):
     monkeypatch.setenv("GARMIN_EMAIL", "atleta@example.com")
     monkeypatch.setenv("GARMIN_PASSWORD", "x")

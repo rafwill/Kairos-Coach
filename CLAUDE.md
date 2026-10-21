@@ -50,7 +50,7 @@ Anclajes por fecha (perfil `performance`):
 - `prompts/mcp_tool_routing_guide.md` no se inyecta al LLM: es referencia para desarrollo.
 - El MCP devuelve algunas listas como objetos JSON concatenados (récords, zonas): usar `_try_parse_json`. `get_activity` trae las métricas en `summaryDTO`: usar `_flatten_garmin_activity`.
 - Batería de preguntas: `docs/bateria_p55_preguntas_base.txt` (25 preguntas). Se lanza con `tools/run_bateria.py [--modelo M]` (usuario de `KAIROS_USERNAME`; salida con tiempos en `.tmp/bateria/`, ignorada por git).
-- Login de Garmin: el MCP reutiliza tokens en `~/.garminconnect/kairos/<hash del email>` (o `GARMINTOKENS`); solo hace login real si faltan o no valen. Antes cada arranque hacía login completo y Garmin bloqueaba la IP (429) tras varias pasadas.
+- Login de Garmin: el MCP reutiliza tokens en `~/.garminconnect/kairos/<hash del email>` (o `GARMINTOKENS`); solo hace login real si faltan o no valen (si Garmin los rechaza al cargarlos, p. ej. tras cambiar la contraseña, se borran y entra con la del perfil). Antes cada arranque hacía login completo y Garmin bloqueaba la IP (429) tras varias pasadas.
 - Capa de coaching: `_coaching_horizon` fija el horizonte (hoy, mañana o los días que quedan de la semana); `_strip_simulated_user_turn` limpia turnos de usuario inventados por el LLM.
 - LLM de pruebas: NVIDIA `nemotron-3-ultra-550b-a55b` vía `NVIDIA_MODEL` en `.env` (el defecto del código sigue siendo `nemotron-3.5-lightning-30b-a3b`). Con la batería del 21/10 fue más coherente y más lento (158 s frente a 75 s en las 4 preguntas con LLM). Varios modelos del catálogo de NVIDIA dan 404 con esta clave (Kimi K2.6, Nemotron 3 Super, Mistral Large 2).
 

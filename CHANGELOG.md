@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-21 (login de Garmin tras cambiar la contraseña)
+
+### Fixed
+- MCP: si Garmin rechaza los tokens guardados dentro de `login()` (pasa al cambiar la contraseña: "Failed to retrieve social profile"), `_garmin_client` los borra y entra con la contraseña. Antes el error saltaba fuera del reintento de `_invoke_with_auth_retry` y todas las tools fallaban; la consulta semanal mostraba "0 actividades".
+
+### Tests
+- 565 passed, 6 skipped.
+
 ## 2026-10-21 (limpieza del proyecto)
 
 ### Removed

@@ -137,7 +137,14 @@ def _garmin_client() -> Garmin:
     # solo hace login con contraseña si faltan o no valen, y entonces los guarda para el siguiente
     # arranque. Sin él, cada proceso hacía un login completo y Garmin acaba devolviendo 429.
     client = Garmin(email=email, password=password)
-    client.login(str(_tokenstore_dir(email)))
+    try:
+        client.login(str(_tokenstore_dir(email)))
+    except GarminConnectAuthenticationError:
+        # Tokens guardados que Garmin ya no acepta (p. ej., tras cambiar la contraseña):
+        # login() los carga y falla sin probar la contraseña. Se borran y se entra con ella.
+        shutil.rmtree(_tokenstore_dir(email), ignore_errors=True)
+        client = Garmin(email=email, password=password)
+        client.login(str(_tokenstore_dir(email)))
     _client = client
     _client_identity = identity
     return client
