@@ -67,7 +67,11 @@ trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364
 
 ## A revisar
 - Trail 24669705725 (09/10) = 545.7 y 23455001968 (02/07, ~10 h) = 550.8: confirmar duración/TP.
-- Running 23966766696 (13/08) sale como `gym_cardio:lthr`: el nombre fuerza la ruta de elíptica; confirmar.
+- Running 23966766696 (13/08, fartlek 8x45" cuestas) = 79.2 frente a TP 66 (1.20): series cortas, limitación conocida.
+
+## Corregido 2026-10-21: enrutado a gym_cardio por texto
+
+`_is_rowing_activity` buscaba "remo"/"erg" como subcadena en nombre y descripción: "podremos", "volveremos" y "remontar" mandaban running/trail a remo. Ahora solo el nombre y palabras completas. Filas corregidas en activity_tss (sin tocar el resto de la línea base; recálculo en prueba: 218/221 idénticas): 22248446621 (21/03) 110.6→144.3, 22915678572 (17/05) 127.3→106.0, 23966766696 (13/08) 57.7→79.2; load_metrics_daily reescrita del 21/03 al 20/10.
 
 ## Limitaciones aceptadas (no bugs abiertos)
 Hiking con n bajo y un punto de desnivel grande (24013969366); short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); trail corto ≈ -12%; RPE de fuerza 0/137; elíptica sin hr_max real; ciclismo e indoor_running sin auditar; watch-item fuerza OOS entre 8 y 22 de noviembre.

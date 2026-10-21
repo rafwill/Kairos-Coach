@@ -140,6 +140,18 @@ def _normalize_text_for_routing(value: Any) -> str:
     ).lower()
 
 
+def _activity_name_words_for_routing(activity: dict) -> list[str]:
+    # Solo el nombre: la descripción es texto libre ("podremos", "remontar", "energía")
+    # y por subcadena mandaba sesiones de running/trail a remo.
+    name = " ".join(
+        [
+            str(activity.get("name") or ""),
+            str(activity.get("activityName") or ""),
+        ]
+    )
+    return re.findall(r"[a-z0-9]+", _normalize_text_for_routing(name))
+
+
 def _is_elliptical_activity(activity: dict, act_type: Any) -> bool:
     t = ""
     if isinstance(act_type, dict):
@@ -150,15 +162,9 @@ def _is_elliptical_activity(activity: dict, act_type: Any) -> bool:
     if any(kw in t for kw in ("ellipt", "cross_trainer", "cross trainer")):
         return True
 
-    name = " ".join(
-        [
-            str(activity.get("name") or ""),
-            str(activity.get("activityName") or ""),
-            str(activity.get("description") or ""),
-        ]
+    return any(
+        w.startswith(("ellipt", "elipt")) for w in _activity_name_words_for_routing(activity)
     )
-    name = _normalize_text_for_routing(name)
-    return ("ellipt" in name) or ("elipt" in name)
 
 
 def _is_rowing_activity(activity: dict, act_type: Any) -> bool:
@@ -171,15 +177,7 @@ def _is_rowing_activity(activity: dict, act_type: Any) -> bool:
     if any(kw in t for kw in ("rowing", "indoor_row", "indoor row", "rower", "ergometer", "erg")):
         return True
 
-    name = " ".join(
-        [
-            str(activity.get("name") or ""),
-            str(activity.get("activityName") or ""),
-            str(activity.get("description") or ""),
-        ]
-    )
-    name = _normalize_text_for_routing(name)
-    return ("rowing" in name) or ("remo" in name) or ("erg" in name)
+    return any(w in ("rowing", "remo", "erg") for w in _activity_name_words_for_routing(activity))
 
 
 def _resolve_activity_type_for_routing(activity: dict) -> Any:

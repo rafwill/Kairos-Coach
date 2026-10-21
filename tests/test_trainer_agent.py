@@ -4519,6 +4519,36 @@ class TestLoadFatigueModel:
         assert model.startswith("gym_cardio:")
         assert tss > 0.0
 
+    def test_estimate_tss_words_inside_description_do_not_route_to_gym_cardio(self):
+        # Casos reales: 23966766696 ("remontar"), 22248446621 ("podremos"), 22915678572 ("volveremos").
+        cases = [
+            ("running", 'Fartlek. 8x45" cuestas', "Me he tenido que comer un gel para remontar."),
+            ("running", "Fartlek. 4 x 4 km RCM REC 3'", "algo podremos hacer en la maratón"),
+            ("trail_running", "Trail. Ruta del Cobre", "Volveremos con más energía y en elíptica no."),
+        ]
+        for act_type, name, description in cases:
+            act = {
+                "type": act_type,
+                "name": name,
+                "description": description,
+                "duration": 3600,
+                "averageHR": 150,
+                "maxHR": 170,
+            }
+            _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190, hr_threshold_bpm=169)
+            assert not _infer_tss_model_tag(act).startswith("gym_cardio:"), name
+
+    def test_estimate_tss_rowing_word_in_name_routes_to_gym_cardio(self):
+        act = {
+            "type": "running",
+            "name": "Remo. 20' Z2",
+            "duration": 1200,
+            "averageHR": 130,
+            "maxHR": 140,
+        }
+        _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190, hr_threshold_bpm=169)
+        assert _infer_tss_model_tag(act).startswith("gym_cardio:")
+
     def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
         act = {
             "type": "trail_running",
