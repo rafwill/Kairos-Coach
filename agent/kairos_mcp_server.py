@@ -5,9 +5,12 @@ Servidor MCP propio de Kairos para consultas Garmin (sin dependencia de runtime 
 
 from __future__ import annotations
 
+import hashlib
 import re
+import shutil
 from datetime import date
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from garminconnect import Garmin
@@ -130,16 +133,36 @@ def _garmin_client() -> Garmin:
     if _client is not None and _client_identity == identity:
         return _client
 
+    # Con tokenstore, garminconnect reutiliza los tokens guardados (y los refresca si caducan);
+    # solo hace login con contraseña si faltan o no valen, y entonces los guarda para el siguiente
+    # arranque. Sin él, cada proceso hacía un login completo y Garmin acaba devolviendo 429.
     client = Garmin(email=email, password=password)
-    client.login()
+    client.login(str(_tokenstore_dir(email)))
     _client = client
     _client_identity = identity
     return client
 
 
-def _invalidate_client_cache() -> None:
+def _tokenstore_dir(email: str) -> Path:
+    """Carpeta de tokens de Garmin por usuario (GARMINTOKENS la sustituye si está definida)."""
+    import os
+
+    override = (os.environ.get("GARMINTOKENS") or "").strip()
+    if override:
+        path = Path(override).expanduser()
+    else:
+        user_key = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:16]
+        path = Path.home() / ".garminconnect" / "kairos" / user_key
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _invalidate_client_cache(clear_tokens: bool = False) -> None:
+    """Olvida el cliente; con clear_tokens borra los tokens guardados para forzar un login nuevo."""
     global _client
     global _client_identity
+    if clear_tokens and _client_identity is not None:
+        shutil.rmtree(_tokenstore_dir(_client_identity[0]), ignore_errors=True)
     _client = None
     _client_identity = None
 
@@ -164,14 +187,15 @@ def _invoke_with_auth_retry(method_name: str, *args: Any, **kwargs: Any) -> Any:
     try:
         return method(*args, **kwargs)
     except GarminConnectAuthenticationError:
-        _invalidate_client_cache()
+        # Tokens guardados que ya no valen: se borran para que el reintento haga login de verdad.
+        _invalidate_client_cache(clear_tokens=True)
         client = _garmin_client()
         method = getattr(client, method_name)
         return method(*args, **kwargs)
     except GarminConnectConnectionError as exc:
         if not _is_auth_like_connection_error(exc):
             raise
-        _invalidate_client_cache()
+        _invalidate_client_cache(clear_tokens=True)
         client = _garmin_client()
         method = getattr(client, method_name)
         return method(*args, **kwargs)

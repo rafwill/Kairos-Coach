@@ -242,3 +242,63 @@ def test_successful_passthrough_keeps_previous_behavior(monkeypatch):
     assert calls["count"] == 1
     assert server._client is cached_client
     assert server._client_identity == ("user@example.com", "secret")
+
+
+def test_garmin_client_logs_in_with_per_user_tokenstore(monkeypatch, tmp_path):
+    calls = []
+
+    class _LoginGarmin:
+        def __init__(self, email, password):
+            self.email = email
+
+        def login(self, tokenstore=None):
+            calls.append(tokenstore)
+
+    monkeypatch.setenv("GARMIN_EMAIL", "Atleta@Example.com")
+    monkeypatch.setenv("GARMIN_PASSWORD", "x")
+    monkeypatch.delenv("GARMINTOKENS", raising=False)
+    monkeypatch.setattr(server.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(server, "Garmin", _LoginGarmin)
+    server._invalidate_client_cache()
+
+    server._garmin_client()
+    server._garmin_client()  # segundo uso en el mismo proceso: sin login nuevo
+
+    assert len(calls) == 1
+    store = calls[0]
+    assert store.startswith(str(tmp_path / ".garminconnect" / "kairos"))
+    # Misma carpeta para el mismo email aunque cambien mayúsculas.
+    assert server._tokenstore_dir("atleta@example.com") == server._tokenstore_dir("ATLETA@example.com")
+    server._invalidate_client_cache()
+
+
+def test_auth_error_clears_saved_tokens_before_retry(monkeypatch, tmp_path):
+    monkeypatch.setenv("GARMIN_EMAIL", "atleta@example.com")
+    monkeypatch.setenv("GARMIN_PASSWORD", "x")
+    monkeypatch.setenv("GARMINTOKENS", str(tmp_path / "tokens"))
+    state = {"n": 0}
+
+    class _AuthGarmin:
+        def __init__(self, email, password):
+            pass
+
+        def login(self, tokenstore=None):
+            (server.Path(tokenstore) / "garmin_tokens.json").write_text("{}")
+
+        def get_stats(self, day):
+            state["n"] += 1
+            if state["n"] == 1:
+                raise GarminConnectAuthenticationError("token caducado")
+            return {"ok": True}
+
+    monkeypatch.setattr(server, "Garmin", _AuthGarmin)
+    server._invalidate_client_cache()
+    server._garmin_client()
+    assert (tmp_path / "tokens" / "garmin_tokens.json").exists()
+
+    deleted = []
+    real_rmtree = server.shutil.rmtree
+    monkeypatch.setattr(server.shutil, "rmtree", lambda p, ignore_errors=False: (deleted.append(str(p)), real_rmtree(p, ignore_errors=ignore_errors)))
+    assert server._invoke_with_auth_retry("get_stats", "2026-10-21") == {"ok": True}
+    assert deleted == [str(tmp_path / "tokens")]
+    server._invalidate_client_cache()
