@@ -49,7 +49,9 @@ Anclajes por fecha (perfil `performance`):
 - Motor de planes (`_generate_structured_plan_payload(..., load_context=)`): `_build_plan_load_context` aporta minutos/semana de las últimas 4 semanas, sesión larga de 6 semanas y CTL/ATL/TSB/estado. Ninguna semana > 10 % sobre lo sostenido; objetivo pasado → plan genérico de 8 semanas; `hr_pct` = % LTHR.
 - `prompts/mcp_tool_routing_guide.md` no se inyecta al LLM: es referencia para desarrollo.
 - El MCP devuelve algunas listas como objetos JSON concatenados (récords, zonas): usar `_try_parse_json`. `get_activity` trae las métricas en `summaryDTO`: usar `_flatten_garmin_activity`.
-- Batería de preguntas: `docs/bateria_p55_preguntas_base.txt`. Cada arranque de Kairos hace un login completo en Garmin; con muchas pasadas seguidas Garmin devuelve 429/403 durante un rato.
+- Batería de preguntas: `docs/bateria_p55_preguntas_base.txt` (25 preguntas; última pasada completa 21/10 sin incoherencias de datos).
+- Login de Garmin: el MCP reutiliza tokens en `~/.garminconnect/kairos/<hash del email>` (o `GARMINTOKENS`); solo hace login real si faltan o no valen. Antes cada arranque hacía login completo y Garmin bloqueaba la IP (429) tras varias pasadas.
+- Capa de coaching: `_coaching_horizon` fija el horizonte (hoy, mañana o los días que quedan de la semana).
 
 ## Datos y herramientas
 

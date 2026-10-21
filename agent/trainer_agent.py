@@ -1572,18 +1572,25 @@ def _format_all_day_events(payload: Any, target_date: str) -> str:
 
 
 def _format_training_effect(payload: Any, activity_payload: Any) -> tuple[str, str]:
-    """Formatea Training Effect y devuelve (valor, fuente)."""
-    src = _pick_day_payload(payload, "") if payload is not None else None
-    if not isinstance(src, dict):
-        src = _pick_day_payload(activity_payload, "") if activity_payload is not None else None
-        source = "Garmin get_activity"
-    else:
-        source = "Garmin get_training_effect"
+    """Formatea Training Effect y devuelve (valor, fuente).
 
-    if not isinstance(src, dict):
-        return "sin datos", "no disponible"
+    get_training_effect puede devolver todos los campos a null; entonces se usa la actividad.
+    """
+    for candidate, source in ((payload, "Garmin get_training_effect"), (activity_payload, "Garmin get_activity")):
+        if candidate is None:
+            continue
+        # Primero el propio diccionario (p. ej. la actividad ya aplanada); _pick_day_payload puede
+        # devolver otro sub-diccionario (activityTypeDTO) sin Training Effect.
+        for src in (candidate, _pick_day_payload(candidate, "")):
+            if isinstance(src, dict):
+                value = _format_training_effect_fields(src)
+                if value:
+                    return value, source
+    return "sin datos", "no disponible"
 
-    te = src.get("training_effect") or src.get("trainingEffect") or src.get("aerobic_effect")
+
+def _format_training_effect_fields(src: dict) -> str:
+    te = src.get("training_effect") or src.get("trainingEffect") or src.get("aerobicTrainingEffect") or src.get("aerobic_effect")
     an = src.get("anaerobic_effect") or src.get("anaerobicTrainingEffect")
     label = src.get("training_effect_label") or src.get("trainingEffectLabel")
     recovery_h = src.get("recovery_time_hours") or src.get("recoveryTimeHours")
@@ -1607,9 +1614,7 @@ def _format_training_effect(payload: Any, activity_payload: Any) -> tuple[str, s
         except (TypeError, ValueError):
             parts.append(f"recuperación {recovery_h}")
 
-    if not parts:
-        return "sin datos", source
-    return " · ".join(parts), source
+    return " · ".join(parts)
 
 
 def _to_iso_date(value: Any) -> str | None:
@@ -2451,6 +2456,10 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         "## ✅ Recomendación",
         f"- {initial_recommendation}",
     ])
+    if decision_for_user and not plan_assigned:
+        lines.append("- No tienes plan activo: la recomendación sale de tu estado de carga y recuperación (puedo crearte un plan hacia tu objetivo).")
+    lines.extend([
+    ])
     if isinstance(daily_plan_decision, dict) and daily_plan_decision.get("decision"):
         decision = str(daily_plan_decision.get("decision") or "").strip().lower()
         decision_label = {
@@ -3128,6 +3137,26 @@ def _is_coaching_recommendation_intent(user_message: str) -> bool:
         "esta semana dado",
     )
     return any(m in text for m in markers)
+
+
+def _coaching_horizon(user_message: str) -> str:
+    """Horizonte que pide el usuario, explícito para la capa de coaching del LLM."""
+    text = (user_message or "").lower()
+    if "semana" in text:
+        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        today = date.today()
+        remaining = ", ".join(
+            f"{dias[(today + timedelta(days=i)).weekday()]} {(today + timedelta(days=i)).strftime('%d/%m')}"
+            for i in range(7 - today.weekday())
+        )
+        return (
+            f"ESTA SEMANA: hoy es {dias[today.weekday()]} {today.strftime('%d/%m')}. Propón el reparto SOLO de los días "
+            f"que quedan ({remaining}): qué día calidad, cuáles rodaje suave y cuál descanso, con las zonas en lpm del "
+            "bloque Umbrales (no porcentajes)"
+        )
+    if "mañana" in text or "manana" in text:
+        return "MAÑANA: la sesión de mañana"
+    return "HOY: la sesión de hoy"
 
 
 def _build_today_load_status_markdown(profile: dict) -> str:
@@ -9049,7 +9078,8 @@ def _build_activity_analysis_block(
         low  = round(dur_h * 0.5, 1)
         high = round(dur_h * 0.8, 1)
         hot  = round(dur_h * 1.0, 1)
-        lines.append(f"Duracion {_seconds_to_hhmmss(dur_s)} -> minimo {low}-{high}L (condiciones normales)")
+        dur_min_total = int(round(dur_s / 60))
+        lines.append(f"Para {dur_min_total // 60} h {dur_min_total % 60:02d} min -> minimo {low}-{high}L (condiciones normales)")
         lines.append(f"Con calor/altitud -> hasta {hot}L")
         if dist_km and dist_km > 30:
             lines.append("  -> Ultra: añadir electrolitos cada 45-60 min ademas de agua")
@@ -11579,10 +11609,11 @@ class TrainerAgent:
                     "role": "user",
                     "content": (
                         f"Pregunta del usuario: {user_message}\n"
-                        f"Ruta factual: {route}\n\n"
+                        f"Ruta factual: {route}\n"
+                        f"Horizonte de la respuesta: {_coaching_horizon(user_message)}\n\n"
                         "Datos deterministas (fuente de verdad):\n"
                         f"{deterministic_reply}\n\n"
-                        "Tarea: da recomendación de coaching práctica basada en esos datos."
+                        "Tarea: da recomendación de coaching práctica basada en esos datos, para ese horizonte."
                     ),
                 },
             ]
