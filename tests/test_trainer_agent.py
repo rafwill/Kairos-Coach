@@ -418,6 +418,34 @@ class TestSystemPromptPlanManagementRules:
         assert "nueva versión" in prompt or "nueva version" in prompt
 
 
+class TestConcatenatedJsonFromMcp:
+    # Formato real del MCP para get_personal_record: objetos JSON seguidos, sin lista.
+    RAW = (
+        '{\n  "typeId": 3,\n  "activityName": "Carrera 5K",\n  "activityType": "running",\n  "value": 1659.0\n}\n'
+        '{\n  "typeId": 5,\n  "activityName": "Media",\n  "activityType": "running",\n  "value": 5483.0\n}'
+    )
+
+    def test_try_parse_json_reads_concatenated_objects_as_list(self):
+        from agent.trainer_agent import _try_parse_json
+
+        data = _try_parse_json(self.RAW)
+        assert isinstance(data, list) and [d["typeId"] for d in data] == [3, 5]
+
+    def test_personal_records_route_renders_concatenated_payload(self):
+        compact = _compact_tool_result(self.RAW, "get_personal_record")
+        out = _build_personal_records_markdown(compact, preferred_sport="running")
+        assert "| 5K | 27:39 |" in out
+        assert "| Medio Maratón | 01:31:23 |" in out
+
+    def test_flatten_garmin_activity_lifts_summary_dto(self):
+        from agent.trainer_agent import _flatten_garmin_activity
+
+        act = {"activityName": "X", "activityTypeDTO": {"typeKey": "trail_running"},
+               "summaryDTO": {"duration": 3600.0, "distance": 10000.0, "averageHR": 140}}
+        flat = _flatten_garmin_activity(act)
+        assert (flat["duration"], flat["distance"], flat["averageHR"], flat["activityType"]) == (3600.0, 10000.0, 140, "trail_running")
+
+
 class TestPostActivitySectionSpec:
     def test_recent_activity_keeps_recovery_next_sessions(self):
         today_d = date(2026, 7, 30)
@@ -1261,7 +1289,8 @@ class TestStartupProactive:
             "trainings": [],
         }
         out = _build_proactive_status_markdown(payload)
-        assert "Motor determinista (día N): rodaje suave" in out
+        assert "Elección recomendada hoy: rodaje suave" in out
+        assert "Motor determinista" not in out
         assert "Motivo: estado neutral con una señal de riesgo" in out
 
     def test_compute_daily_plan_adjustment_overload_forces_rest(self):
@@ -5059,6 +5088,72 @@ class TestTssSourceTagging:
         assert week_indexes[0] == 1
         assert week_indexes[-1] == plan["duration_weeks"]
 
+    @staticmethod
+    def _hm_profile(weeks_ahead: int = 12, hours: float = 10.0) -> dict:
+        return {
+            "goals": {
+                "primary": "running",
+                "target_race": "Media Maratón de Santa Pola (21,1 km)",
+                "target_race_date": (date.today() + timedelta(days=7 * weeks_ahead)).isoformat(),
+                "target_time": "01:22:59",
+                "weekly_training_hours": hours,
+            },
+            "health": {},
+        }
+
+    @staticmethod
+    def _week_minutes(sessions: list[dict], week: int) -> int:
+        return sum(int(s.get("duration_min") or 0) for s in sessions if int(s.get("week_index") or 0) == week)
+
+    def test_plan_starts_from_real_recent_volume_and_never_jumps_more_than_10pct(self):
+        ctx = {"recent_weekly_minutes": 300.0, "longest_recent_min": 100.0, "ctl": 60.0, "atl": 40.0, "tsb": 20.0, "status": "ready"}
+        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
+        weeks = [self._week_minutes(sessions, w) for w in range(1, plan["duration_weeks"] + 1)]
+        # La semana 1 no supera lo sostenido +10 % (con margen por mínimos de sesión).
+        assert weeks[0] <= 300 * 1.10 + 40
+        sustained = 300.0
+        for w in weeks:
+            assert w <= sustained * 1.10 + 40
+            sustained = max(sustained, w)
+        assert weeks[0] < 10 * 60 * 0.8  # muy por debajo de las 10 h declaradas
+        assert "Punto de partida: 300 min/semana reales" in plan["description"]
+        assert plan["plan_data"]["load_context"]["status"] == "ready"
+
+    def test_plan_long_session_grows_from_longest_recent(self):
+        ctx = {"recent_weekly_minutes": 600.0, "longest_recent_min": 90.0}
+        _, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
+        long_w1 = max(int(s["duration_min"]) for s in sessions if s["week_index"] == 1 and s["session_type"] == "long_run")
+        assert long_w1 <= round(90 * 1.10)
+
+    def test_plan_with_fatigue_softens_first_week(self):
+        ctx = {"recent_weekly_minutes": 400.0, "status": "fatigue_high", "tsb": -25.0, "ctl": 60.0, "atl": 85.0}
+        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
+        w1_quality = [s for s in sessions if s["week_index"] == 1 and s["session_type"] == "running_quality"]
+        assert w1_quality and all(s["intensity"] == "RPE 5-6" for s in w1_quality)
+        assert "Inicio con fatiga" in plan["description"]
+
+    def test_plan_derives_half_marathon_target_pace(self):
+        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan")
+        # 1:22:59 / 21,0975 km = 236 s/km = 3:56/km
+        assert plan["plan_data"]["target_pace_sec_per_km"] == pytest.approx(236.0, abs=0.5)
+        assert any("min/km" in str(s.get("notes")) for s in sessions if s["session_type"] == "running_quality")
+
+    def test_plan_ignores_past_target_race(self):
+        profile = self._hm_profile()
+        profile["goals"]["target_race_date"] = (date.today() - timedelta(days=12)).isoformat()
+        plan, _ = _generate_structured_plan_payload(profile, "créame un plan")
+        assert plan["duration_weeks"] == 8
+        assert "ya pasó" in plan["description"]
+        assert plan["plan_data"]["target_race_date"] == ""
+
+    def test_structured_hr_targets_are_percent_of_lthr(self):
+        _, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan")
+        quality = next(s for s in sessions if s["session_type"] == "running_quality")
+        targets = quality["structured_workout"]["targets"]
+        # Umbral = 95-100 % del LTHR (zonas de TP), no 88-92.
+        assert targets["primary"]["metric"] == "hr_pct"
+        assert targets["primary"]["range"][0] >= 85
+
     def test_generate_structured_plan_payload_structured_workout_contract(self):
         profile = {
             "goals": {
@@ -6132,8 +6227,9 @@ class TestGoalStatusDeterministicRoute:
 
         assert "| Semana natural | 10/08/2026 → 16/08/2026 |" in out
         assert "| TSS acumulado | 120.0 |" in out
-        assert "lunes 10/08: 40.0 (rTSS 40.0 · hrTSS 0.0 · sTSS 0.0)" in out
-        assert "domingo 16/08: 15.0 (rTSS 15.0 · hrTSS 0.0 · sTSS 0.0)" in out
+        # Sin fila en activity_tss no se conoce la unidad: no se asigna a rTSS.
+        assert "lunes 10/08: 40.0 (rTSS 0.0 · hrTSS 0.0 · TSS 40.0)" in out
+        assert "domingo 16/08: 15.0 (rTSS 0.0 · hrTSS 0.0 · TSS 15.0)" in out
         assert "- 10/08: TSS 40.0" in out
         assert "- 16/08: TSS 15.0" in out
         assert "- Running — Rodaje lunes" in out
@@ -6533,7 +6629,7 @@ class TestHrThresholdDeterministicRoute:
             out = await TrainerAgent.chat(agent, "Cual es mi FC umbral?")
 
         assert out.startswith("## 🧭 Resumen")
-        assert "174 bpm" in out
+        assert "174 lpm" in out
 
     @pytest.mark.asyncio
     async def test_hr_threshold_route_reads_garmin_user_profile_camel_case(self):
@@ -7200,11 +7296,52 @@ class TestMcpFactualDeterministicRoute:
         )
 
         assert "Desglose por tipo de TSS:" in out
-        assert "rTSS: 40.4" in out
-        # Con prioridad Kairos, una sesión de fuerza puede contribuir por fórmula
-        # (normalmente como hrTSS), así que no fijamos 0.0 aquí.
+        # Sin fila en activity_tss la unidad es desconocida: va a "TSS", nunca a rTSS.
+        assert "rTSS: 0.0" in out
         assert "hrTSS:" in out
-        assert "sTSS: 0.0" in out
+        assert "TSS (potencia o metabólico): 40.4" in out
+        assert "sTSS" not in out
+
+    @pytest.mark.asyncio
+    async def test_build_current_week_tss_markdown_buckets_by_stored_model(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from datetime import date as _Date
+
+        class _FakeDate(_Date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 8, 2)
+
+        monkeypatch.setattr(ta, "date", _FakeDate)
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(
+            ta._storage,
+            "get_activity_tss_map",
+            lambda _start: {
+                1: {"activity_id": 1, "tss": 50.0, "method": "TSS", "model": "running:pipeline_fisico"},
+                2: {"activity_id": 2, "tss": 100.0, "method": "TSS", "model": "cycling:power_ftp"},
+                3: {"activity_id": 3, "tss": 30.0, "method": "hrTSS", "model": "strength:modelo_B"},
+                4: {"activity_id": 4, "tss": 60.0, "method": "TSS", "model": "walk_hike:metabolico"},
+            },
+        )
+        profile = {"load_metrics": {"series": [
+            {"date": "2026-07-27", "tss": 50.0}, {"date": "2026-07-28", "tss": 100.0},
+            {"date": "2026-07-29", "tss": 30.0}, {"date": "2026-07-30", "tss": 60.0},
+        ]}}
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            return [
+                {"activityId": 1, "activityName": "Rodaje", "activityType": "running", "startTimeLocal": "2026-07-27 07:00:00"},
+                {"activityId": 2, "activityName": "Road", "activityType": "road_biking", "startTimeLocal": "2026-07-28 07:00:00"},
+                {"activityId": 3, "activityName": "Gym", "activityType": "strength_training", "startTimeLocal": "2026-07-29 07:00:00"},
+                {"activityId": 4, "activityName": "Paseo", "activityType": "walking", "startTimeLocal": "2026-07-30 07:00:00"},
+            ]
+
+        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile, user_message="cuanto tss hice esta semana?")
+        assert "rTSS: 50.0" in out
+        assert "hrTSS: 30.0" in out
+        assert "TSS (potencia o metabólico): 160.0" in out
 
     @pytest.mark.asyncio
     async def test_build_current_week_tss_markdown_shows_cycling_tss_label_not_rtss_in_activity_row(self, monkeypatch):
@@ -7447,7 +7584,7 @@ class TestRunningThresholdDeterministicRoute:
             out = await TrainerAgent.chat(agent, "Cual es mi ritmo umbral actual?")
 
         assert "4:12 min/km" in out
-        assert "2026-08-15" in out
+        assert "15/08/2026" in out
         assert "perfil persistido" in out
         assert len(agent.conversation_history) == 2
 
@@ -7692,11 +7829,11 @@ class TestRecentTssBySportRoute:
 
         estimate_mock.assert_not_called()
         assert "| Fecha | Deporte | Actividad | TSS | Carga Garmin |" in out
-        assert "| 2026-10-18 | running | Rodaje | 54.4 | 256.2 |" in out
-        assert "| 2026-10-09 | trail | Trail largo | 543.1 | 419.4 |" in out
-        assert "| 2026-10-05 | fuerza | Fuerza | 16.6 | 0.1 |" in out
-        assert "| 2026-10-20 | running | Rodaje nuevo | pendiente | — |" in out
+        assert "| 18/10/2026 | running | Rodaje | 54.4 | 256.2 |" in out
+        assert "| 09/10/2026 | trail | Trail largo | 543.1 | 419.4 |" in out
+        assert "| 05/10/2026 | fuerza | Fuerza | 16.6 | 0.1 |" in out
+        assert "| 20/10/2026 | running | Rodaje nuevo | pendiente | — |" in out
         assert "Bici" not in out
         assert "Rodaje antiguo" not in out
-        rows = [line for line in out.splitlines() if line.startswith("| 2026-")]
-        assert [r.split(" | ")[0] for r in rows] == ["| 2026-10-20", "| 2026-10-18", "| 2026-10-09", "| 2026-10-05"]
+        rows = [line for line in out.splitlines() if line.endswith("|") and "/2026 | " in line]
+        assert [r.split(" | ")[0] for r in rows] == ["| 20/10/2026", "| 18/10/2026", "| 09/10/2026", "| 05/10/2026"]

@@ -2,6 +2,22 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-21 (prompts, planes y respuestas)
+
+### Changed
+- Prompts del LLM (`system_prompt.md`, `system_prompt_compact.md`) reescritos sin contradicciones: flujo de Kairos (alta, cálculo incremental al entrar, rutas deterministas frente a LLM, motor de planes), carga de Garmin nunca como TSS ni CTL/ATL, umbrales de alerta iguales a los del motor diario (HRV −10 %, body battery < 35, sueño < 6 h o < 60), zonas en % del umbral de FC, plantilla única con la excepción del análisis de actividad, rol según el deporte principal, regla de objetivo ya pasado y protocolo de diabetes con insulina (DT1, "DT 1", LADA).
+- El LLM recibe en su contexto el estado de carga actual (CTL/ATL/TSB, estado y rangos), los umbrales con las zonas en lpm y el plan activo (hoy y dos días siguientes). Los prompts secundarios (coaching del estado diario, evaluación de entrenamiento, propuesta para mañana) reciben también el perfil.
+- Motor de planes: parte del volumen real de las últimas 4 semanas (nunca más de un 10 % sobre lo ya sostenido), la sesión larga crece desde la más larga reciente, la primera semana se suaviza si hay fatiga, el ritmo objetivo sale de cualquier distancia (5K a maratón) y no planifica hacia un objetivo ya pasado. `hr_pct` es % del umbral de FC (zonas de TP).
+- Respuestas deterministas: desglose semanal por unidad real (rTSS, hrTSS, TSS de potencia o metabólico) según el modelo guardado; recuento de actividades desde `activity_tss`; ritmo umbral con su historial; FC umbral con la referencia de TP; fechas en DD/MM/AAAA; estado de hoy sin línea interna, con sueño "anoche / noche anterior" en h y min y posición de ATL/TSB respecto a su rango.
+
+### Fixed
+- Récords personales: el MCP los entrega como objetos JSON concatenados y la ruta concluía "no hay récords"; `_try_parse_json` y `_compact_tool_result` los leen como lista (también las zonas de FC del análisis).
+- Detalle de actividad casi vacío: `get_activity` trae las métricas en `summaryDTO`; ahora se leen (duración, distancia, ritmo, FC, desnivel, calorías, Training Effect).
+- Body Battery de hoy salía "datos disponibles": el nivel actual está en `bodyBatteryValuesArray` y un `drained = 0` se perdía.
+
+### Tests
+- 566 passed, 6 skipped.
+
 ## 2026-10-21
 
 ### Changed

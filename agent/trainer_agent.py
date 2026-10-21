@@ -461,7 +461,13 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
     if not raw:
         return "(sin datos)"
     try:
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # Listas que el MCP entrega como objetos concatenados ("{...} {...}").
+            data = _try_parse_json(raw)
+            if data is None:
+                raise
         # Procesado específico para récords personales
         if tool_name in {"get_personal_records", "get_personal_record"} and isinstance(data, list):
             return _compact_personal_records(data)
@@ -1104,7 +1110,9 @@ async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_m
     for r in rows:
         tss_txt = f"{r['tss']:.1f}" if r["tss"] is not None else "pendiente"
         load_txt = f"{r['native_load']:.1f}" if r["native_load"] is not None else "—"
-        lines.append(f"| {r['date']} | {sport_labels.get(r['sport'], r['sport'])} | {r['name']} | {tss_txt} | {load_txt} |")
+        row_d = _parse_iso_date_safe(r["date"])
+        date_txt = row_d.strftime("%d/%m/%Y") if row_d else str(r["date"])
+        lines.append(f"| {date_txt} | {sport_labels.get(r['sport'], r['sport'])} | {r['name']} | {tss_txt} | {load_txt} |")
 
     lines.extend([
         "",
@@ -1116,7 +1124,7 @@ async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_m
     lines.extend([
         "",
         "## 🎯 Próximo paso",
-        "- Si quieres, te comparo esta lista con TP y te marco las sesiones que más se desvían.",
+        "- Si quieres, te analizo en detalle cualquiera de estas sesiones: dime su fecha.",
         "- Fuente: TSS guardado por actividad (activity_tss) + listado de Garmin MCP.",
     ])
     return "\n".join(lines)
@@ -1131,7 +1139,37 @@ def _try_parse_json(raw: str | None) -> Any:
     try:
         return json.loads(text)
     except (TypeError, json.JSONDecodeError):
+        pass
+    # El MCP devuelve algunas listas como objetos JSON concatenados ("{...} {...}"): se leen como lista.
+    decoder = json.JSONDecoder()
+    items: list[Any] = []
+    pos = 0
+    try:
+        while pos < len(text):
+            obj, end = decoder.raw_decode(text, pos)
+            items.append(obj)
+            pos = end
+            while pos < len(text) and text[pos] in " \t\r\n,":
+                pos += 1
+    except json.JSONDecodeError:
         return None
+    return items if len(items) > 1 else None
+
+
+def _flatten_garmin_activity(act: dict) -> dict:
+    """Sube a primer nivel los campos de summaryDTO/activityTypeDTO de get_activity (sin pisar los existentes)."""
+    if not isinstance(act, dict):
+        return act
+    flat = dict(act)
+    summary = act.get("summaryDTO")
+    if isinstance(summary, dict):
+        for key, value in summary.items():
+            if flat.get(key) is None and value is not None:
+                flat[key] = value
+    type_dto = act.get("activityTypeDTO")
+    if flat.get("activityType") is None and isinstance(type_dto, dict) and type_dto.get("typeKey"):
+        flat["activityType"] = type_dto["typeKey"]
+    return flat
 
 
 def _is_activity_details_payload(raw: Any) -> bool:
@@ -1145,6 +1183,19 @@ def _activity_id_int(activity: dict) -> int | None:
         return int(raw) if raw is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _tss_unit_for_stored_row(row: dict | None) -> str:
+    """Unidad de TSS (rTSS, hrTSS o TSS) de una fila de activity_tss a partir de su modelo."""
+    model = str((row or {}).get("model") or "").strip().lower()
+    method = str((row or {}).get("method") or "").strip()
+    if model.startswith("running:") or model == "trail:fast_rtss":
+        return "rTSS"
+    if model == "cycling:power_ftp" or model.startswith("walk_hike:metabolico"):
+        return "TSS"
+    if model or method.lower() == "hrtss":
+        return "hrTSS" if (method.lower() == "hrtss" or not method) else method
+    return method or "TSS"
 
 
 def _load_stored_activity_tss(start_iso: str) -> dict[int, dict]:
@@ -1350,18 +1401,24 @@ def _format_body_battery_day(payload: Any, target_date: str) -> str:
     if not day:
         return "sin datos"
 
-    level = (
-        day.get("body_battery_level")
-        or day.get("bodyBatteryLevel")
-        or day.get("bodyBatteryMostRecentValue")
-        or day.get("bodyBatteryValue")
-        or day.get("current")
-        or day.get("value")
+    def _first_present(*keys: str) -> Any:
+        # Sin `or`: un 0 (p. ej. drained=0 de madrugada) es un dato válido.
+        return next((day.get(k) for k in keys if day.get(k) is not None), None)
+
+    level = _first_present(
+        "body_battery_level", "bodyBatteryLevel", "bodyBatteryMostRecentValue", "bodyBatteryValue", "current", "value"
     )
-    highest = day.get("highestBodyBattery") or day.get("highest") or day.get("body_battery_highest")
-    lowest = day.get("lowestBodyBattery") or day.get("lowest") or day.get("body_battery_lowest")
-    charged = day.get("charged") or day.get("body_battery_charged")
-    drained = day.get("drained") or day.get("body_battery_drained")
+    values = day.get("bodyBatteryValuesArray")
+    if level is None and isinstance(values, list):
+        # Serie [timestamp, nivel]: el último nivel válido es el actual.
+        for point in reversed(values):
+            if isinstance(point, (list, tuple)) and len(point) >= 2 and point[1] is not None:
+                level = point[1]
+                break
+    highest = _first_present("highestBodyBattery", "highest", "body_battery_highest")
+    lowest = _first_present("lowestBodyBattery", "lowest", "body_battery_lowest")
+    charged = _first_present("charged", "body_battery_charged")
+    drained = _first_present("drained", "body_battery_drained")
 
     parts: list[str] = []
     if level is not None:
@@ -1422,9 +1479,10 @@ def _format_sleep_day(payload: Any, target_date: str) -> str:
 
     parts: list[str] = []
     if sleep_hours is not None:
-        parts.append(f"{float(sleep_hours):.2f} h")
+        total_min = int(round(float(sleep_hours) * 60))
+        parts.append(f"{total_min // 60} h {total_min % 60:02d} min")
     if score is not None:
-        parts.append(f"score {int(score)}")
+        parts.append(f"puntuación {int(score)}")
 
     if parts:
         return " · ".join(parts)
@@ -2262,9 +2320,10 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
 
     hrv_summary = hrv.get("summary") or ""
     if hrv.get("today") is not None or hrv.get("yesterday") is not None:
+        # HRV y sueño miden la noche: "anoche" = la noche que termina hoy.
         hrv_summary = (
-            f"hoy={_format_hrv_day(hrv.get('today'), today_iso)} · "
-            f"ayer={_format_hrv_day(hrv.get('yesterday'), yesterday_iso)}"
+            f"anoche={_format_hrv_day(hrv.get('today'), today_iso)} · "
+            f"noche anterior={_format_hrv_day(hrv.get('yesterday'), yesterday_iso)}"
         )
     elif _is_generic_ok_summary(hrv_summary):
         hrv_summary = unavailable_label
@@ -2272,21 +2331,17 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     sleep_summary = sleep.get("summary") or ""
     if sleep.get("today") is not None or sleep.get("yesterday") is not None:
         sleep_summary = (
-            f"hoy={_format_sleep_day(sleep.get('today'), today_iso)} · "
-            f"ayer={_format_sleep_day(sleep.get('yesterday'), yesterday_iso)}"
+            f"anoche={_format_sleep_day(sleep.get('today'), today_iso)} · "
+            f"noche anterior={_format_sleep_day(sleep.get('yesterday'), yesterday_iso)}"
         )
     elif _is_generic_ok_summary(sleep_summary):
         sleep_summary = unavailable_label
 
     lines.append("- Body Battery: " + _normalize_wellness_text(body_summary))
     lines.append("- HRV: " + _normalize_wellness_text(hrv_summary))
-    lines.append("- Sueno: " + _normalize_wellness_text(sleep_summary))
+    lines.append("- Sueño: " + _normalize_wellness_text(sleep_summary))
     if wellness_sources:
-        lines.append(
-            "- Wellness origen: "
-            f"hoy(body={wellness_sources.get('body_today', 'n/d')}, hrv={wellness_sources.get('hrv_today', 'n/d')})"
-            f" · ayer(body={wellness_sources.get('body_yday', 'n/d')}, hrv={wellness_sources.get('hrv_yday', 'n/d')})"
-        )
+        log.debug("proactive status: wellness origen %s", wellness_sources)
     lines.append("- Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)): " + _format_load_fatigue_summary(load_fatigue))
 
     if load_fatigue and load_fatigue.get("latest"):
@@ -2296,14 +2351,24 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         recommendation = str(load_fatigue.get("recommendation") or "").strip()
         weekly_tss = weekly.get("current_tss_effective", weekly.get("current_tss", 0.0))
         if latest:
+            atl_now = float(latest.get("atl", 0.0))
+            tsb_now = float(latest.get("tsb", 0.0))
+            atl_high = float(ranges.get("atl_high", 0.0))
+            tsb_low = float(ranges.get("tsb_low", 0.0))
+            tsb_high = float(ranges.get("tsb_high", 0.0))
+            atl_pos = "por encima: fatiga alta" if atl_high and atl_now > atl_high else "por debajo: fatiga controlada"
+            if tsb_now > tsb_high:
+                tsb_pos = "por encima: muy fresco"
+            elif tsb_now < tsb_low:
+                tsb_pos = "por debajo: fatiga acumulada"
+            else:
+                tsb_pos = "dentro del rango"
             lines.append(
                 "  - Estado: "
-                f"CTL (Estado físico)={float(latest.get('ctl', 0.0)):.1f}, "
-                f"ATL (Fatiga)={float(latest.get('atl', 0.0)):.1f} "
-                f"(alto>{float(ranges.get('atl_high', 0.0)):.1f}), "
-                f"TSB (Forma)={float(latest.get('tsb', 0.0)):.1f} "
-                f"(objetivo {float(ranges.get('tsb_low', 0.0)):.1f}..{float(ranges.get('tsb_high', 0.0)):.1f}), "
-                f"TSS semanal={float(weekly_tss):.1f}"
+                f"Estado físico (CTL) {float(latest.get('ctl', 0.0)):.1f} · "
+                f"Fatiga (ATL) {atl_now:.1f} (su máximo habitual es {atl_high:.1f}; {atl_pos}) · "
+                f"Forma (TSB) {tsb_now:+.1f} (rango habitual {tsb_low:+.1f} a {tsb_high:+.1f}; {tsb_pos}) · "
+                f"TSS de la semana {float(weekly_tss):.1f}"
             )
         if recommendation:
             lines.append(f"  - Regla aplicada: {recommendation}")
@@ -2329,7 +2394,8 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         lines.append("- Entrenamientos recientes:")
         for item in trainings[:3]:
             name = item.get("name") or "Actividad"
-            day = item.get("date") or "fecha desconocida"
+            day_d = _parse_iso_date_safe(item.get("date"))
+            day = day_d.strftime("%d/%m/%Y") if day_d else (item.get("date") or "fecha desconocida")
             lines.append(f"  - {day}: {name}")
     else:
         lines.append("- Entrenamientos recientes: no se encontraron en las ultimas 48h")
@@ -2395,7 +2461,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         }.get(decision, decision or "n/d")
         reason = str(daily_plan_decision.get("reason") or "").strip()
         resulting = str(daily_plan_decision.get("resulting_session") or "").strip()
-        lines.append(f"- Motor determinista (día N): {decision_label}")
+        log.debug("proactive status: decisión del motor diario %s", decision_label)
         if reason:
             lines.append(f"  - Motivo: {reason}")
         if resulting:
@@ -3055,6 +3121,11 @@ def _is_coaching_recommendation_intent(user_message: str) -> bool:
         "estado de forma",
         "como estoy de forma",
         "cómo estoy de forma",
+        "puedo entrenar",
+        "necesito recuperar",
+        "me toca",
+        "mañana",
+        "esta semana dado",
     )
     return any(m in text for m in markers)
 
@@ -3793,22 +3864,30 @@ async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> st
 
     bpm, date_value, source = _resolve_hr_threshold_bpm(profile)
     if bpm is not None:
+        date_d = _parse_iso_date_safe(date_value)
+        date_txt = date_d.strftime("%d/%m/%Y") if date_d else date_value
+        rows = [
+            f"| FC umbral (LTHR) | {int(round(bpm))} lpm | {source} |",
+            f"| Fecha de actualización | {date_txt} | perfil |",
+        ]
+        tp_thr = _resolve_tp_hr_threshold_for_date(profile, date.today().isoformat())
+        if tp_thr:
+            rows.append(f"| Referencia de TrainingPeaks para hrTSS | {int(tp_thr)} lpm | historial del perfil |")
         return "\n".join(
             [
                 "## 🧭 Resumen",
-                "FC umbral actual resuelta desde perfil persistido.",
+                f"Tu FC umbral (LTHR) es {int(round(bpm))} lpm.",
                 "",
                 "## 📊 Métricas clave",
                 "| Métrica | Valor | Fuente |",
                 "|---|---|---|",
-                f"| FC umbral (LTHR) | {int(round(bpm))} bpm | {source} |",
-                f"| Fecha de actualización | {date_value} | perfil |",
+                *rows,
                 "",
                 "## ✅ Recomendación",
-                "- Usa esta FC umbral para estimaciones de carga más realistas.",
+                "- Es la referencia de tus zonas de FC (% del umbral) y del hrTSS de trail, fuerza y bici sin potencia.",
                 "",
                 "## 🎯 Próximo paso",
-                "- Si cambió tu estado de forma, actualízala para mejorar precisión.",
+                "- Si cambia (nueva prueba de esfuerzo o cambio en TrainingPeaks), actualízala para que los cálculos nuevos la usen.",
                 "- Fuente: respuesta determinista (lectura directa del perfil persistido).",
             ]
         )
@@ -3888,22 +3967,37 @@ def _build_running_threshold_profile_markdown(profile: dict) -> str:
             "- Fuente: respuesta determinista (lectura directa del perfil persistido)."
         )
 
-    pace_text = f"{int(pace_sec // 60)}:{int(pace_sec % 60):02d} min/km"
-    pace_date = str(perf.get("running_threshold_pace_date") or "").strip() or "sin fecha"
+    def _fmt_pace(sec: float) -> str:
+        return f"{int(sec // 60)}:{int(sec % 60):02d} min/km"
+
+    today_iso = date.today().isoformat()
+    current = _resolve_running_threshold_pace_for_date(profile, today_iso) or pace_sec
+    pace_text = _fmt_pace(current)
+    pace_date_d = _parse_iso_date_safe(perf.get("running_threshold_pace_date"))
+    pace_date = pace_date_d.strftime("%d/%m/%Y") if pace_date_d else "sin fecha"
     source = "perfil persistido (comando /perfil umbral)"
+
+    history = [
+        e for e in (perf.get("running_threshold_pace_history") or [])
+        if isinstance(e, dict) and _parse_iso_date_safe(e.get("date")) and e.get("sec_per_km")
+    ]
+    history_rows = [
+        f"| Vigente desde {_parse_iso_date_safe(e['date']).strftime('%d/%m/%Y')} | {_fmt_pace(float(e['sec_per_km']))} | historial del perfil |"
+        for e in sorted(history, key=lambda e: str(e["date"]))
+    ]
 
     lines = [
         "## 🧭 Resumen",
-        "Ritmo umbral actual resuelto desde perfil persistido.",
+        f"Tu ritmo umbral de carrera es {pace_text}.",
         "",
         "## 📊 Métricas clave",
         "| Métrica | Valor | Fuente |",
         "|---|---|---|",
         f"| Ritmo umbral running | {pace_text} | {source} |",
-        f"| Fecha de actualización | {pace_date} | perfil persistido |",
+        *(history_rows or [f"| Fecha de actualización | {pace_date} | perfil persistido |"]),
         "",
         "## ✅ Recomendación",
-        "- Usa este ritmo para calibrar sesiones de tempo y umbral.",
+        "- Usa este ritmo para calibrar sesiones de tempo y umbral. Cada actividad se calcula con el umbral vigente en su fecha.",
         "",
         "## 🎯 Próximo paso",
         "- Si quieres, te convierto este umbral en zonas de ritmo para entrenar.",
@@ -4222,19 +4316,11 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     activity_tss_by_day: dict[str, float] = {}
     activity_type_tss_by_day: dict[str, dict[str, float]] = {}
 
-    def _resolve_tss_bucket(activity: dict, tss_label: str | None) -> str:
-        act_type = activity.get("type") or activity.get("activityType") or ""
-        act_type_l = str(act_type).lower()
-        if "swim" in act_type_l or "nat" in act_type_l:
-            return "sTSS"
-        if _is_strength_activity(act_type):
-            return "hrTSS"
-        label_l = str(tss_label or "").lower()
-        if label_l == "hrtss":
-            return "hrTSS"
-        if label_l == "stss":
-            return "sTSS"
-        return "rTSS"
+    def _resolve_tss_bucket(activity: dict, stored_row: dict | None) -> str:
+        # Unidad según el modelo guardado (rTSS running, hrTSS por FC, TSS potencia/metabólico).
+        if stored_row is not None:
+            return _tss_unit_for_stored_row(stored_row)
+        return "hrTSS" if _is_strength_activity(activity.get("type") or activity.get("activityType") or "") else "TSS"
 
     for act in activities:
         if not isinstance(act, dict):
@@ -4259,12 +4345,8 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
             tss_label = str(stored_row.get("method") or "")
             tss_source = "activity_tss"
         if week_start <= d_obj <= week_end:
-            bucket = _resolve_tss_bucket(act, tss_label)
+            bucket = _resolve_tss_bucket(act, stored_row)
             display_bucket = bucket
-            act_type_raw = act.get("type") or act.get("activityType") or ""
-            if _is_cycling_activity(act_type_raw) and str(tss_label or "").strip().upper() == "TSS":
-                # Evita confusión visual: en ciclismo, TSS no debe mostrarse como rTSS.
-                display_bucket = "TSS"
             act_rows.append((
                 d_obj,
                 sport,
@@ -4278,8 +4360,8 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         if act_tss is not None:
             activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(act_tss), 1)
             if week_start <= d_obj <= week_end:
-                bucket = _resolve_tss_bucket(act, tss_label)
-                per_day = activity_type_tss_by_day.setdefault(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0})
+                bucket = _resolve_tss_bucket(act, stored_row)
+                per_day = activity_type_tss_by_day.setdefault(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "TSS": 0.0})
                 per_day[bucket] = round(per_day.get(bucket, 0.0) + float(act_tss), 1)
     act_rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
 
@@ -4305,18 +4387,18 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     else:
         delta_pct = None
 
-    # Normaliza desglose rTSS/hrTSS/sTSS al TSS diario mostrado para mantener
+    # Normaliza desglose rTSS/hrTSS/TSS al TSS diario mostrado para mantener
     # consistencia entre "Desglose por tipo" y TSS semanal.
     day_type_breakdown: dict[str, dict[str, float]] = {}
-    tss_breakdown = {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0}
+    tss_breakdown = {"rTSS": 0.0, "hrTSS": 0.0, "TSS": 0.0}
     for d in week_dates:
         d_iso = d.isoformat()
         day_tss = float(tss_by_day.get(d_iso, 0.0) or 0.0)
-        raw = activity_type_tss_by_day.get(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0})
+        raw = activity_type_tss_by_day.get(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "TSS": 0.0})
         raw_r = float(raw.get("rTSS", 0.0) or 0.0)
         raw_h = float(raw.get("hrTSS", 0.0) or 0.0)
-        raw_s = float(raw.get("sTSS", 0.0) or 0.0)
-        raw_total = raw_r + raw_h + raw_s
+        raw_t = float(raw.get("TSS", 0.0) or 0.0)
+        raw_total = raw_r + raw_h + raw_t
 
         if raw_total > 0.0:
             if day_tss > 0.0:
@@ -4324,20 +4406,21 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
                 comp = {
                     "rTSS": round(raw_r * scale, 1),
                     "hrTSS": round(raw_h * scale, 1),
-                    "sTSS": round(raw_s * scale, 1),
+                    "TSS": round(raw_t * scale, 1),
                 }
-                drift = round(day_tss - (comp["rTSS"] + comp["hrTSS"] + comp["sTSS"]), 1)
+                drift = round(day_tss - (comp["rTSS"] + comp["hrTSS"] + comp["TSS"]), 1)
                 if abs(drift) > 0.0:
-                    comp["rTSS"] = round(comp["rTSS"] + drift, 1)
+                    main_unit = max(comp, key=lambda k: comp[k])
+                    comp[main_unit] = round(comp[main_unit] + drift, 1)
             else:
-                comp = {"rTSS": round(raw_r, 1), "hrTSS": round(raw_h, 1), "sTSS": round(raw_s, 1)}
+                comp = {"rTSS": round(raw_r, 1), "hrTSS": round(raw_h, 1), "TSS": round(raw_t, 1)}
         else:
-            comp = {"rTSS": round(day_tss, 1), "hrTSS": 0.0, "sTSS": 0.0}
+            comp = {"rTSS": 0.0, "hrTSS": 0.0, "TSS": round(day_tss, 1)}
 
         day_type_breakdown[d_iso] = comp
         tss_breakdown["rTSS"] = round(tss_breakdown["rTSS"] + comp["rTSS"], 1)
         tss_breakdown["hrTSS"] = round(tss_breakdown["hrTSS"] + comp["hrTSS"], 1)
-        tss_breakdown["sTSS"] = round(tss_breakdown["sTSS"] + comp["sTSS"], 1)
+        tss_breakdown["TSS"] = round(tss_breakdown["TSS"] + comp["TSS"], 1)
 
     spike_alert = bool(previous_week_tss > 0.0 and current_week_tss > (previous_week_tss * 1.2))
     has_week_end_load_row = week_end.isoformat() in tss_by_day and tss_source_by_day.get(week_end.isoformat()) == "load_metrics_daily"
@@ -4394,17 +4477,17 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         "Desglose por tipo de TSS:",
         f"  - rTSS: {tss_breakdown['rTSS']:.1f}",
         f"  - hrTSS: {tss_breakdown['hrTSS']:.1f}",
-        f"  - sTSS: {tss_breakdown['sTSS']:.1f}",
+        f"  - TSS (potencia o metabólico): {tss_breakdown['TSS']:.1f}",
         "",
         "Desglose diario:",
     ]
 
     for d in week_dates:
         d_iso = d.isoformat()
-        comp = day_type_breakdown.get(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "sTSS": 0.0})
+        comp = day_type_breakdown.get(d_iso, {"rTSS": 0.0, "hrTSS": 0.0, "TSS": 0.0})
         lines.append(
             f"  - {weekday_es.get(d.weekday(), d.strftime('%A'))} {d.strftime('%d/%m')}: {tss_by_day.get(d_iso, 0.0):.1f} "
-            f"(rTSS {comp['rTSS']:.1f} · hrTSS {comp['hrTSS']:.1f} · sTSS {comp['sTSS']:.1f})"
+            f"(rTSS {comp['rTSS']:.1f} · hrTSS {comp['hrTSS']:.1f} · TSS {comp['TSS']:.1f})"
         )
 
     lines.append("")
@@ -4551,7 +4634,7 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
         lines.append("- No aplica en esta consulta.")
     lines.append("")
     lines.append("## 🎯 Próximo paso")
-    lines.append("- Si quieres, te calculo el TSS estimado de esta misma semana a partir de estas actividades.")
+    lines.append("- Si quieres, te digo el TSS de esta misma semana y cómo se reparte por actividad.")
     lines.append("- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad; IDs Garmin incluidos para trazabilidad).")
     return "\n".join(lines)
 
@@ -4760,6 +4843,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         if not isinstance(act_payload, dict):
             act_payload = dict(primary)
             raw_activity = json.dumps(act_payload, ensure_ascii=False)
+        act_payload = _flatten_garmin_activity(act_payload)
 
         te_payload = _try_parse_json(raw_training_effect) if raw_training_effect else None
         te_value, te_source = _format_training_effect(te_payload, act_payload)
@@ -6584,14 +6668,35 @@ def _apply_trail_overrides(sessions: list[dict], has_injuries: bool) -> list[dic
     return sessions
 
 
+def _race_distance_km(race: str) -> float | None:
+    """Distancia de la carrera objetivo a partir de su nombre (para derivar el ritmo objetivo)."""
+    txt = str(race or "").lower()
+    if any(k in txt for k in ("media marat", "medio marat", "half", "21k", "21 k", "21,1", "21.1")):
+        return 21.0975
+    if any(k in txt for k in ("maratón", "maraton", "marathon", "42k", "42,2", "42.2")):
+        return 42.195
+    m = re.search(r"\b(\d{1,2})\s?k(?:m)?\b", txt)
+    if m and int(m.group(1)) in (5, 10, 15):
+        return float(m.group(1))
+    return None
+
+
 def _generate_structured_plan_payload(
     profile: dict,
     user_message: str,
     base_plan: dict | None = None,
+    load_context: dict | None = None,
 ) -> tuple[dict, list[dict]]:
-    """Genera un plan estructurado progresivo y sesiones listas para persistir."""
+    """Genera un plan estructurado progresivo y sesiones listas para persistir.
+
+    `load_context` (opcional) aporta el estado real del atleta: volumen semanal reciente
+    (`recent_weekly_minutes`), sesión más larga reciente (`longest_recent_min`), CTL/ATL/TSB y
+    `status` del modelo de carga. Con él, el plan parte del volumen que el atleta sostiene de verdad
+    (+10 % por semana como máximo hasta las horas declaradas) y suaviza el inicio si hay fatiga.
+    """
     goals = (profile or {}).get("goals", {})
     health = (profile or {}).get("health", {})
+    load_context = load_context if isinstance(load_context, dict) else {}
 
     race = str(goals.get("target_race") or "objetivo de rendimiento").strip()
     race_date = str(goals.get("target_race_date") or "").strip()
@@ -6605,10 +6710,16 @@ def _generate_structured_plan_payload(
     )
 
     duration_weeks = 8
+    past_race_note = ""
     if race_date:
         try:
             days_to_race = (date.fromisoformat(race_date) - date.today()).days
-            duration_weeks = min(16, max(4, int(days_to_race / 7)))
+            if days_to_race < 0:
+                # Objetivo ya pasado: no se planifica hacia él.
+                past_race_note = f"El objetivo guardado ({race}, {race_date}) ya pasó; plan genérico de 8 semanas."
+                race, race_date, target_time = "objetivo de rendimiento", "", ""
+            else:
+                duration_weeks = min(16, max(4, int(days_to_race / 7)))
         except (TypeError, ValueError):
             duration_weeks = 8
 
@@ -6632,6 +6743,7 @@ def _generate_structured_plan_payload(
             wants_road_cycling = True
 
     def _parse_target_10k_pace() -> float | None:
+        """Ritmo objetivo de carrera (s/km) = tiempo objetivo / distancia de la carrera."""
         txt = str(target_time or "").strip()
         if not txt:
             return None
@@ -6640,9 +6752,10 @@ def _generate_structured_plan_payload(
             return None
         h, mm, ss = int(m.group(1)), int(m.group(2)), int(m.group(3))
         total = h * 3600 + mm * 60 + ss
-        if "10" not in race.lower() or total <= 0:
+        distance = _race_distance_km(race)
+        if not distance or total <= 0:
             return None
-        return total / 10.0
+        return total / distance
 
     def _fmt_pace(sec_per_km: float) -> str:
         sec = max(0, int(round(sec_per_km)))
@@ -6674,6 +6787,29 @@ def _generate_structured_plan_payload(
             difficulty_reason = f"{difficulty_reason} Contexto reportado: lesión/condición activa ({detail})."
 
     weekly_minutes = int(round(weekly_hours * 60))
+
+    # Punto de partida real (load_context): volumen sostenido, sesión larga y estado de carga.
+    recent_weekly_min = _safe_float(load_context.get("recent_weekly_minutes"), 0.0)
+    longest_recent_min = _safe_float(load_context.get("longest_recent_min"), 0.0)
+    load_status = str(load_context.get("status") or "").strip().lower()
+    fatigued_start = load_status in {"overload", "fatigue_high"}
+    load_notes: list[str] = []
+    if recent_weekly_min > 0:
+        load_notes.append(
+            f"Punto de partida: {int(round(recent_weekly_min))} min/semana reales (últimas 4 semanas); "
+            "el volumen sube como máximo un 10 % sobre lo ya sostenido."
+        )
+    if load_context.get("ctl") is not None:
+        load_notes.append(
+            f"Carga actual: Estado físico (CTL) {float(load_context['ctl']):.1f}, "
+            f"Fatiga (ATL) {float(load_context.get('atl') or 0):.1f}, Forma (TSB) {float(load_context.get('tsb') or 0):+.1f}"
+            + (f" ({load_status})." if load_status else ".")
+        )
+    if fatigued_start:
+        load_notes.append("Inicio con fatiga: primera semana al 80 % y calidad a RPE 5-6.")
+    if past_race_note:
+        load_notes.append(past_race_note)
+
     taper_weeks = 2 if duration_weeks >= 10 else 1
     peak_weeks = max(1, int(round(duration_weeks * 0.2)))
     base_weeks = max(2, int(round(duration_weeks * 0.4)))
@@ -6813,13 +6949,14 @@ def _generate_structured_plan_payload(
         st = str(session_type or "").lower()
         intensity_class = _intensity_class_from_rpe(intensity_text)
 
-        # Sin dependencia de TP: usamos %HR/%FTP internos como contrato estable.
+        # hr_pct = % del umbral de FC (LTHR), zonas de carrera de TrainingPeaks (Friel);
+        # es la misma referencia que usa el hrTSS de Kairos.
         hr_ranges = {
-            "recovery": [60, 70],
-            "endurance": [70, 80],
-            "tempo": [80, 87],
-            "threshold": [88, 92],
-            "vo2": [93, 97],
+            "recovery": [70, 84],
+            "endurance": [85, 89],
+            "tempo": [90, 94],
+            "threshold": [95, 100],
+            "vo2": [101, 106],
         }
         ftp_ranges = {
             "recovery": [45, 55],
@@ -6893,7 +7030,7 @@ def _generate_structured_plan_payload(
                         "type": "recovery",
                         "duration_min": rec_dur,
                         "intensityClass": "recovery",
-                        "target": {"metric": "hr_pct", "range": [60, 72]},
+                        "target": {"metric": "hr_pct", "range": [70, 84]},
                     },
                 ],
             }
@@ -6922,7 +7059,7 @@ def _generate_structured_plan_payload(
                     "duration_min": warmup,
                     "reps": 1,
                     "intensityClass": "endurance",
-                    "target": {"metric": "hr_pct", "range": [60, 75]},
+                    "target": {"metric": "hr_pct", "range": [75, 89]},
                 },
                 main_step,
                 {
@@ -6931,7 +7068,7 @@ def _generate_structured_plan_payload(
                     "duration_min": cooldown,
                     "reps": 1,
                     "intensityClass": "recovery",
-                    "target": {"metric": "hr_pct", "range": [58, 70]},
+                    "target": {"metric": "hr_pct", "range": [70, 84]},
                 },
             ],
             "notes": str(notes_text or ""),
@@ -6959,16 +7096,31 @@ def _generate_structured_plan_payload(
         }
 
     sessions: list[dict] = []
+    # Máximo semanal sostenido hasta ahora (real al inicio); ninguna semana lo supera en más de un 10 %.
+    sustained_max_min = recent_weekly_min if recent_weekly_min > 0 else None
+    long_cap_min = longest_recent_min * 1.10 if longest_recent_min > 0 else None
     for wi in range(1, duration_weeks + 1):
         phase = _phase_for_week(wi)
         volume_mul = _volume_multiplier(wi, phase)
         week_min = int(round(weekly_minutes * volume_mul * float(constraints.get("volume_factor") or 1.0)))
+        if sustained_max_min is not None:
+            week_min = min(week_min, int(round(sustained_max_min * 1.10)))
+            if volume_mul >= 1.0:
+                sustained_max_min = max(sustained_max_min, float(week_min))
+        if fatigued_start and wi == 1:
+            week_min = int(round(week_min * 0.80))
         split = _split_weekly_minutes(week_min)
+        if long_cap_min is not None and phase != "taper":
+            split["long"] = min(split["long"], int(round(long_cap_min)))
+            long_cap_min *= 1.10
         q1_type, q1_intensity, q1_notes, q1_ex = _quality_workout(phase, wi, slot=1)
         q2_type, q2_intensity, q2_notes, q2_ex = _quality_workout(phase, wi, slot=2)
 
         intensity_factor = float(constraints.get("intensity_factor") or 1.0)
-        if intensity_factor < 0.90:
+        if fatigued_start and wi == 1:
+            q1_intensity = "RPE 5-6"
+            q2_intensity = "RPE 5-6"
+        elif intensity_factor < 0.90:
             q1_intensity = "RPE 5-6"
             q2_intensity = "RPE 5-6"
         elif intensity_factor < 1.0:
@@ -7166,6 +7318,8 @@ def _generate_structured_plan_payload(
 
     base_description = "Plan estructurado generado por el coach a partir de objetivos y perfil del atleta."
     plan_description = f"{base_description} {difficulty_reason}" if difficulty_reason else base_description
+    if load_notes:
+        plan_description = f"{plan_description} {' '.join(load_notes)}"
 
     plan = {
         "title": f"Plan hacia {race}",
@@ -7199,6 +7353,12 @@ def _generate_structured_plan_payload(
             "today_focus": "Sesión de calidad o ajuste por recuperación",
             "generation_note": (user_message or "")[:240],
             "base_plan_id": (base_plan or {}).get("id"),
+            "load_context": {
+                k: load_context.get(k)
+                for k in ("recent_weekly_minutes", "longest_recent_min", "ctl", "atl", "tsb", "status")
+                if load_context.get(k) is not None
+            },
+            "target_pace_sec_per_km": round(target_10k_pace, 1) if target_10k_pace else None,
         },
     }
     return plan, sessions
@@ -8493,7 +8653,10 @@ def _parse_hr_zones_list(raw: str | None) -> list[dict] | None:
     try:
         data = json.loads(stripped)
     except json.JSONDecodeError:
-        return None
+        # get_activity_hr_in_timezones llega como objetos JSON concatenados (uno por zona).
+        data = _try_parse_json(stripped)
+        if data is None:
+            return None
 
     # Búsqueda recursiva: encontrar la lista de zonas dondequiera que esté
     zones_raw = _find_hr_zones_in_json(data)
@@ -8701,6 +8864,7 @@ def _build_activity_analysis_block(
         act = json.loads(activity_raw) if activity_raw else {}
     except (TypeError, json.JSONDecodeError):
         act = {}
+    act = _flatten_garmin_activity(act)  # get_activity trae las métricas dentro de summaryDTO
 
     name     = act.get("name") or act.get("activityName") or "Actividad"
     act_type = act.get("type") or act.get("activityType") or ""
@@ -10540,6 +10704,45 @@ class TrainerAgent:
             "formula_version": _TSS_FORMULA_VERSION,
         }
 
+    async def _build_plan_load_context(self) -> dict:
+        """Estado real del atleta para el motor de planes: carga actual y volumen de las últimas semanas."""
+        context: dict[str, Any] = {}
+        lm = (self.user_profile or {}).get("load_metrics") or {}
+        series = lm.get("series") or []
+        if series:
+            model_cfg = _resolve_sport_model_cfg(self.user_profile)
+            load = _build_load_fatigue_dict_from_series(series, model_cfg) or {}
+            latest = load.get("latest") or {}
+            for key in ("ctl", "atl", "tsb"):
+                if latest.get(key) is not None:
+                    context[key] = round(float(latest[key]), 1)
+            if load.get("status"):
+                context["status"] = str(load["status"])
+        today = date.today()
+        try:
+            acts = await _fetch_activities_for_load_calc(
+                self.mcp_session, (today - timedelta(days=42)).isoformat(), today.isoformat()
+            )
+        except (TimeoutError, OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
+            log.debug("plan load context: actividades no disponibles: %s", exc)
+            acts = []
+        last_28_iso = (today - timedelta(days=28)).isoformat()
+        minutes_28 = 0.0
+        longest = 0.0
+        for act in acts or []:
+            d_iso = _extract_activity_date_iso(act) or ""
+            minutes = _extract_activity_duration_minutes(act)
+            if d_iso >= last_28_iso:
+                minutes_28 += minutes
+            act_type = act.get("type") or act.get("activityType") or act.get("activityTypeDTO") or ""
+            if _is_running_non_trail_activity(act_type) or _load_metrics._is_trail_activity(act_type):
+                longest = max(longest, minutes)
+        if minutes_28 > 0:
+            context["recent_weekly_minutes"] = round(minutes_28 / 4.0, 1)
+        if longest > 0:
+            context["longest_recent_min"] = round(longest, 1)
+        return context
+
     def _apply_series_to_profile(self, series: list[dict], today) -> None:
         """Actualiza self.user_profile["load_metrics"] con la serie dada y la guarda."""
         if not isinstance(self.user_profile, dict):
@@ -11096,6 +11299,122 @@ class TrainerAgent:
         """Devuelve información sobre el uso diario de tokens de Gemini (mantenido por compatibilidad)."""
         return self.get_daily_usage_info()
 
+    def _profile_context_block(self) -> str:
+        """Bloque "Perfil del usuario" (datos personales, objetivo y salud) para cualquier prompt."""
+        p = self.user_profile.get("personal", {})
+        g = self.user_profile.get("goals", {})
+        h = self.user_profile.get("health", {})
+        lines = []
+        if p.get("name"):          lines.append(f"- Nombre: {p['name']}")
+        if p.get("age"):           lines.append(f"- Edad: {p['age']} años")
+        if p.get("gender"):        lines.append(f"- Género: {p['gender']}")
+        if p.get("weight_kg"):     lines.append(f"- Peso: {p['weight_kg']} kg")
+        if p.get("height_cm"):     lines.append(f"- Altura: {p['height_cm']} cm")
+        if g.get("primary"):       lines.append(f"- Deporte principal: {g['primary']}")
+        if g.get("weekly_training_hours"): lines.append(f"- Horas de entrenamiento/semana: {g['weekly_training_hours']}")
+        if g.get("target_race"):   lines.append(f"- Carrera/evento objetivo: {g['target_race']}")
+        if g.get("target_race_date"):
+            race_d = _parse_iso_date_safe(g.get("target_race_date"))
+            if race_d is not None:
+                days_left = (race_d - date.today()).days
+                when = f"faltan {days_left} días" if days_left >= 0 else "YA PASÓ: pedir nuevo objetivo"
+                lines.append(f"- Fecha del evento: {race_d.strftime('%d/%m/%Y')} ({when})")
+            else:
+                lines.append(f"- Fecha del evento: {g['target_race_date']}")
+        if g.get("target_time"):   lines.append(f"- Tiempo objetivo: {g['target_time']}")
+        injuries = h.get("injuries", [])
+        if injuries:               lines.append(f"- Lesiones/condiciones: {', '.join(injuries)}")
+        if h.get("notes"):         lines.append(f"- Notas de salud: {h['notes']}")
+        return ("\n\n## Perfil del usuario\n" + "\n".join(lines) + "\n") if lines else ""
+
+    def _load_and_anchors_context_block(self) -> str:
+        """Bloques "Estado de carga actual" y "Umbrales" desde el perfil (sin llamadas a Garmin).
+
+        Si el perfil está incompleto o mal formado, se omite el bloque: nunca debe impedir la respuesta.
+        """
+        try:
+            return self._build_load_and_anchors_context_block()
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            log.debug("contexto de carga/umbrales no disponible: %s", exc)
+            return ""
+
+    def _build_load_and_anchors_context_block(self) -> str:
+        out = ""
+        lm = (self.user_profile or {}).get("load_metrics") or {}
+        series = lm.get("series") or []
+        if series:
+            load = _build_load_fatigue_dict_from_series(series, _resolve_sport_model_cfg(self.user_profile)) or {}
+            latest = load.get("latest") or {}
+            ranges = load.get("ranges") or {}
+            weekly = load.get("weekly") or {}
+            if latest:
+                out += (
+                    "\n\n## Estado de carga actual (Kairos)\n"
+                    f"- Fecha: {latest.get('date')} · TSS del día {float(latest.get('tss') or 0):.1f}\n"
+                    f"- Estado físico (CTL) {float(latest.get('ctl') or 0):.1f} · Fatiga (ATL) {float(latest.get('atl') or 0):.1f}"
+                    f" · Forma (TSB) {float(latest.get('tsb') or 0):+.1f}\n"
+                    f"- Estado del modelo: {load.get('status') or 'neutral'} ({load.get('action') or ''})\n"
+                    f"- Rango individual de Forma: {ranges.get('tsb_low')} a {ranges.get('tsb_high')} · ATL alto > {ranges.get('atl_high')}"
+                    f" · suelo de Forma {ranges.get('tsb_abs_floor')}\n"
+                    f"- TSS de la semana en curso {float(weekly.get('current_tss') or 0):.1f}"
+                    f" (semana previa {float(weekly.get('previous_tss') or 0):.1f})\n"
+                )
+        perf = (self.user_profile or {}).get("performance") or {}
+        today_iso = date.today().isoformat()
+        anchors = []
+        hr_thr, _, _ = _resolve_hr_threshold_bpm(self.user_profile)
+        if hr_thr:
+            lthr = float(hr_thr)
+
+            def _bpm(pct: float) -> int:
+                return int(round(lthr * pct / 100.0))
+
+            anchors.append(f"- Umbral de FC (LTHR): {int(round(lthr))} lpm")
+            anchors.append(
+                "- Zonas de FC (% del umbral, como TrainingPeaks): "
+                f"recuperación < {_bpm(85)} lpm · resistencia {_bpm(85)}–{_bpm(89)} · tempo {_bpm(90)}–{_bpm(94)} · "
+                f"umbral {_bpm(95)}–{_bpm(100)} · VO₂máx > {_bpm(100)} lpm"
+            )
+        tp_thr = _resolve_tp_hr_threshold_for_date(self.user_profile, today_iso)
+        if tp_thr and (not hr_thr or int(tp_thr) != int(hr_thr)):
+            anchors.append(f"- Umbral de FC de referencia de TrainingPeaks (hrTSS): {int(tp_thr)} lpm")
+        pace = _resolve_running_threshold_pace_for_date(self.user_profile, today_iso) or _resolve_running_threshold_pace_sec_per_km(self.user_profile)
+        if pace:
+            anchors.append(f"- Ritmo umbral de carrera: {int(pace // 60)}:{int(pace % 60):02d} min/km")
+        if perf.get("cycling_ftp"):
+            anchors.append(f"- FTP de ciclismo: {int(float(perf['cycling_ftp']))} W")
+        if anchors:
+            out += "\n\n## Umbrales\n" + "\n".join(anchors) + "\n"
+        return out
+
+    def _plan_context_block(self) -> str:
+        """Bloque "Plan activo" con la sesión de hoy y las dos siguientes (caché por sesión)."""
+        if not hasattr(self, "_active_plan_cache"):
+            try:
+                self._active_plan_cache = _get_active_training_plan(self.user_profile)
+            except (RuntimeError, ValueError, TypeError, KeyError, OSError, AttributeError) as exc:
+                log.debug("plan context: no disponible: %s", exc)
+                self._active_plan_cache = None
+        plan = self._active_plan_cache
+        if not isinstance(plan, dict) or not plan:
+            return "\n\n## Plan activo\n- No hay plan activo.\n"
+        lines = [f"- {plan.get('title') or 'Plan activo'}"]
+        for offset, label in ((0, "Hoy"), (1, "Mañana"), (2, "Pasado mañana")):
+            d = date.today() + timedelta(days=offset)
+            row = _get_planned_session_for_date(plan, d.isoformat())
+            if not row:
+                continue
+            session_type = str(row.get("session_type") or "sesión")
+            if session_type == "rest" or int(row.get("duration_min") or 0) <= 0:
+                desc = "descanso"
+            else:
+                desc = f"{session_type}, {int(row.get('duration_min') or 0)} min, {row.get('intensity') or ''}".strip(", ")
+                notes = str(row.get("notes") or "").strip()
+                if notes:
+                    desc += f" — {notes[:160]}"
+            lines.append(f"- {label} ({d.strftime('%d/%m/%Y')}): {desc}")
+        return "\n\n## Plan activo\n" + "\n".join(lines) + "\n"
+
     def _build_system_prompt(self) -> str:
         """Construye el system prompt incluyendo la fecha actual y el perfil del usuario."""
         today_str = date.today().isoformat()
@@ -11107,27 +11426,7 @@ class TrainerAgent:
             f"- OBLIGATORIO: cuando pases fechas como parámetros a herramientas, SIEMPRE usa formato ISO YYYY-MM-DD exacto (ej: `{today_str}`). "
             f"NUNCA uses palabras como 'hoy', 'ayer', 'today', 'yesterday' ni caracteres de otros idiomas en parámetros de herramientas.\n"
         )
-        profile_context = ""
-        p = self.user_profile.get("personal", {})
-        g = self.user_profile.get("goals", {})
-        h = self.user_profile.get("health", {})
-        if p or g or h:
-            lines = []
-            if p.get("name"):          lines.append(f"- Nombre: {p['name']}")
-            if p.get("age"):           lines.append(f"- Edad: {p['age']} años")
-            if p.get("gender"):        lines.append(f"- Género: {p['gender']}")
-            if p.get("weight_kg"):     lines.append(f"- Peso: {p['weight_kg']} kg")
-            if p.get("height_cm"):     lines.append(f"- Altura: {p['height_cm']} cm")
-            if g.get("primary"):       lines.append(f"- Deporte principal: {g['primary']}")
-            if g.get("weekly_training_hours"): lines.append(f"- Horas de entrenamiento/semana: {g['weekly_training_hours']}")
-            if g.get("target_race"):   lines.append(f"- Carrera/evento objetivo: {g['target_race']}")
-            if g.get("target_race_date"): lines.append(f"- Fecha del evento: {g['target_race_date']}")
-            if g.get("target_time"):   lines.append(f"- Tiempo objetivo: {g['target_time']}")
-            injuries = h.get("injuries", [])
-            if injuries:               lines.append(f"- Lesiones/condiciones: {', '.join(injuries)}")
-            if h.get("notes"):         lines.append(f"- Notas de salud: {h['notes']}")
-            if lines:
-                profile_context = "\n\n## Perfil del usuario\n" + "\n".join(lines) + "\n"
+        profile_context = self._profile_context_block() + self._load_and_anchors_context_block() + self._plan_context_block()
 
         # Incluir resúmenes de sesiones anteriores para memoria a largo plazo
         memory_context = ""
@@ -11254,19 +11553,26 @@ class TrainerAgent:
                 {
                     "role": "system",
                     "content": (
-                        "Eres Kairos Coach. Debes interpretar SOLO los datos factuales recibidos. "
+                        "Eres Kairos Coach. Debes interpretar SOLO los datos factuales recibidos y el perfil del atleta. "
                         "No inventes métricas ni fechas. Si falta un dato, dilo explícitamente. "
-                        "Responde en español."
+                        "Ten en cuenta siempre las condiciones de salud del perfil (si hay diabetes con insulina, añade la nota de seguridad glucémica) "
+                        "y el objetivo (si su fecha ya pasó, no planifiques hacia él). Si pregunta qué le toca y no hay plan activo, dilo y ofrece crearlo. "
+                        "Usa las zonas en lpm del bloque Umbrales; no conviertas porcentajes por tu cuenta. "
+                        "Responde al horizonte que pregunta el usuario (hoy, mañana o esta semana). Responde en español."
                         + (
-                            " Genera las siguientes secciones con sus emojis:\n"
-                            "\u26a1 Efecto de entrenamiento y carga\n"
-                            "\U0001f4a7 Hidratación recomendada\n"
-                            "\U0001f6cc Estado pre-carrera (body battery, sueño y HRV)\n"
-                            "\U0001f504 Recuperación y próximas sesiones\n"
-                            "Cada sección con 2-4 bullets concisos. Usa los datos reales proporcionados."
+                            " Genera estas secciones (título ### con su emoji), 2-4 bullets cada una:\n"
+                            "### 🧭 Lectura del estado (carga, HRV, sueño y body battery, con su porqué)\n"
+                            "### ✅ Qué hacer (sesión concreta: calentamiento, parte principal en RPE y % del umbral de FC, "
+                            "enfriamiento; si pregunta por la semana, reparto de calidad, rodajes y descanso)\n"
+                            "### ⚠️ Qué vigilar (señales que cambiarían la recomendación)\n"
+                            "Usa las reglas de carga de Kairos: disponible → mantener; fatiga alta → suave; sobrecarga → descanso; "
+                            "una señal de recuperación alterada → reducir; dos o más → suave."
                             if is_readiness else
                             " Máximo 5 bullets accionables."
                         )
+                        + self._profile_context_block()
+                        + self._load_and_anchors_context_block()
+                        + self._plan_context_block()
                     ),
                 },
                 {
@@ -11444,34 +11750,37 @@ class TrainerAgent:
         ):
             _count_query = True
         if _count_query:
-            _series_count = (self.user_profile.get("load_metrics") or {}).get("series") or []
-            if not _series_count:
-                try:
-                    _series_count = _storage.get_load_metrics_series(days=120) or []
-                except Exception:
-                    _series_count = []
-            _total_acts = sum(int(r.get("activities_count") or 0) for r in _series_count)
-            _days_with = sum(1 for r in _series_count if int(r.get("activities_count") or 0) > 0)
-            _dates = sorted(str(r.get("date") or "") for r in _series_count if r.get("date"))
-            _range = f"{_dates[0]} → {_dates[-1]}" if len(_dates) >= 2 else "sin rango"
+            # Fuente: activity_tss (una fila por actividad con su TSS), no la serie diaria de 120 días.
+            _rows = list(_load_stored_activity_tss("2000-01-01").values())
+            _by_sport: dict[str, int] = {}
+            for _r in _rows:
+                _label = _get_activity_name_es(str(_r.get("sport") or "")) or str(_r.get("sport") or "otro")
+                _by_sport[_label] = _by_sport.get(_label, 0) + 1
+            _dates = sorted(str(_r.get("start_date") or "") for _r in _rows if _r.get("start_date"))
+
+            def _dmy(iso: str) -> str:
+                _d = _parse_iso_date_safe(iso)
+                return _d.strftime("%d/%m/%Y") if _d else iso
+
+            _range = f"{_dmy(_dates[0])} → {_dmy(_dates[-1])}" if _dates else "sin datos"
             assistant_reply = "\n".join([
                 "## 🧭 Resumen",
-                f"Tengo registradas **{_total_acts} actividades** en la base de datos de Kairos.",
+                f"Tengo registradas **{len(_rows)} actividades** con su TSS en la base de datos de Kairos.",
                 "",
                 "## 📊 Métricas clave",
                 "| Dato | Valor |",
                 "|---|---:|",
-                f"| Actividades totales | {_total_acts} |",
-                f"| Días con entrenamiento | {_days_with} |",
-                f"| Días en serie | {len(_series_count)} |",
+                f"| Actividades con TSS | {len(_rows)} |",
+                f"| Días con entrenamiento | {len(set(_dates))} |",
                 f"| Rango cubierto | {_range} |",
+                *[f"| {sport} | {n} |" for sport, n in sorted(_by_sport.items(), key=lambda kv: -kv[1])],
                 "",
                 "## ✅ Recomendación",
-                "- Datos de `load_metrics_daily` (serie persistida). Para el historial completo de Garmin, consulta la app.",
+                "- Es el histórico con el que Kairos calcula tu Estado físico, Fatiga y Forma (línea base desde la fecha inicial).",
                 "",
                 "## 🎯 Próximo paso",
-                "- Si quieres, filtro por deporte o rango de fechas.",
-                "- Fuente: respuesta determinista (serie Kairos, sin LLM).",
+                "- Si quieres, te listo los TSS de las últimas actividades de un deporte.",
+                "- Fuente: respuesta determinista (activity_tss, sin LLM).",
             ])
             return await self._finalize_chat_reply(user_message, assistant_reply, route="db_count")
 
@@ -11497,10 +11806,7 @@ class TrainerAgent:
             snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
             if active_plan:
                 snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
-            assistant_reply = (
-                _build_proactive_status_markdown(snapshot)
-                + "\n\n_Respuesta determinista: valores tomados del snapshot real de Garmin y modelo de carga; sin inferencias numéricas del LLM._"
-            )
+            assistant_reply = _build_proactive_status_markdown(snapshot)
             assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="daily_readiness")
             return await self._finalize_chat_reply(user_message, assistant_reply, route="daily_readiness")
 
@@ -11524,6 +11830,7 @@ class TrainerAgent:
                     self.user_profile,
                     user_message,
                     base_plan=previous_plan,
+                    load_context=await self._build_plan_load_context(),
                 )
                 validation_errors = _validate_structured_plan(new_plan, new_sessions, self.user_profile)
                 if validation_errors:
@@ -11576,6 +11883,7 @@ class TrainerAgent:
                     persisted_plan.setdefault("target_race_date", (new_plan.get("plan_data") or {}).get("target_race_date"))
                     self.user_profile["training_plan"] = persisted_plan
                     _save_user_profile(self.user_profile)
+                    self.__dict__.pop("_active_plan_cache", None)  # el bloque "Plan activo" se recarga
 
                 return await self._finalize_chat_reply(user_message, assistant_reply, route="planning")
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
@@ -12424,9 +12732,12 @@ class TrainerAgent:
                             {
                                 "role": "system",
                                 "content": (
-                                    "Eres Kairos Coach. Evalúa el entrenamiento indicado usando EXCLUSIVAMENTE los datos provistos. "
+                                    "Eres Kairos Coach. Evalúa el entrenamiento indicado usando EXCLUSIVAMENTE los datos provistos y el perfil del atleta. "
                                     "Entrega una valoración concreta y accionable (no pidas más información). "
-                                    "Si falta algún dato puntual, dilo en una línea y sigue con la mejor recomendación posible."
+                                    "Si falta algún dato puntual, dilo en una línea y sigue con la mejor recomendación posible. "
+                                    "Ten en cuenta las condiciones de salud y el objetivo del perfil."
+                                    + self._profile_context_block()
+                                    + self._plan_context_block()
                                 ),
                             },
                             {
@@ -12461,8 +12772,13 @@ class TrainerAgent:
                                 "content": (
                                     "Eres Kairos Coach. El usuario pide una propuesta de entrenamiento para mañana. "
                                     "Debes responder con una sesión concreta aunque falten algunos datos, usando el contexto disponible. "
+                                    "Si hay plan activo, parte de la sesión prevista y ajústala con las reglas de carga; "
+                                    "ten en cuenta las condiciones de salud y el objetivo del perfil. "
                                     "No pidas más detalles salvo bloqueo crítico de seguridad. "
                                     "Si faltan datos, usa una propuesta conservadora y explícita tus supuestos en 1 línea."
+                                    + self._profile_context_block()
+                                    + self._load_and_anchors_context_block()
+                                    + self._plan_context_block()
                                 ),
                             },
                             {

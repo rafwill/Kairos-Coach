@@ -42,6 +42,15 @@ Anclajes por fecha (perfil `performance`):
 - `running_threshold_pace_history`: 3:50/km (230 s) desde 30/01/2026, 4:12 (252 s) desde 09/05/2026. VT2 de la prueba: 4:15.
 - hr_rest = media del RHR de los 14 días previos. FTP bici 205 (igual que TP). Umbral de marcha = anclaje del perfil.
 
+## Prompts y planes (2026-10-21)
+
+- `prompts/system_prompt.md` / `_compact.md`: flujo de Kairos, rutas deterministas frente a LLM, umbrales de alerta = los del motor diario (`_compute_daily_plan_adjustment`: HRV < 90 % de su media semanal, body battery < 35, sueño < 6 h o < 60). Los tests `TestSystemPrompt*` exigen ciertos encabezados de reglas: no renombrarlos.
+- Contexto del LLM (`_build_system_prompt`): perfil + "Estado de carga actual" + "Umbrales" (con zonas en lpm) + "Plan activo" (hoy y dos días; caché `_active_plan_cache`, se invalida al crear/ajustar plan). Los prompts secundarios reciben el mismo perfil.
+- Motor de planes (`_generate_structured_plan_payload(..., load_context=)`): `_build_plan_load_context` aporta minutos/semana de las últimas 4 semanas, sesión larga de 6 semanas y CTL/ATL/TSB/estado. Ninguna semana > 10 % sobre lo sostenido; objetivo pasado → plan genérico de 8 semanas; `hr_pct` = % LTHR.
+- `prompts/mcp_tool_routing_guide.md` no se inyecta al LLM: es referencia para desarrollo.
+- El MCP devuelve algunas listas como objetos JSON concatenados (récords, zonas): usar `_try_parse_json`. `get_activity` trae las métricas en `summaryDTO`: usar `_flatten_garmin_activity`.
+- Batería de preguntas: `docs/bateria_p55_preguntas_base.txt`. Cada arranque de Kairos hace un login completo en Garmin; con muchas pasadas seguidas Garmin devuelve 429/403 durante un rato.
+
 ## Datos y herramientas
 
 - `activity_tss` (migración 004, aplicada): una fila por actividad con `tss`, `model`, `tss_source`, `native_load`, anclajes usados (`hr_rest_used`, `lthr_used`, `threshold_pace_used`, `ftp_used`, `walk_threshold_used`).
