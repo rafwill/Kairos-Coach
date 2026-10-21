@@ -1,27 +1,28 @@
 # Proximos pasos - Kairos Coach
 
-Ultima actualizacion: 2026-10-05 (estado vigente)
+Ultima actualizacion: 2026-10-21 (estado vigente)
 
-## Estado vigente (2026-10-05)
+## Estado vigente (2026-10-21)
 
-Resumen ejecutivo del estado actual tras cierre de bloques deportivos y validaciones cruzadas:
+El cálculo de carga reproduce el de TrainingPeaks y está validado contra el export de TP del atleta (`workouts.csv`, 01/02–21/10/2026). Detalle técnico en `CLAUDE.md`.
 
-1. Formula activa en codigo: `TSS_FORMULA_VERSION=34`.
-2. Estado por bloque:
-      - Trail: **CERRADO**.
-      - Fuerza: **CERRADO**.
-      - Running: **CERRADO** con excepcion de sesgo documentada.
-      - Gym cardio (eliptica + remo): **IMPLEMENTADO** (fase 1 HR-anchored + fase 2 mecanica opcional).
-3. Walk/hike metabolico:
-      - Ruta de produccion consolidada por muestra (ACSM/Minetti, equivalente en llano, suavizado 30s, tope 350).
-      - Comparativas finales preservadas en:
-            - `docs/walk_hike_temporal_profile/tp_comparison_8_activities.csv`
-            - `docs/walk_hike_temporal_profile/tp_comparison_8_summary.csv`
-4. Investigacion de aceleracion (walk/hike): **CERRADA**.
-      - En serie nativa de `activityDetailMetrics` no se confirmaron transiciones sobre umbral `1.5/2.0 m/s2` en el set de referencia.
-      - Decision: no abrir filtro de aceleracion con la evidencia actual.
-5. Reproducibilidad / fixtures:
-      - Se preservan payloads reales para 8 actividades de referencia en `fixtures/real_payloads` (actividad, detalles y zonas HR).
+1. PMC: CTL 42 / ATL 7 para todos los deportes (config del PMC de TP); Forma = CTL de ayer − ATL de ayer. Frente a la serie de TP reconstruida (05/04–20/10), diferencia media: CTL 2.1, ATL 2.7, TSB 3.0.
+2. TSS por actividad (un valor, guardado en `activity_tss`, nunca recalculado hacia atrás; línea base desde el 22/02/2026):
+      - Running: rTSS por pipeline físico con ritmo umbral por fecha. Mediana Kairos/TP 0.986, MAPE 6.3 % (n=97).
+      - Trail normal: hrTSS de TP (tabla por tramos de FC/umbral TP). MAPE 1.6 %, 25/25 dentro de ±10 %.
+      - Trail rápido (< 6:00/km): rTSS. n=1.
+      - Bici: TSS con potencia normalizada (MAPE 1.6 %, 17/17); sin potencia, hrTSS de TP.
+      - Caminar/senderismo: modelo metabólico intermedio entre rTSS y hrTSS de TP, con tope en el hrTSS de TP (decisión del usuario).
+      - Fuerza (modelo B) ≈ 1.00; elíptica/remo ≈ 1.1.
+3. Anclajes por fecha en el perfil: `hr_threshold_tp_history` (166 → 169 el 21/10) y `running_threshold_pace_history` (3:50 → 4:12 el 09/05).
+
+## Próximos pasos
+
+1. Trail rápido: validar cuando haya más salidas (< 6:00/km) con rTSS en TP.
+2. Series cortas de running (+11 % a +20 % frente a TP): diseñar hipótesis antes de tocar el detector.
+3. Bici sin potencia de más de 2 h: la tabla hrTSS no tiene datos de bici por encima del 85 % del umbral.
+4. Mantener al día los historiales del perfil cuando cambie el umbral en TP (el ritmo umbral se registra con `/perfil umbral`).
+5. Nuevo export de TP cada cierto tiempo para revalidar (mismo procedimiento: prueba sin escribir, criterio fijado antes, solo filas esperadas).
 
 ## Actualizacion de estado (2026-09-16) - CIERRE FINAL
 
@@ -58,12 +59,9 @@ Resumen ejecutivo del estado actual tras cierre de bloques deportivos y validaci
 El contenido operativo previo de este fichero (hipotesis, pendientes y planes por pasos)
 corresponde al periodo de investigacion anterior al cierre final del 2026-09-16.
 
-Para trabajo nuevo, usar como fuente vigente:
-
-- `docs/tss-cierre-definitivo-2026-09-16.md`
-- `docs/tss_independiente_junio_a_septiembre_hasta_2026-09-16.csv`
-
-Los documentos intermedios se mantienen solo para trazabilidad historica.
+Para trabajo nuevo, usar como fuente vigente el "Estado vigente (2026-10-21)" de este fichero y `CLAUDE.md`.
+El cierre del 2026-09-16 (`docs/tss-cierre-definitivo-2026-09-16.md` y sus tablas) y los documentos intermedios
+se mantienen solo para trazabilidad historica: son anteriores a la línea base y a la validación con el export de TP.
 
 ## Checkpoint de continuidad (2026-09-21)
 
@@ -1151,3 +1149,21 @@ Pendiente, cuando quieras:
 Trail: sale un 6 % por encima de TP de mediana, y un 13–17 % en las salidas largas. Lo haría como paso aparte, fijando el criterio de éxito antes de mirar los resultados.
 Caminatas y senderismo: no se parecen a los valores de TP, y los propios valores de TP son incoherentes entre sí. Por ahora lo dejo fuera.
 Sesiones con nombre de elíptica: el running del 13/08 se calculó como elíptica porque su nombre la manda por esa vía. Conviene revisarlo.
+
+21/10/2026
+
+Sesión de cierre del cálculo de carga frente a TrainingPeaks. Referencia: export de TP `workouts.csv` (01/02–21/10, 271 sesiones), prueba de esfuerzo (VT1 142 lpm / 9.2 km/h; VT2 169 lpm / 14.1 km/h = 4:15/km; FC máx 179) y configuración del PMC de TP (CTL 42, ATL 7).
+
+1. Enrutado a cardio de gimnasio (087aec0). `_is_rowing_activity` buscaba "remo"/"erg" como subcadena en nombre y descripción ("podremos", "volveremos", "remontar"). Ahora solo el nombre y palabras completas. Corregidas 3 actividades (21/03 110.6→144.3, 17/05 127.3→106.0, 13/08 57.7→79.2).
+2. Trail como TP (50d9954). TP calcula el hrTSS con TSS/h por tramo de FC respecto a su umbral de FC, sin FC de reposo ni zonas personalizadas (validado: los minutos por zona del export dejaron de cuadrar al cambiar las zonas en septiembre, el TSS no). Tabla deducida de 25 trails: <85 % 40.8, 85–95 % 72.7, 95–100 % 91.8, ≥100 % 100. Validación sin la sesión: MAPE 1.8 %; encaja mejor con umbral 163–166 que con 169. Umbral TP en `hr_threshold_tp_history` (166 desde 30/01, 169 desde 21/10). Trail rápido con rTSS. Resultado: trail mediana 1.106 → 1.011, MAPE 9.9 % → 1.6 %. Descartado: rTSS para todo el trail (MAPE 17 %, −35 % en largas) y ajustar la FC de reposo (empeoraba las salidas a FC baja).
+3. Ritmo umbral por fecha (7270bfa). TP: 3:50 desde 30/01, 4:12 desde 09/05. Running 22/02–08/05: mediana 1.179 → 0.983, MAPE 20.7 % → 6.6 %.
+4. Maratón de Madrid (26/04): Kairos 230 rTSS frente a TP 299 (−23 %). Anomalía de TP en esa sesión (NGP/ritmo medio 1.10 frente a 1.006 en el resto). Se deja así (decisión del usuario).
+5. Auditoría del PMC y de los TSS por deporte (1decb7e):
+      - ATL usaba 8 días (deporte principal "trail running" y valor guardado en el perfil). Ahora 42/7 para todos.
+      - TSB pasa a CTL de ayer − ATL de ayer (convención de TP).
+      - Bici: se usaba la potencia media porque Garmin manda la NP como `normPower`. Con NP: MAPE 26.9 % → 1.6 %.
+      - Bici sin potencia y tope de caminatas con la tabla hrTSS de TP.
+      - Respaldo de carga sin carga nativa de Garmin y arrancando en 0.
+      - Serie frente a TP reconstruida: TSB 6.5/51.7 → 3.0/12.7 (media/máx).
+      - El export de TP omite 7 sesiones de fuerza de agosto que sí están en el calendario de TP; Kairos las tiene bien.
+6. Documentación: README, Harness, CLAUDE.md, CHANGELOG, TODO y prompts actualizados al estado vigente. `/perfil umbral` ahora añade la entrada de hoy al historial de ritmo umbral (antes el historial lo ignoraba).

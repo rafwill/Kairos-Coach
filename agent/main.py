@@ -259,10 +259,19 @@ def _set_running_threshold_pace(profile: dict, pace_raw: str) -> tuple[bool, str
     if profile is None:
         profile = {}
     perf = profile.setdefault("performance", {})
+    today_iso = date.today().isoformat()
     perf["running_threshold_pace_sec_per_km"] = round(float(pace_sec), 1)
     perf["running_threshold_pace"] = f"{int(pace_sec // 60)}:{int(pace_sec % 60):02d}"
-    perf["running_threshold_pace_date"] = date.today().isoformat()
-    perf["performance_params_updated_at"] = date.today().isoformat()
+    perf["running_threshold_pace_date"] = today_iso
+    perf["performance_params_updated_at"] = today_iso
+    # El historial por fecha manda en compute_load: el nuevo valor rige desde hoy, el pasado no cambia.
+    history = [
+        entry
+        for entry in (perf.get("running_threshold_pace_history") or [])
+        if isinstance(entry, dict) and entry.get("date") != today_iso
+    ]
+    history.append({"date": today_iso, "sec_per_km": round(float(pace_sec), 1)})
+    perf["running_threshold_pace_history"] = sorted(history, key=lambda entry: str(entry.get("date")))
     return True, str(perf["running_threshold_pace"])
 
 

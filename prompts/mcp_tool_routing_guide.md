@@ -57,7 +57,7 @@ Cuando el usuario pide analizar su ultima actividad.
 Secuencia prioritaria:
 1. `get_activities` con `limit=1`
 2. `get_activity` usando `activityId`
-3. `get_training_load_trend` (para contextualizar carga)
+3. `kairos_load_trends` (para contextualizar carga con TSS/CTL/ATL/TSB de Kairos; `get_training_load_trend` es la carga de Garmin, no TSS)
 
 Secundarias:
 - `get_activity_splits`
@@ -142,8 +142,8 @@ Cuando el usuario pida actividades/entrenamientos de una semana (actual o histó
 Secuencia prioritaria:
 1. Resolver ventana semanal (lunes-domingo) según texto del usuario.
 2. `get_activities_by_date` para ese rango.
-3. Si hay consulta asociada de TSS semanal y falta cierre en serie diaria, calcular primero TSS por actividad con fórmula Kairos según deporte (determinismo Kairos-first).
-4. Solo si no hay valor válido por fórmula Kairos para alguna actividad, usar fallback de carga por actividad nativa.
+3. Si hay consulta asociada de TSS, usar el TSS guardado por Kairos para cada actividad (lo entregan las rutas deterministas y `kairos_load_trends`).
+4. Si una actividad aún no tiene TSS guardado, indicarlo como "pendiente de cálculo". La carga nativa de Garmin nunca sustituye al TSS (solo "Carga Garmin").
 
 Salida esperada:
 - Listado por día (`DD/MM`) con tipo y nombre de actividad, una línea por actividad.

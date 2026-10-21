@@ -2,6 +2,46 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-21
+
+### Changed
+- PMC como TrainingPeaks: CTL 42 / ATL 7 para todos los deportes (antes ATL 8 en trail y CTL 45 en ciclismo/triatlón; las constantes ya no se leen del modelo guardado en el perfil) y Forma (TSB) = CTL de ayer − ATL de ayer.
+- Trail normal: hrTSS como TP (`trail:tp_zones`), TSS/h por tramo de FC respecto al umbral de FC de TP (`TP_HRTSS_RATES`), sin FC de reposo. Trail rápido (< 6:00/km): rTSS con el pipeline de running (`trail:fast_rtss`).
+- Running: ritmo umbral vigente en la fecha de cada actividad (`performance.running_threshold_pace_history`).
+- Bici sin potencia: hrTSS como TP (`cycling:tp_zones`); `compute_load` pide el detalle por segundo de esas salidas.
+- Caminar/senderismo: el modelo metabólico tiene tope en el hrTSS de TP (`walk_hike:tp_hr_cap`).
+- `/perfil umbral` añade la entrada de hoy al historial de ritmo umbral.
+
+### Added
+- `performance.hr_threshold_tp_history`: umbral de FC con el que TP calcula su hrTSS, por fecha (distinto del umbral fisiológico del perfil).
+
+### Fixed
+- Bici con potencia usaba la potencia media: Garmin envía la NP como `normPower`. Con NP, MAPE frente a TP 26.9 % → 1.6 %.
+- Elíptica/remo por texto: "remo"/"erg" se buscaban como subcadena también en la descripción ("podremos", "remontar"); ahora solo palabras completas del nombre.
+- Respaldo `_compute_load_fatigue_metrics`: ya no usa la carga nativa de Garmin ni arranca con el CTL del último día.
+
+### Data
+- Correcciones aplicadas en Supabase tras prueba completa sin escribir: 3 actividades mal enrutadas, 26 trails, 40 running de feb–may, 30 bici/caminata y `load_metrics_daily` completa desde el 22/02/2026.
+
+### Tests
+- 556 passed, 6 skipped.
+
+## 2026-10-20
+
+### Added
+- Tabla `activity_tss` (migración 004): un TSS por actividad con modelo, origen, carga nativa informativa y anclajes usados.
+- Línea base de TSS desde el 22/02/2026 y `tools/rebuild_tss_baseline.py` (prueba sin escribir; `--apply`).
+
+### Changed
+- El TSS guardado nunca se recalcula hacia atrás; ATL/CTL/TSB se recalculan a diario desde los TSS guardados.
+- Running usa siempre el detalle por segundo (pipeline físico).
+- Todas las rutas del chat leen `activity_tss`; la carga de Garmin solo aparece como "Carga Garmin (no TSS)".
+- hr_rest = media del RHR de los 14 días previos a cada actividad.
+
+### Fixed
+- `_fetch_activities_for_load_calc` solo leía 100 actividades.
+- `activity_tss.sport` guardaba el dict de tipo en lugar del `typeKey`.
+
 ## 2026-10-05
 
 ### Changed

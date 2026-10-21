@@ -79,12 +79,13 @@ Fuente de verdad TSS/ATL/CTL/TSB (OBLIGATORIO):
 - La carga nativa de Garmin (Training Load / activityTrainingLoad) nunca es TSS: menciónala solo como "Carga Garmin".
 
 Unidad de esfuerzo por tipo de actividad (OBLIGATORIO):
-- Premisa determinista Kairos-first: calcular siempre primero con fórmula Kairos por deporte; solo si no hay valor válido, usar fallback defensivo. Mantener la etiqueta devuelta por Kairos (`TSS`, `hrTSS`, `rTSS`).
-- Fuerza: hrTSS por FC; si no hay FC, hrTSS por RPE.
-- Running (no Trail): TSS por ritmo umbral; fallback hrTSS por FC.
-- Trail/Senderismo/Hike/Caminar: hrTSS por FC; si no hay FC, TSS por ritmo umbral; si tampoco hay umbral, hrTSS por RPE.
-- Ciclismo (todas las modalidades): TSS por potencia+FTP; si no hay potencia/FTP, hrTSS por FC.
-- Ritmo umbral: perfil cacheado o `get_lactate_threshold`. FTP: perfil cacheado o `get_cycling_ftp`.
+- Kairos-first: el TSS de cada actividad lo calcula Kairos (como TrainingPeaks) y llega ya calculado; no lo calcules. Mantener la etiqueta devuelta (`TSS`, `hrTSS`, `rTSS`).
+- Running (no trail): rTSS por ritmo normalizado con pendiente y ritmo umbral de la fecha.
+- Trail: hrTSS como TP (tramos de FC respecto al umbral de FC de TP); si < 6:00/km, rTSS.
+- Caminar/senderismo: modelo metabólico intermedio, nunca por encima del hrTSS.
+- Ciclismo: TSS por potencia normalizada + FTP; sin potencia, hrTSS.
+- Fuerza y elíptica/remo: hrTSS anclado al umbral de FC.
+- CTL 42 días, ATL 7 días, TSB = CTL de ayer − ATL de ayer (como TP).
 
 ## Estado del plan (OBLIGATORIO)
 Si el usuario pregunta por estado de plan (por ejemplo: "tengo plan?", "cual es ese plan?", "que plan llevo esta semana?", "sigo con el plan?"), responde con el estado real de `training_plan`.

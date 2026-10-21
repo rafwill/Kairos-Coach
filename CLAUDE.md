@@ -1,107 +1,69 @@
-# Kairos Coach — TSS único por actividad
+# Kairos Coach — notas de trabajo (TSS y carga)
 
 ## Reglas de método (obligatorias)
+
 - Nunca escribir en un golden un número que no haya salido de ejecutar el código real. Si falta el insumo, dejar `tss: null` y `status: "pendiente_de_calculo"`.
 - Criterios de cierre fijados antes de ver resultados. No calibrar con n pequeño. Sin suelos ni constantes ocultas.
 - Reutilizar funciones de producción en scripts de diagnóstico; goldens generados ejecutando, no de memoria.
-- Protocolo de outliers: verificar primero la fuente del TP (3 desenlaces: misma actividad verificada → auditar código; mal transcrito → corregir referencia; sin verificar → no tocar código).
-- Sin push hasta orden expresa. Commits locales.
+- Protocolo de outliers: verificar primero la fuente del TP (misma actividad verificada → auditar código; mal transcrito → corregir referencia; sin verificar → no tocar código).
+- Cambios en datos de Supabase: siempre en prueba primero (recálculo completo sin escribir), comprobar que solo cambia lo esperado, aplicar solo esas filas y verificar leyendo de vuelta.
+- Sin push hasta orden expresa. Commits sin firma en este ordenador (no hay clave GPG).
 
 ## Objetivo
-Cada actividad tiene UN TSS, calculado una vez con el mejor método, guardado en `activity_tss`, y todas las pantallas (listas, consulta por fecha, resumen) leen ese número. La carga nativa de Garmin (activityTrainingLoad) nunca es TSS: solo columna informativa `native_load`.
 
-## Plan en 4 commits
-1. Persistir TSS por actividad (`activity_tss`) SIN cambiar números. **Hecho en local: 94dc1fb + fix b20be03.**
-2. Pasar `activity_details` a running en `compute_load` (único paso que cambia el CTL). **Hecho en local.** Tabla antes/después: docs/tablas/commit2_ctl_antes_despues_2026-10-20.csv. Solo cambian las 38 sesiones de running (todas `pipeline_fisico`, mediana ×0.865). TSS en 121 días -4.5 %; CTL a 20/10 de 61.1 a 58.3 (Δ entre -0.5 y -3.8 en toda la serie).
-3. Migrar listas, consulta por fecha y bloque de resumen a leer de la tabla. **Hecho en local.** Rutas: últimos N (varios deportes, "entrenamientos"), semana, TSS semanal efectivo, consulta por fecha, bloque de análisis, adherencia al plan (provisional solo si no hay fila). Sin TSS guardado → "pendiente de cálculo"; nunca la carga nativa. Eliminado el reescalado de TSS por actividad en la ruta semanal.
-4. Carga nativa solo como columna aparte ("Carga Garmin"), nunca como TSS. **Hecho junto con el 3** (rutas + bloque de análisis sin umbrales tipo TSS + prompts).
-   Verificación 2026-10-20 con la pregunta original: 20 sesiones, mediana Kairos/TP 1.00, MAPE 5.4 %, 17/20 dentro de ±10 %.
+Cuantificar cada sesión con TSS (TSS/hrTSS/rTSS) como lo haría TrainingPeaks, para que ATL/CTL/TSB se parezcan lo más posible a los de TP. Cada actividad tiene UN TSS, calculado una vez, guardado en `activity_tss`, y todas las pantallas leen ese número. La carga nativa de Garmin nunca es TSS (solo columna `native_load` / "Carga Garmin").
 
-## Estado a 2026-10-20
-- `main` va 2 commits por delante de `origin/main` (94dc1fb, b20be03), sin push. 523 passed / 6 skipped.
-- Commit 1 verificado: con la misma entrada, origin/main y HEAD dan el mismo TSS (comprobado offline con payloads congelados).
-- `tss_source` ∈ {garmin_native, kairos_model}; rama real en `model`; `native_load` informativa; `sport` = typeKey.
-- Migración `supabase/migrations/004_activity_tss.sql` NO aplicada en Supabase (se puede editar en sitio). Hasta aplicarla, el upsert a activity_tss falla y se ignora (compute_load continúa).
-- Payloads de running 24398763300 y 24227364808 capturados el 2026-10-20 (`fixtures/real_payloads/*_20261020_0951*.json`, carpeta en .gitignore → `git add -f` en el commit del golden). Captura: `python -m tools.capture_running_payloads [ids]`.
+## Modelo vigente (2026-10-21)
 
-## Línea base de TSS (decisión del usuario, 2026-10-20)
-Un recálculo completo hoy con fórmulas y anclajes nuevos = línea base. Después, el TSS **nunca** se recalcula hacia atrás: solo se calculan actividades nuevas y ATL/CTL/TSB a diario desde los TSS guardados.
-- `compute_and_persist_load_metrics`: si una actividad ya está en `activity_tss`, se usa su TSS (sin descargas ni recálculo). Si la lectura de activity_tss falla (no por tabla ausente), no toca nada. hr_rest = media del RHR de los 14 días previos (perfil si no hay datos). Umbral de marcha = anclaje del perfil (`performance.walk_hike_threshold_speed_m_min`). Semilla del EWMA = fila de la víspera en load_metrics_daily. `rebuild_from=ISO` solo para la línea base.
-- `tools/rebuild_tss_baseline.py --username U --start ISO [--apply]`: ruta de producción con escrituras interceptadas, reintentos, validación (bloquea si algún running no usa detalles o hay errores de detalles) y comprobación de que la tabla existe.
-- Arreglado: `_fetch_activities_for_load_calc` solo leía 100 actividades (lista simple sin has_more).
-- Inicio elegido: 2026-02-22 (240 d; el arranque en 0 deja ~0.3 % de error en el CTL de hoy, frente a ~6 % con 120 d).
+PMC (`agent/trainer_agent.py` `compute_and_persist_load_metrics`, `agent/load_metrics.py`):
 
-## Pendiente (en orden)
-1. DECISIÓN DEL USUARIO (bloquea commit 2): política de anclajes. Recomendación: histórico por fecha de efecto. Afecta a hr_rest, LTHR, FTP, umbral de carrera **y al umbral de marcha (Option A)**. hr_rest "vigente" = media de los 14 días previos (probado frente a TP: no empeora nada y mejora trail un poco).
-2. golden_objetivo.json: calcular offline con `procesar_actividad` (hr_rest 37.0, LTHR 169, umbral de carrera 252 s/km). Referencias solo para comparar: 24398763300 ≈ 100.6; 24227364808 ≈ 78.7.
-3. Commit 2, tabla antes/después.
-4. Commit 3: rutas de chat. Hoy la pregunta "últimos 20 entrenamientos de trail, fuerza y running … TSS" cae en `mcp_factual` (resumen del día): `_is_recent_tss_by_sport_intent` exige "activ" y un solo deporte. Y `_build_recent_tss_by_sport_markdown` prioriza la carga nativa sobre Kairos.
+- CTL 42 / ATL 7 para todos los deportes (`PMC_CTL_TAU_DAYS`, `PMC_ATL_TAU_DAYS`; config del PMC de TP del usuario). No se leen de `load_metrics.model` del perfil.
+- `ATL_t = ATL_{t-1} + (TSS_t − ATL_{t-1})/7`, ídem CTL con 42. **TSB_t = CTL_{t-1} − ATL_{t-1}** (convención de TP).
+- Semilla = fila de la víspera en `load_metrics_daily`; la línea base arranca en 0 el 2026-02-22.
 
-## Comparación con TrainingPeaks (2026-10-20, docs/tablas/tss_kairos_vs_tp_2026-10-20.csv)
-TP de los CSV de docs (86 actividades, sin contradicciones entre ficheros; hasta 2026-09-16). Cruce: 52 + 24398763300. Ratio = Kairos/TP.
-- Running (n=24): hoy sin detalles, mediana 1.15, MAPE 16.7 %, 6/24 dentro de ±10 %. Con detalles (commit 2, pipeline_fisico): mediana 1.00, MAPE 5.7 %, 21/24. Empeora: 24141099893 series 4x1000 (1.30); 24027714450 (1.13, limitación conocida).
-- Trail (n=11): hr_rest 37 → mediana 1.12, MAPE 10.8 %. Con RHR vigente (media 14 d previos, 37.8–41.6) → 1.10, 9.5 % (cumple el criterio fijado de antemano, mejora pequeña). La validación de septiembre (≈1.0) se hizo con hr_rest = 50 por defecto oculto (load_metrics.py:603 y otros; perfil sin hr_rest hasta a89f6a0, 29/09). Hipótesis a probar: el hrTSS de TP solo usa LTHR; trail:lthr_details depende de hr_rest.
-- Fuerza modelo_B (n=11): 1.01, MAPE 1 %. Ojo: dentro de muestra (recalibrado el 27/09 con estos mismos TP).
-- Walk/hike n=2 (1.16 y 2.62), gym_cardio n=4 (1.13), ciclismo n=1: n insuficiente.
-- Carga Garmin / TP: running 1.81, trail 1.13, fuerza 0.07 → la carga nativa no sirve como TSS.
-- Fuera de muestra (docs/workouts.csv, export TP 17/09–18/10; 24 de 24 emparejadas por fecha+tipo+duración ±5 %; docs/tablas/tss_kairos_vs_tp_fuera_muestra_2026-10-20.csv). Criterios fijados antes:
-  - Running (n=13): hoy 1.17 / MAPE 16.7 % / 2 de 13 dentro de ±10 %. Con detalles: 1.01 / 5.5 % / 11 de 13 → **commit 2 VALIDADO**. hr_rest vigente no cambia nada en running.
-  - Fuerza modelo_B (n=3): MAPE 1.0 % → validado (n pequeño).
-  - Trail (n=4): 1.07 (hr 37) → 1.06 (hr vigente). 24669705725 (8.7 h): Kairos 545.7 / TP 482.2 (1.13).
-  - Walk/hike (n=4): sin relación con TP (0.45–4.56). Los valores de TP también son raros (IF 0.21 frente a 0.52 con FC similar). Fuera de alcance hasta revisarlo.
-  - Carga Garmin / TP running: 2.14 (1.41–4.64).
+TSS por deporte (`_estimate_session_tss`):
 
-## Golden de producción (docs/tablas/golden_produccion_actual.json, 2026-10-19, hr_rest 37.0 / LTHR 169)
-trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364808 = 91.996 · fuerza 24618238695 = 16.597 · walking 24502427862 = 17.073 · hiking 24013969366 = 102.75 · ciclismo 23950882994 = 50.825 · elíptica 24383422318 = 23.772
+| Deporte | Modelo (`model`) | Referencia |
+| --- | --- | --- |
+| Running (no trail) | `running:pipeline_fisico` (rTSS: NGP con pendiente Minetti / ritmo umbral vigente en la fecha) | feb–oct frente a TP: mediana 0.986, MAPE 6.3 % (n=97) |
+| Trail normal | `trail:tp_zones` (hrTSS de TP: TSS/h por tramo de FC/umbral TP, sin FC de reposo) | MAPE 1.6 %, 25/25 dentro de ±10 % |
+| Trail rápido (< 6:00/km) | `trail:fast_rtss` (pipeline de running) | n=1 (+14 %) |
+| Bici con potencia | `cycling:power_ftp` (NP = `normPower` / FTP) | MAPE 1.6 %, 17/17 |
+| Bici sin potencia | `cycling:tp_zones` | 5 de 7 mejor que antes |
+| Caminar / senderismo | `walk_hike:metabolico` (ACSM + Minetti; intermedio entre rTSS y hrTSS de TP, por decisión del usuario), con tope `walk_hike:tp_hr_cap` | ×1.37 frente a TP (TP mezcla rTSS y hrTSS a mano) |
+| Fuerza | `strength:modelo_B` (LTHR) | ≈ 1.00 |
+| Elíptica / remo | `gym_cardio:*` (solo por tipo o por palabra completa en el nombre) | ≈ 1.1 ("Other" en TP) |
 
-## Hechos del diagnóstico
-- Running no-trail: modelo por defecto `tp_like`; sin detalles cae a `_estimate_running_tss_tp_like_adjusted` (`model=running:tp_like_adjusted`). Guardado: 90.02 (03/09), 115.67 (17/09). Validado con pipeline físico + detalles: 78.7 y 100.6. TP: 24398763300 = 104 rTSS.
-- Trail 24172582627: validado 210.0 (TP 223); producción guarda 210.02; hoy 228.27 por hr_rest 37.0.
-- `_hydrate_profile_hr_anchors_if_missing` (trainer_agent.py ~3674) solo llama a get_rhr_day si falta hr_rest → el valor depende de cuándo se hidrató. RHR 14 d (6–19 oct): mín 37.0, media 41.571, último 43.0.
-- Umbral de marcha: `_derive_walk_hike_threshold_speed_m_min_from_activities` (trainer_agent.py ~10208) se recalibra con todas las sesiones walk/hike de la ventana de recálculo. TSS ∝ 1/umbral². El 2026-10-20 (force_full_recalc) walking 24502427862 = 11.714 y hiking 24013969366 = 70.498 (×0.686 frente al golden del 19/10). El umbral usado no se guarda en activity_tss.
-- Carga Garmin / TSS Kairos en running: 1.2–5.1× (p. ej. 24764615547: 256.2 frente a 50.4). En fuerza, la carga nativa ≈ 0.
-- Listas de TSS (trainer_agent.py ~995) priorizan nativo→kairos_formula. Ruta por fecha (~4389) y resumen (~8440) dan cifras distintas (170.1 / 364.2 / 344.9 para 24172582627). 364.2 sale de calcular sin activity_details.
-- compute_load solo pide activity_details para trail/hike/walk. `call_tool` devuelve los errores como texto (no lanza): `if activity_details_raw:` aceptaría un texto de error como detalle.
-- `_parse_hr_zones_list` devuelve None con el formato real de get_activity_hr_in_timezones (objetos JSON concatenados) → zonas FC probablemente sin usar en producción. Sin tocar (cambiaría números).
-- TSS_FORMULA_VERSION = 34 (33/34 = cardio de gimnasio, elíptica/remo, sin validar contra TP).
+Tabla hrTSS de TP (`TP_HRTSS_RATES`): FC/umbral TP < 85 % → 40.8 TSS/h; 85–95 % → 72.7; 95–100 % → 91.8; ≥ 100 % → 100. Deducida de 25 trails (validación sin la sesión MAPE 1.8 %).
 
-## A revisar
+Anclajes por fecha (perfil `performance`):
 
-- Trail rápido (< 6:00/km, `trail:fast_rtss`): solo 1 sesión con TP (24003202488, 16/08): Kairos 128.0 frente a TP 112.4 rTSS (+14 %). Vigilar con más sesiones.
-- Series cortas (6x500, 6x1000, 4x400, 8x500) siguen en +11 % a +20 % frente a TP.
-- Running 23966766696 (13/08, fartlek 8x45" cuestas) = 79.2 frente a TP 66 (1.20): series cortas, limitación conocida.
+- `hr_threshold_tp_history`: umbral de FC con el que TP calcula su hrTSS (166 desde 30/01/2026, 169 desde 21/10/2026). Distinto del umbral fisiológico `hr_threshold_bpm` = 169 (Garmin; VT2 de la prueba de esfuerzo).
+- `running_threshold_pace_history`: 3:50/km (230 s) desde 30/01/2026, 4:12 (252 s) desde 09/05/2026. VT2 de la prueba: 4:15.
+- hr_rest = media del RHR de los 14 días previos. FTP bici 205 (igual que TP). Umbral de marcha = anclaje del perfil.
 
-## Corregido 2026-10-21: enrutado a gym_cardio por texto
+## Datos y herramientas
 
-`_is_rowing_activity` buscaba "remo"/"erg" como subcadena en nombre y descripción: "podremos", "volveremos" y "remontar" mandaban running/trail a remo. Ahora solo el nombre y palabras completas. Filas corregidas en activity_tss (sin tocar el resto de la línea base; recálculo en prueba: 218/221 idénticas): 22248446621 (21/03) 110.6→144.3, 22915678572 (17/05) 127.3→106.0, 23966766696 (13/08) 57.7→79.2; load_metrics_daily reescrita del 21/03 al 20/10.
+- `activity_tss` (migración 004, aplicada): una fila por actividad con `tss`, `model`, `tss_source`, `native_load`, anclajes usados (`hr_rest_used`, `lthr_used`, `threshold_pace_used`, `ftp_used`, `walk_threshold_used`).
+- `load_metrics_daily`: serie diaria TSS/ATL/CTL/TSB (fuente canónica de las pantallas).
+- Línea base: desde 2026-02-22. El TSS guardado nunca se recalcula; solo se calculan actividades nuevas. Correcciones puntuales = recálculo en prueba + escritura de las filas afectadas + serie desde la primera fecha afectada.
+- `tools/rebuild_tss_baseline.py --username U --start ISO [--apply]`: ruta de producción con escrituras interceptadas; sin `--apply` es la prueba.
+- TP de referencia: `workouts.csv` en la raíz (export TP 01/02–21/10/2026, sin commitear). El export omite algunas sesiones (7 de fuerza de agosto) y la columna IF no sirve para validar (TSS de running ≈ 1.06–1.14 × h·IF²·100).
+- `TSS_FORMULA_VERSION` = 34: no subirla sin decidirlo (dispara recálculo completo de 120 días).
 
-## Corregido 2026-10-21: trail con hrTSS como TP
+## Pendiente
 
-- Fuente de verdad: `workouts.csv` (export TP 01/02–21/10, sin commitear). En TP el trail es "Run" y el usuario elige hrTSS a mano (también fuerza y elíptica); el trail rápido queda en rTSS.
-- TP calcula el hrTSS con TSS/h por tramo de FC respecto a SU umbral de FC, sin FC de reposo ni zonas personalizadas. Deducido de 25 trails: <85 % 40.8, 85–95 % 72.7, 95–100 % 91.8, ≥100 % 100 (`TRAIL_TP_HRTSS_RATES`). Validación sin la sesión: MAPE 1.8 %, máx 5.7 %; el ajuste encaja mejor con umbral 163–166 que con 169.
-- Umbral TP ≠ umbral fisiológico: prueba de esfuerzo VT2 = 169 (perfil, desde Garmin), TP tenía 166 desde el 30/01 y pasó a 169 el 21/10. Se guarda aparte en `performance.hr_threshold_tp_history` y se usa el vigente en cada fecha.
-- Trail normal → `trail:tp_zones`; trail rápido → `trail:fast_rtss` (pipeline de running). Sin detalle de actividad, cadena anterior.
-- Aplicado: 26 filas de trail en activity_tss y load_metrics_daily del 29/03 al 20/10 (recálculo en prueba: 196/222 idénticas, solo cambian trails). Trail normal frente a TP: mediana 1.106 → 1.011, MAPE 9.9 % → 1.6 %, 25/25 dentro de ±10 %.
-
-## Corregido 2026-10-21: ritmo umbral de running por fecha
-
-- Historial de TP (Run/Default): 3:57 desde 15/09/2025, 4:15 desde 24/01/2026, 3:50 desde 30/01/2026, 4:12 desde 09/05/2026. Prueba de esfuerzo: VT2 a 14.1 km/h = 4:15/km.
-- `performance.running_threshold_pace_history` (`[{date, sec_per_km}]`) y `_resolve_running_threshold_pace_for_date`; sin historial se usa `running_threshold_pace_sec_per_km`. `threshold_pace_used` en activity_tss guarda el usado.
-- Aplicado: 40 sesiones de running 22/02–08/05 (recálculo en prueba: solo cambian esas) y load_metrics_daily desde el 22/02. Running 22/02–08/05 frente a TP: mediana 1.179 → 0.983, MAPE 20.7 % → 6.6 %, 31/40 dentro de ±10 %.
-
-## Corregido 2026-10-21: auditoría de ATL/CTL/TSB y TSS por deporte frente a TP
-
-- PMC de TP del usuario: CTL 42, ATL 7. Kairos usaba ATL 8 (goals.primary = "trail running" en `_SPORT_MODEL_DEFAULTS`, y `load_metrics.model` del perfil lo volvía a imponer). Ahora `PMC_CTL_TAU_DAYS`/`PMC_ATL_TAU_DAYS` para todos los deportes; las constantes ya no se leen del modelo guardado.
-- TSB = CTL de ayer − ATL de ayer (convención de TP); antes era el mismo día.
-- Bici con potencia: Garmin manda la NP como `normPower` (lista) / `normalizedPower` (summaryDTO); se usaba `avgPower`. Con NP, 17 salidas: MAPE 26.9 % → 1.6 %. TP usa el mismo FTP (205).
-- Bici sin potencia: `cycling:tp_zones` (tabla hrTSS de TP); compute_load pide activity_details para esas salidas.
-- Caminatas: el modelo metabólico (intermedio entre rTSS y hrTSS de TP, decisión del usuario) tiene tope en el hrTSS de TP (`walk_hike:tp_hr_cap`): 25/06 175 → 73 (TP 67).
-- Respaldo `_compute_load_fatigue_metrics` (solo con DB vacía): ya no usa la carga de Garmin ni arranca con el CTL del último día.
-- Export de TP: no incluye 7 sesiones de fuerza de agosto (03, 10, 14, 19, 24, 27, 31) que sí están en el calendario de TP con TSS ≈ Kairos. Las caminatas en TP mezclan rTSS (turismo) y hrTSS (senderismo) según elige el usuario: no son referencia directa.
-- Aplicado: 30 filas (bici y caminata) y load_metrics_daily completa desde el 22/02. Frente a la serie de TP reconstruida (05/04–20/10), diferencia media/máx: CTL 2.6/7.1 → 2.1/6.6, ATL 4.4/17.6 → 2.7/15.5, TSB 6.5/51.7 → 3.0/12.7. TSS por deporte: running 1.000, bici 0.996, fuerza ≈ 1.00 (sin las 7 de agosto), caminar 1.37 (por diseño).
+- Trail rápido: vigilar con más sesiones (16/08: Kairos 128.0 frente a TP 112.4 rTSS).
+- Series cortas de running (6x500, 6x1000, 4x400, 8x500) en +11 % a +20 % frente a TP; 23966766696 (13/08, 8x45" cuestas) ×1.20.
+- Bici sin potencia > 2 h: 07/08 Kairos 65.9 frente a TP 93 (la tabla no tiene datos de bici por encima del 85 %).
+- Si cambia el umbral de FC de TP, añadir la entrada con fecha a `hr_threshold_tp_history` el mismo día (no hay comando; el ritmo umbral sí: `/perfil umbral` añade la entrada de hoy al historial).
 
 ## Limitaciones aceptadas (no bugs abiertos)
 
-Maratón de Madrid 22663819817 (26/04, 3.4 h): Kairos 230.1 rTSS frente a TP 299.3 (−23 %), decidido dejarlo así el 2026-10-21. Kairos NGP 4:40/km (NGP/ritmo medio 1.031); TP implica NGP/medio 1.100, cuando en las otras 96 sesiones es 1.006 (Kairos 1.036) — anomalía de TP en esa sesión, no de la fórmula. Además, en el export de TP el TSS de running es 1.06–1.14 × h·IF²·100 (crece con la duración): no usar la columna IF de TP para validar.
+- Maratón de Madrid 22663819817 (26/04, 3.4 h): Kairos 230.1 rTSS frente a TP 299.3 (−23 %), decidido dejarlo así. NGP/ritmo medio en TP 1.100 frente a 1.006 en las otras 96 sesiones: anomalía de TP en esa sesión.
+- Caminatas: no cuadran con TP por diseño (modelo intermedio).
+- Hiking con n bajo; short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real; `_parse_hr_zones_list` no lee el formato real de zonas de Garmin (solo afecta a respaldos).
 
-Hiking con n bajo y un punto de desnivel grande (24013969366); short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real; ciclismo e indoor_running sin auditar; watch-item fuerza OOS entre 8 y 22 de noviembre.
+## Historia
+
+Detalle de cada cambio en `docs/proximos_pasos.md` (bitácora) y `CHANGELOG.md`. Hitos: `activity_tss` y línea base (94dc1fb…4a9ae68, 20/10); enrutado gym_cardio por palabras completas (087aec0); trail como TP (50d9954); ritmo umbral por fecha (7270bfa); auditoría PMC, bici NP, caminatas (1decb7e). Los golden de `docs/tablas/golden_*.json` son del 19/10, anteriores a la línea base: solo históricos.

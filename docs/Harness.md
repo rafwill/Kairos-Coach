@@ -83,13 +83,22 @@ Flags activos que el coach debe detectar y reportar:
 - Body battery < 30 durante ≥ 2 días.
 
 #### Modelo de carga y fatiga TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)
-**Función:** series temporales en `load_metrics.series` (Supabase)
+**Función:** `TrainerAgent.compute_and_persist_load_metrics()`; datos en `activity_tss` y `load_metrics_daily` (Supabase)
 
-Sensor continuo de carga y fatiga con EWMA:
-- Tau ajustados por deporte.
-- Percentiles individualizados por atleta.
-- Persistencia de hasta 120 días.
+Sensor continuo de carga y fatiga, calculado como TrainingPeaks:
+- Un TSS por actividad, calculado una vez con el método de su deporte y guardado en `activity_tss` con el modelo y los anclajes usados. Nunca se recalcula hacia atrás (línea base desde el 22/02/2026).
+- EWMA con las constantes del PMC de TP (CTL 42, ATL 7) para todos los deportes; Forma = CTL de ayer − ATL de ayer.
+- Anclajes con fecha en el perfil (umbral de FC de TP, ritmo umbral) aplicados según la fecha de cada actividad.
+- Percentiles individualizados por atleta para las alertas.
 - Integrado en el snapshot proactivo con regla aplicada de actuación.
+
+#### Validación frente a TrainingPeaks
+**Herramientas:** `tools/rebuild_tss_baseline.py`, export de TP (`workouts.csv`)
+
+Sensor de exactitud del propio cálculo:
+- `rebuild_tss_baseline.py` recalcula todo por la ruta de producción con las escrituras interceptadas (prueba) y deja un CSV por actividad; con `--apply` persiste.
+- Cada cambio de fórmula se valida contra el export de TP con criterios fijados antes de ver resultados (mediana Kairos/TP, MAPE, sesiones dentro de ±10 %) y comprobando que solo cambian las filas esperadas.
+- Estado a 2026-10-21: running MAPE 6.3 %, trail 1.6 %, bici con potencia 1.6 %; serie frente a TP con diferencia media CTL 2.1 · ATL 2.7 · TSB 3.0.
 
 #### Tendencia junto al valor puntual
 **Definido en:** `prompts/system_prompt.md`
@@ -106,10 +115,12 @@ Regla: declarar N (tamaño de muestra) y calidad del dato en toda afirmación so
 #### Suite de tests (estado validado en CI y local)
 **Directorio:** `tests/`
 
-Verifica que el harness no se rompe:
-- `test_trainer_agent.py` — funciones puras del agente.
+Verifica que el harness no se rompe (2026-10-21: 556 passed, 6 skipped):
+- `test_trainer_agent.py` — funciones puras del agente y cálculo de TSS/PMC.
+- `test_running_tss.py`, `test_walk_hike_*.py`, `test_load_metrics_*.py` — modelos de TSS por deporte.
 - `test_storage.py` — capa de persistencia.
-- `test_main.py` — flujo principal.
+- `test_main.py` — flujo principal y comandos de perfil.
+- `test_hooks_router.py`, `test_kairos_mcp_server.py`, `test_mcp_client.py`, `test_mcp_inspector_smoke.py` — hooks, router y MCP.
 
 Toda la capa de Supabase y Garmin está mockeada — no se realizan conexiones reales en ningún test.
 
@@ -167,7 +178,8 @@ main()
        ├─ [hook: sincronización]     _sync_from_garmin() → profile_changes
        ├─ [hook: primer uso]         _is_first_time() → _run_first_time_setup()
        ├─ [hook: knowledge base]     build_onboarding_mcp_enrichment() (si nuevo)
-      ├─ [hook: snapshot proactivo] _build_proactive_status_markdown()
+       ├─ [hook: carga/fatiga]       agent.compute_and_persist_load_metrics() → activity_tss + load_metrics_daily
+       ├─ [hook: snapshot proactivo] _build_proactive_status_markdown()
        └─ [loop de chat]            while True: agent.chat(user_input)
 ```
 
@@ -186,16 +198,23 @@ Hooks explícitos alrededor del ciclo de conversación:
 ### Router determinista opcional (`ToolRouter`)
 Router de intenciones críticas, habilitado por defecto:
 
+- `config_options`
 - `plan_status`
+- `goal_status`
 - `week_tss`
 - `week_activities`
+- `load_trend`
 - `hr_threshold`
 - `running_threshold`
+- `today_load_status`
+- `activity_details`
+- `recent_tss_by_sport` (últimos N entrenamientos con su TSS guardado, varios deportes)
+- `personal_records`
 - `mcp_factual`
 - `daily_readiness`
 - `planning`
-- `personal_records`
-- `config_options`
+
+Las rutas que muestran TSS leen `activity_tss`: una actividad sin fila aparece como "pendiente de cálculo" y la carga de Garmin solo como "Carga Garmin (no TSS)".
 
 Se puede desactivar con `KAIROS_DETERMINISTIC_ROUTER=false` para volver al comportamiento basado solo en lógica existente/LLM.
 
@@ -226,7 +245,8 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 │                   SENSORS                           │
 │  snapshot proactivo 48h     ✓ operativo             │
 │  anomalías biométricas      ✓ en prompting          │
-│  TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) EWMA       ✓ operativo             │
+│  TSS por actividad + PMC    ✓ operativo             │
+│  validación frente a TP     ✓ rebuild en prueba     │
 │  guardrail read-only        ✓ operativo             │
 │  suite de tests             ✓ operativo             │
 │  CI GitHub Actions          ✓ operativo             │

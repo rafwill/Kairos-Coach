@@ -4,43 +4,29 @@
 
 La conversación con el coach tiene contexto real porque los números son reales. Antes de responder cualquier pregunta sobre estado, rendimiento o recomendaciones, el sistema consulta tus datos de Garmin. Nunca inventa, nunca generaliza.
 
-## Estado TSS vigente (2026-10-05)
+## Estado de la carga (2026-10-21)
 
-Estado operativo actual, consolidando cierres previos y nuevas modalidades:
+Objetivo: cuantificar cada sesión con TSS como TrainingPeaks (TP) para que Estado físico (CTL), Fatiga (ATL) y Forma (TSB) se parezcan lo más posible a los de TP. Validado contra el export de TP del atleta (01/02–21/10/2026):
 
-- Formula activa: `TSS_FORMULA_VERSION=34`.
-- Trail: **CERRADO**.
-- Fuerza: **CERRADO**.
-- Running: **CERRADO** con excepción documentada de criterio de sesgo.
-- Gym Cardio (eliptica + remo): **Fase 1 + Fase 2 IMPLEMENTADAS** (anclaje LTHR + componente mecanico opcional).
+| Pieza | Cómo se calcula | Frente a TP |
+|---|---|---|
+| CTL / ATL / TSB | EWMA 42 / 7 días para todos los deportes; TSB = CTL de ayer − ATL de ayer | diferencia media CTL 2.1 · ATL 2.7 · TSB 3.0 |
+| Running | rTSS: ritmo normalizado con pendiente (Minetti) / ritmo umbral vigente en la fecha | mediana 0.986, MAPE 6.3 % (n=97) |
+| Trail normal | hrTSS como TP: TSS/h por tramo de FC respecto al umbral de FC de TP, sin FC de reposo | MAPE 1.6 %, 25/25 dentro de ±10 % |
+| Trail rápido (< 6:00/km) | rTSS como running | n=1 |
+| Bici con potencia | TSS con potencia normalizada (NP) y FTP | MAPE 1.6 %, 17/17 |
+| Bici sin potencia | hrTSS como TP | — |
+| Caminar / senderismo | modelo metabólico (ACSM + Minetti), intermedio entre rTSS y hrTSS de TP, con tope en el hrTSS de TP | por diseño no cuadra (TP mezcla rTSS y hrTSS) |
+| Fuerza | hrTSS anclado al umbral de FC (modelo B) | ≈ 1.00 |
+| Elíptica / remo | cardio de gimnasio anclado al umbral de FC | ≈ 1.1 |
 
-Resumen de cierre running:
+Principios:
 
-- `running_global`: `n=32`, `MAE=6.178491`, `bias=-3.278240`, `ratio_mean=0.957760`.
-- Ratios por segmento en banda `[0.88, 1.12]`:
-  - `rodaje_continuo=0.938087`
-  - `fartlek_tempo_sostenido=0.974348`
-  - `repeticiones_cortas=1.077338`
-- Criterio final de sesgo aplicado: `±3.5` (ampliado desde `±3` como excepción explícita y justificada para evitar sobreajuste por margen residual).
+- Un TSS por actividad, calculado una vez y guardado en `activity_tss`; nunca se recalcula hacia atrás (línea base desde el 22/02/2026).
+- Los anclajes con fecha (umbral de FC de TP, ritmo umbral) se aplican según la fecha de cada actividad.
+- La carga nativa de Garmin (Training Load) nunca es TSS: solo aparece como "Carga Garmin".
 
-Cambios principales relevantes (v26 -> v34):
-
-- Cierre running v26: `tempo_detector` a `400 s`, huecos cortos `20 s`, ajuste Minetti en bajada y exclusión mutua tempo/short-reps.
-- Cierre fuerza v29: Modelo B LTHR-anchored como principal para strength.
-- Cierre walk/hike metabólico v32: ruta metabólica por muestra (ACSM/Minetti + equivalente en llano + suavizado 30 s + tope 350 m/min).
-- Gym cardio v33-v34: rutas dedicadas para `elliptical` y `rowing`, con mezcla híbrida HR+mecánica cuando hay señal válida.
-
-Documentos consolidados de cierre y estado:
-
-- `docs/tss-cierre-definitivo-2026-09-16.md`.
-- `docs/proximos_pasos.md` (bitácora de investigación y estado operativo vigente).
-
-Limitaciones y decisiones recientes (documentadas y aceptadas):
-
-- Hiking con muestra corta (`n=2`).
-- `short_reps_detector` con cobertura parcial en datos reales.
-- Caso `24027714450` (tramo sostenido corto embebido en rodaje largo, bloque máximo ~`289 s`) no detectado por tempo.
-- Investigación de ruido por aceleración en walk/hike cerrada: en serie nativa no se confirmaron transiciones imposibles sobre umbrales `1.5`/`2.0 m/s²` en el set de referencia; no se activó filtro de aceleración.
+Detalle técnico y pendientes en `CLAUDE.md`; bitácora en `docs/proximos_pasos.md`.
 
 ---
 
@@ -64,12 +50,12 @@ El LLM recibe un bloque `=== RESUMEN DE ACTIVIDAD ===` ya calculado y se dedica 
 
 #### 3. Modelo de carga/fatiga propio (tipo TrainingPeaks)
 En cada arranque de sesión, el sistema calcula automáticamente:
-- **TSS** (Training Stress Score): carga por sesión
-- **ATL** (Fatiga, τ 7–8 días según deporte): cuánto has acumulado a corto plazo
-- **CTL** (Estado físico, τ 42–45 días): tu nivel de forma construido en semanas
-- **TSB** (Forma = CTL − ATL): disponibilidad real para entrenar hoy
+- **TSS** (Training Stress Score): carga por sesión (TSS, hrTSS o rTSS según el deporte, como TrainingPeaks)
+- **ATL** (Fatiga, 7 días): cuánto has acumulado a corto plazo
+- **CTL** (Estado físico, 42 días): tu nivel de forma construido en semanas
+- **TSB** (Forma = CTL de ayer − ATL de ayer): disponibilidad real para entrenar hoy
 
-Los tau y percentiles se ajustan automáticamente al deporte principal (running, trail, ciclismo, triatlón). Los rangos son **individualizados** a tus propios datos históricos, no umbrales genéricos. La serie completa (hasta 120 días) se persiste en Supabase. Con las herramientas `kairos_load_trends` y `kairos_correlate`, el agente puede calcular correlaciones estadísticas y tendencias directamente sobre esa serie.
+Las constantes son las del gráfico de rendimiento de TrainingPeaks (42/7) para todos los deportes. Los rangos de alerta son **individualizados** a tus propios datos históricos (percentiles por deporte principal), no umbrales genéricos. La serie diaria se persiste en Supabase (`load_metrics_daily`) y el TSS de cada actividad en `activity_tss`. Con las herramientas `kairos_load_trends` y `kairos_correlate`, el agente puede calcular correlaciones estadísticas y tendencias directamente sobre esa serie.
 
 #### 4. Planes de entrenamiento versionados y persistidos
 Puedes pedirle que te cree un plan de entrenamiento y lo guarda en Supabase (`training_plan`, `training_plan_session`, `training_plan_version`). Cada edición genera un snapshot de versión. El plan incluye sesiones estructuradas con calentamiento, parte principal en RPE, enfriamiento, hidratación y notas específicas. Si eres corredor de trail, las sesiones se adaptan con contenido específico de montaña. El coach sabe en todo momento si tienes plan activo o no, sin depender del LLM para esa decisión.
@@ -245,7 +231,7 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
     - `goals`: objetivo deportivo (carrera, fecha, tiempo, horas/semana).
     - `training_plan`: plan activo para el día a día (separado del objetivo).
   - Comandos de parámetros de carga:
-    - `/perfil umbral <mm:ss>` para actualizar ritmo umbral de running.
+    - `/perfil umbral <mm:ss>` para actualizar ritmo umbral de running (se añade al historial con la fecha de hoy: rige desde hoy y no cambia el TSS ya calculado).
     - `/perfil fc <reposo> <max>` para actualizar FC de reposo y FC máxima (ej: `/perfil fc 48 186`).
 
 * **📚 Base de conocimiento del atleta (RAG ligero):**
@@ -261,20 +247,14 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
     - Al salir, no se bloquea el cierre con un resumen final dependiente del LLM.
 
 * **� Cuantificación de carga y fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)):**
-  - Al arrancar la sesión, el sistema calcula automáticamente el modelo de carga inspirado en TrainingPeaks:
+  - Al arrancar la sesión, el sistema calcula automáticamente el modelo de carga de TrainingPeaks:
     - **TSS** (Training Stress Score): carga por sesión y acumulada diaria.
-    - **ATL** (fatiga aguda, ventana 7 días por defecto): cuánto estás acumulando a corto plazo.
-    - **CTL** (fitness crónico, ventana 42 días por defecto): tu nivel de forma construido en semanas/meses.
-    - **TSB** (forma = CTL − ATL): disponibilidad real para entrenar hoy.
+    - **ATL** (fatiga aguda, 7 días): cuánto estás acumulando a corto plazo.
+    - **CTL** (fitness crónico, 42 días): tu nivel de forma construido en semanas/meses.
+    - **TSB** (forma = CTL de ayer − ATL de ayer, como TP): disponibilidad real para entrenar hoy.
   - En usuario nuevo, antes del primer briefing se fuerza un backfill completo desde Garmin para poblar la serie histórica en DB (hasta 120 días) y evitar arrancar con métricas vacías.
-  - Los **tau** (constantes de tiempo) y **percentiles** se ajustan automáticamente al deporte principal del perfil:
-    | Deporte | ATL tau | CTL tau | Percentiles TSB/ATL |
-    |---------|--------:|--------:|---------------------|
-    | Running | 7 días | 42 días | estándar |
-    | Trail running | 8 días | 42 días | más amplios (sesiones largas) |
-    | Ciclismo | 7 días | 45 días | estándar |
-    | Triatlón | 7 días | 45 días | más amplios |
-  - Los parámetros se pueden **sobreescribir manualmente** en `profile.load_metrics.model`.
+  - Constantes 42/7 para todos los deportes (las del gráfico de rendimiento de TP). Los **percentiles** de alerta y el suelo de TSB sí dependen del deporte principal del perfil.
+  - TSS por actividad: un único valor por actividad, calculado una vez con el método de su deporte y guardado en `activity_tss` (con el modelo y los anclajes usados). Los anclajes con fecha del perfil (`hr_threshold_tp_history`, `running_threshold_pace_history`) se aplican según la fecha de cada actividad.
   - Genera **rangos individualizados** por atleta usando percentiles de sus propios datos históricos (no umbrales genéricos).
   - **Reglas de actuación automáticas** visibles en el estado proactivo:
     - 🟠 Fatiga alta (TSB por debajo del rango individual) → reduce intensidad/volumen.
@@ -283,10 +263,11 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
     - ⚠️ Spike semanal >20% vs semana previa → advertencia activa y reducción temporal (15-25%) de carga aunque TSB no haya cruzado umbral.
   - La serie temporal completa (hasta 120 días) se persiste en el perfil del atleta en Supabase para análisis de tendencias.
   - El bloque de carga/fatiga se incluye en el estado proactivo de arranque con resumen operativo (TSS·CTL (Estado físico)·ATL (Fatiga)·TSB (Forma)·semana) y la regla aplicada.
-  - Política de inmutabilidad histórica por parámetros:
-    - Si cambias parámetros de cálculo (umbral, FTP o FC), Kairos no recalcula días anteriores a la fecha de cambio.
-    - Desde la fecha efectiva del cambio en adelante, los nuevos cálculos usan los nuevos parámetros.
+  - Política de inmutabilidad histórica:
+    - El TSS de una actividad ya guardada en `activity_tss` no se recalcula nunca (línea base desde el 22/02/2026); solo se calculan actividades nuevas y ATL/CTL/TSB a diario desde los TSS guardados.
+    - Si cambias parámetros de cálculo (umbral, FTP o FC), los nuevos cálculos usan los nuevos parámetros desde la fecha efectiva del cambio.
     - Si el FTP se refresca y el valor no cambia, no se actualiza la fecha efectiva para evitar recálculos innecesarios.
+    - Correcciones del histórico: `tools/rebuild_tss_baseline.py` (prueba sin escribir; `--apply` para persistir).
 
 * **�🚦 Estado proactivo al iniciar (48h):**
   - Tras seleccionar modelo y conectar herramientas, muestra un briefing automático de últimas 48h.
@@ -316,8 +297,8 @@ Kairos no guarda solo chat: persiste estado operativo completo por usuario para 
   - También soporta semanas históricas explícitas (`semana del 10 de agosto de 2026`).
   - Soporta fechas cortas de entrada (`dd/mm/yy`, por ejemplo `17/08/26`).
   - El detalle de actividades (tipo/nombre) se toma de Garmin como fuente real y se devuelve sin inferencias del LLM.
-  - En la vista semanal se muestra un único TSS por día (el usado por el modelo de carga y fatiga).
-  - No se muestran TSS por actividad en ese bloque para evitar discrepancias visuales y confusión de interpretación.
+  - En la vista semanal se muestra el TSS de cada día (el usado por el modelo de carga y fatiga) y, si un día tiene varias actividades, el TSS guardado de cada una en `activity_tss` (sin reescalar).
+  - Una actividad sin TSS guardado aparece como "pendiente de cálculo"; la carga de Garmin nunca se muestra como TSS.
 
 * **🧩 Formato de salida unificado (prompt + rutas deterministas):**
   - Kairos usa una plantilla única de 4 secciones en respuestas de coaching y factuales:
@@ -749,10 +730,14 @@ kairos-coach/
 │   ├── main.py            # Punto de entrada: menú de proveedor, herramientas, chat e interfaz de usuario.
 │   ├── mcp_client.py      # Cliente MCP asíncrono — lanza el MCP propio local.
 │   ├── kairos_mcp_server.py # Servidor MCP propio con herramientas Garmin Essentials.
+│   ├── load_metrics.py    # TSS por deporte (hrTSS de TP, NP, metabólico de marcha, gym cardio) y PMC.
+│   ├── running_tss.py     # Pipeline físico de running (NGP con pendiente, rTSS, detectores).
 │   ├── storage.py         # Capa de persistencia multiusuario DB-first (Supabase).
-│   └── trainer_agent.py   # Agente: tool-calling, adaptadores LLM, lógica de conversación.
+│   └── trainer_agent.py   # Agente: tool-calling, adaptadores LLM, compute_load, lógica de conversación.
 ├── docs/
 │   ├── Harness.md
+│   ├── proximos_pasos.md  # Bitácora de investigación y estado vigente.
+│   ├── tablas/            # Comparativas Kairos vs TrainingPeaks y goldens históricos.
 │   ├── mcp-tools-completo-vs-essentials.md
 │   └── validation-load-fatigue-e2e-2026-08-15.md
 ├── memory/                # Base de conocimiento local opcional (RAG).
@@ -763,16 +748,19 @@ kairos-coach/
 │   └── mcp_tool_routing_guide.md   # Guía operativa de enrutado de tools MCP por intención.
 ├── supabase/
 │   ├── schema.sql         # DDL para crear las tablas en Supabase (ejecutar en SQL Editor).
-│   └── migrations/        # Migraciones incrementales de esquema.
+│   └── migrations/        # Migraciones incrementales (001 load_metrics_daily … 004 activity_tss).
 ├── tests/
 │   ├── __init__.py
 │   ├── test_trainer_agent.py  # Tests de funciones puras + mock de Gemini.
 │   ├── test_main.py           # Tests de validaciones de input + flujo principal.
 │   ├── test_storage.py        # Tests de persistencia DB-first y seguridad de credenciales.
 │   ├── test_hooks_router.py   # Tests de HookManager y ToolRouter.
+│   ├── test_running_tss.py    # Tests del pipeline físico de running.
+│   ├── test_walk_hike_*.py    # Tests del modelo metabólico de caminar/senderismo.
 │   └── test_fit_tss_probe.py  # Tests sintéticos de detección de patrones de intervalos.
 ├── tools/
-│   └── fit_tss_probe.py   # Utilidad local de soporte para análisis TSS.
+│   ├── rebuild_tss_baseline.py # Reconstrucción/corrección de la línea base de TSS (prueba sin escribir; --apply).
+│   └── fit_tss_probe.py   # Utilidad local de soporte para análisis TSS (y otros scripts de auditoría).
 ├── tmp/                   # Scripts utilitarios de catálogo/render de tools MCP.
 │   ├── build_mcp_catalog.py
 │   ├── mcp_tools_dump.py
@@ -832,44 +820,47 @@ main.py → asyncio.run(run_agent())
 
 ### Cálculo del modelo TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)
 
-> **Estado actual (v14):** La serie se calcula de forma incremental (solo procesa días necesarios desde el último registro en DB). Migración automática de fórmulas legacy (`formula_version`) y refresco de días recientes para capturar actividad nueva no reflejada aún en DB.
-
-### Reset one-shot del precálculo (cuando cambia la fórmula)
-
-Si cambias la lógica de cálculo (por ejemplo `walking/hiking`, fuerza o running) y quieres reconstruir toda la serie desde cero:
-
-1. Borra `load_metrics_daily` del usuario activo.
-2. Elimina `load_metrics` dentro de `user_profile.data` del mismo usuario.
-3. Arranca Kairos normalmente.
-
-En el siguiente arranque, al no existir serie previa, Kairos recalcula la ventana completa (120 días) y repuebla DB.
-
-Comportamiento normal de arranque:
-
-- Si `formula_version` guardada en perfil es distinta de la versión del código, fuerza recálculo completo automático.
-- Si la versión coincide y la serie está al día, reutiliza DB y puede hacer `up_to_date` o `incremental_refresh` según actividad reciente.
+La serie se calcula de forma incremental: solo procesa los días necesarios desde el último registro en DB, reutiliza el TSS ya guardado de cada actividad (`activity_tss`) y refresca días recientes si entró actividad nueva.
 
 ```
-_compute_load_fatigue_metrics(activities, trend_payload, profile, days_window)
+TrainerAgent.compute_and_persist_load_metrics()
   │
-  ├─ 1. Recopilación: _extract_training_load_points(trend_payload) + _estimate_session_tss(act)
-  ├─ 2. Config por deporte: _resolve_sport_model_cfg(profile)
-  │       └─ lee profile["goals"]["primary"] → _SPORT_MODEL_DEFAULTS[deporte]
-  │       └─ aplica overrides de profile["load_metrics"]["model"] si existen
-  ├─ 3. Semilla: profile["load_metrics"]["last"] → atl_prev, ctl_prev (continuidad)
+  ├─ 1. Actividades desde fetch_from (Garmin, paginado)
+  │       └─ si la actividad ya está en activity_tss → usa ese TSS (no descarga ni recalcula)
+  │       └─ si es nueva → _estimate_session_tss(act, anclajes vigentes en su fecha)
+  │             · detalle por segundo (get_activity_details) para running, trail, caminar y bici sin potencia
+  │             · hr_rest = media RHR 14 días previos · umbral FC de TP y ritmo umbral por fecha
+  │       └─ upsert en activity_tss (TSS, modelo, anclajes usados, carga Garmin informativa)
+  ├─ 2. Constantes PMC: CTL 42 / ATL 7 (todos los deportes)
+  ├─ 3. Semilla: fila de la víspera en load_metrics_daily (0 al reconstruir la línea base)
   ├─ 4. EWMA día a día:
-  │       atl = atl_prev + (tss - atl_prev) / tau_atl
-  │       ctl = ctl_prev + (tss - ctl_prev) / tau_ctl
-  │       tsb = ctl - atl
-  ├─ 5. Percentiles individualizados (últimos 28 días del propio atleta):
+  │       atl = atl_prev + (tss - atl_prev) / 7
+  │       ctl = ctl_prev + (tss - ctl_prev) / 42
+  │       tsb = ctl_prev - atl_prev        (Forma de TP: valores de ayer)
+  └─ 5. upsert en load_metrics_daily y caché en el perfil (load_metrics)
+```
+
+Reconstrucción o corrección del histórico (no hace falta borrar nada):
+
+- `python -m tools.rebuild_tss_baseline --username U --start 2026-02-22` recalcula todo por la ruta de producción **sin escribir** y deja un informe CSV.
+- Con `--apply` persiste las filas y la serie (bloquea si algún running no usó el detalle o hubo errores de Garmin).
+- Si `formula_version` guardada en el perfil difiere de `TSS_FORMULA_VERSION`, se fuerza un recálculo de 120 días (las actividades ya guardadas mantienen su TSS).
+
+Estado de carga para el briefing (sobre la serie ya calculada):
+
+```
+_build_load_fatigue_dict_from_series(series, model_cfg)
+  │
+  ├─ 1. Config por deporte: _resolve_sport_model_cfg(profile) → percentiles y suelo de TSB del deporte principal
+  ├─ 2. Percentiles individualizados (últimos 28 días del propio atleta):
   │       tsb_low = p15, tsb_high = p80, atl_high = p85
-  ├─ 6. Decisión de status (por prioridad):
+  ├─ 3. Decisión de status (por prioridad):
   │       abs_overload  → tsb <= tsb_abs_floor (suelo fijo por deporte)
   │       sustained_overload → todos últimos 7 días TSB <= tsb_low
   │       fatigue_high  → tsb < tsb_low OR atl > atl_high
   │       ready         → tsb en rango AND not fatigue_high
   │       neutral       → resto
-  └─ 7. Flag warm-up: days_with_load < 21 → aviso de calibración al usuario
+  └─ 4. Flag warm-up: days_with_load < 21 → aviso de calibración al usuario
 ```
 
 ### Cada mensaje en el chat
@@ -923,7 +914,7 @@ Cuando `TSB ≤ floor` el sistema fuerza `status=OVERLOAD` independientemente de
 ### Training Load de Garmin vs. TSS de TrainingPeaks
 
 Kairos **no toma CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) de Garmin**: los calcula localmente en Python.
-Para el **TSS por actividad**, Kairos aplica una jerarquía por modalidad (potencia+FTP, zonas FC, ritmo umbral, RPE) y usa `trainingStressScore`/`trainingLoad` nativo de Garmin como fuente/fallback cuando está disponible.
+Para el **TSS por actividad**, Kairos aplica el método de cada deporte (tabla de la sección "Estado de la carga"). La carga nativa de Garmin (`activityTrainingLoad`/`trainingLoad`) **nunca se usa como TSS**: se guarda aparte en `activity_tss.native_load` y solo se muestra como "Carga Garmin". En los datos del atleta, la carga de Garmin frente al TSS de TP va de ×0.07 (fuerza) a ×2 (running), así que no es intercambiable.
 Aquí la diferencia técnica entre referencias:
 
 **Training Load de Garmin** se basa en **EPOC** (Excess Post-exercise Oxygen Consumption):
@@ -937,7 +928,7 @@ Aquí la diferencia técnica entre referencias:
 
 $$TSS = \frac{t \times NP \times IF}{FTP \times 3600} \times 100$$
 
-Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin potenciómetro, TP usa hrTSS basado en la fórmula TRIMP de Banister (FC media vs. LTHR).
+Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running con ritmo, TP usa **rTSS** (ritmo normalizado con pendiente frente al ritmo umbral). Cuando se elige **hrTSS**, TP asigna un TSS por hora según el tramo de FC respecto a su umbral de FC (sin FC de reposo); Kairos reproduce esa tabla a partir de los datos del atleta (ver `TP_HRTSS_RATES` en `agent/load_metrics.py`).
 
 **Comparativa:**
 
@@ -949,39 +940,21 @@ Una sesión en FTP durante exactamente 1 hora = **100 TSS**. Para running sin po
 | Comparabilidad entre atletas | No (relativa al historial propio) | Sí (100 TSS = 1h en umbral) |
 | Deportes | Todos (running, trail, cycling, swimming) | Nació en ciclismo; adaptado a running/triatlón |
 
-**Por qué nuestro modelo es válido:** CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) son modelos relacionales, no absolutos. Lo que importa es que la unidad de carga sea **consistente para el mismo atleta**, no que sea exactamente 100 en umbral. La individualización está en los tau y percentiles propios de cada atleta, no en el valor absoluto de cada sesión.
+**Criterio de validez:** Kairos busca que su TSS por sesión coincida con el de TP para el mismo atleta, y lo valida contra el export de TP con criterios fijados antes de mirar resultados (mediana Kairos/TP, MAPE y sesiones dentro de ±10 %). La individualización de las alertas está en los percentiles propios de cada atleta.
 
-### Diseno vigente (v26)
+### Diseño vigente (2026-10-21)
 
-La referencia normativa para calculo actual es:
+Referencia del cálculo actual y de su validación frente a TP: `CLAUDE.md` (modelo por deporte, anclajes, procedimientos y pendientes) y la bitácora `docs/proximos_pasos.md`.
 
-- `docs/tss-cierre-definitivo-2026-09-16.md`
-- `docs/tss_independiente_junio_a_septiembre_hasta_2026-09-16.csv`
-
-Resumen ejecutivo del diseno actual:
-
-- Running usa pipeline fisico en `agent/running_tss.py` (series de velocidad/elevacion/FC desde `get_activity_details`, NGP aproximado, rTSS y hrTSS).
-- En v26 se ajusto el detector de tempo (`_TEMPO_SUSTAINED_MIN_SECONDS=400`, tolerancia de huecos cortos) y se aplico atenuacion de descuento Minetti en bajada (`_MINETTI_NEGATIVE_DISCOUNT_STRENGTH=0.55`).
-- Tambien se introdujo exclusion mutua de detectores: si tempo activa, short reps no activa.
-- Trail, fuerza y running quedaron cerrados bajo el criterio final documentado (running con excepcion de sesgo explicita en +/-3.5).
-
-### Nota importante de trazabilidad
-
-El enfoque anterior basado en heuristicas de clasificacion por keywords de sesion
-(`rodaje/fartlek/series`) y ajustes ad-hoc de uplift, asi como la calibracion
-historial de `trail_running` con factor fijo `0.72` y excepcion de trail rapido,
-se conserva solo como contexto historico de iteraciones previas.
-
-No debe considerarse la definicion vigente del calculo actual.
-
-Para decisiones tecnicas y validacion, usar siempre la referencia de cierre v26
-indicada arriba.
+- Running usa el pipeline físico de `agent/running_tss.py` (velocidad/elevación/FC de `get_activity_details`, NGP con pendiente Minetti, rTSS), con detector de tempo (`400 s`, huecos cortos de `20 s`), atenuación Minetti en bajada (`0.55`) y exclusión mutua tempo/series cortas.
+- Trail normal, bici sin potencia y el tope de caminatas usan la tabla hrTSS de TP (`TP_HRTSS_RATES`) con el umbral de FC de TP vigente en la fecha.
+- Los documentos de cierre anteriores (`docs/tss-cierre-definitivo-2026-09-16.md` y tablas de septiembre/octubre) se conservan solo como historia: describen el cálculo previo a la línea base del 22/02 y a la validación con el export de TP.
 
 ---
 
 ## 🧪 Tests
 
-El proyecto incluye una suite activa de tests unitarios (colección en crecimiento continuo) que cubre funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM. Referencia reciente de validación completa local: `455 passed`.
+El proyecto incluye una suite activa de tests unitarios (colección en crecimiento continuo) que cubre funciones críticas sin necesidad de conexión a Garmin ni a ningún LLM. Referencia reciente de validación completa local (2026-10-21): `556 passed, 6 skipped`.
 
 ### Instalar dependencias de desarrollo
 ```powershell
@@ -1016,7 +989,11 @@ pytest --cov=agent --cov-report=html
 |--------|-----------|
 | `trainer_agent.py` | `_seconds_to_hhmmss`, `_normalize_date_args`, `_strip_garmin_object`, `_compact_tool_result`, `_compact_personal_records`, `_clean_schema_for_gemini`, `_GeminiCompletions._parse`, resolución de actividad por fecha, zonas FC y análisis profundo, estado proactivo 48h, fallbacks de planificación, modelo de carga/fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)), configuración por deporte, tabla de tendencia `/carga`, plan trail específico, cálculo TSS por potencia+FTP / zonas FC / ritmo umbral / HR / RPE, fetch histórico por fechas |
 | `main.py` | `_validate_date`, `_validate_time`, `_validate_hours`, `_is_first_time`, KB enriquecida de onboarding, `_ensure_garmin_credentials`, `_build_enriched_athlete_knowledge` |
-| `storage.py` | sanitización de credenciales, no-persistencia de passwords Garmin |
+| `storage.py` | sanitización de credenciales, no-persistencia de passwords Garmin, `activity_tss` y `load_metrics_daily` |
+| `load_metrics.py` (vía `test_trainer_agent.py`) | hrTSS de TP por tramos (trail, bici sin potencia, tope de caminatas), TSS por NP, constantes PMC 42/7, TSB del día anterior, enrutado de elíptica/remo por palabra completa, anclajes por fecha |
+| `running_tss.py` | pipeline físico de running (NGP, detectores de tempo y series cortas) |
+| `test_walk_hike_*` | modelo metabólico de caminar/senderismo |
+| `test_hooks_router.py`, `test_kairos_mcp_server.py`, `test_mcp_*` | hooks, router determinista y servidor MCP propio |
 | `test_fit_tss_probe.py` | validación sintética del detector de intervalos (alta/media/baja probabilidad) |
 
 ---

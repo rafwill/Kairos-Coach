@@ -225,6 +225,27 @@ class TestSetRunningThresholdPace:
         assert perf.get("running_threshold_pace") == "4:10"
         assert perf.get("running_threshold_pace_date")
 
+    def test_appends_dated_entry_to_history_without_touching_past(self):
+        from datetime import date as _date
+
+        today_iso = _date.today().isoformat()
+        profile = {
+            "performance": {
+                "running_threshold_pace_history": [
+                    {"date": "2026-01-30", "sec_per_km": 230},
+                    {"date": "2026-05-09", "sec_per_km": 252},
+                    {"date": today_iso, "sec_per_km": 260},
+                ]
+            }
+        }
+        ok, _ = _set_running_threshold_pace(profile, "4:05")
+        assert ok is True
+        assert profile["performance"]["running_threshold_pace_history"] == [
+            {"date": "2026-01-30", "sec_per_km": 230},
+            {"date": "2026-05-09", "sec_per_km": 252},
+            {"date": today_iso, "sec_per_km": 245.0},
+        ]
+
     def test_returns_error_when_invalid(self):
         profile = {}
         ok, msg = _set_running_threshold_pace(profile, "foo")
