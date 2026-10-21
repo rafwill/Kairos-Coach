@@ -68,7 +68,6 @@ trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364
 ## A revisar
 
 - Trail rápido (< 6:00/km, `trail:fast_rtss`): solo 1 sesión con TP (24003202488, 16/08): Kairos 128.0 frente a TP 112.4 rTSS (+14 %). Vigilar con más sesiones.
-- Maratón de Madrid 22663819817 (26/04, 3.4 h): TP 299.3 rTSS frente a Kairos 230.1 (−23 %), ambos rTSS con umbral 3:50. Sin explicar.
 - Series cortas (6x500, 6x1000, 4x400, 8x500) siguen en +11 % a +20 % frente a TP.
 - Running 23966766696 (13/08, fartlek 8x45" cuestas) = 79.2 frente a TP 66 (1.20): series cortas, limitación conocida.
 
@@ -91,4 +90,7 @@ trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364
 - Aplicado: 40 sesiones de running 22/02–08/05 (recálculo en prueba: solo cambian esas) y load_metrics_daily desde el 22/02. Running 22/02–08/05 frente a TP: mediana 1.179 → 0.983, MAPE 20.7 % → 6.6 %, 31/40 dentro de ±10 %.
 
 ## Limitaciones aceptadas (no bugs abiertos)
+
+Maratón de Madrid 22663819817 (26/04, 3.4 h): Kairos 230.1 rTSS frente a TP 299.3 (−23 %), decidido dejarlo así el 2026-10-21. Kairos NGP 4:40/km (NGP/ritmo medio 1.031); TP implica NGP/medio 1.100, cuando en las otras 96 sesiones es 1.006 (Kairos 1.036) — anomalía de TP en esa sesión, no de la fórmula. Además, en el export de TP el TSS de running es 1.06–1.14 × h·IF²·100 (crece con la duración): no usar la columna IF de TP para validar.
+
 Hiking con n bajo y un punto de desnivel grande (24013969366); short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real; ciclismo e indoor_running sin auditar; watch-item fuerza OOS entre 8 y 22 de noviembre.
