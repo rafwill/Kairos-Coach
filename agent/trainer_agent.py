@@ -3579,27 +3579,44 @@ def _resolve_hr_threshold_bpm(profile: dict | None) -> tuple[float | None, str, 
     return None, "", ""
 
 
-def _resolve_tp_hr_threshold_for_date(profile: dict | None, d_iso: str) -> float | None:
-    """Umbral de FC que tenía TrainingPeaks en la fecha (performance.hr_threshold_tp_history).
-
-    Es la referencia con la que TP calcula su hrTSS; puede diferir del umbral fisiológico del perfil.
-    """
+def _resolve_profile_history_value(
+    profile: dict | None,
+    history_key: str,
+    value_key: str,
+    d_iso: str,
+    valid_range: tuple[float, float],
+) -> float | None:
+    """Valor vigente en la fecha de un historial del perfil: performance[history_key] = [{date, value_key}]."""
     perf = (profile or {}).get("performance") if isinstance(profile, dict) else None
-    history = perf.get("hr_threshold_tp_history") if isinstance(perf, dict) else None
+    history = perf.get(history_key) if isinstance(perf, dict) else None
     if not isinstance(history, list):
         return None
+    lo, hi = valid_range
     vigente: tuple[str, float] | None = None
     for entry in history:
         if not isinstance(entry, dict):
             continue
         try:
             since = str(entry.get("date") or "")
-            bpm = float(entry.get("bpm"))
+            value = float(entry.get(value_key))
         except (TypeError, ValueError):
             continue
-        if since and since <= d_iso and 120 <= bpm <= 230 and (vigente is None or since > vigente[0]):
-            vigente = (since, bpm)
+        if since and since <= d_iso and lo <= value <= hi and (vigente is None or since > vigente[0]):
+            vigente = (since, value)
     return vigente[1] if vigente else None
+
+
+def _resolve_tp_hr_threshold_for_date(profile: dict | None, d_iso: str) -> float | None:
+    """Umbral de FC que tenía TrainingPeaks en la fecha (performance.hr_threshold_tp_history).
+
+    Es la referencia con la que TP calcula su hrTSS; puede diferir del umbral fisiológico del perfil.
+    """
+    return _resolve_profile_history_value(profile, "hr_threshold_tp_history", "bpm", d_iso, (120, 230))
+
+
+def _resolve_running_threshold_pace_for_date(profile: dict | None, d_iso: str) -> float | None:
+    """Ritmo umbral (s/km) vigente en la fecha (performance.running_threshold_pace_history)."""
+    return _resolve_profile_history_value(profile, "running_threshold_pace_history", "sec_per_km", d_iso, (150, 600))
 
 
 def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
@@ -10354,10 +10371,13 @@ class TrainerAgent:
 
             hr_rest_for_activity = await _hr_rest_for_date(d_iso)
             hr_threshold_tp = _resolve_tp_hr_threshold_for_date(self.user_profile, d_iso)
+            threshold_pace_for_activity = (
+                _resolve_running_threshold_pace_for_date(self.user_profile, d_iso) or running_threshold_pace
+            )
             tss, tss_label = _estimate_session_tss(
                 act,
                 ftp=cycling_ftp,
-                running_threshold_pace_sec_per_km=running_threshold_pace,
+                running_threshold_pace_sec_per_km=threshold_pace_for_activity,
                 hr_rest_bpm=hr_rest_for_activity,
                 hr_max_bpm=hr_max_bpm,
                 hr_zones_raw=hr_zones_raw,
@@ -10411,7 +10431,7 @@ class TrainerAgent:
                             else hr_threshold_bpm
                         ),
                         "ftp_used": cycling_ftp,
-                        "threshold_pace_used": running_threshold_pace,
+                        "threshold_pace_used": threshold_pace_for_activity,
                         "walk_threshold_used": act.get("_walk_hike_threshold_speed_m_min"),
                         "computed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
                     }

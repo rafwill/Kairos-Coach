@@ -4615,6 +4615,23 @@ class TestLoadFatigueModel:
         assert _resolve_tp_hr_threshold_for_date(profile, "2026-10-21") == 169
         assert _resolve_tp_hr_threshold_for_date({"performance": {}}, "2026-05-01") is None
 
+    def test_resolve_running_threshold_pace_for_date_picks_value_in_force(self):
+        from agent.trainer_agent import _resolve_running_threshold_pace_for_date
+
+        profile = {
+            "performance": {
+                "running_threshold_pace_sec_per_km": 252.0,
+                "running_threshold_pace_history": [
+                    {"date": "2026-01-30", "sec_per_km": 230},
+                    {"date": "2026-05-09", "sec_per_km": 252},
+                ],
+            }
+        }
+        assert _resolve_running_threshold_pace_for_date(profile, "2026-01-29") is None
+        assert _resolve_running_threshold_pace_for_date(profile, "2026-05-08") == 230
+        assert _resolve_running_threshold_pace_for_date(profile, "2026-05-09") == 252
+        assert _resolve_running_threshold_pace_for_date({"performance": {}}, "2026-05-01") is None
+
     def test_estimate_tss_rowing_word_in_name_routes_to_gym_cardio(self):
         act = {
             "type": "running",

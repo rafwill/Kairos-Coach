@@ -68,7 +68,8 @@ trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364
 ## A revisar
 
 - Trail rápido (< 6:00/km, `trail:fast_rtss`): solo 1 sesión con TP (24003202488, 16/08): Kairos 128.0 frente a TP 112.4 rTSS (+14 %). Vigilar con más sesiones.
-- Ritmo umbral en TP: 3:50/km del 30/01 al 09/05 y 4:12 desde el 09/05; Kairos usa 4:12 siempre → running feb–may probablemente alto frente a TP.
+- Maratón de Madrid 22663819817 (26/04, 3.4 h): TP 299.3 rTSS frente a Kairos 230.1 (−23 %), ambos rTSS con umbral 3:50. Sin explicar.
+- Series cortas (6x500, 6x1000, 4x400, 8x500) siguen en +11 % a +20 % frente a TP.
 - Running 23966766696 (13/08, fartlek 8x45" cuestas) = 79.2 frente a TP 66 (1.20): series cortas, limitación conocida.
 
 ## Corregido 2026-10-21: enrutado a gym_cardio por texto
@@ -82,6 +83,12 @@ trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364
 - Umbral TP ≠ umbral fisiológico: prueba de esfuerzo VT2 = 169 (perfil, desde Garmin), TP tenía 166 desde el 30/01 y pasó a 169 el 21/10. Se guarda aparte en `performance.hr_threshold_tp_history` y se usa el vigente en cada fecha.
 - Trail normal → `trail:tp_zones`; trail rápido → `trail:fast_rtss` (pipeline de running). Sin detalle de actividad, cadena anterior.
 - Aplicado: 26 filas de trail en activity_tss y load_metrics_daily del 29/03 al 20/10 (recálculo en prueba: 196/222 idénticas, solo cambian trails). Trail normal frente a TP: mediana 1.106 → 1.011, MAPE 9.9 % → 1.6 %, 25/25 dentro de ±10 %.
+
+## Corregido 2026-10-21: ritmo umbral de running por fecha
+
+- Historial de TP (Run/Default): 3:57 desde 15/09/2025, 4:15 desde 24/01/2026, 3:50 desde 30/01/2026, 4:12 desde 09/05/2026. Prueba de esfuerzo: VT2 a 14.1 km/h = 4:15/km.
+- `performance.running_threshold_pace_history` (`[{date, sec_per_km}]`) y `_resolve_running_threshold_pace_for_date`; sin historial se usa `running_threshold_pace_sec_per_km`. `threshold_pace_used` en activity_tss guarda el usado.
+- Aplicado: 40 sesiones de running 22/02–08/05 (recálculo en prueba: solo cambian esas) y load_metrics_daily desde el 22/02. Running 22/02–08/05 frente a TP: mediana 1.179 → 0.983, MAPE 20.7 % → 6.6 %, 31/40 dentro de ±10 %.
 
 ## Limitaciones aceptadas (no bugs abiertos)
 Hiking con n bajo y un punto de desnivel grande (24013969366); short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real; ciclismo e indoor_running sin auditar; watch-item fuerza OOS entre 8 y 22 de noviembre.
