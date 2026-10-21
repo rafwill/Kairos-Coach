@@ -2,6 +2,17 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-21 (modelo LLM de pruebas)
+
+### Changed
+- Modelo NVIDIA de pruebas: `nvidia/nemotron-3-ultra-550b-a55b` (550B, 55B activos) en `.env` (`NVIDIA_MODEL`) en lugar del de por defecto `nemotron-3.5-lightning-30b-a3b` (30B, 3B activos). Batería de 25 preguntas cronometrada con los dos: en las 4 preguntas con LLM, Ultra tuvo 2 fallos (turno de usuario inventado, "lunes" por martes) frente a ~8 de Lightning (confunde el máximo de ATL con CTL, toma 58 TSS parciales como semanales, umbrales inventados, frases en inglés); Ultra tardó 158 s frente a 75 s.
+
+### Fixed
+- Capa de coaching: `_strip_simulated_user_turn` quita un turno del usuario inventado por el LLM al final de la respuesta (línea con rol explícito o cola en primera persona tras la última pregunta).
+
+### Tests
+- 571 passed, 6 skipped.
+
 ## 2026-10-21 (prompts, planes y respuestas)
 
 ### Changed

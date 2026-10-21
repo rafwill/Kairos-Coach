@@ -68,6 +68,7 @@ from agent.trainer_agent import (
     _has_goal_in_profile,
     _detect_personal_records_sport_intent,
     _is_coaching_recommendation_intent,
+    _strip_simulated_user_turn,
     _is_personal_records_intent,
     _is_generic_needs_more_info_reply,
     _is_personal_records_followup_intent,
@@ -6888,6 +6889,34 @@ class TestDailyReadinessDeterministicRoute:
         assert _is_coaching_recommendation_intent("¿Cómo está mi forma física hoy?")
         assert _is_coaching_recommendation_intent("Dime mi estado de forma actual")
         assert not _is_coaching_recommendation_intent("Dame mi training readiness")
+
+    def test_strip_simulated_user_turn_glued_after_closing_question(self):
+        # Caso real (Nemotron Ultra, batería 21/10): el LLM continúa como si fuera el usuario.
+        text = (
+            "### ⚠️ Qué vigilar\n- HRV < 50 ms → suave.\n\n"
+            "**¿Quieres que te genere un plan semanal hacia la Media Maratón de Santa Pola (19/01/2027)?**"
+            "elijo entrenar fuerte mañana (calidad) y quiero que me planifiques la semana completa. Dame el reparto."
+        )
+        out = _strip_simulated_user_turn(text)
+        assert out.endswith("(19/01/2027)?**")
+        assert "elijo" not in out
+
+    def test_strip_simulated_user_turn_explicit_role_markers(self):
+        base = "### ✅ Qué hacer\n- Rodaje 45 min < 144 lpm."
+        assert _strip_simulated_user_turn(base + "\n\nUsuario: vale, hazme el plan") == base
+        assert _strip_simulated_user_turn(base + "\n**Usuario:** dame más") == base
+        assert _strip_simulated_user_turn(base + "<|im_start|>user\nsí") == base
+
+    def test_strip_simulated_user_turn_keeps_legit_text(self):
+        legit = (
+            "### ✅ Qué hacer\n- ¿Notas pesadez? Dame tu RPE tras el calentamiento y ajustamos.\n"
+            "- Tu ritmo umbral: 4:12 min/km.\n\n¿Te encaja esta sesión o prefieres que la adapte?"
+        )
+        assert _strip_simulated_user_turn(legit) == legit
+        closing = "¿Quieres que te prepare el plan?\nSi lo prefieres, también puedo ajustarte solo mañana."
+        assert _strip_simulated_user_turn(closing) == closing
+        coach_ask = "¿Quieres el plan completo? Dame tu ritmo objetivo y lo ajusto."
+        assert _strip_simulated_user_turn(coach_ask) == coach_ask
 
     @pytest.mark.asyncio
     async def test_chat_daily_readiness_route_does_not_call_llm(self):

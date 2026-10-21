@@ -3159,6 +3159,48 @@ def _coaching_horizon(user_message: str) -> str:
     return "HOY: la sesión de hoy"
 
 
+_SIMULATED_ROLE_LINE_RE = re.compile(
+    r"^\s*(?:\*\*|__)?(?:usuario|user|tú)\s*(?::\s*(?:\*\*|__)?|(?:\*\*|__)\s*:)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SIMULATED_ROLE_TOKEN_RE = re.compile(r"<\|im_start\|>\s*user|<\|user\|>", re.IGNORECASE)
+_FIRST_PERSON_REQUEST_RE = re.compile(
+    r"\b(?:elijo|prefiero|quiero que me|me gustar[ií]a que me|planif[ií]came|prep[aá]rame|cr[eé]ame|"
+    r"s[ií],? (?:quiero|hazlo|por favor|adelante))\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_simulated_user_turn(text: str) -> str:
+    """Quita un turno del usuario que el LLM haya inventado al final de su respuesta.
+
+    Casos: una línea con rol explícito ("Usuario:", "<|im_start|>user"…) o una cola
+    en primera persona pegada tras la última pregunta de cierre ("…?**elijo entrenar…").
+    """
+    if not text:
+        return text
+    cut = len(text)
+    for rx in (_SIMULATED_ROLE_LINE_RE, _SIMULATED_ROLE_TOKEN_RE):
+        m = rx.search(text)
+        if m:
+            cut = min(cut, m.start())
+    text = text[:cut].rstrip()
+    q = text.rfind("?")
+    if q >= 0:
+        head_end = q + 1
+        while head_end < len(text) and text[head_end] in "*_":
+            head_end += 1
+        tail = text[head_end:].strip()
+        if (
+            tail
+            and "?" not in tail
+            and not re.search(r"^\s*(?:#|[-*•]\s|\d+[.)]\s)", tail, re.MULTILINE)
+            and _FIRST_PERSON_REQUEST_RE.search(tail)
+        ):
+            text = text[:head_end].rstrip()
+    return text
+
+
 def _build_today_load_status_markdown(profile: dict) -> str:
     """Construye estado determinista de hoy con TSS/ATL/CTL/TSB y regla aplicada."""
     load_metrics = (profile or {}).get("load_metrics") or {}
@@ -11641,7 +11683,9 @@ class TrainerAgent:
                 if getattr(self, "_api_key", None):
                     update_gemini_daily_usage(self._api_key, p_toks + c_toks)
 
-            coaching_text = str((coaching_response.choices[0].message.content or "")).strip()
+            coaching_text = _strip_simulated_user_turn(
+                str((coaching_response.choices[0].message.content or "")).strip()
+            )
             if not coaching_text:
                 return (
                     deterministic_reply
