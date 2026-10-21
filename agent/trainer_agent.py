@@ -10347,7 +10347,13 @@ class TrainerAgent:
                     act["_splits_raw"] = splits_raw
 
             activity_details_raw: str | None = None
-            if _is_trail_hike_walk_activity(act_type) or _is_running_non_trail_activity(act_type):
+            needs_details = (
+                _is_trail_hike_walk_activity(act_type)
+                or _is_running_non_trail_activity(act_type)
+                # Bici sin potencia utilizable: hrTSS por FC segundo a segundo.
+                or (_is_cycling_activity(act_type) and not (cycling_ftp and _has_activity_power_data(act)))
+            )
+            if needs_details:
                 act_id = act.get("id") or act.get("activityId")
                 act_id_key = str(act_id) if act_id is not None else ""
                 if act_id_key:
@@ -10501,7 +10507,7 @@ class TrainerAgent:
             tss   = max(0.0, float(tss_by_day.get(d_iso, 0.0)))
             atl   = atl_prev + (tss - atl_prev) * alpha_atl
             ctl   = ctl_prev + (tss - ctl_prev) * alpha_ctl
-            tsb   = ctl - atl
+            tsb   = ctl_prev - atl_prev  # TP: Forma = CTL de ayer − ATL de ayer
             new_rows.append({
                 "date": d_iso,
                 "tss":  round(tss, 2),

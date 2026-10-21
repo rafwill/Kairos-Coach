@@ -2928,20 +2928,38 @@ class TestSessionTssEstimation:
 
     def test_compute_load_fatigue_metrics_detects_overload(self):
         today = date.today()
-        trend = []
-        for idx in range(14):
-            d = (today - timedelta(days=idx)).isoformat()
-            trend.append({"date": d, "trainingLoad": 130})
+        activities = [
+            {"startTimeLocal": f"{(today - timedelta(days=idx)).isoformat()}T07:00:00.0", "trainingLoad": 130}
+            for idx in range(14)
+        ]
 
         out = _compute_load_fatigue_metrics(
-            activities=[],
-            trend_payload={"points": trend},
+            activities=activities,
+            trend_payload={},
             profile={},
             days_window=28,
         )
 
         assert out is not None
         assert out["flags"]["sustained_overload"] or out["status"] in {"overload", "fatigue_high"}
+
+    def test_compute_load_fatigue_metrics_ignores_garmin_training_load_trend(self):
+        today = date.today()
+        trend = [{"date": (today - timedelta(days=idx)).isoformat(), "trainingLoad": 130} for idx in range(14)]
+
+        out = _compute_load_fatigue_metrics(activities=[], trend_payload={"points": trend}, profile={}, days_window=28)
+
+        assert out is None
+
+    def test_compute_load_fatigue_metrics_tsb_uses_previous_day_like_tp(self):
+        today = date.today()
+        activities = [{"startTimeLocal": f"{today.isoformat()}T07:00:00.0", "trainingLoad": 100}]
+
+        out = _compute_load_fatigue_metrics(activities=activities, trend_payload={}, profile={}, days_window=28)
+
+        # Hoy entra TSS 100: ATL y CTL suben, pero la Forma usa los valores de ayer (0).
+        assert out["latest"]["atl"] > 0
+        assert out["latest"]["tsb"] == 0.0
 
     def test_compute_load_fatigue_metrics_flags_weekly_spike_over_20_percent(self):
         import agent.trainer_agent as ta
@@ -2993,15 +3011,10 @@ class TestSessionTssEstimation:
 
     # ── Tests por deporte ─────────────────────────────────────────────────────
 
-    def test_resolve_sport_model_cfg_trail_running_has_larger_atl_tau(self):
-        profile = {"goals": {"primary": "trail running"}}
-        cfg = _resolve_sport_model_cfg(profile)
-        assert cfg["atl_tau_days"] == 8
-
-    def test_resolve_sport_model_cfg_ciclismo_has_larger_ctl_tau(self):
-        profile = {"goals": {"primary": "ciclismo"}}
-        cfg = _resolve_sport_model_cfg(profile)
-        assert cfg["ctl_tau_days"] == 45
+    def test_resolve_sport_model_cfg_uses_tp_pmc_constants_for_every_sport(self):
+        for sport in ("running", "trail running", "ciclismo", "triatlón", "patinaje"):
+            cfg = _resolve_sport_model_cfg({"goals": {"primary": sport}})
+            assert (cfg["ctl_tau_days"], cfg["atl_tau_days"]) == (42, 7), sport
 
     def test_resolve_sport_model_cfg_unknown_sport_falls_back_to_running(self):
         profile = {"goals": {"primary": "patinaje"}}
@@ -3009,13 +3022,15 @@ class TestSessionTssEstimation:
         running_cfg = _resolve_sport_model_cfg({"goals": {"primary": "running"}})
         assert cfg["atl_tau_days"] == running_cfg["atl_tau_days"]
 
-    def test_resolve_sport_model_cfg_manual_override_wins(self):
+    def test_resolve_sport_model_cfg_ignores_taus_saved_in_profile_model(self):
+        # load_metrics.model lo reescribe Kairos; no debe fijar constantes antiguas (p. ej. ATL 8).
         profile = {
-            "goals": {"primary": "running"},
-            "load_metrics": {"model": {"atl_tau_days": 10}},
+            "goals": {"primary": "trail running"},
+            "load_metrics": {"model": {"atl_tau_days": 8, "ctl_tau_days": 45, "tsb_low_pct": 0.3}},
         }
         cfg = _resolve_sport_model_cfg(profile)
-        assert cfg["atl_tau_days"] == 10
+        assert (cfg["ctl_tau_days"], cfg["atl_tau_days"]) == (42, 7)
+        assert cfg["tsb_low_pct"] == 0.3
 
     def test_compute_load_fatigue_metrics_trail_uses_sport_tau(self):
         today = date.today()
@@ -3032,7 +3047,7 @@ class TestSessionTssEstimation:
         )
         assert out is not None
         assert out["model"]["sport"] == "trail running"
-        assert out["model"]["atl_tau_days"] == 8
+        assert out["model"]["atl_tau_days"] == 7
 
     def test_compute_load_fatigue_metrics_ciclismo_uses_sport_tau(self):
         today = date.today()
@@ -3049,7 +3064,7 @@ class TestSessionTssEstimation:
         )
         assert out is not None
         assert out["model"]["sport"] == "ciclismo"
-        assert out["model"]["ctl_tau_days"] == 45
+        assert out["model"]["ctl_tau_days"] == 42
 
     def test_abs_overload_triggers_when_tsb_below_floor_trail(self):
         """TSB <= tsb_abs_floor (-35 para trail) debe forzar OVERLOAD aunque el percentil no lo detecte."""
@@ -3285,7 +3300,7 @@ class TestSportSpecificLoadProfiles:
         assert out["ranges"]["tsb_abs_floor"] == -30.0
         assert out["latest"]["atl"] > 0 and out["latest"]["ctl"] > 0
 
-    def test_trail_profile_uses_slower_atl_and_deeper_tsb_floor(self):
+    def test_trail_profile_uses_tp_taus_and_deeper_tsb_floor(self):
         activities = self._build_fake_activities(days=56, default_tss=55.0)
         running_profile = {"goals": {"primary": "running"}}
         trail_profile = {"goals": {"primary": "trail running"}}
@@ -3305,11 +3320,11 @@ class TestSportSpecificLoadProfiles:
 
         assert run_out is not None and trail_out is not None
         assert trail_out["model"]["sport"] == "trail running"
-        assert trail_out["model"]["atl_tau_days"] == 8
+        assert trail_out["model"]["atl_tau_days"] == 7
         assert trail_out["model"]["ctl_tau_days"] == 42
         assert trail_out["ranges"]["tsb_abs_floor"] == -35.0
-        # Misma carga, ATL trail debe responder algo más lento (igual o menor que running).
-        assert float(trail_out["latest"]["atl"]) <= float(run_out["latest"]["atl"]) + 0.2
+        # Mismas constantes (PMC de TP): misma carga, mismo ATL.
+        assert float(trail_out["latest"]["atl"]) == float(run_out["latest"]["atl"])
 
     def test_triathlon_profile_uses_longer_ctl_and_flags_recent_overload(self):
         # Bloque agudo reciente para simular sobrecarga en un atleta de triatlón.
@@ -3331,7 +3346,7 @@ class TestSportSpecificLoadProfiles:
         assert out is not None
         assert out["model"]["sport"] == "triatlón"
         assert out["model"]["atl_tau_days"] == 7
-        assert out["model"]["ctl_tau_days"] == 45
+        assert out["model"]["ctl_tau_days"] == 42
         assert out["ranges"]["tsb_abs_floor"] == -35.0
         assert out["status"] in {"fatigue_high", "overload"}
 
@@ -4597,6 +4612,44 @@ class TestLoadFatigueModel:
         assert pipe.called
         assert (tss, label) == (88.0, "TSS")
         assert _infer_tss_model_tag(act) == "trail:fast_rtss"
+
+    def test_cycling_power_tss_uses_garmin_norm_power(self):
+        # Caso real 28/07: avgPower 125, normPower 165, FTP 205, 1.58 h -> TP 101 TSS.
+        act = {"type": "road_biking", "duration": 1.58 * 3600, "avgPower": 125.0, "normPower": 165.0}
+        tss, label = _estimate_session_tss(act, ftp=205.0)
+        assert label == "TSS"
+        assert _infer_tss_model_tag(act) == "cycling:power_ftp"
+        assert tss == pytest.approx(1.58 * (165 / 205) ** 2 * 100, abs=0.1)
+
+    def test_cycling_without_power_uses_tp_hr_zones(self):
+        act = {"type": "gravel_cycling", "duration": 3600, "averageHR": 120}
+        tss, label = _estimate_session_tss(
+            act, ftp=205.0, hr_threshold_bpm=169, hr_threshold_tp_bpm=166,
+            activity_details_raw=self._trail_hr_details(120),
+        )
+        assert (label, _infer_tss_model_tag(act)) == ("hrTSS", "cycling:tp_zones")
+        assert tss == pytest.approx(40.8, abs=0.3)
+
+    def test_walk_tss_is_capped_by_tp_hrtss(self):
+        # Caminata rápida (6.8 km/h, FC 100): el modelo metabólico no puede superar el hrTSS de TP.
+        act = {"type": "hiking", "duration": 3600, "distance": 6800, "averageSpeed": 1.89, "averageHR": 100}
+        with patch("agent.load_metrics._estimate_walk_hike_tss", return_value=(99.0, "TSS")):
+            tss, label = _estimate_session_tss(
+                act, hr_threshold_bpm=169, hr_threshold_tp_bpm=166,
+                activity_details_raw=self._trail_hr_details(100),
+            )
+        assert (label, _infer_tss_model_tag(act)) == ("hrTSS", "walk_hike:tp_hr_cap")
+        assert tss == pytest.approx(40.8, abs=0.3)
+
+    def test_walk_tss_below_tp_hrtss_keeps_metabolic_model(self):
+        act = {"type": "walking", "duration": 3600, "distance": 2500, "averageSpeed": 0.7, "averageHR": 60}
+        with patch("agent.load_metrics._estimate_walk_hike_tss", return_value=(15.0, "TSS")):
+            tss, _ = _estimate_session_tss(
+                act, hr_threshold_bpm=169, hr_threshold_tp_bpm=166,
+                activity_details_raw=self._trail_hr_details(60),
+            )
+        assert _infer_tss_model_tag(act) == "walk_hike:metabolico"
+        assert tss == 15.0
 
     def test_resolve_tp_hr_threshold_for_date_picks_value_in_force(self):
         from agent.trainer_agent import _resolve_tp_hr_threshold_for_date

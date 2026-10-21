@@ -60,16 +60,16 @@ RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
 # Fast trail threshold (< 6:00/km) where raw zone hrTSS is explicitly preferred.
 TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
 
-# Non-fast trail hrTSS (TP-like): TSS/h por tramo de FC respecto al umbral de referencia de TP.
-# Deducido de 25 trails con hrTSS de TP (feb-oct 2026, umbral TP 166): validación sin la sesión
-# MAPE 1.8 %, máx 5.7 %. TP no usa FC de reposo. Por encima del umbral no hay datos: 100 TSS/h
-# es la definición de TP (1 h en umbral = 100).
-TRAIL_TP_HRTSS_RATES = (
+# hrTSS como TP (trail normal, bici sin potencia y tope de caminatas): TSS/h por tramo de FC respecto
+# al umbral de referencia de TP. Deducido de 25 trails con hrTSS de TP (feb-oct 2026, umbral TP 166):
+# validación sin la sesión MAPE 1.8 %, máx 5.7 %. TP no usa FC de reposo. Por encima del umbral no hay
+# datos: 100 TSS/h es la definición de TP (1 h en umbral = 100).
+TP_HRTSS_RATES = (
     (0.85, 40.8),
     (0.95, 72.7),
     (1.00, 91.8),
 )
-TRAIL_TP_HRTSS_RATE_ABOVE_THRESHOLD = 100.0
+TP_HRTSS_RATE_ABOVE_THRESHOLD = 100.0
 
 # Non-fast trail smoothing for sustained very-low-intensity blocks.
 TRAIL_NON_FAST_LOW_IF_THRESHOLD = 0.58
@@ -1976,14 +1976,14 @@ def _resolve_trail_rest_hr_bpm(activity: dict, hr_rest_bpm: float | None = None)
     return 55.0
 
 
-def _estimate_trail_hr_tss_tp_zones(
+def _estimate_hr_tss_tp_zones(
     activity: dict,
     hours: float,
     activity_details_raw: str | None,
     hr_threshold_bpm: float | None,
     min_coverage_ratio: float = 0.40,
 ) -> float | None:
-    """hrTSS de trail como TP: TSS/h por tramo de FC/umbral, segundo a segundo, sin FC de reposo."""
+    """hrTSS como TP: TSS/h por tramo de FC/umbral, segundo a segundo, sin FC de reposo."""
     if not activity_details_raw or not hr_threshold_bpm or hr_threshold_bpm <= 0:
         return None
 
@@ -2006,8 +2006,8 @@ def _estimate_trail_hr_tss_tp_zones(
         dt = max(1.0, min(30.0, float(dt)))
         ratio = float(hr) / float(hr_threshold_bpm)
         rate = next(
-            (r for upper, r in TRAIL_TP_HRTSS_RATES if ratio < upper),
-            TRAIL_TP_HRTSS_RATE_ABOVE_THRESHOLD,
+            (r for upper, r in TP_HRTSS_RATES if ratio < upper),
+            TP_HRTSS_RATE_ABOVE_THRESHOLD,
         )
         tss_total += (dt / 3600.0) * rate
         covered_seconds += dt
@@ -3125,8 +3125,12 @@ def _estimate_walk_hike_tss(
 def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
     if hours <= 0 or not ftp or ftp <= 0:
         return None
+    # TSS por potencia usa NP, como TP. Garmin la envía como "normPower" en la lista de actividades
+    # y "normalizedPower" en summaryDTO; la potencia media solo si no hay NP.
     power_raw = (
-        activity.get("normalizedPower")
+        activity.get("normPower")
+        or activity.get("normalizedPower")
+        or activity.get("normalizedPowerWatts")
         or activity.get("normalized_power_watts")
         or activity.get("avgPower")
         or activity.get("avg_power_watts")
@@ -3150,6 +3154,7 @@ def _has_activity_power_data(activity: dict) -> bool:
     if not isinstance(activity, dict):
         return False
     for key in (
+        "normPower",
         "normalizedPower",
         "normalizedPowerWatts",
         "normalized_power_watts",
@@ -3795,6 +3800,17 @@ def _estimate_session_tss(
             _set_tss_resolution_meta(activity, model_tag="cycling:power_ftp")
             return tss_pow, "TSS"
 
+        # Sin potencia: hrTSS como TP (misma tabla que trail).
+        tss_tp_hr = _estimate_hr_tss_tp_zones(
+            activity,
+            hours=hours,
+            activity_details_raw=details_payload,
+            hr_threshold_bpm=hr_threshold_tp_bpm or _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm),
+        )
+        if tss_tp_hr is not None:
+            _set_tss_resolution_meta(activity, model_tag="cycling:tp_zones")
+            return max(0.0, float(tss_tp_hr)), "hrTSS"
+
         tss_hr_zones = _estimate_hr_tss_from_zones(
             activity,
             hours=hours,
@@ -3937,7 +3953,7 @@ def _estimate_session_tss(
             else:
                 # TP-like for non-fast trail: prefer LTHR-based hrTSS, then fallback to pace-based TSS.
                 lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
-                tss_tp_zones = _estimate_trail_hr_tss_tp_zones(
+                tss_tp_zones = _estimate_hr_tss_tp_zones(
                     activity,
                     hours=hours,
                     activity_details_raw=details_payload,
@@ -4042,6 +4058,17 @@ def _estimate_session_tss(
                 running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
             )
             if tss_walk is not None:
+                # Modelo intermedio entre rTSS y hrTSS de TP: nunca por encima del hrTSS de TP.
+                tss_walk_hr_cap = _estimate_hr_tss_tp_zones(
+                    activity,
+                    hours=hours,
+                    activity_details_raw=details_payload,
+                    hr_threshold_bpm=hr_threshold_tp_bpm
+                    or _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm),
+                )
+                if tss_walk_hr_cap is not None and tss_walk_hr_cap < float(tss_walk):
+                    _set_tss_resolution_meta(activity, model_tag="walk_hike:tp_hr_cap")
+                    return max(0.0, float(tss_walk_hr_cap)), "hrTSS"
                 _set_tss_resolution_meta(activity, model_tag="walk_hike:metabolico")
                 return max(0.0, float(tss_walk)), str(lbl_walk or "TSS")
 
@@ -4247,6 +4274,9 @@ def _percentile(values: list[float], pct: float, default: float = 0.0) -> float:
     return cleaned[idx]
 
 
+PMC_ATL_TAU_DAYS = 7
+PMC_CTL_TAU_DAYS = 42
+
 _SPORT_MODEL_DEFAULTS: dict[str, dict] = {
     "trail running": {
         "atl_tau_days": 8,
@@ -4307,11 +4337,13 @@ def _resolve_sport_model_cfg(profile: dict | None) -> dict:
     p = profile or {}
     sport_raw = str((p.get("goals") or {}).get("primary") or "running").strip().lower()
     base = dict(_SPORT_MODEL_DEFAULTS.get(sport_raw) or _SPORT_MODEL_DEFAULTS["running"])
+    # Constantes del PMC de TrainingPeaks (CTL 42, ATL 7) para todos los deportes; no se leen del
+    # modelo guardado en el perfil porque Kairos lo reescribe solo y fijaba valores antiguos.
+    base["atl_tau_days"] = PMC_ATL_TAU_DAYS
+    base["ctl_tau_days"] = PMC_CTL_TAU_DAYS
 
     saved_model = (p.get("load_metrics") or {}).get("model") or {}
     for key in (
-        "atl_tau_days",
-        "ctl_tau_days",
         "tsb_low_pct",
         "tsb_high_pct",
         "atl_high_pct",
@@ -4383,19 +4415,8 @@ def _compute_load_fatigue_metrics(
     running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
     hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
 
+    # La carga nativa de Garmin (trend_payload) no es TSS: no se usa. Se mantiene el parámetro por compatibilidad.
     tss_by_day: dict[str, float] = {}
-
-    for item in _extract_training_load_points(trend_payload):
-        d_iso = item.get("date")
-        if not d_iso:
-            continue
-        try:
-            d_obj = date.fromisoformat(d_iso)
-        except ValueError:
-            continue
-        if d_obj < start_day or d_obj > today:
-            continue
-        tss_by_day[d_iso] = max(tss_by_day.get(d_iso, 0.0), float(item.get("tss") or 0.0))
 
     for act in list(activities or []):
         if not isinstance(act, dict):
@@ -4430,18 +4451,9 @@ def _compute_load_fatigue_metrics(
 
     sport_raw = str(((profile or {}).get("goals") or {}).get("primary") or "running").strip().lower()
 
-    saved_last = ((profile or {}).get("load_metrics") or {}).get("last") or {}
-    atl_prev = max(0.0, float(saved_last.get("atl") or 0.0))
-    ctl_prev = max(0.0, float(saved_last.get("ctl") or 0.0))
-    seed_date_iso = _to_iso_date(saved_last.get("date"))
-    if seed_date_iso:
-        try:
-            seed_date = date.fromisoformat(seed_date_iso)
-            if seed_date < start_day:
-                atl_prev = 0.0
-                ctl_prev = 0.0
-        except ValueError:
-            pass
+    # Arranque en 0 al inicio de la ventana: el "last" guardado es del final de la serie, no de la víspera.
+    atl_prev = 0.0
+    ctl_prev = 0.0
 
     alpha_atl = 1.0 / float(tau_atl)
     alpha_ctl = 1.0 / float(tau_ctl)
@@ -4453,7 +4465,7 @@ def _compute_load_fatigue_metrics(
         tss = max(0.0, float(tss_by_day.get(d_iso, 0.0)))
         atl = atl_prev + (tss - atl_prev) * alpha_atl
         ctl = ctl_prev + (tss - ctl_prev) * alpha_ctl
-        tsb = ctl - atl
+        tsb = ctl_prev - atl_prev  # TP: Forma = CTL de ayer − ATL de ayer
         row = {
             "date": d_iso,
             "tss": round(tss, 1),

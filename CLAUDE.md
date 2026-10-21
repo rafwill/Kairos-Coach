@@ -89,6 +89,17 @@ trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364
 - `performance.running_threshold_pace_history` (`[{date, sec_per_km}]`) y `_resolve_running_threshold_pace_for_date`; sin historial se usa `running_threshold_pace_sec_per_km`. `threshold_pace_used` en activity_tss guarda el usado.
 - Aplicado: 40 sesiones de running 22/02–08/05 (recálculo en prueba: solo cambian esas) y load_metrics_daily desde el 22/02. Running 22/02–08/05 frente a TP: mediana 1.179 → 0.983, MAPE 20.7 % → 6.6 %, 31/40 dentro de ±10 %.
 
+## Corregido 2026-10-21: auditoría de ATL/CTL/TSB y TSS por deporte frente a TP
+
+- PMC de TP del usuario: CTL 42, ATL 7. Kairos usaba ATL 8 (goals.primary = "trail running" en `_SPORT_MODEL_DEFAULTS`, y `load_metrics.model` del perfil lo volvía a imponer). Ahora `PMC_CTL_TAU_DAYS`/`PMC_ATL_TAU_DAYS` para todos los deportes; las constantes ya no se leen del modelo guardado.
+- TSB = CTL de ayer − ATL de ayer (convención de TP); antes era el mismo día.
+- Bici con potencia: Garmin manda la NP como `normPower` (lista) / `normalizedPower` (summaryDTO); se usaba `avgPower`. Con NP, 17 salidas: MAPE 26.9 % → 1.6 %. TP usa el mismo FTP (205).
+- Bici sin potencia: `cycling:tp_zones` (tabla hrTSS de TP); compute_load pide activity_details para esas salidas.
+- Caminatas: el modelo metabólico (intermedio entre rTSS y hrTSS de TP, decisión del usuario) tiene tope en el hrTSS de TP (`walk_hike:tp_hr_cap`): 25/06 175 → 73 (TP 67).
+- Respaldo `_compute_load_fatigue_metrics` (solo con DB vacía): ya no usa la carga de Garmin ni arranca con el CTL del último día.
+- Export de TP: no incluye 7 sesiones de fuerza de agosto (03, 10, 14, 19, 24, 27, 31) que sí están en el calendario de TP con TSS ≈ Kairos. Las caminatas en TP mezclan rTSS (turismo) y hrTSS (senderismo) según elige el usuario: no son referencia directa.
+- Aplicado: 30 filas (bici y caminata) y load_metrics_daily completa desde el 22/02. Frente a la serie de TP reconstruida (05/04–20/10), diferencia media/máx: CTL 2.6/7.1 → 2.1/6.6, ATL 4.4/17.6 → 2.7/15.5, TSB 6.5/51.7 → 3.0/12.7. TSS por deporte: running 1.000, bici 0.996, fuerza ≈ 1.00 (sin las 7 de agosto), caminar 1.37 (por diseño).
+
 ## Limitaciones aceptadas (no bugs abiertos)
 
 Maratón de Madrid 22663819817 (26/04, 3.4 h): Kairos 230.1 rTSS frente a TP 299.3 (−23 %), decidido dejarlo así el 2026-10-21. Kairos NGP 4:40/km (NGP/ritmo medio 1.031); TP implica NGP/medio 1.100, cuando en las otras 96 sesiones es 1.006 (Kairos 1.036) — anomalía de TP en esa sesión, no de la fórmula. Además, en el export de TP el TSS de running es 1.06–1.14 × h·IF²·100 (crece con la duración): no usar la columna IF de TP para validar.
