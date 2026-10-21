@@ -389,19 +389,10 @@ def load_session_summaries() -> list[dict]:
     return load_session_context().get("session_summaries", [])
 
 
-def persist_session_summary(summary: str) -> None:
-    ctx = load_session_context()
-    summaries = ctx.get("session_summaries", [])
-    summaries.append({"date": date.today().isoformat(), "summary": (summary or "")[:600]})
-    ctx["session_summaries"] = summaries[-10:]
-    save_session_context(ctx)
-
-
 def persist_session_summary_daily(summary: str) -> None:
     """Guarda/actualiza el resumen del día actual en session_summaries.
 
-    A diferencia de persist_session_summary (append), este método hace upsert
-    por fecha para permitir checkpoints frecuentes sin inflar el historial.
+    Hace upsert por fecha para permitir checkpoints frecuentes sin inflar el historial.
     """
     ctx = load_session_context()
     summaries = list(ctx.get("session_summaries") or [])

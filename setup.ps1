@@ -11,7 +11,7 @@ function Resolve-Python {
     if (Get-Command python -ErrorAction SilentlyContinue) {
         return @("python")
     }
-    throw "No se encontró Python en PATH. Instala Python 3.10+ e inténtalo de nuevo."
+    throw "No se encontró Python en PATH. Instala Python 3.11+ e inténtalo de nuevo."
 }
 
 $pyCmd = Resolve-Python

@@ -7,7 +7,7 @@
   - Running MAPE 6.3 % · trail 1.6 % · bici con potencia 1.6 % · fuerza ≈ 1.00.
   - Serie frente a TP: diferencia media CTL 2.1 · ATL 2.7 · TSB 3.0.
 - Un TSS por actividad en `activity_tss`, línea base desde el 22/02/2026, sin recálculo hacia atrás.
-- Tests: 556 passed, 6 skipped.
+- Tests: 564 passed, 6 skipped.
 - Detalle técnico: `CLAUDE.md`. Bitácora: `docs/proximos_pasos.md`.
 
 ## Limitaciones conocidas (aceptadas)
@@ -35,7 +35,8 @@
 ## Referencia de documentos vigentes
 
 - CLAUDE.md
+- docs/arquitectura.md
+- docs/Harness.md
 - docs/proximos_pasos.md
 - CHANGELOG.md
 - README.md
-- docs/Harness.md

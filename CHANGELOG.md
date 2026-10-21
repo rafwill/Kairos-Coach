@@ -2,6 +2,26 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-21 (limpieza del proyecto)
+
+### Removed
+- 131 ficheros versionados fuera del repo: logs de baterías antiguas, sondas de login, copias de código, tablas e informes de calibraciones cerradas, scripts sueltos de `.tmp/` y tools de análisis puntual (con `tests/test_fit_tss_probe.py`). Lo que puede servir (evidencias de la validación frente a TP, diseños cerrados, herramientas de captura y calibración, exports de TP) pasa a `_archivo/`, local y en `.gitignore`.
+- Datos reales fuera de git: `fixtures/real_payloads/*` y los exports de TP siguen en local, ignorados.
+- Código muerto (sin ninguna llamada): `_classify_running_session`, `_build_tomorrow_workout_markdown`, `_is_wellness_row_fresh`, `_apply_trail_overrides`, `_hr_zone_bar`, `_safe_get_wellness_row`, `_wellness_ttl_hours`, `get_gemini_daily_info`, `generate_session_summary`, `save_session_summary`, `_persist_session_summary`, `persist_session_summary`, `_parse_recent_tss_sport_request`, `_extract_trail_ngp_like_pace_sec_per_km`, `_split_first_float` y `_extract_split_*`.
+- Variantes de rTSS `legacy` y `tp_like_v2` (solo activables con `KAIROS_RUNNING_TSS_MODEL` / `KAIROS_RUNNING_TSS_FALLBACK_MODEL`, sin uso en ninguna de las 222 actividades guardadas). Running queda en `running:pipeline_fisico` con respaldo `running:tp_like_adjusted`; ningún TSS cambia.
+
+### Added
+- `tools/run_bateria.py`: batería de preguntas con tiempo por respuesta (`--modelo` para comparar modelos; usuario en `KAIROS_USERNAME`; salida en `.tmp/bateria/`).
+- `docs/arquitectura.md`: el detalle técnico que estaba en el README, revisado (fuera `MCP_READ_ONLY` y `_apply_trail_overrides`, que ya no existen; añadida `activity_tss`).
+
+### Changed
+- README reescrito: de 1 016 a unas 120 líneas.
+- El menú de proveedores muestra el modelo efectivo de cada uno (`*_MODEL` del `.env`), no un nombre fijo.
+- Python mínimo 3.11 (el código usa `BaseExceptionGroup`).
+
+### Tests
+- 564 passed, 6 skipped.
+
 ## 2026-10-21 (modelo LLM de pruebas)
 
 ### Changed

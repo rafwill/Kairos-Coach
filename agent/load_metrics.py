@@ -2188,157 +2188,6 @@ def _extract_splits_list(payload: Any) -> list[dict]:
     return []
 
 
-def _split_first_float(split: dict, *keys: str) -> float | None:
-    for key in keys:
-        raw = split.get(key)
-        if raw is None:
-            continue
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _extract_split_duration_seconds(split: dict) -> float | None:
-    return _split_first_float(
-        split,
-        "duration",
-        "durationInSeconds",
-        "elapsedDuration",
-        "movingDuration",
-        "seconds",
-        "splitDuration",
-        "lapDuration",
-        "total_time_seconds",
-    )
-
-
-def _extract_split_distance_meters(split: dict) -> float | None:
-    # Explicit meter keys in Garmin payloads.
-    for key in ("distanceInMeters", "distance_m"):
-        if key in split:
-            value = _split_first_float(split, key)
-            if value is not None and value > 0:
-                return value
-
-    # Garmin lapDTOs commonly expose distance in meters under "distance".
-    if "distance" in split:
-        value = _split_first_float(split, "distance")
-        if value is not None and value > 0:
-            # Heuristic: large values are meters; tiny values are likely kilometers.
-            if value >= 100.0:
-                return value
-            return value * 1000.0
-
-    # Alternative keys that may be in kilometers.
-    for key in ("splitDistance", "lapDistance"):
-        if key in split:
-            value = _split_first_float(split, key)
-            if value is not None and value > 0:
-                return value * 1000.0
-
-    return None
-
-
-def _extract_split_net_grade(split: dict, distance_m: float) -> float | None:
-    if distance_m <= 0:
-        return None
-
-    grade_pct = _split_first_float(split, "avgGrade", "averageGrade", "grade", "gradePercent")
-    if grade_pct is not None:
-        return grade_pct / 100.0
-
-    elev_gain = _split_first_float(split, "elevationGain", "elevation_gain", "totalAscent", "ascent", "gain")
-    elev_loss = _split_first_float(split, "elevationLoss", "elevation_loss", "totalDescent", "descent", "loss")
-    if elev_gain is None and elev_loss is None:
-        start_ele = _split_first_float(split, "startElevation", "startElevationInMeters", "start_elevation")
-        end_ele = _split_first_float(split, "endElevation", "endElevationInMeters", "end_elevation")
-        if start_ele is not None and end_ele is not None:
-            return (end_ele - start_ele) / distance_m
-        return None
-
-    gain = max(0.0, elev_gain or 0.0)
-    loss = max(0.0, elev_loss or 0.0)
-    return (gain - loss) / distance_m
-
-
-def _running_energy_cost_ratio_for_grade(grade_decimal: float) -> float:
-    s = max(-0.30, min(0.30, float(grade_decimal)))
-    cost = (
-        155.4 * (s**5)
-        - 30.4 * (s**4)
-        - 43.3 * (s**3)
-        + 46.3 * (s**2)
-        + 19.5 * s
-        + 3.6
-    )
-    return max(0.70, min(1.60, cost / 3.6))
-
-
-def _extract_trail_ngp_like_pace_sec_per_km(
-    activity: dict,
-    splits_raw: str | None = None,
-) -> tuple[float | None, float]:
-    splits_payload: Any = splits_raw
-    if splits_payload is None and isinstance(activity, dict):
-        splits_payload = (
-            activity.get("_splits_raw")
-            or activity.get("splits_raw")
-            or activity.get("splitsRaw")
-            or activity.get("splits")
-        )
-
-    splits = _extract_splits_list(splits_payload)
-    if not splits:
-        return None, 0.0
-
-    total_weight = 0.0
-    weighted_speed4 = 0.0
-    covered_seconds = 0.0
-
-    for split in splits:
-        if not isinstance(split, dict):
-            continue
-
-        duration_s = _extract_split_duration_seconds(split)
-        distance_m = _extract_split_distance_meters(split)
-        if duration_s is None or distance_m is None:
-            continue
-        if duration_s <= 0 or distance_m <= 0:
-            continue
-
-        grade = _extract_split_net_grade(split, distance_m)
-        if grade is None:
-            continue
-
-        speed_ms = distance_m / duration_s
-        if speed_ms <= 0:
-            continue
-
-        cost_ratio = _running_energy_cost_ratio_for_grade(grade)
-        eq_flat_speed = speed_ms * cost_ratio
-        if eq_flat_speed <= 0:
-            continue
-
-        weight = max(1.0, duration_s)
-        weighted_speed4 += weight * (eq_flat_speed**4)
-        total_weight += weight
-        covered_seconds += duration_s
-
-    if total_weight <= 0:
-        return None, 0.0
-
-    ngp_like_speed = (weighted_speed4 / total_weight) ** 0.25
-    if ngp_like_speed <= 0:
-        return None, 0.0
-
-    pace_sec_per_km = 1000.0 / ngp_like_speed
-    activity_seconds = _extract_activity_duration_hours(activity) * 3600.0
-    coverage = (covered_seconds / activity_seconds) if activity_seconds > 0 else 0.0
-    return pace_sec_per_km, max(0.0, min(1.0, coverage))
-
-
 def _estimate_trail_tss_high_precision(
     activity: dict,
     hours: float,
@@ -3351,124 +3200,6 @@ def _classify_running_session_with_confidence(activity: dict) -> dict[str, Any]:
     return {"session_kind": session_kind, "confidence": confidence, "scores": scores}
 
 
-def _resolve_running_tss_model(activity: dict | None = None) -> str:
-    """Resolve running TSS model with activity override and env fallback."""
-    model_raw = None
-    if isinstance(activity, dict):
-        model_raw = activity.get("running_tss_model") or activity.get("_running_tss_model")
-    if model_raw is None:
-        model_raw = os.environ.get("KAIROS_RUNNING_TSS_MODEL")
-
-    model = str(model_raw or "tp_like").strip().lower()
-    if model in {"legacy", "examined", "baseline"}:
-        return "legacy"
-    return "tp_like"
-
-
-def _resolve_running_fallback_model(activity: dict | None = None) -> str:
-    """Resolve running fallback model used when activity_details pipeline is unavailable.
-
-    Defaults to legacy for backward compatibility. Enable simplified fallback with:
-      - env: KAIROS_RUNNING_TSS_FALLBACK_MODEL=v2
-      - activity override: running_tss_fallback_model='v2'
-    """
-    model_raw = None
-    if isinstance(activity, dict):
-        model_raw = activity.get("running_tss_fallback_model") or activity.get("_running_tss_fallback_model")
-    if model_raw is None:
-        model_raw = os.environ.get("KAIROS_RUNNING_TSS_FALLBACK_MODEL")
-
-    model = str(model_raw or "legacy").strip().lower()
-    if model in {"v2", "simple", "minimal"}:
-        return "v2"
-    return "legacy"
-
-
-def _estimate_running_tss_examined(
-    activity: dict,
-    hours: float,
-    running_threshold_pace_sec_per_km: float | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-) -> float | None:
-    if hours <= 0:
-        return None
-
-    base_if = _extract_running_if_from_threshold_pace(
-        activity,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-        prefer_effective_running_pace=True,
-        if_pace_ceiling=1.30,
-    )
-    tss_pace_base = max(0.0, hours * (base_if**2) * 100.0) if base_if is not None else None
-
-    if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
-    tss_hr = max(0.0, hours * (if_hr**2) * 100.0) if if_hr is not None else None
-
-    if base_if is None:
-        return tss_hr
-
-    cls = _classify_running_session_with_confidence(activity)
-    session_kind = str(cls.get("session_kind") or "calidad")
-    confidence = str(cls.get("confidence") or "low")
-
-    if session_kind in {"fartlek", "series"}:
-        sig = _extract_running_session_signals(activity)
-        speed_ratio = float(sig.get("speed_ratio") or 1.0)
-        lap_count = int(sig.get("lap_count") or 0)
-        workout_rpe = sig.get("workout_rpe")
-        workout_rpe = float(workout_rpe) if workout_rpe is not None else 0.0
-        te_label = str(sig.get("te_label") or "")
-        interval_keyword = bool(sig.get("interval_keyword"))
-        fartlek_keyword = bool(sig.get("fartlek_keyword"))
-
-        confidence_factor = {"high": 1.0, "medium": 0.85, "low": 0.70}.get(confidence, 0.70)
-
-        uplift = 0.0
-        if session_kind == "fartlek" or fartlek_keyword:
-            if speed_ratio > 1.10:
-                uplift += min(0.014, (speed_ratio - 1.10) * 0.12)
-            if lap_count >= 24:
-                uplift += 0.006
-            elif lap_count >= 16:
-                uplift += 0.003
-            if interval_keyword:
-                uplift += 0.004
-            if fartlek_keyword:
-                uplift += 0.003
-            if workout_rpe >= 80.0:
-                uplift += 0.003
-            elif workout_rpe >= 65.0:
-                uplift += 0.002
-            if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
-                uplift += 0.002
-            uplift *= confidence_factor
-            uplift = min(0.018, uplift)
-        else:
-            if speed_ratio > 1.12:
-                uplift += min(0.045, (speed_ratio - 1.12) * 0.20)
-            if workout_rpe >= 70.0:
-                uplift += 0.01
-            elif workout_rpe >= 55.0:
-                uplift += 0.005
-            if te_label in {"lactate_threshold", "vo2max", "anaerobic_capacity"}:
-                uplift += 0.008
-            if interval_keyword:
-                uplift += 0.008
-            uplift *= confidence_factor
-            uplift = min(0.07, uplift)
-
-        interval_if = max(0.50, min(1.30, base_if + uplift))
-        tss_interval = max(0.0, hours * (interval_if**2) * 100.0)
-        if tss_pace_base is not None:
-            return max(tss_interval, tss_pace_base)
-        return tss_interval if tss_interval is not None else tss_hr
-
-    if tss_pace_base is not None:
-        return tss_pace_base
-    return tss_hr
-
-
 def _estimate_running_tss_tp_like_adjusted(
     activity: dict,
     hours: float,
@@ -3595,48 +3326,6 @@ def _estimate_running_tss_tp_like_adjusted(
         tss = max(tss, 0.88 * tss_hr)
 
     return max(0.0, tss)
-
-
-def _estimate_running_tss_tp_like_v2(
-    activity: dict,
-    hours: float,
-    running_threshold_pace_sec_per_km: float | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-) -> float | None:
-    """Simplified TP-like fallback for running when activity_details is unavailable.
-
-    Design goals:
-    - Keep this path easy to reason about (base pace IF + single explicit HR guardrail).
-    - Avoid stacked heuristic layers from legacy fallback.
-    - Keep `k` fixed by design (no dataset tuning loops).
-    """
-    if hours <= 0:
-        return None
-
-    threshold_pace = _extract_threshold_pace_sec_per_km(activity, running_threshold_pace_sec_per_km)
-    native_effective_pace = _extract_running_native_effective_pace_sec_per_km(activity)
-    avg_pace = _extract_avg_pace_sec_per_km(activity)
-
-    base_if: float | None = None
-    if threshold_pace and threshold_pace > 0:
-        if native_effective_pace and native_effective_pace > 0:
-            base_if = max(0.50, min(1.35, threshold_pace / native_effective_pace))
-        elif avg_pace and avg_pace > 0:
-            base_if = max(0.50, min(1.30, threshold_pace / avg_pace))
-
-    if_hr = _estimate_if_from_hr(activity, cycling_formula=False, hr_rest_bpm=hr_rest_bpm, hr_max_bpm=hr_max_bpm)
-    tss_hr = max(0.0, hours * (if_hr**2) * 100.0) if if_hr is not None else None
-
-    if base_if is None:
-        return tss_hr
-
-    tss_pace = max(0.0, hours * (base_if**2) * 100.0)
-    if tss_hr is None:
-        return tss_pace
-
-    # Single explicit guardrail against implausibly low pace-based fallback output.
-    return max(tss_pace, RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO * tss_hr)
 
 
 def _estimate_running_tss_from_activity_details_pipeline(
@@ -3842,49 +3531,25 @@ def _estimate_session_tss(
             return max(0.0, float(tss_gym)), "hrTSS"
 
     elif is_running_non_trail:
-        running_model = _resolve_running_tss_model(activity)
-        running_resolution = "running:unknown"
-        if running_model == "legacy":
-            running_resolution = "running:legacy"
-            tss_running = _estimate_running_tss_examined(
+        running_resolution = "running:pipeline_fisico"
+        tss_running = _estimate_running_tss_from_activity_details_pipeline(
+            activity,
+            activity_details_raw=details_payload,
+            running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+            hr_rest_bpm=hr_rest_bpm,
+            hr_max_bpm=hr_max_bpm,
+            hr_threshold_bpm=hr_threshold_bpm,
+        )
+        if tss_running is None:
+            # Sin activity_details: respaldo por agregados de la actividad.
+            tss_running = _estimate_running_tss_tp_like_adjusted(
                 activity,
                 hours=hours,
                 running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
                 hr_rest_bpm=hr_rest_bpm,
                 hr_max_bpm=hr_max_bpm,
             )
-        else:
-            tss_running = _estimate_running_tss_from_activity_details_pipeline(
-                activity,
-                activity_details_raw=details_payload,
-                running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
-                hr_threshold_bpm=hr_threshold_bpm,
-            )
-            if tss_running is not None:
-                running_resolution = "running:pipeline_fisico"
-            if tss_running is None:
-                fallback_model = _resolve_running_fallback_model(activity)
-                if fallback_model == "v2":
-                    # Classification stays metadata-only in v2 fallback (no multipliers by session kind).
-                    tss_running = _estimate_running_tss_tp_like_v2(
-                        activity,
-                        hours=hours,
-                        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-                        hr_rest_bpm=hr_rest_bpm,
-                        hr_max_bpm=hr_max_bpm,
-                    )
-                    running_resolution = "running:tp_like_v2"
-                else:
-                    tss_running = _estimate_running_tss_tp_like_adjusted(
-                        activity,
-                        hours=hours,
-                        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-                        hr_rest_bpm=hr_rest_bpm,
-                        hr_max_bpm=hr_max_bpm,
-                    )
-                    running_resolution = "running:tp_like_adjusted"
+            running_resolution = "running:tp_like_adjusted"
         if tss_running is not None:
             _set_tss_resolution_meta(activity, model_tag=running_resolution)
             return tss_running, "TSS"
@@ -4792,22 +4457,6 @@ def classify_walk_hike_session_with_confidence(activity: dict, hours: float) -> 
     return _classify_walk_hike_session_with_confidence(activity, hours)
 
 
-def estimate_running_tss_examined(
-    activity: dict,
-    hours: float,
-    running_threshold_pace_sec_per_km: float | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-) -> float | None:
-    return _estimate_running_tss_examined(
-        activity,
-        hours,
-        running_threshold_pace_sec_per_km,
-        hr_rest_bpm,
-        hr_max_bpm,
-    )
-
-
 def estimate_running_tss_tp_like_adjusted(
     activity: dict,
     hours: float,
@@ -4816,22 +4465,6 @@ def estimate_running_tss_tp_like_adjusted(
     hr_max_bpm: float | None,
 ) -> float | None:
     return _estimate_running_tss_tp_like_adjusted(
-        activity,
-        hours,
-        running_threshold_pace_sec_per_km,
-        hr_rest_bpm,
-        hr_max_bpm,
-    )
-
-
-def estimate_running_tss_tp_like_v2(
-    activity: dict,
-    hours: float,
-    running_threshold_pace_sec_per_km: float | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-) -> float | None:
-    return _estimate_running_tss_tp_like_v2(
         activity,
         hours,
         running_threshold_pace_sec_per_km,
@@ -4950,9 +4583,7 @@ __all__ = [
     "classify_running_session",
     "classify_strength_session_with_confidence",
     "classify_walk_hike_session_with_confidence",
-    "estimate_running_tss_examined",
     "estimate_running_tss_tp_like_adjusted",
-    "estimate_running_tss_tp_like_v2",
     "estimate_if_from_training_effect",
     "estimate_session_tss",
     "infer_tss_source_tag",

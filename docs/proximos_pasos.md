@@ -2,6 +2,8 @@
 
 Ultima actualizacion: 2026-10-21 (estado vigente)
 
+> **Limpieza del 21/10/2026.** Las tablas, CSV, informes y scripts de diagnóstico que cita esta bitácora se movieron a `_archivo/` (local, fuera de git) o se borraron. El export de TP está en `_archivo/datos_tp/workouts.csv`. Los hashes de commit citados abajo son anteriores a la reescritura del historial de ese día: ver la tabla de equivalencias en `CHANGELOG.md`.
+
 ## Estado vigente (2026-10-21)
 
 El cálculo de carga reproduce el de TrainingPeaks y está validado contra el export de TP del atleta (`workouts.csv`, 01/02–21/10/2026). Detalle técnico en `CLAUDE.md`.

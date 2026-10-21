@@ -49,7 +49,7 @@ Anclajes por fecha (perfil `performance`):
 - Motor de planes (`_generate_structured_plan_payload(..., load_context=)`): `_build_plan_load_context` aporta minutos/semana de las últimas 4 semanas, sesión larga de 6 semanas y CTL/ATL/TSB/estado. Ninguna semana > 10 % sobre lo sostenido; objetivo pasado → plan genérico de 8 semanas; `hr_pct` = % LTHR.
 - `prompts/mcp_tool_routing_guide.md` no se inyecta al LLM: es referencia para desarrollo.
 - El MCP devuelve algunas listas como objetos JSON concatenados (récords, zonas): usar `_try_parse_json`. `get_activity` trae las métricas en `summaryDTO`: usar `_flatten_garmin_activity`.
-- Batería de preguntas: `docs/bateria_p55_preguntas_base.txt` (25 preguntas; última pasada completa 21/10 sin incoherencias de datos).
+- Batería de preguntas: `docs/bateria_p55_preguntas_base.txt` (25 preguntas). Se lanza con `tools/run_bateria.py [--modelo M]` (usuario de `KAIROS_USERNAME`; salida con tiempos en `.tmp/bateria/`, ignorada por git).
 - Login de Garmin: el MCP reutiliza tokens en `~/.garminconnect/kairos/<hash del email>` (o `GARMINTOKENS`); solo hace login real si faltan o no valen. Antes cada arranque hacía login completo y Garmin bloqueaba la IP (429) tras varias pasadas.
 - Capa de coaching: `_coaching_horizon` fija el horizonte (hoy, mañana o los días que quedan de la semana); `_strip_simulated_user_turn` limpia turnos de usuario inventados por el LLM.
 - LLM de pruebas: NVIDIA `nemotron-3-ultra-550b-a55b` vía `NVIDIA_MODEL` en `.env` (el defecto del código sigue siendo `nemotron-3.5-lightning-30b-a3b`). Con la batería del 21/10 fue más coherente y más lento (158 s frente a 75 s en las 4 preguntas con LLM). Varios modelos del catálogo de NVIDIA dan 404 con esta clave (Kimi K2.6, Nemotron 3 Super, Mistral Large 2).
@@ -60,7 +60,7 @@ Anclajes por fecha (perfil `performance`):
 - `load_metrics_daily`: serie diaria TSS/ATL/CTL/TSB (fuente canónica de las pantallas).
 - Línea base: desde 2026-02-22. El TSS guardado nunca se recalcula; solo se calculan actividades nuevas. Correcciones puntuales = recálculo en prueba + escritura de las filas afectadas + serie desde la primera fecha afectada.
 - `tools/rebuild_tss_baseline.py --username U --start ISO [--apply]`: ruta de producción con escrituras interceptadas; sin `--apply` es la prueba.
-- TP de referencia: `workouts.csv` en la raíz (export TP 01/02–21/10/2026, sin commitear). El export omite algunas sesiones (7 de fuerza de agosto) y la columna IF no sirve para validar (TSS de running ≈ 1.06–1.14 × h·IF²·100).
+- TP de referencia: `_archivo/datos_tp/workouts.csv` (export TP 01/02–21/10/2026; `_archivo/` es local y está en `.gitignore`). El export omite algunas sesiones (7 de fuerza de agosto) y la columna IF no sirve para validar (TSS de running ≈ 1.06–1.14 × h·IF²·100).
 - `TSS_FORMULA_VERSION` = 34: no subirla sin decidirlo (dispara recálculo completo de 120 días).
 
 ## Pendiente
@@ -78,4 +78,4 @@ Anclajes por fecha (perfil `performance`):
 
 ## Historia
 
-Detalle de cada cambio en `docs/proximos_pasos.md` (bitácora) y `CHANGELOG.md`. Hitos: `activity_tss` y línea base (94dc1fb…4a9ae68, 20/10); enrutado gym_cardio por palabras completas (087aec0); trail como TP (50d9954); ritmo umbral por fecha (7270bfa); auditoría PMC, bici NP, caminatas (1decb7e). Los golden de `docs/tablas/golden_*.json` son del 19/10, anteriores a la línea base: solo históricos.
+Detalle de cada cambio en `docs/proximos_pasos.md` (bitácora) y `CHANGELOG.md`. Hitos: `activity_tss` y línea base (94dc1fb…4a9ae68, 20/10); enrutado gym_cardio por palabras completas (087aec0); trail como TP (50d9954); ritmo umbral por fecha (7270bfa); auditoría PMC, bici NP, caminatas (1decb7e). Evidencias de calibración (tablas frente a TP, goldens del 19/10, diseños cerrados) y herramientas de diagnóstico: `_archivo/` (local, en `.gitignore`; no se sube). Datos reales de Garmin para reproducir offline: `fixtures/real_payloads/` (local, ignorado).

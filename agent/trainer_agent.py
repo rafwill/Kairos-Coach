@@ -79,11 +79,6 @@ def _load_session_summaries() -> list[dict]:
     return _storage.load_session_summaries()
 
 
-def _persist_session_summary(summary: str) -> None:
-    """Guarda el resumen de la sesión actual en el contexto persistente."""
-    _storage.persist_session_summary(summary)
-
-
 def get_gemini_daily_usage(api_key: str) -> int:
     """Obtiene los tokens consumidos hoy para una API key específica."""
     return _storage.get_gemini_daily_usage(api_key)
@@ -1802,32 +1797,12 @@ def _classify_running_session_with_confidence(activity: dict) -> dict[str, Any]:
     return _load_metrics.classify_running_session_with_confidence(activity)
 
 
-def _classify_running_session(activity: dict) -> str:
-    return _load_metrics.classify_running_session(activity)
-
-
 def _classify_strength_session_with_confidence(activity: dict) -> dict[str, Any]:
     return _load_metrics.classify_strength_session_with_confidence(activity)
 
 
 def _classify_walk_hike_session_with_confidence(activity: dict, hours: float) -> dict[str, Any]:
     return _load_metrics.classify_walk_hike_session_with_confidence(activity, hours)
-
-
-def _estimate_running_tss_examined(
-    activity: dict,
-    hours: float,
-    running_threshold_pace_sec_per_km: float | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-) -> float | None:
-    return _load_metrics.estimate_running_tss_examined(
-        activity,
-        hours,
-        running_threshold_pace_sec_per_km,
-        hr_rest_bpm,
-        hr_max_bpm,
-    )
 
 
 def _estimate_if_from_training_effect(activity: dict) -> float | None:
@@ -3361,12 +3336,6 @@ def _parse_recent_tss_sports_request(user_message: str) -> tuple[list[str], int]
     return sports, n
 
 
-def _parse_recent_tss_sport_request(user_message: str) -> tuple[str | None, int]:
-    """Compatibilidad: primer deporte detectado y tamaño N."""
-    sports, n = _parse_recent_tss_sports_request(user_message)
-    return (sports[0] if sports else None), n
-
-
 def _is_recent_tss_by_sport_intent(user_message: str) -> bool:
     """Detecta petición de TSS de las últimas N actividades/entrenamientos de uno o varios deportes."""
     text = (user_message or "").strip().lower()
@@ -3557,96 +3526,6 @@ def _build_config_options_markdown() -> str:
             "- Si quieres, te guío paso a paso para actualizar uno ahora.",
             "",
             "- Fuente: respuesta determinista (listado de opciones configurables en perfil).",
-        ]
-    )
-
-
-def _build_tomorrow_workout_markdown(profile: dict) -> str:
-    """Propone sesión de mañana de forma determinista usando plan o carga/fatiga actual."""
-    profile = profile if isinstance(profile, dict) else {}
-    tomorrow_d = date.today() + timedelta(days=1)
-    tomorrow_iso = tomorrow_d.isoformat()
-    weekday_es = {
-        1: "lunes",
-        2: "martes",
-        3: "miercoles",
-        4: "jueves",
-        5: "viernes",
-        6: "sabado",
-        7: "domingo",
-    }
-    tomorrow_label = f"{weekday_es.get(tomorrow_d.isoweekday(), tomorrow_d.strftime('%A'))} {tomorrow_d.strftime('%d/%m')}"
-
-    active_plan = _get_active_training_plan(profile)
-    if active_plan:
-        planned = _get_planned_session_for_date(active_plan, tomorrow_iso)
-        if planned:
-            stype = str(planned.get("session_type") or "sesión").replace("_", " ").strip()
-            intensity = str(planned.get("intensity") or "RPE 3-5").strip()
-            duration = planned.get("duration_min")
-            duration_text = f"{int(duration)} min" if isinstance(duration, (int, float)) and float(duration) > 0 else "duración flexible"
-            notes = str(planned.get("notes") or "").strip()
-            lines = [
-                "## 🧭 Resumen",
-                "Propuesta de sesión para mañana basada en tu plan activo.",
-                "",
-                "## 📊 Métricas clave",
-                "| Métrica | Valor | Fuente |",
-                "|---|---|---|",
-                f"| Fecha | {tomorrow_label} | calendario |",
-                f"| Sesión sugerida | {stype} · {duration_text} · {intensity} | plan activo |",
-            ]
-            if notes:
-                lines.append(f"| Nota del plan | {notes} | plan activo |")
-            lines.extend([
-                "",
-                "## ✅ Recomendación",
-                "- Mantener la sesión propuesta y ajustar solo si cambian recuperación o fatiga.",
-                "",
-                "## 🎯 Próximo paso",
-                "- Si quieres, te la detallo por bloques (calentamiento, parte principal y vuelta a la calma).",
-                "- Fuente: respuesta determinista (no depende del LLM).",
-            ])
-            return "\n".join(lines)
-
-    lm = (profile.get("load_metrics") if isinstance(profile.get("load_metrics"), dict) else {}) or {}
-    last = (lm.get("last") if isinstance(lm.get("last"), dict) else {}) or {}
-    weekly = (lm.get("weekly") if isinstance(lm.get("weekly"), dict) else {}) or {}
-
-    tsb = float(last.get("tsb") or 0.0)
-    atl = float(last.get("atl") or 0.0)
-    ctl = float(last.get("ctl") or 0.0)
-    weekly_spike = bool(weekly.get("spike_alert"))
-
-    session = "Rodaje aeróbico 45-55 min (RPE 3-4) + 6x20'' progresivos"
-    reason = "Estado neutro: se prioriza consistencia sin exceso de fatiga."
-
-    if weekly_spike or tsb <= -10.0 or atl > (ctl + 8.0):
-        session = "Recuperación activa 30-40 min (RPE 2-3) o descanso total"
-        reason = "Carga/fatiga altas: mejor consolidar adaptación y reducir riesgo."
-    elif tsb >= 5.0 and atl <= (ctl + 2.0):
-        session = "Calidad controlada 50-65 min: 15' suave + 3x8' tempo (RPE 6-7) + 10' enfriamiento"
-        reason = "Buena disponibilidad: puedes introducir estímulo de calidad moderada."
-
-    return "\n".join(
-        [
-            "## 🧭 Resumen",
-            "Propuesta de sesión para mañana basada en carga/fatiga actual.",
-            "",
-            "## 📊 Métricas clave",
-            "| Métrica | Valor | Fuente |",
-            "|---|---|---|",
-            f"| Fecha | {tomorrow_label} | calendario |",
-            f"| Estado actual | CTL={ctl:.1f} · ATL={atl:.1f} · TSB={tsb:.1f} | perfil DB-first |",
-            f"| Sesión sugerida | {session} | reglas deterministas |",
-            f"| Motivo | {reason} | reglas deterministas |",
-            "",
-            "## ✅ Recomendación",
-            "- Ejecuta la sesión sugerida respetando el RPE objetivo.",
-            "",
-            "## 🎯 Próximo paso",
-            "- Si quieres, la adapto a tiempo disponible (30, 45 o 60 min).",
-            "- Fuente: respuesta determinista (no depende del LLM).",
         ]
     )
 
@@ -4336,9 +4215,6 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     # se consulta una semana histórica (p. ej. "semana pasada").
     range_start = min(week_start, comp_start)
     range_end = max(week_end, comp_end)
-    # mantener prev_week_start/end para compatibilidad con resto del código
-    prev_week_start = comp_start
-    prev_week_end = comp_end
     prev_week_dates = comp_dates
 
     tss_by_day: dict[str, float] = {}
@@ -5548,27 +5424,6 @@ def _build_wellness_payloads_from_row(row: dict | None, metric_date: str) -> tup
     return (body_payload if has_body else None, hrv_payload if has_hrv else None)
 
 
-def _is_wellness_row_fresh(row: dict | None, *, max_age_hours: float) -> bool:
-    """Evalúa frescura de un snapshot wellness en DB."""
-    if not isinstance(row, dict):
-        return False
-    if max_age_hours <= 0:
-        return False
-
-    stamp_raw = row.get("pulled_at") or row.get("updated_at")
-    if not stamp_raw:
-        return False
-    try:
-        stamp = datetime.fromisoformat(str(stamp_raw).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-
-    age_hours = (datetime.now(tz=timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds() / 3600.0
-    return age_hours <= max_age_hours
-
-
 def _extract_sleep_inputs(payload: Any, target_date: str) -> tuple[float | None, float | None]:
     """Extrae horas de sueño y score del día objetivo."""
     day = _pick_day_payload(payload, target_date)
@@ -6639,104 +6494,6 @@ def _wants_new_plan_intent(user_message: str) -> bool:
         "crear otro plan",
     ]
     return any(marker in text for marker in markers)
-
-
-def _apply_trail_overrides(sessions: list[dict], has_injuries: bool) -> list[dict]:
-    """Enriquece las sesiones con tipos y notas específicos de trail running.
-
-    Modifica en los dicts existentes: session_type, exercises y notes según el rol
-    de cada sesión en la semana. No altera duraciones ni intensidades.
-    """
-    quality_intensity_note = "(RPE conservado por lesión)" if has_injuries else ""
-
-    for s in sessions:
-        day = s.get("day_index", 0)
-        stype = str(s.get("session_type") or "").lower()
-
-        if stype == "strength":
-            s["session_type"] = "strength_trail"
-            s["exercises"] = [
-                "fuerza excéntrica cuádriceps (sentadillas búlgaras)",
-                "isométricos de sóleo y gemelo",
-                "hip thrust + trabajo glúteo medio",
-                "core antirotacional",
-                "movilidad cadera/tobillo",
-            ]
-            s["notes"] = (
-                "Calentamiento 10'. Enfoque en tren inferior para subida/bajada de trail. "
-                "Enfriamiento 5' con estiramientos fascia plantar y sóleo. "
-                "Hidratación 500 ml. Sin impacto en rodilla si lesión activa."
-            )
-
-        elif stype == "running_quality" and day in (2, 4):
-            if day == 2:
-                s["session_type"] = "trail_hills"
-                s["exercises"] = [
-                    "cuestas largas 4-6x3-4 min Z4",
-                    "bajadas técnicas controladas Z2 (no frenar con el talón)",
-                    "técnica de subida con bastones si aplica",
-                ]
-                s["notes"] = (
-                    f"Calentamiento 15' en llano/pendiente suave. "
-                    f"Cuestas con desnivel 6-10%. Bajadas controlando impacto. "
-                    f"Enfriamiento 10'. {quality_intensity_note} "
-                    f"Nutrición pre-sesión. Hidratación 600-800 ml."
-                )
-            else:
-                s["session_type"] = "trail_tempo"
-                s["exercises"] = [
-                    "tempo continuo Z3-Z4 en terreno variado",
-                    "secciones de terreno técnico a ritmo controlado",
-                    "economía de carrera en bajada",
-                ]
-                s["notes"] = (
-                    f"Calentamiento 15'. Tempo en terreno mixto (mezcla llano + cuesta suave). "
-                    f"Enfriamiento 10'. {quality_intensity_note} "
-                    f"Hidratación 500-750 ml. Practica alimentación en movimiento."
-                )
-
-        elif stype == "running_z2":
-            s["session_type"] = "trail_z2"
-            s["exercises"] = [
-                "rodaje continuo Z2 en terreno variado",
-                "movilidad de cadera en parada breve",
-            ]
-            s["notes"] = (
-                "Calentamiento 10'. Prioriza terreno blando (tierra/hierba) para reducir impacto. "
-                "Desnivel acumulado suave (±150 m si es posible). "
-                "Enfriamiento 5-10' + estiramientos suaves. Hidratación 500 ml."
-            )
-
-        elif stype == "long_run":
-            s["session_type"] = "trail_long"
-            s["exercises"] = [
-                "tirada larga progresiva en terreno de montaña",
-                "subidas a potencia constante (RPE, no ritmo)",
-                "bajadas técnicas con cadencia alta",
-                "alimentación y estrategia de avituallamiento en carrera",
-            ]
-            dur_h = round((s.get("duration_min") or 90) / 60, 1)
-            s["notes"] = (
-                f"Salida de {dur_h}h en terreno de trail. "
-                f"Objetivo: acumular desnivel positivo (+400-800 m según capacidad). "
-                f"Ritmo conversacional Z2. Practica tu estrategia real de avituallamiento: "
-                f"carbohidratos 30-60 g/h, hidratación 400-600 ml/h. "
-                f"Lleva bastones si el recorrido lo requiere."
-            )
-
-        elif stype == "recovery":
-            s["session_type"] = "trail_recovery"
-            s["exercises"] = [
-                "rodaje muy suave en terreno blando",
-                "movilidad y estiramientos de fascia plantar, cuádriceps y glúteo",
-            ]
-            s["notes"] = (
-                "Ritmo completamente libre, sin HR objetivo. "
-                "Terreno llano o bajada muy suave. "
-                "Enfriamiento con rodillo de espuma. Hidratación 400-600 ml."
-            )
-
-    return sessions
 
 
 def _race_distance_km(race: str) -> float | None:
@@ -8872,12 +8629,6 @@ def _get_activity_name_es(act_type) -> str:
     return ""
 
 
-def _hr_zone_bar(pct: float, width: int = 10) -> str:
-    """Barra visual █░ proporcional al porcentaje de zona de FC."""
-    filled = max(0, min(width, round(pct / 100 * width)))
-    return "█" * filled + "░" * (width - filled)
-
-
 def _format_activity_analysis_for_markdown(analysis_block: str) -> str:
     """Convierte el bloque técnico de análisis en Markdown legible para usuario."""
     if not analysis_block or not str(analysis_block).strip():
@@ -10885,24 +10636,9 @@ class TrainerAgent:
                 return _try_parse_json(compact) or compact
             return await _tool_json(tool_name, args)
 
-        def _wellness_ttl_hours() -> float:
-            raw = str(os.environ.get("KAIROS_WELLNESS_TTL_HOURS", "6") or "6").strip()
-            try:
-                value = float(raw)
-            except ValueError:
-                return 6.0
-            return max(0.0, value)
-
         def _wellness_refresh_on_startup() -> bool:
             raw = str(os.environ.get("KAIROS_WELLNESS_REFRESH_ON_STARTUP", "true") or "true").strip().lower()
             return raw not in {"0", "false", "no", "off"}
-
-        def _safe_get_wellness_row(metric_date: str) -> dict | None:
-            try:
-                return _storage.get_wellness_daily(metric_date)
-            except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
-                log.debug("collect_startup_snapshot_48h: wellness DB read fallo (%s): %s", metric_date, exc)
-                return None
 
         def _safe_upsert_wellness(
             metric_date: str,
@@ -10928,7 +10664,6 @@ class TrainerAgent:
         async def _return(value: Any) -> Any:
             return value
 
-        ttl_hours = _wellness_ttl_hours()
         force_refresh_today = _wellness_refresh_on_startup()
 
         def _session_get(metric_date: str, metric_key: str) -> Any:
@@ -11366,10 +11101,6 @@ class TrainerAgent:
             "has_key":         bool(api_key),
             "quota_exhausted": is_exhausted or (today_usage >= limit if limit else False),
         }
-
-    def get_gemini_daily_info(self) -> dict:
-        """Devuelve información sobre el uso diario de tokens de Gemini (mantenido por compatibilidad)."""
-        return self.get_daily_usage_info()
 
     def _profile_context_block(self) -> str:
         """Bloque "Perfil del usuario" (datos personales, objetivo y salud) para cualquier prompt."""
@@ -12885,49 +12616,6 @@ class TrainerAgent:
                         log.debug("Fallback LLM de planificación no disponible: %s", exc)
 
             return await self._finalize_chat_reply(user_message, assistant_reply, route="llm")
-
-    async def generate_session_summary(self) -> str:
-        """Genera un resumen compacto de la sesión actual usando el LLM."""
-        if not self.conversation_history:
-            return ""
-        # Tomar los últimos 30 mensajes para el resumen (evitar contexto excesivo)
-        history_text = "\n".join(
-            f"{msg['role'].upper()}: {msg['content'][:600]}"
-            for msg in self.conversation_history[-30:]
-            if msg.get("content")
-        )
-        summary_prompt = (
-            "Resume en MÁXIMO 250 palabras los puntos clave de esta sesión de entrenamiento. "
-            "Incluye: métricas destacadas (HRV, VO₂max, sueño, estrés…), hallazgos importantes, "
-            "recomendaciones dadas al deportista, y cualquier dato personal relevante que deba "
-            "recordarse en futuras sesiones. Sé conciso y factual, sin saludos ni introducciones.\n\n"
-            f"CONVERSACIÓN:\n{history_text}"
-        )
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": summary_prompt}],
-            )
-            # Track and update token usage for OpenAI keys
-            if getattr(response, "usage", None) and getattr(self, "_api_key", None):
-                u = response.usage
-                p_toks = getattr(u, "prompt_tokens", 0) or 0
-                c_toks = getattr(u, "completion_tokens", 0) or 0
-                update_gemini_daily_usage(self._api_key, p_toks + c_toks)
-            return (response.choices[0].message.content or "").strip()
-        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError, AttributeError):
-            # Fallback: resumen básico con los temas del usuario
-            topics = [
-                msg["content"][:80]
-                for msg in self.conversation_history
-                if msg.get("role") == "user" and msg.get("content")
-            ]
-            return f"Temas tratados: {' | '.join(topics[:5])}"
-
-    def save_session_summary(self, summary: str) -> None:
-        """Persiste el resumen de sesión en disco."""
-        if summary:
-            _persist_session_summary(summary)
 
     def generate_session_summary_checkpoint(self) -> str:
         """Genera un resumen local y ligero para checkpoints frecuentes.

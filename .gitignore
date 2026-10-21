@@ -44,3 +44,8 @@ memory/*
 .DS_Store
 Thumbs.db
 
+
+# Archivo local: evidencias, datos reales y herramientas de diagnóstico (no se sube)
+_archivo/
+.tmp/
+workouts*.csv

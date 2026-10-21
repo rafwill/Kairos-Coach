@@ -13,7 +13,7 @@ resolve_python() {
     echo "python"
     return
   fi
-  echo "No se encontró Python en PATH. Instala Python 3.10+ e inténtalo de nuevo." >&2
+  echo "No se encontró Python en PATH. Instala Python 3.11+ e inténtalo de nuevo." >&2
   exit 1
 }
 

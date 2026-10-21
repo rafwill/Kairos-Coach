@@ -1100,13 +1100,18 @@ def _format_coach_markdown(response: str) -> str:
 console = Console()
 
 
+def _model_label(name: str, model_env: str, default_model: str) -> str:
+    """Etiqueta del menú con el modelo efectivo (el de .env o el defecto de TrainerAgent)."""
+    return f"{name} ({os.environ.get(model_env) or default_model})"
+
+
 _PROVIDER_INFO = {
-    "vpn":      ("GITHUB_TOKEN",     "GitHub Models (gpt-4o-mini)",         "VPN activa"),
-    "groq":     ("GROQ_API_KEY",     "Groq (llama-3.3-70b-versatile)",      "100k tokens/día"),
-    "gemini":   ("GEMINI_API_KEY",   "Google Gemini (gemini-2.0-flash)",    "~1M tokens/día gratis"),
-    "mistral":  ("MISTRAL_API_KEY",  "Mistral (mistral-small-latest)",      "capa gratuita · console.mistral.ai"),
-    "cerebras": ("CEREBRAS_API_KEY", "Cerebras (llama-3.3-70b)",            "ultrarrápido · gratis · cloud.cerebras.ai"),
-    "nvidia":   ("NVIDIA_API_KEY",   "NVIDIA NIM (nemotron-3.5-lightning-30b)",  "API compatible OpenAI · build.nvidia.com"),
+    "vpn":      ("GITHUB_TOKEN",     _model_label("GitHub Models", "GITHUB_MODEL", "gpt-4o-mini"),              "VPN activa"),
+    "groq":     ("GROQ_API_KEY",     _model_label("Groq", "GROQ_MODEL", "llama-3.3-70b-versatile"),            "100k tokens/día"),
+    "gemini":   ("GEMINI_API_KEY",   _model_label("Google Gemini", "GEMINI_MODEL", "gemini-2.0-flash"),         "~1M tokens/día gratis"),
+    "mistral":  ("MISTRAL_API_KEY",  _model_label("Mistral", "MISTRAL_MODEL", "mistral-small-latest"),          "capa gratuita · console.mistral.ai"),
+    "cerebras": ("CEREBRAS_API_KEY", _model_label("Cerebras", "CEREBRAS_MODEL", "llama-3.3-70b"),               "ultrarrápido · gratis · cloud.cerebras.ai"),
+    "nvidia":   ("NVIDIA_API_KEY",   _model_label("NVIDIA NIM", "NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"), "API compatible OpenAI · build.nvidia.com"),
 }
 
 
@@ -1354,11 +1359,6 @@ async def main() -> None:
                     "[yellow]ℹ Detecté cambios en el modelo de carga/TSS. "
                     "Voy a recalcular histórico y este inicio puede tardar un poco más.[/]"
                 )
-            status_msg = (
-                "[dim]Inicializando histórico de carga desde Garmin (usuario nuevo)...[/]"
-                if is_new_user
-                else "[dim]Verificando actividades recientes en Garmin y calculando carga/fatiga...[/]"
-            )
             _load_start = time.time()
 
             async def _compute_with_counter() -> None:

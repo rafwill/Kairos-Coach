@@ -93,7 +93,7 @@ Sensor continuo de carga y fatiga, calculado como TrainingPeaks:
 - Integrado en el snapshot proactivo con regla aplicada de actuación.
 
 #### Validación frente a TrainingPeaks
-**Herramientas:** `tools/rebuild_tss_baseline.py`, export de TP (`workouts.csv`)
+**Herramientas:** `tools/rebuild_tss_baseline.py`, export de TP (`_archivo/datos_tp/workouts.csv`, local)
 
 Sensor de exactitud del propio cálculo:
 - `rebuild_tss_baseline.py` recalcula todo por la ruta de producción con las escrituras interceptadas (prueba) y deja un CSV por actividad; con `--apply` persiste.

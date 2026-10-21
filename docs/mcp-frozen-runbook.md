@@ -52,26 +52,15 @@ Unix/macOS:
 
 ## Incidentes 403 y 429 (diagnostico operativo)
 
-Cuando aparezcan `429` y `403` mezclados en una misma tanda, no usar retry ciego.
+Desde el 21/10/2026 el MCP reutiliza los tokens de Garmin en `~/.garminconnect/kairos/<hash del email>` (o `GARMINTOKENS`) y solo hace login real si faltan o no valen. Los 429/403 venían de hacer un login completo en cada arranque.
 
-### Comando recomendado
+Si aun así aparecen `429` y `403` mezclados:
 
-```powershell
-c:/Github/garmin-ai-coach/.venv/Scripts/python.exe tools/mcp_relogin_probe.py
-```
+1. No reintentar en bucle: Garmin endurece el bloqueo (cuenta/IP) si se insiste.
+2. Esperar al menos 15 min antes de volver a arrancar Kairos o lanzar la batería.
+3. No lanzar trazas largas de análisis hasta que un arranque normal funcione.
 
-Comportamiento por defecto de la sonda:
-
-1. Re-login aislado sin llamadas de datos.
-2. Cooldown largo (`900s`, 15 min) antes de sondear.
-3. Sonda lenta (`8s` entre llamadas).
-4. Stop en el primer error para evitar escalada anti-abuso.
-
-### Lectura rapida de resultados
-
-1. `first_429_session_age_seconds` bajo (por ejemplo < 10s): probable bloqueo a nivel cuenta/IP, no solo por sesion.
-2. `429` seguido de `403` en la misma corrida: posible escalada anti-abuso; ampliar ventana de espera.
-3. Si el probe no queda limpio, no ejecutar trazas largas de analisis (hiking/running) en ese momento.
+La sonda de re-login que se usó para diagnosticarlo (`mcp_relogin_probe.py`) está archivada en `_archivo/tools/` (local, fuera de git).
 
 ## Mantenimiento
 - Si cambia el catálogo o contrato de tools, actualizar:
@@ -79,7 +68,7 @@ Comportamiento por defecto de la sonda:
   - `agent/mcp_adapter.py` (`TOOL_CONTRACTS_V1`, normalización y fallback).
   - `tests/test_mcp_client.py` (drift-check y contrato).
 - Si cambia política de resiliencia, alinear también:
-  - `README.md` (sección backend MCP y modo de herramientas).
+  - `docs/arquitectura.md` (sección Servidor MCP propio).
   - `KAIROS_MCP_ENABLE_FALLBACK` en `.env.example`/runbooks si aplica.
 - Si cambia launcher local, revisar:
   - `tools/garmin-mcp-frozen.cmd`
