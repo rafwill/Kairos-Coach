@@ -11,7 +11,7 @@ Uso:
 Validación (bloquea --apply):
   - get_activity_details devolvió error en alguna llamada.
   - Alguna sesión de running no-trail no usó el pipeline con detalles.
-  - La tabla activity_tss no existe (migración 004 sin aplicar).
+  - La tabla activity_tss no existe (falta ejecutar supabase/schema.sql).
 """
 
 from __future__ import annotations
@@ -182,7 +182,7 @@ def main() -> None:
     if problems:
         raise SystemExit("No se aplica: validación fallida.")
     if not _activity_tss_table_exists():
-        raise SystemExit("No se aplica: la tabla activity_tss no existe (aplica supabase/migrations/004_activity_tss.sql).")
+        raise SystemExit("No se aplica: la tabla activity_tss no existe (ejecuta supabase/schema.sql en el SQL Editor de Supabase).")
 
     from agent import storage as st
     from agent import trainer_agent as ta

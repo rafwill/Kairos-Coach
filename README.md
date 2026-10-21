@@ -41,7 +41,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1   # Windows
 El setup crea `.venv`, instala dependencias, copia `.env.example` a `.env` y genera `ENCRYPTION_KEY`. Después:
 
 1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` y al menos una API key de LLM (`NVIDIA_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `CEREBRAS_API_KEY` o `GITHUB_TOKEN`). Cada proveedor admite su `*_MODEL`; ver `.env.example`.
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en el SQL Editor de Supabase. En un proyecto ya existente, aplica las migraciones pendientes de `supabase/migrations/`.
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en el SQL Editor de Supabase (New query → pegar → Run). Es el único fichero de esquema: crea todas las tablas en un proyecto nuevo y, en uno ya existente, añade solo lo que falte sin tocar los datos.
 
 ## Uso
 
@@ -79,7 +79,7 @@ agent/
   kairos_mcp_server.py   servidor MCP propio sobre Garmin Connect (solo lectura)
   mcp_client.py, mcp_adapter.py   cliente MCP y contratos de tools
 prompts/                 system prompt (completo y compacto) y guía de tools MCP
-supabase/                schema.sql y migraciones
+supabase/                schema.sql (esquema completo e idempotente)
 tests/                   suite de pytest (sin red: Garmin, Supabase y LLM mockeados)
 tools/
   rebuild_tss_baseline.py   corrección del histórico de TSS (prueba; --apply escribe)

@@ -2,6 +2,12 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-21 (esquema de Supabase en un solo fichero)
+
+### Changed
+- `supabase/schema.sql` es el único fichero de esquema y es idempotente: instala desde cero o pone al día un proyecto existente sin tocar datos. Incluye lo de las antiguas migraciones 001–004 (ya estaba todo salvo el `add column if not exists structured_workout` para proyectos anteriores a la 002). Se borra `supabase/migrations/`.
+- Comprobado contra la base de datos real: las 8 tablas existentes coinciden columna a columna con el fichero. Faltaban `training_plan`, `training_plan_session` y `training_plan_version` (los planes no se podían guardar); se crean ejecutando `schema.sql`.
+
 ## 2026-10-21 (login de Garmin tras cambiar la contraseña)
 
 ### Fixed

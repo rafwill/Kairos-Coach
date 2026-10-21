@@ -1,10 +1,13 @@
 -- =============================================================================
--- Kairos Coach — Supabase Schema (instalacion limpia)
+-- Kairos Coach — Supabase Schema (fichero único)
 -- =============================================================================
 -- Ejecutar en: Supabase Dashboard -> SQL Editor -> New query -> Run.
 --
--- Este script crea el esquema multiusuario desde cero para un proyecto nuevo.
--- No incluye migraciones legacy ni scripts de limpieza.
+-- Crea el esquema multiusuario completo en un proyecto nuevo y pone al día uno
+-- ya existente: es idempotente (create ... if not exists, add column if not
+-- exists, drop/create trigger), así que se puede ejecutar las veces que haga
+-- falta sin perder datos. Sustituye a las antiguas migraciones 001–004.
+-- Al cambiar el esquema, editar este fichero manteniendo esa propiedad.
 -- =============================================================================
 
 begin;
@@ -116,6 +119,10 @@ create table if not exists training_plan_session (
 );
 
 alter table training_plan_session disable row level security;
+
+-- Proyectos creados antes de que existiera la columna (antigua migración 002).
+alter table training_plan_session
+    add column if not exists structured_workout jsonb not null default '{}';
 
 create index if not exists idx_training_plan_session_plan
     on training_plan_session (plan_id, week_index, day_index);

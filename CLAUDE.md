@@ -56,7 +56,7 @@ Anclajes por fecha (perfil `performance`):
 
 ## Datos y herramientas
 
-- `activity_tss` (migración 004, aplicada): una fila por actividad con `tss`, `model`, `tss_source`, `native_load`, anclajes usados (`hr_rest_used`, `lthr_used`, `threshold_pace_used`, `ftp_used`, `walk_threshold_used`).
+- `activity_tss` (en `supabase/schema.sql`, el único fichero de esquema, idempotente): una fila por actividad con `tss`, `model`, `tss_source`, `native_load`, anclajes usados (`hr_rest_used`, `lthr_used`, `threshold_pace_used`, `ftp_used`, `walk_threshold_used`).
 - `load_metrics_daily`: serie diaria TSS/ATL/CTL/TSB (fuente canónica de las pantallas).
 - Línea base: desde 2026-02-22. El TSS guardado nunca se recalcula; solo se calculan actividades nuevas. Correcciones puntuales = recálculo en prueba + escritura de las filas afectadas + serie desde la primera fecha afectada.
 - `tools/rebuild_tss_baseline.py --username U --start ISO [--apply]`: ruta de producción con escrituras interceptadas; sin `--apply` es la prueba.

@@ -40,7 +40,7 @@ Referencia técnica de cómo funciona Kairos por dentro. El estado vigente del c
 | `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente canónica de todas las pantallas. |
 | `wellness_daily` | Body Battery y HRV por día, con `pulled_at` para no consultar Garmin de más. |
 
-Esquema completo en `supabase/schema.sql`; migraciones incrementales en `supabase/migrations/`.
+Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve para instalar desde cero y para poner al día un proyecto existente).
 
 ## Arranque de sesión
 

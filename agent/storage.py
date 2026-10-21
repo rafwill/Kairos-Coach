@@ -935,7 +935,7 @@ def get_load_metrics_row(metric_date: str) -> dict | None:
 def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
     """TSS ya guardados por actividad desde start_date.
 
-    Devuelve {} si la tabla aún no existe (migración pendiente: no hay línea base) y
+    Devuelve {} si la tabla aún no existe (falta ejecutar supabase/schema.sql: no hay línea base) y
     None si la lectura falla por otro motivo; el llamador no debe recalcular el histórico
     en ese caso.
     """
@@ -966,7 +966,7 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
         }
     except Exception as exc:  # postgrest APIError no hereda de los tipos habituales
         if _is_missing_table_error(exc, "activity_tss"):
-            log.info("get_activity_tss_map: tabla activity_tss no disponible (migración pendiente)")
+            log.info("get_activity_tss_map: tabla activity_tss no disponible (falta ejecutar supabase/schema.sql)")
             return {}
         log.warning("get_activity_tss_map: %s", exc)
         return None
