@@ -2,7 +2,7 @@
 
 Ultima actualizacion: 2026-10-21 (estado vigente)
 
-> **Limpieza del 21/10/2026.** Las tablas, CSV, informes y scripts de diagnóstico que cita esta bitácora se movieron a `_archivo/` (local, fuera de git) o se borraron. El export de TP está en `_archivo/datos_tp/workouts.csv`. Los hashes de commit citados abajo son anteriores a la reescritura del historial de ese día: ver la tabla de equivalencias en `CHANGELOG.md`.
+> **Limpieza del 21/10/2026.** Las tablas, CSV, informes y scripts de diagnóstico que cita esta bitácora se movieron a `_archivo/` (local, fuera de git) o se borraron. El export de TP está en `_archivo/datos_tp/workouts.csv`. Ese día se reescribió el historial de git para quitar datos personales; los hashes citados abajo ya son los del historial nuevo (los de los commits antiguos no coinciden).
 
 ## Estado vigente (2026-10-21)
 
@@ -71,7 +71,7 @@ Estado guardado para reanudar en la siguiente sesion:
 
 1. Rama de trabajo activa con cambios publicados:
       - Branch: `feature/calibracion-fuerza-tp`
-      - Commit: `37cbf30`
+      - Commit: `0ac9d2f`
       - Push remoto: completado en `origin/feature/calibracion-fuerza-tp`
 2. Calibracion de fuerza implementada y validada en codigo/tests:
       - Estimador de fuerza recalibrado (enfoque global, no por actividad aislada).
@@ -1008,10 +1008,10 @@ log -S "TSS_FORMULA_VERSION = 33"
 log -S "TSS_FORMULA_VERSION = 34"
 Resultado:
 
-1a957e3: subida a 33
+7ae3620: subida a 33
 Mensaje: Add gym cardio phase-1 TSS model for elliptical and rowing
 Cambios: introduce detección rowing y modelo gym cardio fase 1 (parámetros IF y fuente gym_cardio:lthr/fallback).
-ec433ef: subida a 34
+15b1c23: subida a 34
 Mensaje: Implement gym cardio phase-2 mechanical blend
 Cambios: añade blend mecánico + HR en gym cardio (pesos HR/mech), nuevas señales mecánicas (power/pace500/cadence/resistance), y etiquetas de fuente extendidas.
 Referencias de código:
@@ -1092,7 +1092,7 @@ Ventana 14 días cerrando en 2026-09-23:
 media: 40.714 (coincide con 40.7 redondeado)
 mínimo: 38.0
 último día (23-sep): 39.0
-Resultado de 3) Confirmación con git show sobre 1a957e3 y ec433ef
+Resultado de 3) Confirmación con git show sobre 7ae3620 y 15b1c23
 
 Archivos tocados por ambos commits: agent/load_metrics.py, tests/test_trainer_agent.py, proximos_pasos.md
 Verificación estricta de líneas añadidas/eliminadas con palabras trail/running/strength/walk/hike en esos diffs: no aparecen cambios directos con esas claves.
@@ -1130,15 +1130,15 @@ el trail, que va un +6 % de mediana (+13–17 % en salidas largas), como paso ap
 el walk/hike, fuera de alcance por ahora.
 
 
-Hecho: el commit 3 está creado y firmado (2f4a9a3), y los 6 commits ya están en origin/main (651cb77..2f4a9a3). Antes del push comprobé que el remoto no tenía cambios nuevos. Tests: 542 pasan.
+Hecho: el commit 3 está creado y firmado (98917c1), y los 6 commits ya están en origin/main (2e8d070..98917c1). Antes del push comprobé que el remoto no tenía cambios nuevos. Tests: 542 pasan.
 
 Commit	Contenido
-94dc1fb	Tabla activity_tss (TSS por actividad, de dónde sale, modelo usado y carga Garmin aparte)
-b20be03	Arreglo: la columna sport guardaba el tipo de actividad entero en vez de solo su nombre
-037c575	Comparación con TrainingPeaks, tu workouts.csv y CLAUDE.md
-ef8bdd7	Commit 2: running calculado con los detalles de la actividad
-9bd5fcf	Línea base: un TSS por actividad que no se recalcula, hr_rest según la fecha y arreglo de la paginación
-2f4a9a3	Commit 3: el chat lee el TSS guardado y la carga Garmin nunca se usa como TSS
+086b5f6	Tabla activity_tss (TSS por actividad, de dónde sale, modelo usado y carga Garmin aparte)
+20848dc	Arreglo: la columna sport guardaba el tipo de actividad entero en vez de solo su nombre
+5c3bfc7	Comparación con TrainingPeaks, tu workouts.csv y CLAUDE.md
+edc7373	Commit 2: running calculado con los detalles de la actividad
+280360f	Línea base: un TSS por actividad que no se recalcula, hr_rest según la fecha y arreglo de la paginación
+98917c1	Commit 3: el chat lee el TSS guardado y la carga Garmin nunca se usa como TSS
 docs/workouts.csv (tu export de TP, con RPE y comentarios) y los datos de Garmin ya están subidos a GitHub. No he podido comprobar si el repositorio es público; si lo es, tenlo en cuenta.
 
 Cómo queda Kairos:
@@ -1156,11 +1156,11 @@ Sesiones con nombre de elíptica: el running del 13/08 se calculó como elíptic
 
 Sesión de cierre del cálculo de carga frente a TrainingPeaks. Referencia: export de TP `workouts.csv` (01/02–21/10, 271 sesiones), prueba de esfuerzo (VT1 142 lpm / 9.2 km/h; VT2 169 lpm / 14.1 km/h = 4:15/km; FC máx 179) y configuración del PMC de TP (CTL 42, ATL 7).
 
-1. Enrutado a cardio de gimnasio (087aec0). `_is_rowing_activity` buscaba "remo"/"erg" como subcadena en nombre y descripción ("podremos", "volveremos", "remontar"). Ahora solo el nombre y palabras completas. Corregidas 3 actividades (21/03 110.6→144.3, 17/05 127.3→106.0, 13/08 57.7→79.2).
-2. Trail como TP (50d9954). TP calcula el hrTSS con TSS/h por tramo de FC respecto a su umbral de FC, sin FC de reposo ni zonas personalizadas (validado: los minutos por zona del export dejaron de cuadrar al cambiar las zonas en septiembre, el TSS no). Tabla deducida de 25 trails: <85 % 40.8, 85–95 % 72.7, 95–100 % 91.8, ≥100 % 100. Validación sin la sesión: MAPE 1.8 %; encaja mejor con umbral 163–166 que con 169. Umbral TP en `hr_threshold_tp_history` (166 desde 30/01, 169 desde 21/10). Trail rápido con rTSS. Resultado: trail mediana 1.106 → 1.011, MAPE 9.9 % → 1.6 %. Descartado: rTSS para todo el trail (MAPE 17 %, −35 % en largas) y ajustar la FC de reposo (empeoraba las salidas a FC baja).
-3. Ritmo umbral por fecha (7270bfa). TP: 3:50 desde 30/01, 4:12 desde 09/05. Running 22/02–08/05: mediana 1.179 → 0.983, MAPE 20.7 % → 6.6 %.
+1. Enrutado a cardio de gimnasio (089462c). `_is_rowing_activity` buscaba "remo"/"erg" como subcadena en nombre y descripción ("podremos", "volveremos", "remontar"). Ahora solo el nombre y palabras completas. Corregidas 3 actividades (21/03 110.6→144.3, 17/05 127.3→106.0, 13/08 57.7→79.2).
+2. Trail como TP (c664f46). TP calcula el hrTSS con TSS/h por tramo de FC respecto a su umbral de FC, sin FC de reposo ni zonas personalizadas (validado: los minutos por zona del export dejaron de cuadrar al cambiar las zonas en septiembre, el TSS no). Tabla deducida de 25 trails: <85 % 40.8, 85–95 % 72.7, 95–100 % 91.8, ≥100 % 100. Validación sin la sesión: MAPE 1.8 %; encaja mejor con umbral 163–166 que con 169. Umbral TP en `hr_threshold_tp_history` (166 desde 30/01, 169 desde 21/10). Trail rápido con rTSS. Resultado: trail mediana 1.106 → 1.011, MAPE 9.9 % → 1.6 %. Descartado: rTSS para todo el trail (MAPE 17 %, −35 % en largas) y ajustar la FC de reposo (empeoraba las salidas a FC baja).
+3. Ritmo umbral por fecha (2cea97c). TP: 3:50 desde 30/01, 4:12 desde 09/05. Running 22/02–08/05: mediana 1.179 → 0.983, MAPE 20.7 % → 6.6 %.
 4. Maratón de Madrid (26/04): Kairos 230 rTSS frente a TP 299 (−23 %). Anomalía de TP en esa sesión (NGP/ritmo medio 1.10 frente a 1.006 en el resto). Se deja así (decisión del usuario).
-5. Auditoría del PMC y de los TSS por deporte (1decb7e):
+5. Auditoría del PMC y de los TSS por deporte (d8dfc45):
       - ATL usaba 8 días (deporte principal "trail running" y valor guardado en el perfil). Ahora 42/7 para todos.
       - TSB pasa a CTL de ayer − ATL de ayer (convención de TP).
       - Bici: se usaba la potencia media porque Garmin manda la NP como `normPower`. Con NP: MAPE 26.9 % → 1.6 %.

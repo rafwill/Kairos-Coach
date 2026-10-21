@@ -78,4 +78,4 @@ Anclajes por fecha (perfil `performance`):
 
 ## Historia
 
-Detalle de cada cambio en `docs/proximos_pasos.md` (bitácora) y `CHANGELOG.md`. Hitos: `activity_tss` y línea base (94dc1fb…4a9ae68, 20/10); enrutado gym_cardio por palabras completas (087aec0); trail como TP (50d9954); ritmo umbral por fecha (7270bfa); auditoría PMC, bici NP, caminatas (1decb7e). Evidencias de calibración (tablas frente a TP, goldens del 19/10, diseños cerrados) y herramientas de diagnóstico: `_archivo/` (local, en `.gitignore`; no se sube). Datos reales de Garmin para reproducir offline: `fixtures/real_payloads/` (local, ignorado).
+Detalle de cada cambio en `docs/proximos_pasos.md` (bitácora) y `CHANGELOG.md`. Hitos: `activity_tss` y línea base (086b5f6…70275f8, 20/10); enrutado gym_cardio por palabras completas (089462c); trail como TP (c664f46); ritmo umbral por fecha (2cea97c); auditoría PMC, bici NP, caminatas (d8dfc45). Evidencias de calibración (tablas frente a TP, goldens del 19/10, diseños cerrados) y herramientas de diagnóstico: `_archivo/` (local, en `.gitignore`; no se sube). Datos reales de Garmin para reproducir offline: `fixtures/real_payloads/` (local, ignorado).

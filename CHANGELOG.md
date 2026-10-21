@@ -19,6 +19,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - El menú de proveedores muestra el modelo efectivo de cada uno (`*_MODEL` del `.env`), no un nombre fijo.
 - Python mínimo 3.11 (el código usa `BaseExceptionGroup`).
 
+### Security
+- Historial de git reescrito con `git filter-repo`: fuera de todos los commits las 214 rutas que ya no forman parte del repo (payloads reales de Garmin, exports de TP, sondas, logs de baterías…) y sustituidos en todas las versiones la contraseña de Garmin (filtrada en `.tmp/bateria_p55_input_runtime*.txt` el 18/10) y el email de Garmin. Cambian todos los hashes; los citados en la documentación están traducidos al historial nuevo. Copia del historial anterior: `_archivo/backup_historial_pre_purga_2026-10-21.bundle` (local).
+
 ### Tests
 - 564 passed, 6 skipped.
 
@@ -382,7 +385,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Suite completa validada en verde.
 
 ### Notes
-- Commits clave del día: 55af659 (base), b9ea941 (cierre rápido de sesión), 367d770 (cierre completo punto 38), 18bfd72 (hooks/router + tests), 4b74718 (harness docs move/update), 8420dec (sensor spike semanal >20%).
+- Commits clave del día: 6a0c3de (base), 30abe3c (cierre rápido de sesión), d8fee73 (cierre completo punto 38), 41cda8c (hooks/router + tests), 30c2085 (harness docs move/update), de751d0 (sensor spike semanal >20%).
 - Estado de validación local al cierre: 317 tests passed.
 - Validacion E2E real #55 cerrada con contraste de muestra FIT (avg_method=55.71 vs series_method=57.69, delta +1.98 TSS) y serie real de 120 dias documentada.
 - Estado de validación actualizado: 325 tests passed.
