@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agent.trainer_agent import (
+    _build_mcp_error_warning_markdown,
     _build_mcp_transparency_markdown,
     _build_goal_status_markdown,
     _build_training_plan_status_markdown,
@@ -7594,6 +7595,40 @@ class TestMcpTransparencyAndLatencyRegression:
         assert "## ℹ️ Transparencia de datos" in out
         assert "get_user_profile: fallback_cache_on_error x2" in out
         assert "get_training_load_trend: fallback_fastpath x1" in out
+        assert "fallaron" not in out
+        assert _build_mcp_error_warning_markdown(events) == ""
+
+    def test_mcp_errors_produce_top_warning_and_correct_transparency(self):
+        # Caso real (21/10): tokens de Garmin rechazados → la semana salía "0 actividades" sin aviso.
+        events = [
+            {"tool": "get_activities_by_date", "mode": "mcp_error", "reason": "kind=unknown;http=;retry_after="},
+            {"tool": "get_activities_by_date", "mode": "mcp_error", "reason": "kind=unknown;http=;retry_after="},
+        ]
+
+        warning = _build_mcp_error_warning_markdown(events)
+        out = _build_mcp_transparency_markdown(events)
+
+        assert "No se pudo consultar Garmin" in warning
+        assert "get_activities_by_date" in warning
+        assert "Algunas consultas a Garmin (MCP) fallaron." in out
+        assert "contingencia" not in out
+
+    @pytest.mark.asyncio
+    async def test_finalize_reply_puts_garmin_error_warning_first(self, monkeypatch):
+        import agent.trainer_agent as ta
+        from agent.trainer_agent import TrainerAgent
+
+        events = [{"tool": "get_activities_by_date", "mode": "mcp_error", "reason": "kind=unknown"}]
+        monkeypatch.setattr(ta, "consume_tool_transparency_events", lambda: list(events))
+        agent = TrainerAgent.__new__(TrainerAgent)
+        agent.hook_manager = ta.HookManager()
+        agent.conversation_history = []
+        monkeypatch.setattr(ta, "_save_history_entry", lambda *a, **k: None)
+
+        reply = await agent._finalize_chat_reply("¿Qué actividades hice esta semana?", "## 🧭 Resumen\n- Sin actividades.", "week_activities")
+
+        assert reply.startswith("> ⚠️ **No se pudo consultar Garmin**")
+        assert "## 🧭 Resumen" in reply
 
     @pytest.mark.asyncio
     async def test_build_week_activities_markdown_does_not_use_asyncio_wait_for(self, monkeypatch):

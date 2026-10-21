@@ -9554,11 +9554,13 @@ def _build_mcp_transparency_markdown(events: list[dict]) -> str:
         if key not in reasons:
             reasons[key] = str(ev.get("reason") or "").strip()
 
-    lines = [
-        "",
-        "## ℹ️ Transparencia de datos",
-        "- Se usó modo de contingencia (caché/fastpath) en algunas consultas MCP.",
-    ]
+    has_errors = any(mode == "mcp_error" for _tool, mode in grouped)
+    has_fallbacks = any(mode != "mcp_error" for _tool, mode in grouped)
+    lines = ["", "## ℹ️ Transparencia de datos"]
+    if has_errors:
+        lines.append("- Algunas consultas a Garmin (MCP) fallaron.")
+    if has_fallbacks:
+        lines.append("- Se usó modo de contingencia (caché/fastpath) en algunas consultas MCP.")
     for (tool, mode), count in sorted(grouped.items(), key=lambda item: (-item[1], item[0][0])):
         reason = reasons.get((tool, mode))
         if reason:
@@ -9567,6 +9569,25 @@ def _build_mcp_transparency_markdown(events: list[dict]) -> str:
             lines.append(f"- {tool}: {mode} x{count}")
     lines.append("- Nota: estos datos pueden no reflejar el último estado en vivo de Garmin.")
     return "\n".join(lines)
+
+
+def _build_mcp_error_warning_markdown(events: list[dict]) -> str:
+    """Aviso al principio de la respuesta si alguna consulta a Garmin falló.
+
+    Sin él, un fallo de Garmin se leía como dato real ("0 actividades", "sin datos").
+    """
+    failed = sorted({
+        str(ev.get("tool") or "tool_desconocida").strip() or "tool_desconocida"
+        for ev in (events or [])
+        if str(ev.get("mode") or "") == "mcp_error"
+    })
+    if not failed:
+        return ""
+    return (
+        f"> ⚠️ **No se pudo consultar Garmin** (falló: {', '.join(failed)}). "
+        "Los datos que vienen de Garmin pueden estar incompletos: un \"0\" o \"sin actividades\" "
+        "puede deberse a este error y no a que no haya datos. Vuelve a preguntar en unos minutos.\n\n"
+    )
 
 
 class TrainerAgent:
@@ -11307,7 +11328,11 @@ class TrainerAgent:
         """Persiste el turno y emite hook post-mensaje de forma uniforme."""
         transparency_events = consume_tool_transparency_events()
         if transparency_events:
-            assistant_reply = assistant_reply + _build_mcp_transparency_markdown(transparency_events)
+            assistant_reply = (
+                _build_mcp_error_warning_markdown(transparency_events)
+                + assistant_reply
+                + _build_mcp_transparency_markdown(transparency_events)
+            )
 
         await self.hook_manager.after_message(
             {
