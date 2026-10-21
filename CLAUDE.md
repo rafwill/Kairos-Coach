@@ -66,12 +66,22 @@ trail 24172582627 = 228.266 · running 24398763300 = 118.471 · running 24227364
 - TSS_FORMULA_VERSION = 34 (33/34 = cardio de gimnasio, elíptica/remo, sin validar contra TP).
 
 ## A revisar
-- Trail 24669705725 (09/10) = 545.7 y 23455001968 (02/07, ~10 h) = 550.8: confirmar duración/TP.
+
+- Trail rápido (< 6:00/km, `trail:fast_rtss`): solo 1 sesión con TP (24003202488, 16/08): Kairos 128.0 frente a TP 112.4 rTSS (+14 %). Vigilar con más sesiones.
+- Ritmo umbral en TP: 3:50/km del 30/01 al 09/05 y 4:12 desde el 09/05; Kairos usa 4:12 siempre → running feb–may probablemente alto frente a TP.
 - Running 23966766696 (13/08, fartlek 8x45" cuestas) = 79.2 frente a TP 66 (1.20): series cortas, limitación conocida.
 
 ## Corregido 2026-10-21: enrutado a gym_cardio por texto
 
 `_is_rowing_activity` buscaba "remo"/"erg" como subcadena en nombre y descripción: "podremos", "volveremos" y "remontar" mandaban running/trail a remo. Ahora solo el nombre y palabras completas. Filas corregidas en activity_tss (sin tocar el resto de la línea base; recálculo en prueba: 218/221 idénticas): 22248446621 (21/03) 110.6→144.3, 22915678572 (17/05) 127.3→106.0, 23966766696 (13/08) 57.7→79.2; load_metrics_daily reescrita del 21/03 al 20/10.
 
+## Corregido 2026-10-21: trail con hrTSS como TP
+
+- Fuente de verdad: `workouts.csv` (export TP 01/02–21/10, sin commitear). En TP el trail es "Run" y el usuario elige hrTSS a mano (también fuerza y elíptica); el trail rápido queda en rTSS.
+- TP calcula el hrTSS con TSS/h por tramo de FC respecto a SU umbral de FC, sin FC de reposo ni zonas personalizadas. Deducido de 25 trails: <85 % 40.8, 85–95 % 72.7, 95–100 % 91.8, ≥100 % 100 (`TRAIL_TP_HRTSS_RATES`). Validación sin la sesión: MAPE 1.8 %, máx 5.7 %; el ajuste encaja mejor con umbral 163–166 que con 169.
+- Umbral TP ≠ umbral fisiológico: prueba de esfuerzo VT2 = 169 (perfil, desde Garmin), TP tenía 166 desde el 30/01 y pasó a 169 el 21/10. Se guarda aparte en `performance.hr_threshold_tp_history` y se usa el vigente en cada fecha.
+- Trail normal → `trail:tp_zones`; trail rápido → `trail:fast_rtss` (pipeline de running). Sin detalle de actividad, cadena anterior.
+- Aplicado: 26 filas de trail en activity_tss y load_metrics_daily del 29/03 al 20/10 (recálculo en prueba: 196/222 idénticas, solo cambian trails). Trail normal frente a TP: mediana 1.106 → 1.011, MAPE 9.9 % → 1.6 %, 25/25 dentro de ±10 %.
+
 ## Limitaciones aceptadas (no bugs abiertos)
-Hiking con n bajo y un punto de desnivel grande (24013969366); short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); trail corto ≈ -12%; RPE de fuerza 0/137; elíptica sin hr_max real; ciclismo e indoor_running sin auditar; watch-item fuerza OOS entre 8 y 22 de noviembre.
+Hiking con n bajo y un punto de desnivel grande (24013969366); short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real; ciclismo e indoor_running sin auditar; watch-item fuerza OOS entre 8 y 22 de noviembre.

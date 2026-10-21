@@ -1782,6 +1782,7 @@ def _estimate_session_tss(
     activity_details_raw: str | None = None,
     use_trail_splits: bool = True,
     hr_threshold_bpm: float | None = None,
+    hr_threshold_tp_bpm: float | None = None,
 ) -> tuple[float, str]:
     """Estima carga de sesión con prioridades explícitas por tipo de actividad."""
     return _load_metrics._estimate_session_tss(
@@ -1795,6 +1796,7 @@ def _estimate_session_tss(
         activity_details_raw=activity_details_raw,
         use_trail_splits=use_trail_splits,
         hr_threshold_bpm=hr_threshold_bpm,
+        hr_threshold_tp_bpm=hr_threshold_tp_bpm,
     )
 
 
@@ -3575,6 +3577,29 @@ def _resolve_hr_threshold_bpm(profile: dict | None) -> tuple[float | None, str, 
             ).strip() or "sin fecha"
             return round(v, 1), date_value, "perfil persistido"
     return None, "", ""
+
+
+def _resolve_tp_hr_threshold_for_date(profile: dict | None, d_iso: str) -> float | None:
+    """Umbral de FC que tenía TrainingPeaks en la fecha (performance.hr_threshold_tp_history).
+
+    Es la referencia con la que TP calcula su hrTSS; puede diferir del umbral fisiológico del perfil.
+    """
+    perf = (profile or {}).get("performance") if isinstance(profile, dict) else None
+    history = perf.get("hr_threshold_tp_history") if isinstance(perf, dict) else None
+    if not isinstance(history, list):
+        return None
+    vigente: tuple[str, float] | None = None
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            since = str(entry.get("date") or "")
+            bpm = float(entry.get("bpm"))
+        except (TypeError, ValueError):
+            continue
+        if since and since <= d_iso and 120 <= bpm <= 230 and (vigente is None or since > vigente[0]):
+            vigente = (since, bpm)
+    return vigente[1] if vigente else None
 
 
 def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
@@ -10328,6 +10353,7 @@ class TrainerAgent:
                     act["_activity_details_raw"] = activity_details_raw
 
             hr_rest_for_activity = await _hr_rest_for_date(d_iso)
+            hr_threshold_tp = _resolve_tp_hr_threshold_for_date(self.user_profile, d_iso)
             tss, tss_label = _estimate_session_tss(
                 act,
                 ftp=cycling_ftp,
@@ -10338,6 +10364,7 @@ class TrainerAgent:
                 splits_raw=splits_raw,
                 activity_details_raw=activity_details_raw,
                 hr_threshold_bpm=hr_threshold_bpm,
+                hr_threshold_tp_bpm=hr_threshold_tp,
             )
             tss_source = _infer_tss_source_tag(
                 activity=act,
@@ -10378,7 +10405,11 @@ class TrainerAgent:
                         "native_load": native_load,
                         "formula_version": int(_TSS_FORMULA_VERSION),
                         "hr_rest_used": hr_rest_for_activity,
-                        "lthr_used": hr_threshold_bpm,
+                        "lthr_used": (
+                            (hr_threshold_tp or hr_threshold_bpm)
+                            if model_tag == "trail:tp_zones"
+                            else hr_threshold_bpm
+                        ),
                         "ftp_used": cycling_ftp,
                         "threshold_pace_used": running_threshold_pace,
                         "walk_threshold_used": act.get("_walk_hike_threshold_speed_m_min"),

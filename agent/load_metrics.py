@@ -60,6 +60,17 @@ RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO = 0.88
 # Fast trail threshold (< 6:00/km) where raw zone hrTSS is explicitly preferred.
 TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
 
+# Non-fast trail hrTSS (TP-like): TSS/h por tramo de FC respecto al umbral de referencia de TP.
+# Deducido de 25 trails con hrTSS de TP (feb-oct 2026, umbral TP 166): validación sin la sesión
+# MAPE 1.8 %, máx 5.7 %. TP no usa FC de reposo. Por encima del umbral no hay datos: 100 TSS/h
+# es la definición de TP (1 h en umbral = 100).
+TRAIL_TP_HRTSS_RATES = (
+    (0.85, 40.8),
+    (0.95, 72.7),
+    (1.00, 91.8),
+)
+TRAIL_TP_HRTSS_RATE_ABOVE_THRESHOLD = 100.0
+
 # Non-fast trail smoothing for sustained very-low-intensity blocks.
 TRAIL_NON_FAST_LOW_IF_THRESHOLD = 0.58
 TRAIL_NON_FAST_LOW_IF_FLOOR = 0.58
@@ -1965,6 +1976,47 @@ def _resolve_trail_rest_hr_bpm(activity: dict, hr_rest_bpm: float | None = None)
     return 55.0
 
 
+def _estimate_trail_hr_tss_tp_zones(
+    activity: dict,
+    hours: float,
+    activity_details_raw: str | None,
+    hr_threshold_bpm: float | None,
+    min_coverage_ratio: float = 0.40,
+) -> float | None:
+    """hrTSS de trail como TP: TSS/h por tramo de FC/umbral, segundo a segundo, sin FC de reposo."""
+    if not activity_details_raw or not hr_threshold_bpm or hr_threshold_bpm <= 0:
+        return None
+
+    duration_seconds = hours * 3600.0 if hours > 0 else 0.0
+    if duration_seconds <= 0:
+        duration_seconds = float(_extract_duration_seconds_from_activity_details_payload(activity_details_raw) or 0.0)
+
+    samples = _extract_hr_samples_from_activity_details(activity_details_raw, duration_seconds)
+    if len(samples) < 5:
+        return None
+    if duration_seconds <= 0:
+        duration_seconds = max(0.0, float(samples[-1][0]))
+    if duration_seconds <= 0:
+        return None
+
+    tss_total = 0.0
+    covered_seconds = 0.0
+    for idx, (t_sec, hr) in enumerate(samples):
+        dt = (samples[idx + 1][0] - t_sec) if idx + 1 < len(samples) else 1.0
+        dt = max(1.0, min(30.0, float(dt)))
+        ratio = float(hr) / float(hr_threshold_bpm)
+        rate = next(
+            (r for upper, r in TRAIL_TP_HRTSS_RATES if ratio < upper),
+            TRAIL_TP_HRTSS_RATE_ABOVE_THRESHOLD,
+        )
+        tss_total += (dt / 3600.0) * rate
+        covered_seconds += dt
+
+    if covered_seconds / duration_seconds < max(0.0, float(min_coverage_ratio or 0.0)):
+        return None
+    return max(0.0, tss_total)
+
+
 def _estimate_hr_tss_from_activity_details_lthr(
     activity: dict,
     hours: float,
@@ -3691,6 +3743,7 @@ def _estimate_session_tss(
     activity_details_raw: str | None = None,
     use_trail_splits: bool = True,
     hr_threshold_bpm: float | None = None,
+    hr_threshold_tp_bpm: float | None = None,
 ) -> tuple[float, str]:
     if not isinstance(activity, dict):
         return 0.0, "hrTSS"
@@ -3823,7 +3876,19 @@ def _estimate_session_tss(
     elif is_trail_hike_walk:
         if is_trail:
             if _should_use_raw_hr_tss_for_fast_trail(activity):
-                # Keep fast-trail pattern intact.
+                # Trail rápido (< 6:00/km): rTSS como running (NGP con pendiente), igual que TP.
+                tss_fast_rtss = _estimate_running_tss_from_activity_details_pipeline(
+                    activity,
+                    activity_details_raw=details_payload,
+                    running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
+                    hr_rest_bpm=hr_rest_bpm,
+                    hr_max_bpm=hr_max_bpm,
+                    hr_threshold_bpm=hr_threshold_bpm,
+                )
+                if tss_fast_rtss is not None:
+                    _set_tss_resolution_meta(activity, model_tag="trail:fast_rtss")
+                    return max(0.0, float(tss_fast_rtss)), "TSS"
+
                 if use_trail_splits:
                     tss_trail_precise = _estimate_trail_tss_high_precision(
                         activity,
@@ -3872,6 +3937,15 @@ def _estimate_session_tss(
             else:
                 # TP-like for non-fast trail: prefer LTHR-based hrTSS, then fallback to pace-based TSS.
                 lthr = _resolve_hr_threshold_bpm_for_activity(activity, hr_threshold_bpm)
+                tss_tp_zones = _estimate_trail_hr_tss_tp_zones(
+                    activity,
+                    hours=hours,
+                    activity_details_raw=details_payload,
+                    hr_threshold_bpm=hr_threshold_tp_bpm or lthr,
+                )
+                if tss_tp_zones is not None:
+                    _set_tss_resolution_meta(activity, model_tag="trail:tp_zones")
+                    return max(0.0, float(tss_tp_zones)), "hrTSS"
                 if lthr is not None:
                     tss_hr_stream_lthr = _estimate_hr_tss_from_activity_details_lthr(
                         activity,
@@ -4769,6 +4843,7 @@ def estimate_session_tss(
     activity_details_raw: str | None = None,
     use_trail_splits: bool = True,
     hr_threshold_bpm: float | None = None,
+    hr_threshold_tp_bpm: float | None = None,
 ) -> tuple[float, str]:
     return _estimate_session_tss(
         activity=activity,
@@ -4781,6 +4856,7 @@ def estimate_session_tss(
         activity_details_raw=activity_details_raw,
         use_trail_splits=use_trail_splits,
         hr_threshold_bpm=hr_threshold_bpm,
+        hr_threshold_tp_bpm=hr_threshold_tp_bpm,
     )
 
 

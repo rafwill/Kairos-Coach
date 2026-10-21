@@ -4538,6 +4538,83 @@ class TestLoadFatigueModel:
             _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190, hr_threshold_bpm=169)
             assert not _infer_tss_model_tag(act).startswith("gym_cardio:"), name
 
+    @staticmethod
+    def _trail_hr_details(hr: float, seconds: int = 3600, step: int = 10) -> str:
+        return json.dumps([{"timeInSeconds": t, "heartRate": hr} for t in range(0, seconds, step)])
+
+    def _slow_trail(self) -> dict:
+        # 10:00/km: trail normal (no rápido).
+        return {"type": "trail_running", "duration": 3600, "distance": 6000, "averageSpeed": 1.667}
+
+    def test_trail_tp_zones_rate_by_hr_band_vs_tp_threshold(self):
+        # TSS/h por tramo de FC/umbral TP (166): <85 % = 40.8, 85-95 % = 72.7, >= 100 % = 100.
+        for hr, expected in ((130, 40.8), (150, 72.7), (170, 100.0)):
+            act = self._slow_trail()
+            tss, label = _estimate_session_tss(
+                act,
+                hr_rest_bpm=40,
+                hr_threshold_bpm=169,
+                hr_threshold_tp_bpm=166,
+                activity_details_raw=self._trail_hr_details(hr),
+            )
+            assert label == "hrTSS"
+            assert _infer_tss_model_tag(act) == "trail:tp_zones"
+            assert tss == pytest.approx(expected, abs=0.3), hr
+
+    def test_trail_tp_zones_ignores_resting_hr(self):
+        values = []
+        for hr_rest in (37, 50):
+            tss, _ = _estimate_session_tss(
+                self._slow_trail(),
+                hr_rest_bpm=hr_rest,
+                hr_threshold_bpm=169,
+                hr_threshold_tp_bpm=166,
+                activity_details_raw=self._trail_hr_details(135),
+            )
+            values.append(tss)
+        assert values[0] == values[1]
+
+    def test_trail_tp_zones_uses_tp_threshold_and_falls_back_to_lthr(self):
+        # 143 lpm: 86 % de 166 (tramo 72.7) pero 84.6 % de 169 (tramo 40.8).
+        details = self._trail_hr_details(143)
+        tss_tp, _ = _estimate_session_tss(
+            self._slow_trail(), hr_threshold_bpm=169, hr_threshold_tp_bpm=166, activity_details_raw=details
+        )
+        tss_lthr, _ = _estimate_session_tss(self._slow_trail(), hr_threshold_bpm=169, activity_details_raw=details)
+        assert tss_tp == pytest.approx(72.7, abs=0.3)
+        assert tss_lthr == pytest.approx(40.8, abs=0.3)
+
+    def test_fast_trail_uses_running_rtss_pipeline(self):
+        act = {"type": "trail_running", "duration": 3600, "distance": 11000, "averageSpeed": 3.06}
+        with patch("agent.load_metrics._estimate_running_tss_from_activity_details_pipeline", return_value=88.0) as pipe:
+            tss, label = _estimate_session_tss(
+                act,
+                hr_threshold_bpm=169,
+                hr_threshold_tp_bpm=166,
+                running_threshold_pace_sec_per_km=252,
+                activity_details_raw=self._trail_hr_details(150),
+            )
+        assert pipe.called
+        assert (tss, label) == (88.0, "TSS")
+        assert _infer_tss_model_tag(act) == "trail:fast_rtss"
+
+    def test_resolve_tp_hr_threshold_for_date_picks_value_in_force(self):
+        from agent.trainer_agent import _resolve_tp_hr_threshold_for_date
+
+        profile = {
+            "performance": {
+                "hr_threshold_bpm": 169,
+                "hr_threshold_tp_history": [
+                    {"date": "2026-10-21", "bpm": 169},
+                    {"date": "2026-01-30", "bpm": 166},
+                ],
+            }
+        }
+        assert _resolve_tp_hr_threshold_for_date(profile, "2026-01-29") is None
+        assert _resolve_tp_hr_threshold_for_date(profile, "2026-05-01") == 166
+        assert _resolve_tp_hr_threshold_for_date(profile, "2026-10-21") == 169
+        assert _resolve_tp_hr_threshold_for_date({"performance": {}}, "2026-05-01") is None
+
     def test_estimate_tss_rowing_word_in_name_routes_to_gym_cardio(self):
         act = {
             "type": "running",
