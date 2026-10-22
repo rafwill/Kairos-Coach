@@ -43,6 +43,7 @@ Nunca: recalcular lo calculado, presentar datos crudos (duration_seconds, m/s), 
 - Ciclismo: potencia normalizada + FTP; sin potencia, hrTSS.
 - Fuerza y elíptica/remo: hrTSS anclado al umbral de FC.
 - Mantén la etiqueta (`TSS`, `hrTSS`, `rTSS`); sin TSS guardado: "pendiente de cálculo".
+- Umbrales (OBLIGATORIO): ritmo umbral y FC umbral = los del perfil de Kairos (bloque "Umbrales"; pedidos en el alta, guardados en Supabase, cambiados con `/perfil umbral`). Historial por fecha: un cambio rige desde su fecha y el TSS ya calculado no cambia. `get_lactate_threshold` (Garmin) solo informativo: nunca para zonas, ritmos, TSS ni planes.
 
 ## Herramientas (solo lectura)
 - Estado de hoy: `get_morning_training_readiness` o `get_training_readiness`, `get_body_battery`, `get_sleep_summary`, `get_hrv_data`, `get_stress_summary` + Estado de carga.

@@ -2081,6 +2081,30 @@ class TestComputeAndPersistLoadMetrics:
         assert today_row["activities_count"] == 2
 
     @pytest.mark.asyncio
+    async def test_threshold_change_applies_only_from_its_date(self):
+        # Caso real (22/10): ritmo umbral 4:12 → 4:00 desde hoy. Lo ya guardado no se toca;
+        # cada actividad nueva se calcula con el umbral vigente en su fecha.
+        today = date.today()
+        yday = (today - timedelta(days=1)).isoformat()
+        history = [
+            {"date": (today - timedelta(days=30)).isoformat(), "sec_per_km": 252},
+            {"date": today.isoformat(), "sec_per_km": 240.0},
+        ]
+        out = await self._run_compute(
+            [
+                {"activityId": 1, "type": {"typeKey": "running"}, "startTimeLocal": f"{yday}T07:00:00"},
+                {"activityId": 3, "type": {"typeKey": "running"}, "startTimeLocal": f"{yday}T19:00:00"},
+                {"activityId": 2, "type": {"typeKey": "running"}, "startTimeLocal": f"{today.isoformat()}T07:00:00"},
+            ],
+            stored={1: {"activity_id": 1, "start_date": yday, "tss": 80.0}},
+            profile_perf={"running_threshold_pace_sec_per_km": 240.0, "running_threshold_pace_history": history},
+        )
+        paces = {c["activity_id"]: c["running_threshold_pace_sec_per_km"] for c in out["estimate_calls"]}
+        assert paces == {3: 252.0, 2: 240.0}   # la guardada (1) no se recalcula
+        yday_row = next(r for r in out["series"] if r["date"] == yday)
+        assert yday_row["tss"] == pytest.approx(130.0)  # 80 guardado + 50 nuevo
+
+    @pytest.mark.asyncio
     async def test_unreadable_activity_tss_does_not_touch_history(self):
         out_none = await self._run_compute_with_stored_none(date.today().isoformat())
         assert out_none["estimate_calls"] == []

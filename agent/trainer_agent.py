@@ -4767,7 +4767,10 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             activity_raw=raw_activity or "{}",
             hr_zones_raw=raw_hr_zones,
             ftp=_extract_cycling_ftp_watts(profile),
-            running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(profile),
+            running_threshold_pace_sec_per_km=(
+                _resolve_running_threshold_pace_for_date(profile, target_d.isoformat())
+                or _resolve_running_threshold_pace_sec_per_km(profile)
+            ),
             stored_tss_row=primary_stored,
         )
         analysis_md = _format_activity_analysis_for_markdown(analysis)
@@ -5874,7 +5877,10 @@ def _compute_plan_execution_feedback(
         # Algunos payloads omiten duration/duration_seconds; evitamos penalizar adherencia por dato faltante.
         actual_duration = round(planned_duration, 1)
     actual_tss_acc = 0.0
-    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
+    running_threshold_pace = (
+        _resolve_running_threshold_pace_for_date(profile, target_date_iso)
+        or _resolve_running_threshold_pace_sec_per_km(profile)
+    )
     hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
     hr_threshold_bpm, _, _ = _resolve_hr_threshold_bpm(profile)
     cycling_ftp = _extract_cycling_ftp_watts(profile)
@@ -9825,7 +9831,9 @@ class TrainerAgent:
                 est_tss, _ = _estimate_session_tss(
                     act,
                     ftp=cycling_ftp,
-                    running_threshold_pace_sec_per_km=running_threshold_pace,
+                    running_threshold_pace_sec_per_km=(
+                        _resolve_running_threshold_pace_for_date(self.user_profile, d_iso) or running_threshold_pace
+                    ),
                     hr_rest_bpm=hr_rest_bpm,
                     hr_max_bpm=hr_max_bpm,
                     hr_zones_raw=None,
@@ -11934,7 +11942,10 @@ class TrainerAgent:
                     hrv_raw=next((p for p in context_parts if "HRV" in p), None),
                     training_load_raw=next((p for p in context_parts if "CARGA" in p), None),
                     ftp=cycling_ftp_for_analysis,
-                    running_threshold_pace_sec_per_km=_resolve_running_threshold_pace_sec_per_km(self.user_profile),
+                    running_threshold_pace_sec_per_km=(
+                        _resolve_running_threshold_pace_for_date(self.user_profile, str(user_date or date.today().isoformat()))
+                        or _resolve_running_threshold_pace_sec_per_km(self.user_profile)
+                    ),
                     hr_zones_raw=raw_hr_zones,
                     stored_tss_row=(
                         _load_stored_activity_tss(str(user_date)).get(_activity_id_int({"activityId": pre_id}))

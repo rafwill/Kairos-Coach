@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Fixed
+- Ritmo umbral por fecha también en los cálculos de respaldo (análisis de actividad sin TSS guardado, adherencia al plan, verificación incremental): usaban el umbral actual y, tras un cambio, habrían calculado actividades anteriores con el nuevo. El TSS guardado ya no se recalculaba; ahora tampoco se muestra un valor provisional con el umbral equivocado.
+
+### Changed
+- Prompts: regla explícita de umbrales. El ritmo umbral y la FC umbral son los del perfil de Kairos (pedidos en el alta, guardados en Supabase, cambiados con `/perfil umbral`); un cambio rige desde su fecha y no altera el TSS ya calculado; `get_lactate_threshold` (Garmin) es solo informativo.
+
 ### Data
 - Ritmo umbral de running 4:00/km (240 s) desde el 22/10/2026 (antes 4:12), estimado con la carrera del 18/10 (24764615547): 27 min, NGP 3:49/km del pipeline de producción, llevado a 60 min con Riegel (×1.049). FC umbral sin cambios (168 lpm de media en los últimos 20 min frente a 169). Añadido al historial del perfil; el TSS ya guardado no cambia.
 
