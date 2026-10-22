@@ -6,7 +6,7 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 
 ## Qué hace
 
-- **Briefing al arrancar:** Body Battery, HRV, sueño, entrenamientos de las últimas 48 h, estado de carga con rangos personales y plan del día.
+- **Briefing al arrancar:** Body Battery, HRV, sueño, entrenamientos de las últimas 48 h, estado de carga por zonas de Forma (Joe Friel, relativas a tu CTL) y plan del día.
 - **Carga como TrainingPeaks:** un TSS por actividad con el método de su deporte, guardado una vez; PMC 42/7. Validado contra el export de TP del atleta (tabla abajo).
 - **Planes de entrenamiento:** motor determinista multisemana (base → build → peak → taper) que parte del volumen real de las últimas 4 semanas, nunca sube más de un 10 % por semana y guarda cada versión.
 - **Coaching con contexto:** perfil, condiciones de salud (protocolo de diabetes tipo 1 con insulina), objetivo, umbrales con zonas en lpm y plan activo.

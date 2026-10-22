@@ -20,6 +20,7 @@ PMC (`agent/trainer_agent.py` `compute_and_persist_load_metrics`, `agent/load_me
 - CTL 42 / ATL 7 para todos los deportes (`PMC_CTL_TAU_DAYS`, `PMC_ATL_TAU_DAYS`; config del PMC de TP del usuario). No se leen de `load_metrics.model` del perfil.
 - `ATL_t = ATL_{t-1} + (TSS_t − ATL_{t-1})/7`, ídem CTL con 42. **TSB_t = CTL_{t-1} − ATL_{t-1}** (convención de TP).
 - Semilla = fila de la víspera en `load_metrics_daily`; la línea base arranca en 0 el 2026-02-22.
+- Estado de carga: zonas de Forma de Friel relativas al CTL (TSB/CTL: Riesgo alto < −30 %, Óptimo −30 a −10 %, Zona gris −10 a +5 %, Fresco +5 a +20 %, Transición > +20 %), regla única en `load_metrics.form_zone` / `resolve_load_status` (decisión del usuario, 22/10). Los percentiles personales solo informan; no hay suelos de TSB por deporte.
 
 TSS por deporte (`_estimate_session_tss`):
 

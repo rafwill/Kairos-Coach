@@ -3951,7 +3951,6 @@ _SPORT_MODEL_DEFAULTS: dict[str, dict] = {
         "atl_high_pct": 0.85,
         "weekly_target_pct": 0.55,
         "weekly_high_pct": 0.90,
-        "tsb_abs_floor": -35.0,
     },
     "running": {
         "atl_tau_days": 7,
@@ -3961,7 +3960,6 @@ _SPORT_MODEL_DEFAULTS: dict[str, dict] = {
         "atl_high_pct": 0.80,
         "weekly_target_pct": 0.55,
         "weekly_high_pct": 0.85,
-        "tsb_abs_floor": -30.0,
     },
     "ciclismo": {
         "atl_tau_days": 7,
@@ -3971,7 +3969,6 @@ _SPORT_MODEL_DEFAULTS: dict[str, dict] = {
         "atl_high_pct": 0.80,
         "weekly_target_pct": 0.55,
         "weekly_high_pct": 0.85,
-        "tsb_abs_floor": -32.0,
     },
     "triatlón": {
         "atl_tau_days": 7,
@@ -3981,7 +3978,6 @@ _SPORT_MODEL_DEFAULTS: dict[str, dict] = {
         "atl_high_pct": 0.85,
         "weekly_target_pct": 0.55,
         "weekly_high_pct": 0.90,
-        "tsb_abs_floor": -35.0,
     },
     "otro": {
         "atl_tau_days": 7,
@@ -3991,7 +3987,6 @@ _SPORT_MODEL_DEFAULTS: dict[str, dict] = {
         "atl_high_pct": 0.80,
         "weekly_target_pct": 0.55,
         "weekly_high_pct": 0.85,
-        "tsb_abs_floor": -30.0,
     },
 }
 _SPORT_MODEL_DEFAULTS["triaton"] = _SPORT_MODEL_DEFAULTS["triatlón"]
@@ -4065,6 +4060,112 @@ def _compute_weekly_spike_signal(
         "threshold_pct": round(threshold_ratio * 100.0, 1),
         "available": available,
         "spike_alert": spike_alert,
+    }
+
+
+# ─── Zonas de Forma (Joe Friel), relativas al CTL como en intervals.icu ─────────
+# Form % = TSB / CTL · 100. Es la única regla de estado de carga de Kairos: la usan el
+# estado de arranque, el motor diario, /carga, el resumen semanal y el motor de planes.
+# Los rangos personales (percentiles) se muestran como información, pero no deciden.
+FORM_ZONES: dict[str, tuple[str, str]] = {
+    "transition": ("Transición", "⚪"),   # > +20 %
+    "fresh": ("Fresco", "🔵"),            # +5 a +20 %
+    "grey": ("Zona gris", "🟡"),          # −10 a +5 %
+    "optimal": ("Óptimo", "🟢"),          # −30 a −10 %
+    "high_risk": ("Riesgo alto", "🔴"),   # < −30 %
+}
+FORM_LOAD_ZONE_PCT = -10.0  # por debajo: zona de carga (Óptimo o Riesgo alto)
+FORM_LEGEND = (
+    "Forma en % del CTL (zonas de Joe Friel): 🔴 Riesgo alto < −30 % · 🟢 Óptimo −30 a −10 % · "
+    "🟡 Zona gris −10 a +5 % · 🔵 Fresco +5 a +20 % · ⚪ Transición > +20 %"
+)
+
+_ZONE_RULES: dict[str, tuple[str, str, str]] = {
+    # zona → (status del motor diario, acción, recomendación)
+    "high_risk": (
+        "overload", "riesgo alto",
+        "Riesgo alto: descarga (−30 % a −40 % de volumen) y sin intensidad 3-5 días.",
+    ),
+    "optimal": (
+        "neutral", "zona óptima",
+        "Zona óptima de entrenamiento: sigue el bloque previsto y vigila HRV, sueño y body battery.",
+    ),
+    "grey": (
+        "ready", "zona gris",
+        "Zona gris (mantenimiento): puedes hacer calidad o progresión controlada.",
+    ),
+    "fresh": (
+        "ready", "fresco",
+        "Fresco: buen momento para calidad o para competir.",
+    ),
+    "transition": (
+        "ready", "transición",
+        "Transición: llevas tiempo descargando y empiezas a perder forma; retoma la carga de forma "
+        "progresiva (salvo que sea el taper de una carrera).",
+    ),
+}
+
+
+def form_zone(tsb: float, ctl: float) -> dict:
+    """Zona de Forma de un día: TSB como % del CTL (sin CTL no hay referencia: 0 %)."""
+    form_pct = (float(tsb) / float(ctl) * 100.0) if float(ctl or 0.0) > 0 else 0.0
+    if form_pct > 20.0:
+        key = "transition"
+    elif form_pct > 5.0:
+        key = "fresh"
+    elif form_pct >= FORM_LOAD_ZONE_PCT:
+        key = "grey"
+    elif form_pct >= -30.0:
+        key = "optimal"
+    else:
+        key = "high_risk"
+    label, emoji = FORM_ZONES[key]
+    return {"key": key, "label": label, "emoji": emoji, "form_pct": round(form_pct, 1)}
+
+
+def form_zone_label(tsb: float, ctl: float) -> str:
+    zone = form_zone(tsb, ctl)
+    return f"{zone['emoji']} {zone['label']}"
+
+
+def resolve_load_status(series: list[dict], weekly_spike_alert: bool = False) -> dict:
+    """Estado de carga de hoy a partir de la zona de Forma (regla única de Kairos).
+
+    - Riesgo alto (< −30 % del CTL) → overload: descarga.
+    - 7 días seguidos en zona de carga (< −10 %) → fatigue_high: suave si la recuperación
+      no acompaña y programar descarga.
+    - Óptimo → neutral; Zona gris, Fresco y Transición → ready (el motor diario modula
+      con HRV, sueño y body battery).
+    """
+    latest = series[-1]
+    zone = form_zone(float(latest.get("tsb") or 0.0), float(latest.get("ctl") or 0.0))
+    week_in_load = len(series) >= 7 and all(
+        form_zone(float(x.get("tsb") or 0.0), float(x.get("ctl") or 0.0))["form_pct"] < FORM_LOAD_ZONE_PCT
+        for x in series[-7:]
+    )
+    status, action, recommendation = _ZONE_RULES[zone["key"]]
+    if zone["key"] != "high_risk" and week_in_load:
+        status = "fatigue_high"
+        action = "7 días seguidos en zona de carga"
+        recommendation = (
+            "Llevas 7 días seguidos en zona de carga: hoy suave si la recuperación no acompaña y "
+            "programa una descarga en los próximos días."
+        )
+    if weekly_spike_alert:
+        if status in {"ready", "neutral"}:
+            action = "spike semanal >20%"
+            recommendation = (
+                "⚠️ Spike semanal >20% vs semana previa: reduce 15-25% la carga de los próximos 2-3 días "
+                "y prioriza recuperación para consolidar adaptación."
+            )
+        elif status == "fatigue_high":
+            recommendation = recommendation + " Además, la carga semanal ya supera en >20% a la semana previa."
+    return {
+        "zone": zone,
+        "status": status,
+        "action": action,
+        "recommendation": recommendation,
+        "week_in_load": week_in_load,
     }
 
 
@@ -4181,41 +4282,11 @@ def _compute_load_fatigue_metrics(
     warming_up = days_with_load < min_days_for_reliable_ranges
     warming_up_days_remaining = max(0, min_days_for_reliable_ranges - days_with_load)
 
-    tsb_now = float(latest["tsb"])
-    atl_now = float(latest["atl"])
-    tsb_abs_floor = float(model_cfg.get("tsb_abs_floor") or -30.0)
-    abs_overload = tsb_now <= tsb_abs_floor
-    sustained_overload = len(series) >= 7 and all(float(x["tsb"]) <= tsb_low for x in series[-7:])
-    fatigue_high = (tsb_now < tsb_low) or (atl_now > atl_high)
-    available_for_quality = (tsb_now >= tsb_low) and (tsb_now <= max(tsb_high, tsb_low + 4.0)) and not fatigue_high
     weekly_spike_alert = bool(weekly_spike.get("spike_alert"))
-
-    if abs_overload or sustained_overload or (current_week_tss > weekly_high and tsb_now < tsb_low):
-        status = "overload"
-        action = "sobrecarga sostenida"
-        recommendation = "Activa semana de descarga (-30% a -40% de volumen) y elimina calidad intensa 3-5 dias."
-    elif fatigue_high:
-        status = "fatigue_high"
-        action = "fatiga alta"
-        recommendation = "Reduce intensidad/volumen hoy y prioriza recuperacion activa, sueño e hidratacion."
-    elif available_for_quality:
-        status = "ready"
-        action = "buena disponibilidad"
-        recommendation = "Puedes mantener sesion de calidad o progresion controlada segun plan."
-    else:
-        status = "neutral"
-        action = "carga estable"
-        recommendation = "Manten carga aerobica controlada y reevalua mañana con HRV/sueño/estres."
-
-    if weekly_spike_alert:
-        if status in {"ready", "neutral"}:
-            action = "spike semanal >20%"
-            recommendation = (
-                "⚠️ Spike semanal >20% vs semana previa: reduce 15-25% la carga de los proximos 2-3 dias "
-                "y prioriza recuperacion para consolidar adaptacion."
-            )
-        elif status == "fatigue_high":
-            recommendation = recommendation + " Ademas, la carga semanal ya supera en >20% a la semana previa."
+    resolved = resolve_load_status(series, weekly_spike_alert=weekly_spike_alert)
+    status = resolved["status"]
+    action = resolved["action"]
+    recommendation = resolved["recommendation"]
 
     return {
         "model": {
@@ -4238,23 +4309,24 @@ def _compute_load_fatigue_metrics(
             "target_tss": weekly_target,
             "high_tss": weekly_high,
         },
+        # Rangos personales (percentiles de 28 días): solo informativos, no deciden el estado.
         "ranges": {
             "tsb_low": tsb_low,
             "tsb_high": tsb_high,
             "atl_high": atl_high,
-            "tsb_abs_floor": tsb_abs_floor,
         },
         "warming_up": warming_up,
         "warming_up_days_remaining": warming_up_days_remaining,
         "days_with_load": days_with_load,
         "flags": {
-            "fatigue_high": fatigue_high,
-            "sustained_overload": sustained_overload,
-            "abs_overload": abs_overload,
-            "available_for_quality": available_for_quality,
+            "fatigue_high": status == "fatigue_high",
+            "sustained_overload": resolved["week_in_load"],
+            "abs_overload": resolved["zone"]["key"] == "high_risk",
+            "available_for_quality": status == "ready",
             "warming_up": warming_up,
             "weekly_spike_alert": weekly_spike_alert,
         },
+        "zone": resolved["zone"],
         "status": status,
         "action": action,
         "recommendation": recommendation,

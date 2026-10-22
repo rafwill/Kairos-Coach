@@ -31,7 +31,8 @@ Nunca: recalcular lo calculado, presentar datos crudos (duration_seconds, m/s), 
 ## Carga y fatiga (OBLIGATORIO)
 - Fuente: bloque "Estado de carga actual" y `kairos_load_trends`. La carga de Garmin (`get_training_load_trend`, Training Load) nunca es TSS ni CTL/ATL: solo "Carga Garmin".
 - CTL 42 días, ATL 7 días, TSB = CTL de ayer − ATL de ayer (como TrainingPeaks).
-- Sobrecarga → descanso y descarga. Fatiga alta → suave (descanso si ≥ 2 señales). Disponible → mantener; reducir con 1 señal; suavizar con ≥ 2. Spike semanal > 20 % → avisar y reducir 15–25 % dos o tres días.
+- Zonas de Forma (Friel, TSB en % del CTL): Riesgo alto < −30 % · Óptimo −30 a −10 % (se construye forma; no es alarma) · Zona gris −10 a +5 % · Fresco +5 a +20 % · Transición > +20 % (pierde forma). El rango habitual del atleta es solo informativo.
+- Riesgo alto → descanso y descarga. 7 días seguidos < −10 % → suave (descanso si ≥ 2 señales) y programar descarga. Resto de zonas → mantener; reducir con 1 señal; suavizar con ≥ 2. Spike semanal > 20 % → avisar y reducir 15–25 % dos o tres días.
 - Señales de recuperación alterada (mismos umbrales que el motor diario): HRV > 10 % bajo su media semanal o estado bajo/desequilibrado; body battery < 35; sueño < 6 h o puntuación < 60; semana por encima de su carga alta habitual.
 - Explica siempre el porqué con sueño/HRV/estrés.
 

@@ -75,21 +75,22 @@ compute_and_persist_load_metrics()
 - Correcciones del histórico: `tools/rebuild_tss_baseline.py` (prueba sin escribir; `--apply` persiste).
 - Si `formula_version` del perfil difiere de `TSS_FORMULA_VERSION`, se recalculan 120 días (las actividades ya guardadas conservan su TSS).
 
-### Estado de carga del briefing
+### Estado de carga: zonas de Forma
 
-```
-_build_load_fatigue_dict_from_series(series, model_cfg)
-  ├─ percentiles del propio atleta (últimos 28 días): tsb_low = p15, tsb_high = p80, atl_high = p85
-  ├─ estado por prioridad:
-  │     abs_overload       → TSB ≤ suelo del deporte principal
-  │     sustained_overload → 7 días seguidos con TSB ≤ tsb_low
-  │     fatigue_high       → TSB < tsb_low o ATL > atl_high
-  │     ready              → TSB en rango y sin fatiga alta
-  │     neutral            → resto
-  └─ aviso de calibración si hay menos de 21 días con carga
-```
+Una sola regla para todo Kairos (`load_metrics.form_zone` y `resolve_load_status`): estado de arranque, motor diario, `/carga`, resumen semanal, contexto del LLM y motor de planes. Zonas de Joe Friel con la Forma relativa al CTL, como intervals.icu (Form % = TSB / CTL · 100):
 
-Suelos absolutos de TSB: trail −35, running −30, ciclismo −32, triatlón −35. Por debajo, el estado es sobrecarga aunque los percentiles del atleta digan otra cosa (evita normalizar una sobrecarga crónica).
+| Zona | Form % | Estado del motor diario |
+| --- | --- | --- |
+| 🔴 Riesgo alto | < −30 % | `overload`: descanso y descarga |
+| 🟢 Óptimo | −30 a −10 % | `neutral`: seguir el bloque (se modula con HRV, sueño y body battery) |
+| 🟡 Zona gris | −10 a +5 % | `ready` |
+| 🔵 Fresco | +5 a +20 % | `ready` |
+| ⚪ Transición | > +20 % | `ready`, avisando de pérdida de forma |
+
+- 7 días seguidos por debajo de −10 % (sin llegar a Riesgo alto) → `fatigue_high`: suave si la recuperación no acompaña y programar descarga.
+- Spike semanal > 20 % sobre la semana anterior: aviso y reducción de 15–25 % los 2–3 días siguientes.
+- Los percentiles del atleta (rango habitual de Forma, ATL máximo habitual) se muestran como información y no deciden. No hay suelos de TSB por deporte.
+- TrainingPeaks no publica zonas de TSB; las de Friel son una convención de entrenadores con poca evidencia formal.
 
 ## Cada mensaje del chat
 

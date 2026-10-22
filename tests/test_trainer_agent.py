@@ -3128,35 +3128,36 @@ class TestSessionTssEstimation:
         assert out["model"]["sport"] == "ciclismo"
         assert out["model"]["ctl_tau_days"] == 42
 
-    def test_abs_overload_triggers_when_tsb_below_floor_trail(self):
-        """TSB <= tsb_abs_floor (-35 para trail) debe forzar OVERLOAD aunque el percentil no lo detecte."""
-        today = date.today()
-        # Serie de carga extrema sostenida que lleva TSB muy por debajo de -35
-        activities = [
-            {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0",
-             "trainingLoad": 130}
-            for i in range(30)
-        ]
-        profile = {"goals": {"primary": "trail running"}}
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=profile,
-            days_window=56,
-        )
-        assert out is not None
-        assert out["ranges"]["tsb_abs_floor"] == -35.0
-        if out["latest"]["tsb"] <= -35.0:
-            assert out["status"] == "overload"
-            assert out["flags"]["abs_overload"] is True
+    def test_form_zone_boundaries_relative_to_ctl(self):
+        # Zonas de Friel en % del CTL (como intervals.icu): >20 / 5..20 / -10..5 / -30..-10 / <-30.
+        from agent.load_metrics import form_zone
+        assert form_zone(27.0, 59.2)["key"] == "transition"   # +46 %
+        assert form_zone(12.0, 60.0)["key"] == "fresh"        # +20 % → aún Fresco (límite)
+        assert form_zone(3.0, 60.0)["key"] == "grey"          # +5 % exacto → gris (Fresco es > +5 %)
+        assert form_zone(-6.0, 60.0)["key"] == "grey"         # −10 % → gris (límite incluido)
+        assert form_zone(-12.2, 73.7)["key"] == "optimal"     # −17 %
+        assert form_zone(-18.0, 60.0)["key"] == "optimal"     # −30 % → óptimo (límite incluido)
+        assert form_zone(-18.1, 60.0)["key"] == "high_risk"
+        assert form_zone(5.0, 0.0)["form_pct"] == 0.0         # sin CTL no hay referencia
 
-    def test_abs_overload_running_floor_is_minus_30(self):
-        cfg = _resolve_sport_model_cfg({"goals": {"primary": "running"}})
-        assert cfg["tsb_abs_floor"] == -30.0
-
-    def test_abs_overload_trail_floor_is_minus_35(self):
-        cfg = _resolve_sport_model_cfg({"goals": {"primary": "trail running"}})
-        assert cfg["tsb_abs_floor"] == -35.0
+    def test_load_status_follows_form_zone_not_personal_percentiles(self):
+        from agent.load_metrics import resolve_load_status
+        def _series(points):
+            return [{"date": f"2026-10-{i + 1:02d}", "tss": 50.0, "ctl": ctl, "atl": ctl - tsb, "tsb": tsb}
+                    for i, (tsb, ctl) in enumerate(points)]
+        # Bloque normal (−21 %): Óptimo → el motor mantiene, no "sobrecarga".
+        out = resolve_load_status(_series([(5.0, 70.0)] * 6 + [(-14.7, 70.1)]))
+        assert out["zone"]["key"] == "optimal" and out["status"] == "neutral"
+        # Riesgo alto (< −30 %) → descarga.
+        out = resolve_load_status(_series([(-25.0, 70.0)]))
+        assert out["zone"]["key"] == "high_risk" and out["status"] == "overload"
+        # 7 días seguidos en zona de carga (< −10 %) → suave / programar descarga.
+        out = resolve_load_status(_series([(-12.0, 70.0)] * 7))
+        assert out["status"] == "fatigue_high" and out["week_in_load"] is True
+        # Transición tras descargar (+46 %) → disponible, avisa de pérdida de forma.
+        out = resolve_load_status(_series([(27.0, 59.2)]))
+        assert out["zone"]["key"] == "transition" and out["status"] == "ready"
+        assert "perder forma" in out["recommendation"]
 
     def test_sustained_overload_boundary_le_fix(self):
         """Cuando tsb_now == tsb_low (valor == percentil p15), debe detectarse como overload.
@@ -3359,7 +3360,7 @@ class TestSportSpecificLoadProfiles:
         assert out["model"]["sport"] == "running"
         assert out["model"]["atl_tau_days"] == 7
         assert out["model"]["ctl_tau_days"] == 42
-        assert out["ranges"]["tsb_abs_floor"] == -30.0
+        assert "tsb_abs_floor" not in out["ranges"]  # sin suelos fijos: decide la zona de Forma
         assert out["latest"]["atl"] > 0 and out["latest"]["ctl"] > 0
 
     def test_trail_profile_uses_tp_taus_and_deeper_tsb_floor(self):
@@ -3384,7 +3385,7 @@ class TestSportSpecificLoadProfiles:
         assert trail_out["model"]["sport"] == "trail running"
         assert trail_out["model"]["atl_tau_days"] == 7
         assert trail_out["model"]["ctl_tau_days"] == 42
-        assert trail_out["ranges"]["tsb_abs_floor"] == -35.0
+        assert "tsb_abs_floor" not in trail_out["ranges"]
         # Mismas constantes (PMC de TP): misma carga, mismo ATL.
         assert float(trail_out["latest"]["atl"]) == float(run_out["latest"]["atl"])
 
@@ -3409,7 +3410,7 @@ class TestSportSpecificLoadProfiles:
         assert out["model"]["sport"] == "triatlón"
         assert out["model"]["atl_tau_days"] == 7
         assert out["model"]["ctl_tau_days"] == 42
-        assert out["ranges"]["tsb_abs_floor"] == -35.0
+        assert "tsb_abs_floor" not in out["ranges"]
         assert out["status"] in {"fatigue_high", "overload"}
 
 class TestLoadFatigueModel:
@@ -7048,7 +7049,7 @@ class TestMcpFactualDeterministicRoute:
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada",
             )
 
-        assert "Regla aplicada" in out
+        assert "Zona de Forma" in out
         assert "TSS del día" in out
         assert len(agent.conversation_history) == 2
 

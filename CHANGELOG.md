@@ -7,8 +7,16 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 ### Fixed
 - Estado de arranque: si Garmin devuelve el registro del día sin valores (reloj sin sincronizar), Body Battery y sueño decían "datos disponibles". Ahora dicen "sin datos" y una línea avisa de qué falta ("Garmin aún no tiene … sincroniza el reloj con la app y vuelve a arrancar Kairos").
 
+### Changed
+- Estado de carga con una sola regla en todo Kairos: zonas de Forma de Joe Friel relativas al CTL (Form % = TSB / CTL, como intervals.icu): 🔴 Riesgo alto < −30 %, 🟢 Óptimo −30 a −10 %, 🟡 Zona gris −10 a +5 %, 🔵 Fresco +5 a +20 %, ⚪ Transición > +20 %. Antes había tres reglas distintas (umbrales fijos en `/carga`, otros con −3,4/+6,2 en el resumen semanal y percentiles + suelos por deporte en el arranque) que se contradecían y llamaban "sobrecarga" a bloques normales de entrenamiento (TSB −16/−18).
+- Motor diario: Riesgo alto → descanso; 7 días seguidos < −10 % → suave/descarga; resto de zonas → mantener y modular con HRV, sueño y body battery. Los percentiles personales pasan a ser informativos y se eliminan los suelos de TSB por deporte (`tsb_abs_floor`).
+- `/carga`, resumen semanal, estado de arranque, estado de hoy, contexto del LLM y prompts muestran la zona y su % del CTL.
+
+### Removed
+- Copia muerta de `_SPORT_MODEL_DEFAULTS` en `trainer_agent.py` (constantes antiguas, sin uso).
+
 ### Tests
-- 569 passed, 6 skipped.
+- 568 passed, 6 skipped.
 
 ## 2026-10-21 (esquema de Supabase en un solo fichero)
 

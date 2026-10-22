@@ -1915,72 +1915,6 @@ def _percentile(values: list[float], pct: float, default: float = 0.0) -> float:
     return cleaned[idx]
 
 
-# ── Configuración de modelo de carga/fatiga por tipo de deporte ───────────────
-# Cada deporte tiene unos tau (constantes de tiempo) y percentiles distintos:
-#   - Trail running / ultrafondo: sesiones muy largas y TSS muy variable →
-#     ATL más largo (acumula fatiga lento) y percentiles más amplios.
-#   - Running de pista/carretera: volumen moderado, respuesta más ágil.
-#   - Ciclismo: mayor volumen horario, CTL más largo (el fitness tarda más).
-#   - Triatlón: multimodal, se asemeja al ciclismo en tau pero percentiles amplios.
-#   - Genérico (otro / desconocido): valores medios conservadores.
-#
-# Los valores pueden sobreescribirse con profile.load_metrics.model.
-_SPORT_MODEL_DEFAULTS: dict[str, dict] = {
-    "trail running": {
-        "atl_tau_days": 8,
-        "ctl_tau_days": 42,
-        "tsb_low_pct": 0.15,
-        "tsb_high_pct": 0.80,
-        "atl_high_pct": 0.85,
-        "weekly_target_pct": 0.55,
-        "weekly_high_pct": 0.90,
-        "tsb_abs_floor": -35.0,   # TSB ≤ esto → OVERLOAD obligatorio
-    },
-    "running": {
-        "atl_tau_days": 7,
-        "ctl_tau_days": 42,
-        "tsb_low_pct": 0.20,
-        "tsb_high_pct": 0.80,
-        "atl_high_pct": 0.80,
-        "weekly_target_pct": 0.55,
-        "weekly_high_pct": 0.85,
-        "tsb_abs_floor": -30.0,
-    },
-    "ciclismo": {
-        "atl_tau_days": 7,
-        "ctl_tau_days": 45,
-        "tsb_low_pct": 0.20,
-        "tsb_high_pct": 0.80,
-        "atl_high_pct": 0.80,
-        "weekly_target_pct": 0.55,
-        "weekly_high_pct": 0.85,
-        "tsb_abs_floor": -32.0,
-    },
-    "triatlón": {
-        "atl_tau_days": 7,
-        "ctl_tau_days": 45,
-        "tsb_low_pct": 0.15,
-        "tsb_high_pct": 0.80,
-        "atl_high_pct": 0.85,
-        "weekly_target_pct": 0.55,
-        "weekly_high_pct": 0.90,
-        "tsb_abs_floor": -35.0,
-    },
-    "otro": {
-        "atl_tau_days": 7,
-        "ctl_tau_days": 42,
-        "tsb_low_pct": 0.20,
-        "tsb_high_pct": 0.80,
-        "atl_high_pct": 0.80,
-        "weekly_target_pct": 0.55,
-        "weekly_high_pct": 0.85,
-        "tsb_abs_floor": -30.0,
-    },
-}
-_SPORT_MODEL_DEFAULTS["triaton"] = _SPORT_MODEL_DEFAULTS["triatlón"]   # alias: triatón sin tilde
-_SPORT_MODEL_DEFAULTS["triatlon"] = _SPORT_MODEL_DEFAULTS["triatlón"]  # alias: triatlon sin tilde (datos migrados)
-
-
 def _resolve_sport_model_cfg(profile: dict | None) -> dict:
     """Devuelve configuración de modelo de carga según deporte + overrides."""
     return _load_metrics._resolve_sport_model_cfg(profile)
@@ -2028,24 +1962,10 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
     if not series:
         return "Sin datos de carga/fatiga disponibles. Inicia una sesión para que el sistema los calcule."
 
-    _STATUS_EMOJI = {
-        "overload": "🔴 sobrecarga",
-        "fatigue_high": "🟠 fatiga alta",
-        "ready": "🟢 disponible",
-        "neutral": "🟡 estable",
-    }
-
-    def _row_status(tsb: float, tsb_low: float = -10.0, tsb_high: float = 5.0, atl: float = 0.0, atl_high: float = 9999.0) -> str:
-        """Clasifica el estado de la fila según TSB (Forma) y ATL (Fatiga)."""
-        fatigue = tsb < tsb_low or atl > atl_high
-        available = not fatigue and (tsb_low <= tsb <= tsb_high)
-        if fatigue and tsb < tsb_low * 1.5:
-            return _STATUS_EMOJI["overload"]
-        if fatigue:
-            return _STATUS_EMOJI["fatigue_high"]
-        if available:
-            return _STATUS_EMOJI["ready"]
-        return _STATUS_EMOJI["neutral"]
+    def _row_status(tsb: float, ctl: float) -> str:
+        """Zona de Forma de la fila (regla única de Kairos: TSB en % del CTL)."""
+        zone = _load_metrics.form_zone(tsb, ctl)
+        return f"{zone['emoji']} {zone['label']} ({zone['form_pct']:+.0f} %)"
 
     def _fmt_date_range(start_iso: str, end_iso: str) -> str:
         try:
@@ -2082,7 +2002,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             return "Sin datos suficientes para vista mensual."
 
         header = (
-            "| Mes | TSS total | CTL fin (Estado físico) | ATL fin (Fatiga) | TSB fin (Forma) | Estado |\n"
+            "| Mes | TSS total | CTL fin (Estado físico) | ATL fin (Fatiga) | TSB fin (Forma) | Zona (% del CTL) |\n"
             "|---|---:|---:|---:|---:|---|\n"
         )
         rows_md: list[str] = []
@@ -2093,7 +2013,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             atl = float(last.get("atl") or 0.0)
             ctl = float(last.get("ctl") or 0.0)
             tsb = float(last.get("tsb") or 0.0)
-            estado = _row_status(tsb, atl=atl)
+            estado = _row_status(tsb, ctl)
             rows_md.append(
                 f"| {_fmt_month(mk)} | {tss_total:.1f} | {ctl:.1f} | {atl:.1f} | {tsb:+.1f} | {estado} |"
             )
@@ -2103,7 +2023,8 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             + header
             + "\n".join(rows_md)
             + "\n\n"
-            + "_TSS: carga de sesión · CTL (Estado físico): estado físico crónico · ATL (Fatiga): fatiga (7d) · TSB (Forma): forma (CTL−ATL)_"
+            + "_TSS: carga de sesión · CTL (Estado físico): estado físico crónico · ATL (Fatiga): fatiga (7d) · TSB (Forma): CTL de ayer − ATL de ayer_\n"
+            + f"_{_load_metrics.FORM_LEGEND}_"
         )
 
     # Vista semanal: últimas 8 semanas naturales lunes→domingo
@@ -2126,7 +2047,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
         return "Sin datos suficientes para vista semanal."
 
     header = (
-        "| Semana | TSS | CTL (Estado físico) | ATL (Fatiga) | TSB (Forma) | Estado |\n"
+        "| Semana | TSS | CTL (Estado físico) | ATL (Fatiga) | TSB (Forma) | Zona (% del CTL) |\n"
         "|---|---:|---:|---:|---:|---|\n"
     )
     rows_md = []
@@ -2139,7 +2060,7 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
             tsb = float(last.get("tsb") or 0.0)
         else:
             atl = ctl = tsb = 0.0
-        estado = _row_status(tsb, atl=atl)
+        estado = _row_status(tsb, ctl)
         rows_md.append(
             f"| {_fmt_date_range(start_iso, end_iso)} | {tss_sum:.1f} | {ctl:.1f} | {atl:.1f} | {tsb:+.1f} | {estado} |"
         )
@@ -2162,8 +2083,8 @@ def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
         + header
         + "\n".join(rows_md)
         + "\n\n"
-        + "_TSS: carga de sesión · CTL (Estado físico): estado físico crónico · ATL (Fatiga): fatiga · TSB (Forma): forma (CTL−ATL)_\n"
-        + "_🟢 disponible = puedes calidad · 🟠 fatiga alta = reduce carga · 🔴 sobrecarga = descarga obligatoria_"
+        + "_TSS: carga de sesión · CTL (Estado físico): estado físico crónico · ATL (Fatiga): fatiga · TSB (Forma): CTL de ayer − ATL de ayer_\n"
+        + f"_{_load_metrics.FORM_LEGEND}_"
         + warmup_note
     )
 
@@ -2353,18 +2274,14 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             atl_high = float(ranges.get("atl_high", 0.0))
             tsb_low = float(ranges.get("tsb_low", 0.0))
             tsb_high = float(ranges.get("tsb_high", 0.0))
-            atl_pos = "por encima: fatiga alta" if atl_high and atl_now > atl_high else "por debajo: fatiga controlada"
-            if tsb_now > tsb_high:
-                tsb_pos = "por encima: muy fresco"
-            elif tsb_now < tsb_low:
-                tsb_pos = "por debajo: fatiga acumulada"
-            else:
-                tsb_pos = "dentro del rango"
+            atl_pos = "por encima de lo habitual" if atl_high and atl_now > atl_high else "dentro de lo habitual"
+            zone = _load_metrics.form_zone(tsb_now, float(latest.get("ctl", 0.0)))
             lines.append(
                 "  - Estado: "
                 f"Estado físico (CTL) {float(latest.get('ctl', 0.0)):.1f} · "
-                f"Fatiga (ATL) {atl_now:.1f} (su máximo habitual es {atl_high:.1f}; {atl_pos}) · "
-                f"Forma (TSB) {tsb_now:+.1f} (rango habitual {tsb_low:+.1f} a {tsb_high:+.1f}; {tsb_pos}) · "
+                f"Fatiga (ATL) {atl_now:.1f} (máximo habitual {atl_high:.1f}; {atl_pos}) · "
+                f"Forma (TSB) {tsb_now:+.1f} = {zone['form_pct']:+.0f} % de tu CTL → zona {zone['emoji']} {zone['label']} "
+                f"(rango habitual {tsb_low:+.1f} a {tsb_high:+.1f}) · "
                 f"TSS de la semana {float(weekly_tss):.1f}"
             )
         if recommendation:
@@ -3220,7 +3137,6 @@ def _build_today_load_status_markdown(profile: dict) -> str:
     latest_date = str(latest.get("date") or "")
     weekly = load_fatigue.get("weekly") or {}
     action = str(load_fatigue.get("action") or "carga estable")
-    status = str(load_fatigue.get("status") or "neutral")
 
     try:
         tss = float(latest.get("tss") or 0.0)
@@ -3236,7 +3152,8 @@ def _build_today_load_status_markdown(profile: dict) -> str:
     except ValueError:
         date_label = latest_date or "sin fecha"
 
-    rule_text = f"{status} ({action})"
+    zone = _load_metrics.form_zone(tsb, ctl)
+    rule_text = f"{zone['emoji']} {zone['label']} ({zone['form_pct']:+.0f} % del CTL) · {action}"
 
     return "\n".join([
         "## 🧭 Resumen",
@@ -3249,9 +3166,9 @@ def _build_today_load_status_markdown(profile: dict) -> str:
         f"| TSS del día | {tss:.1f} | load_metrics(series) |",
         f"| ATL (Fatiga) | {atl:.1f} | modelo EWMA |",
         f"| CTL (Estado físico) | {ctl:.1f} | modelo EWMA |",
-        f"| TSB (Forma) | {tsb:.1f} | CTL-ATL |",
+        f"| TSB (Forma) | {tsb:.1f} | CTL de ayer − ATL de ayer |",
         f"| TSS semanal actual | {week_tss:.1f} | weekly.current_tss |",
-        f"| Regla aplicada | {rule_text} | load_fatigue.status/action |",
+        f"| Zona de Forma | {rule_text} | zonas de Friel (% del CTL) |",
         "",
         "## ✅ Recomendación",
         f"- Regla vigente hoy: **{action}**.",
@@ -4398,14 +4315,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
                 return float(row.get("ctl") or 0), float(row.get("atl") or 0), float(row.get("tsb") or 0)
         return 0.0, 0.0, 0.0
 
-    def _wstatus(tsb: float, atl: float) -> str:
-        if tsb < -10.0 or atl > 80.0:
-            return "🔴 sobrecarga"
-        if tsb < -3.4:
-            return "🟠 fatiga alta"
-        if tsb <= 6.2:
-            return "🟢 disponible"
-        return "🟡 estable"
+    def _wstatus(tsb: float, ctl: float) -> str:
+        # Misma regla que /carga y el estado de arranque: zona de Forma en % del CTL.
+        zone = _load_metrics.form_zone(tsb, ctl)
+        return f"{zone['emoji']} {zone['label']} ({zone['form_pct']:+.0f} %)"
 
     w_ctl, w_atl, w_tsb = _week_end_load(week_end)
     c_ctl, c_atl, c_tsb = _week_end_load(comp_end)
@@ -4433,10 +4346,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         f"| Diferencia porcentual | {delta_pct_text} |",
         f"| Spike >20% | {spike_text} |",
         "",
-        "| Semana | TSS | CTL (Estado físico) | ATL (Fatiga) | TSB (Forma) | Estado |",
+        "| Semana | TSS | CTL (Estado físico) | ATL (Fatiga) | TSB (Forma) | Zona (% del CTL) |",
         "|---|---:|---:|---:|---:|---|",
-        f"| {week_label} | {current_week_tss:.1f} | {w_ctl:.1f} | {w_atl:.1f} | {w_tsb:+.1f} | {_wstatus(w_tsb, w_atl)} |",
-        f"| {comp_label} | {comp_tss_str} | {c_ctl:.1f} | {c_atl:.1f} | {c_tsb:+.1f} | {_wstatus(c_tsb, c_atl)} |",
+        f"| {week_label} | {current_week_tss:.1f} | {w_ctl:.1f} | {w_atl:.1f} | {w_tsb:+.1f} | {_wstatus(w_tsb, w_ctl)} |",
+        f"| {comp_label} | {comp_tss_str} | {c_ctl:.1f} | {c_atl:.1f} | {c_tsb:+.1f} | {_wstatus(c_tsb, c_ctl)} |",
         "",
         "Desglose por tipo de TSS:",
         f"  - rTSS: {tss_breakdown['rTSS']:.1f}",
@@ -9487,40 +9400,11 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
     _MIN_DAYS = 21
     warming_up = days_with_load < _MIN_DAYS
 
-    tsb_now = float(latest["tsb"])
-    atl_now = float(latest["atl"])
-    tsb_abs_floor = float(model_cfg.get("tsb_abs_floor") or -30.0)
-    abs_overload = tsb_now <= tsb_abs_floor
-    sustained_overload = len(series) >= 7 and all(float(x["tsb"]) <= tsb_low for x in series[-7:])
-    fatigue_high = (tsb_now < tsb_low) or (atl_now > atl_high)
-    available_for_quality = (tsb_now >= tsb_low) and (tsb_now <= max(tsb_high, tsb_low + 4.0)) and not fatigue_high
     weekly_spike_alert = bool(weekly_spike.get("spike_alert"))
-
-    if abs_overload or sustained_overload or (current_week_tss > weekly_high and tsb_now < tsb_low):
-        status = "overload"; action = "sobrecarga sostenida"
-        recommendation = "Activa semana de descarga (−30% a −40% de volumen) y elimina calidad intensa 3-5 dias."
-    elif fatigue_high:
-        status = "fatigue_high"; action = "fatiga alta"
-        recommendation = "Reduce intensidad/volumen hoy y prioriza recuperación activa, sueño e hidratación."
-    elif available_for_quality:
-        status = "ready"; action = "buena disponibilidad"
-        recommendation = "Puedes mantener sesión de calidad o progresión controlada según plan."
-    else:
-        status = "neutral"; action = "carga estable"
-        recommendation = "Mantén carga aeróbica controlada y reevalúa mañana con HRV/sueño/estrés."
-
-    if weekly_spike_alert:
-        if status in {"ready", "neutral"}:
-            action = "spike semanal >20%"
-            recommendation = (
-                "⚠️ Spike semanal >20% vs semana previa: reduce 15-25% la carga de los próximos 2-3 días "
-                "y prioriza recuperación para consolidar adaptación."
-            )
-        elif status == "fatigue_high":
-            recommendation = (
-                recommendation
-                + " Además, la carga semanal ya supera en >20% a la semana previa."
-            )
+    resolved = _load_metrics.resolve_load_status(series, weekly_spike_alert=weekly_spike_alert)
+    status = resolved["status"]
+    action = resolved["action"]
+    recommendation = resolved["recommendation"]
 
     return {
         "model": {
@@ -9540,16 +9424,18 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
             "target_tss": weekly_target,
             "high_tss": weekly_high,
         },
-        "ranges": {"tsb_low": tsb_low, "tsb_high": tsb_high, "atl_high": atl_high, "tsb_abs_floor": tsb_abs_floor},
+        # Rangos personales (percentiles de 28 días): solo informativos, no deciden el estado.
+        "ranges": {"tsb_low": tsb_low, "tsb_high": tsb_high, "atl_high": atl_high},
         "warming_up": warming_up,
         "warming_up_days_remaining": max(0, _MIN_DAYS - days_with_load),
         "days_with_load": days_with_load,
         "flags": {
-            "fatigue_high": fatigue_high, "sustained_overload": sustained_overload,
-            "abs_overload": abs_overload, "available_for_quality": available_for_quality,
+            "fatigue_high": status == "fatigue_high", "sustained_overload": resolved["week_in_load"],
+            "abs_overload": resolved["zone"]["key"] == "high_risk", "available_for_quality": status == "ready",
             "warming_up": warming_up,
             "weekly_spike_alert": weekly_spike_alert,
         },
+        "zone": resolved["zone"],
         "status": status,
         "action": action,
         "recommendation": recommendation,
@@ -11189,14 +11075,16 @@ class TrainerAgent:
             ranges = load.get("ranges") or {}
             weekly = load.get("weekly") or {}
             if latest:
+                _zone_ctx = _load_metrics.form_zone(float(latest.get("tsb") or 0), float(latest.get("ctl") or 0))
                 out += (
                     "\n\n## Estado de carga actual (Kairos)\n"
                     f"- Fecha: {latest.get('date')} · TSS del día {float(latest.get('tss') or 0):.1f}\n"
                     f"- Estado físico (CTL) {float(latest.get('ctl') or 0):.1f} · Fatiga (ATL) {float(latest.get('atl') or 0):.1f}"
                     f" · Forma (TSB) {float(latest.get('tsb') or 0):+.1f}\n"
-                    f"- Estado del modelo: {load.get('status') or 'neutral'} ({load.get('action') or ''})\n"
-                    f"- Rango individual de Forma: {ranges.get('tsb_low')} a {ranges.get('tsb_high')} · ATL alto > {ranges.get('atl_high')}"
-                    f" · suelo de Forma {ranges.get('tsb_abs_floor')}\n"
+                    f"- Zona de Forma (Friel, % del CTL): {_zone_ctx['emoji']} {_zone_ctx['label']} ({_zone_ctx['form_pct']:+.0f} %)"
+                    f" · estado del motor diario: {load.get('status') or 'neutral'} ({load.get('action') or ''})\n"
+                    f"- Rango habitual de Forma (informativo, no decide): {ranges.get('tsb_low')} a {ranges.get('tsb_high')}"
+                    f" · ATL máximo habitual {ranges.get('atl_high')}\n"
                     f"- TSS de la semana en curso {float(weekly.get('current_tss') or 0):.1f}"
                     f" (semana previa {float(weekly.get('previous_tss') or 0):.1f})\n"
                 )
