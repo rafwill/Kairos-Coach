@@ -4,28 +4,29 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
-### Fixed
-- Ritmo umbral por fecha también en los cálculos de respaldo (análisis de actividad sin TSS guardado, adherencia al plan, verificación incremental): usaban el umbral actual y, tras un cambio, habrían calculado actividades anteriores con el nuevo. El TSS guardado ya no se recalculaba; ahora tampoco se muestra un valor provisional con el umbral equivocado.
+### Added
+- `tools/juez_bateria.py`: juez determinista de la batería. Contrasta cada respuesta con Supabase (y Garmin para los récords) con una rúbrica fijada antes de ver resultados (`docs/Harness.md`). Primera pasada: 23/25; tras corregir el fallo de la Carga Garmin y un falso positivo del propio juez (un rango de TSS leído como FC), 25/25. Verificado que detecta errores introducidos a propósito (CTL, TSS semanal, fecha ISO, rango de FC).
+- `_hr_zone_bounds_bpm`: zonas de FC en lpm en una sola función; la usan el contexto del LLM y el juez.
 
 ### Changed
 - Prompts: regla explícita de umbrales. El ritmo umbral y la FC umbral son los del perfil de Kairos (pedidos en el alta, guardados en Supabase, cambiados con `/perfil umbral`); un cambio rige desde su fecha y no altera el TSS ya calculado; `get_lactate_threshold` (Garmin) es solo informativo.
-
-### Data
-- Ritmo umbral de running 4:00/km (240 s) desde el 22/10/2026 (antes 4:12), estimado con la carrera del 18/10 (24764615547): 27 min, NGP 3:49/km del pipeline de producción, llevado a 60 min con Riegel (×1.049). FC umbral sin cambios (168 lpm de media en los últimos 20 min frente a 169). Añadido al historial del perfil; el TSS ya guardado no cambia.
-
-### Fixed
-- Estado de arranque: si Garmin devuelve el registro del día sin valores (reloj sin sincronizar), Body Battery y sueño decían "datos disponibles". Ahora dicen "sin datos" y una línea avisa de qué falta ("Garmin aún no tiene … sincroniza el reloj con la app y vuelve a arrancar Kairos").
-
-### Changed
 - Estado de carga con una sola regla en todo Kairos: zonas de Forma de Joe Friel relativas al CTL (Form % = TSB / CTL, como intervals.icu): 🔴 Riesgo alto < −30 %, 🟢 Óptimo −30 a −10 %, 🟡 Zona gris −10 a +5 %, 🔵 Fresco +5 a +20 %, ⚪ Transición > +20 %. Antes había tres reglas distintas (umbrales fijos en `/carga`, otros con −3,4/+6,2 en el resumen semanal y percentiles + suelos por deporte en el arranque) que se contradecían y llamaban "sobrecarga" a bloques normales de entrenamiento (TSB −16/−18).
 - Motor diario: Riesgo alto → descanso; 7 días seguidos < −10 % → suave/descarga; resto de zonas → mantener y modular con HRV, sueño y body battery. Los percentiles personales pasan a ser informativos y se eliminan los suelos de TSB por deporte (`tsb_abs_floor`).
 - `/carga`, resumen semanal, estado de arranque, estado de hoy, contexto del LLM y prompts muestran la zona y su % del CTL.
 
+### Fixed
+- "Carga Garmin" en bici con potencia mostraba el TSS que calcula Garmin (`trainingStressScore`) en vez de su carga (`activityTrainingLoad`, la guardada en `activity_tss.native_load`): en "últimas N actividades" y en el análisis de una actividad.
+- Ritmo umbral por fecha también en los cálculos de respaldo (análisis de actividad sin TSS guardado, adherencia al plan, verificación incremental): usaban el umbral actual y, tras un cambio, habrían calculado actividades anteriores con el nuevo. El TSS guardado ya no se recalculaba; ahora tampoco se muestra un valor provisional con el umbral equivocado.
+- Estado de arranque: si Garmin devuelve el registro del día sin valores (reloj sin sincronizar), Body Battery y sueño decían "datos disponibles". Ahora dicen "sin datos" y una línea avisa de qué falta ("Garmin aún no tiene … sincroniza el reloj con la app y vuelve a arrancar Kairos").
+
 ### Removed
 - Copia muerta de `_SPORT_MODEL_DEFAULTS` en `trainer_agent.py` (constantes antiguas, sin uso).
 
+### Data
+- Ritmo umbral de running 4:00/km (240 s) desde el 22/10/2026 (antes 4:12), estimado con la carrera del 18/10 (24764615547): 27 min, NGP 3:49/km del pipeline de producción, llevado a 60 min con Riegel (×1.049). FC umbral sin cambios (168 lpm de media en los últimos 20 min frente a 169). Añadido al historial del perfil; el TSS ya guardado no cambia.
+
 ### Tests
-- 568 passed, 6 skipped.
+- 570 passed, 6 skipped. Nuevos: zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
 
 ## 2026-10-21 (esquema de Supabase en un solo fichero)
 
