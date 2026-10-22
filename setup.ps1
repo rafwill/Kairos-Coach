@@ -27,6 +27,9 @@ Write-Host "[setup] Actualizando pip..."
 Write-Host "[setup] Instalando dependencias runtime..."
 & $venvPython -m pip install -r requirements.txt
 
+Write-Host "[setup] Instalando Kairos en modo editable (agent y garmin_mcp importables desde cualquier carpeta)..."
+& $venvPython -m pip install -e . --no-deps
+
 if (-not $SkipDev) {
     Write-Host "[setup] Instalando dependencias de desarrollo..."
     & $venvPython -m pip install -r requirements-dev.txt

@@ -623,6 +623,16 @@ class TestCompactToolResult:
         assert parsed["rows"][1] == ["2026-10-09", None, 61, "BALANCED"]
         assert parsed["days_with_data"] == 14
         assert "omitted_oldest_days" not in parsed
+        # Resumen determinista para que el LLM no cuente ni promedie.
+        assert parsed["rows_total"] == 15
+        hrv = parsed["summary"]["hrv"]
+        values = [r["hrv"] for r in rows if r["hrv"] is not None]
+        assert hrv["n"] == 14 and hrv["min"] == min(values) and hrv["max"] == max(values)
+        assert hrv["mean"] == round(sum(values) / 14, 1)
+        assert hrv["first"] == {"date": "2026-10-08", "value": rows[0]["hrv"]}
+        assert hrv["last"] == {"date": "2026-10-22", "value": rows[-1]["hrv"]}
+        assert parsed["summary"]["status"] == {"n": 15, "counts": {"BALANCED": 15}}
+        assert "date" not in parsed["summary"]
 
     def test_long_daily_series_drops_oldest_days_and_says_so(self):
         rows = [{"date": f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}", "trainingLoad": 123.45} for i in range(200)]

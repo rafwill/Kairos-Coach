@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Changed (series de tendencia e instalación)
+- `get_vo2max_trend` pide el rango en una sola llamada al endpoint `maxmet/daily/{inicio}/{fin}` de Garmin (el mismo que usa `get_max_metrics`, que solo lo llama con un día) y devuelve todos los días con estimación. Antes consultaba un día de cada 7 y muchas muestras caían en días sin estimación: en dos meses, 31 valores en vez de 4–6, en 0,6 s.
+- Series de tendencia en el host: además de las filas, `rows_total` y `summary` por columna (n, mín, máx, media, primero y último; recuento por valor en las de texto), calculados sobre todas las filas. Los dos system prompts piden citar `summary` en vez de contar o promediar (el LLM decía "13/14 días" con 14 de 15).
+- `pyproject.toml` mínimo (solo declara `agent` y `garmin_mcp`; las dependencias siguen en `requirements*.txt`) y `pip install -e . --no-deps` en `setup.ps1`/`setup.sh`: los paquetes se importan desde cualquier carpeta. Ruff toma ahora `requires-python` (3.11): desaparece un falso positivo (`BaseExceptionGroup`) y aparecen 22 sugerencias de modernización (`UP017`, `UP041`, `FURB162`).
+
 ### Fixed (historial entre sesiones, VO2máx y entorno)
 - Kairos restauraba al arrancar los 6 últimos mensajes de la sesión anterior, respuestas incluidas, y el LLM repetía cifras viejas o erróneas sin consultar las tools (pasó con "0 días con datos" de HRV). Ahora solo recupera las preguntas del usuario, en una nota de sistema que dice que no traen datos (`_restore_previous_session`, `previous_session_questions`). El historial de la sesión en curso no cambia.
 - `get_vo2max_trend` devolvía el payload entero de `get_max_metrics` por muestra (~600 caracteres de aclimatación al calor y la altitud cada una) y el host solo podía pasar 4 muestras al LLM. Devuelve ahora una serie plana (`date`, `running`, `cycling`) con `days_with_data`, y el host la envía completa como las otras series.

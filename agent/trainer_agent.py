@@ -451,11 +451,39 @@ def _compact_personal_records(data: list) -> str:
 _DAILY_SERIES_TOOLS = {"get_hrv_trend": "trend", "get_training_load_trend": "trend", "get_vo2max_trend": "trend"}
 
 
+def _daily_series_summary(rows: list[dict], columns: list[str]) -> dict:
+    """Por columna: n, mín, máx, media, primero y último (numéricas) o recuento por valor (texto)."""
+    summary: dict[str, dict] = {}
+    for col in columns:
+        if col in {"date", "error"}:
+            continue
+        pairs = [(r.get("date"), r.get(col)) for r in rows if r.get(col) is not None]
+        nums = [(d, v) for d, v in pairs if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if nums and len(nums) == len(pairs):
+            values = [v for _, v in nums]
+            summary[col] = {
+                "n": len(values), "min": min(values), "max": max(values),
+                "mean": round(sum(values) / len(values), 1),
+                "first": {"date": nums[0][0], "value": nums[0][1]},
+                "last": {"date": nums[-1][0], "value": nums[-1][1]},
+            }
+        elif pairs:
+            counts: dict[str, int] = {}
+            for _, v in pairs:
+                counts[str(v)] = counts.get(str(v), 0) + 1
+            summary[col] = {"n": len(pairs), "counts": counts}
+    return summary
+
+
 def _compact_daily_series(data: dict, key: str) -> str:
     """Serie diaria completa en formato columnas/filas. Si no cabe, quita los días más antiguos y lo dice."""
     rows = [r for r in (data.get(key) or []) if isinstance(r, dict)]
     columns = list(dict.fromkeys(k for r in rows for k in r))
     out = {k: v for k, v in data.items() if k != key}
+    # Resumen calculado aquí (sobre todas las filas, también las que no quepan): el LLM contaba mal
+    # días y muestras ("13/14" con 14 de 15). Se le pide citar estos valores en vez de contar.
+    out["rows_total"] = len(rows)
+    out["summary"] = _daily_series_summary(rows, columns)
     out["columns"] = columns
     out["rows"] = [[r.get(c) for c in columns] for r in rows]
     compact = json.dumps(out, ensure_ascii=False, separators=(",", ":"))

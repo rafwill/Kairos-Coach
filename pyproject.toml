@@ -1,0 +1,15 @@
+# Solo declara los paquetes del repo para instalarlos en modo editable (`pip install -e . --no-deps`,
+# lo hace setup.ps1 / setup.sh): así `agent` y `garmin_mcp` se importan desde cualquier carpeta.
+# Las dependencias siguen en requirements.txt y requirements-dev.txt.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kairos-coach"
+version = "0.1.0"
+description = "Kairos Coach: entrenador con datos de Garmin (host) y su servidor MCP (garmin_mcp)"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+include = ["agent*", "garmin_mcp*"]

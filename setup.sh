@@ -29,6 +29,9 @@ echo "[setup] Actualizando pip..."
 echo "[setup] Instalando dependencias runtime..."
 "$VENV_PY" -m pip install -r requirements.txt
 
+echo "[setup] Instalando Kairos en modo editable (agent y garmin_mcp importables desde cualquier carpeta)..."
+"$VENV_PY" -m pip install -e . --no-deps
+
 if [[ "$SKIP_DEV" != "1" ]]; then
   echo "[setup] Instalando dependencias de desarrollo..."
   "$VENV_PY" -m pip install -r requirements-dev.txt

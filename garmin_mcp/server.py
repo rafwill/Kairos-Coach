@@ -369,35 +369,32 @@ def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Endpoint de Garmin que usa get_max_metrics; admite rango, pero la librería solo lo llama con un día.
+_MAX_METRICS_URL = "/metrics-service/metrics/maxmet/daily"
+
+
 def _vo2max_trend(args: dict[str, Any]) -> dict[str, Any]:
     start = _as_iso_day(args.get("start_date") or args.get("date"))
     end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
-    days = _iso_date_iter(start, end)
-    sample = sorted(set(days[::7]) | {days[-1]})  # el VO2máx cambia despacio: una consulta por semana
-    # Serie plana (fecha, carrera, ciclismo): get_max_metrics trae además ~600 caracteres de aclimatación
-    # al calor y la altitud por muestra, y con ellos el host solo podía pasar 4 muestras al LLM.
-    trend: list[dict[str, Any]] = []
-    for day in sample:
-        try:
-            payload = _invoke_with_auth_retry("get_max_metrics", day)
-        except GarminConnectAuthenticationError:
-            raise
-        except Exception as exc:  # un día sin datos no invalida el resto del rango
-            trend.append({"date": day, "running": None, "cycling": None, "error": str(exc)[:120]})
+    days = _iso_date_iter(start, end)  # ordena y limita a 90 días como el resto de tendencias
+    start, end = days[0], days[-1]
+    # Una sola llamada con el rango: Garmin devuelve un elemento por cada día con estimación nueva.
+    # Antes se pedía un día de cada 7 y muchas muestras caían en días sin estimación.
+    payload = _invoke_with_auth_retry("connectapi", f"{_MAX_METRICS_URL}/{start}/{end}")
+    by_day: dict[str, dict[str, Any]] = {}
+    for item in payload if isinstance(payload, list) else [payload]:
+        if not isinstance(item, dict):
             continue
-        item = next((x for x in (payload if isinstance(payload, list) else [payload]) if isinstance(x, dict)), {})
-        trend.append({
-            "date": day,
-            "running": _vo2max_value(item.get("generic")),
-            "cycling": _vo2max_value(item.get("cycling")),
-        })
-    return {
-        "start_date": start,
-        "end_date": end,
-        "sampled_every_days": 7,
-        "days_with_data": sum(1 for r in trend if r["running"] is not None or r["cycling"] is not None),
-        "trend": trend,
-    }
+        generic, cycling = item.get("generic"), item.get("cycling")
+        day = next((b.get("calendarDate") for b in (generic, cycling) if isinstance(b, dict) and b.get("calendarDate")), None)
+        if not day:
+            continue
+        row = by_day.setdefault(day, {"date": day, "running": None, "cycling": None})
+        row["running"] = _vo2max_value(generic) if _vo2max_value(generic) is not None else row["running"]
+        row["cycling"] = _vo2max_value(cycling) if _vo2max_value(cycling) is not None else row["cycling"]
+    trend = [r for _, r in sorted(by_day.items()) if r["running"] is not None or r["cycling"] is not None]
+    # Solo días con estimación: Garmin no recalcula el VO2máx a diario.
+    return {"start_date": start, "end_date": end, "days_with_data": len(trend), "trend": trend}
 
 
 def _vo2max_value(block: Any) -> Any:
@@ -713,8 +710,8 @@ def get_hrv_trend(start_date: StartDate = None, end_date: EndDate = None, date: 
 
 
 @_tool("get_vo2max_trend", "Tendencia de VO2máx",
-       "VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas, muestreado cada 7 días más el "
-       "último día del rango (cambia despacio). Devuelve una fila por muestra: fecha, running y cycling.")
+       "VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas (máx. 90 días): una fila por cada "
+       "día con estimación nueva (fecha, running, cycling). Garmin no lo recalcula a diario.")
 def get_vo2max_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_vo2max_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 
