@@ -65,7 +65,7 @@ Kairos pide el usuario, muestra los proveedores con clave configurada y arranca 
 
 Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué sesión me recomiendas para esta semana?"*, *"Créame un plan para mi media maratón"*.
 
-Con `make` disponible: `make setup`, `make serve`, `make test`, `make lint`, `make lint-mcp` (guía de estilo MCP), `make health-mcp` (las 41 tools contra Garmin).
+Con `make` disponible: `make setup` y `make serve`. Los comandos de pruebas y diagnóstico están en [Tests y diagnóstico](#tests-y-diagnóstico).
 
 ## Estructura
 
@@ -93,15 +93,22 @@ docs/                    arquitectura, harness, bitácora, runbook del MCP y bat
 
 Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (evidencias de calibración, exports de TP y herramientas de diagnóstico), `fixtures/real_payloads/` (datos reales de Garmin), `.tmp/` (salidas de la batería) y `memory/`.
 
-## Tests
+## Tests y diagnóstico
 
-```powershell
-.venv\Scripts\python.exe -m pytest           # 570 passed, 6 skipped (22/10/2026)
-.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy
-.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md   # comprueba cada respuesta contra Supabase
-```
+| Qué | Con `make` | Sin `make` (Windows) | Cuándo |
+| --- | --- | --- | --- |
+| Tests (sin red) | `make test` | `.venv\Scripts\python.exe -m pytest` | Siempre; la CI los pasa en cada push |
+| Lint de código | `make lint` | `.venv\Scripts\python.exe -m ruff check agent tests tools` | Antes de commitear |
+| Guía de estilo del MCP | `make lint-mcp` | `.venv\Scripts\python.exe tools\lint_mcp.py` | Al añadir o cambiar tools del MCP |
+| Salud de las tools del MCP | `make health-mcp` | `.venv\Scripts\python.exe tools\healthcheck_mcp.py` | Al actualizar `garminconnect`, antes de una batería o si algo falla |
+| Batería de preguntas | — | `.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy` | Tras cambios en rutas, prompts o modelo |
+| Juez de la batería | — | `.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md` | Justo después de la batería |
 
-La suite no necesita red. Los 6 tests saltados son la prueba de humo del MCP con Inspector (`RUN_MCP_INSPECTOR_SMOKE=1`). La CI (`.github/workflows/tests.yml`) ejecuta pytest en cada push y pull request. La batería (`docs/bateria_p55_preguntas_base.txt`) se lanza contra datos reales y necesita `KAIROS_USERNAME` en `.env`.
+- **Tests:** 574 passed, 6 skipped (22/10/2026). No necesitan red. Los 6 saltados son la prueba de humo con el Inspector oficial de MCP (`RUN_MCP_INSPECTOR_SMOKE=1`, con `GARMIN_EMAIL` y `GARMIN_PASSWORD` en el entorno).
+- **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
+- **`healthcheck_mcp`:** llama a las 41 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
+- **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
+- Las salidas con datos reales van a `.tmp/`, que está en `.gitignore`.
 
 ## Documentación
 
