@@ -446,6 +446,28 @@ def _compact_personal_records(data: list) -> str:
     return json.dumps(results, ensure_ascii=False, separators=(",", ":"))
 
 
+# Tools que devuelven una serie diaria dentro de un objeto ({..., "trend": [{date, ...}, ...]}).
+# La poda genérica deja 4 elementos de cada lista anidada: con 15 días el LLM recibía 4 e inventaba el resto.
+_DAILY_SERIES_TOOLS = {"get_hrv_trend": "trend", "get_training_load_trend": "trend"}
+
+
+def _compact_daily_series(data: dict, key: str) -> str:
+    """Serie diaria completa en formato columnas/filas. Si no cabe, quita los días más antiguos y lo dice."""
+    rows = [r for r in (data.get(key) or []) if isinstance(r, dict)]
+    columns = list(dict.fromkeys(k for r in rows for k in r))
+    out = {k: v for k, v in data.items() if k != key}
+    out["columns"] = columns
+    out["rows"] = [[r.get(c) for c in columns] for r in rows]
+    compact = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+    omitted = 0
+    while len(compact) > _MAX_TOOL_RESULT_CHARS and len(out["rows"]) > 1:
+        out["rows"].pop(0)
+        omitted += 1
+        out["omitted_oldest_days"] = omitted
+        compact = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+    return compact
+
+
 def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
     """
     Compacta el resultado de una herramienta para que quepa en el contexto.
@@ -504,8 +526,13 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
                     return json.dumps(_bb_out, ensure_ascii=False, separators=(",", ":"))
         # Procesado específico para datos de sueño: extrae solo métricas clave antes del truncado
         # Procesado específico para HRV: extrae campos clave antes del truncado
+        if tool_name in _DAILY_SERIES_TOOLS and isinstance(data, dict):
+            return _compact_daily_series(data, _DAILY_SERIES_TOOLS[tool_name])
         if tool_name == "get_hrv_data" and isinstance(data, (dict, list)):
             _hd = data[0] if isinstance(data, list) and data else data
+            # Garmin trae los valores del día dentro de hrvSummary; la raíz solo lleva lecturas sueltas.
+            if isinstance(_hd, dict) and isinstance(_hd.get("hrvSummary"), dict):
+                _hd = _hd["hrvSummary"]
             if isinstance(_hd, dict):
                 _hrv_out = {}
                 for _k, _aliases in (
@@ -2940,6 +2967,28 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
         "valoración",
     )
     if any(marker in text for marker in coaching_markers):
+        return False
+
+    # Exclusión: preguntas de evolución o de un periodo ("¿cómo ha evolucionado mi HRV en las
+    # últimas dos semanas?"). Esta ruta responde con los datos de un día; las tendencias van al LLM,
+    # que tiene get_hrv_trend, kairos_load_trends, etc.
+    trend_markers = (
+        "evoluci",
+        "tendencia",
+        "ha ido",
+        "han ido",
+        "ultimas",
+        "últimas",
+        "ultimos",
+        "últimos",
+        "este mes",
+        "semanas",
+        "meses",
+        "historico",
+        "histórico",
+        "progres",
+    )
+    if any(marker in text for marker in trend_markers):
         return False
 
     factual_markers = (

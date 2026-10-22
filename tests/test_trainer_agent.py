@@ -605,6 +605,34 @@ class TestCompactToolResult:
         assert parsed.get("charged") == 58
         assert parsed.get("drained") == 31
 
+    def test_get_hrv_data_reads_nested_hrv_summary(self):
+        # Forma real de Garmin: los valores van en hrvSummary; antes caía a la poda genérica.
+        data = {"userProfilePk": 1, "hrvReadings": [{"hrvValue": 70}] * 50,
+                "hrvSummary": {"weeklyAvg": 61, "lastNightAvg": 56, "status": "BALANCED"}}
+        parsed = json.loads(_compact_tool_result(json.dumps(data), tool_name="get_hrv_data"))
+        assert parsed == {"lastNightAvg": 56, "weeklyAvg": 61, "status": "BALANCED"}
+
+    def test_hrv_trend_keeps_every_day_of_the_series(self):
+        # La poda genérica dejaba 4 de 15 días y el LLM inventaba el resto.
+        rows = [{"date": f"2026-10-{d:02d}", "hrv": None if d == 9 else 60 + d % 5, "weekly_avg": 61,
+                 "status": "BALANCED"} for d in range(8, 23)]
+        data = {"start_date": "2026-10-08", "end_date": "2026-10-22", "days_with_data": 14, "trend": rows}
+        parsed = json.loads(_compact_tool_result(json.dumps(data), tool_name="get_hrv_trend"))
+        assert parsed["columns"] == ["date", "hrv", "weekly_avg", "status"]
+        assert len(parsed["rows"]) == 15
+        assert parsed["rows"][1] == ["2026-10-09", None, 61, "BALANCED"]
+        assert parsed["days_with_data"] == 14
+        assert "omitted_oldest_days" not in parsed
+
+    def test_long_daily_series_drops_oldest_days_and_says_so(self):
+        rows = [{"date": f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}", "trainingLoad": 123.45} for i in range(200)]
+        data = {"start_date": "x", "end_date": "y", "days_with_data": 200, "trend": rows}
+        compact = _compact_tool_result(json.dumps(data), tool_name="get_training_load_trend")
+        parsed = json.loads(compact)
+        assert len(compact) <= 3000
+        assert parsed["omitted_oldest_days"] + len(parsed["rows"]) == 200
+        assert parsed["rows"][-1] == [rows[-1]["date"], 123.45]
+
 
 # ─── Base de conocimiento del atleta (RAG) ──────────────────────────────────
 
@@ -4603,6 +4631,21 @@ class TestDailyReadinessDeterministicRoute:
 
 
 class TestMcpFactualDeterministicRoute:
+    def test_trend_questions_go_to_llm_not_single_day_route(self):
+        # Caso real (22/10): "¿Cómo ha evolucionado mi HRV en las últimas dos semanas?" iba a la ruta
+        # factual de un día y respondía con los datos de hoy. Las tendencias van al LLM (get_hrv_trend…).
+        import agent.trainer_agent as ta
+
+        router = ta.ToolRouter(enabled=True)
+        for q in ("¿Cómo ha evolucionado mi HRV en las últimas dos semanas?", "¿Cómo ha ido mi HRV este mes?",
+                  "Tendencia de mi sueño en las últimas semanas", "Evolución de mi FC en reposo este mes"):
+            assert not ta._is_mcp_factual_query_intent(q), q
+            assert router.route_key(q, [], {}) is None, q
+        for q in ("¿Cómo está mi HRV hoy?", "¿Qué HRV tuve ayer?", "¿Cómo dormí anoche?", "¿Cuál fue mi FC en reposo ayer?"):
+            assert router.route_key(q, [], {}) == "mcp_factual", q
+        assert router.route_key("¿Cuál es mi tendencia de carga de las últimas 4 semanas?", [], {}) == "load_trend"
+        assert router.route_key("¿Dime los TSS de mis 20 ultimas actividades de Trail?", [], {}) == "recent_tss_by_sport"
+
     def test_is_mcp_factual_query_intent_detects_data_queries(self):
         assert _is_mcp_factual_query_intent("¿Qué TSS hice ayer?")
         assert _is_mcp_factual_query_intent("¿Cuánto he dormido hoy?")

@@ -4,6 +4,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Fixed (preguntas de tendencia de HRV)
+- "¿Cómo ha evolucionado mi HRV en las últimas dos semanas?" iba a la ruta factual de un día (`mcp_factual`) y respondía con los datos de hoy. `_is_mcp_factual_query_intent` excluye ahora las preguntas de evolución o de periodo (evolución, tendencia, "ha ido", últimas semanas, este mes…), que pasan al LLM; las de un día siguen en la ruta determinista.
+- `get_hrv_trend` (servidor) buscaba `lastNightAvg` en la raíz del payload de Garmin, que lo trae dentro de `hrvSummary`: devolvía 0 días con datos. Ahora lee `hrvSummary` y añade la media semanal y el estado de cada día.
+- Compactación del host (`_compact_tool_result`): `get_hrv_data` tenía el mismo fallo (caía a la poda genérica y el LLM no veía la HRV; pedía días sueltos hasta agotar las 15 iteraciones). Y la poda genérica deja 4 elementos de cada lista anidada: de una serie de 15 días el LLM recibía 4 e inventaba el resto. `get_hrv_trend` y `get_training_load_trend` se envían ahora completas en formato columnas/filas; si no caben, se quitan los días más antiguos y se indica cuántos (`omitted_oldest_days`).
+- Verificado con Kairos: los 14 días de la respuesta coinciden con la serie real de Garmin (antes: 15 iteraciones sin respuesta, o valores inventados). Batería 25/25 con el juez.
+- Juez: el objetivo de glucemia "120–180 mg/dL" se juzgaba como rango de FC ("vo" de "objetivo" casaba con VO2). Ahora exige `VO2` como palabra y descarta rangos en mg/dL.
+
 ### Changed (tests y cliente MCP)
 - Tests organizados por módulo: `tests/test_load_metrics.py` reúne los tests de TSS/PMC que estaban en `test_trainer_agent.py` y los cuatro ficheros pequeños de `load_metrics` (duración, caminar/senderismo). En `test_trainer_agent.py`, los 30 tests del motor de planes que estaban mezclados en `TestTssSourceTagging` pasan a `TestStructuredPlanEngine`, y los de la tabla `/carga` y de umbrales por fecha a `TestLoadTrendDisplay` y `TestThresholdHistoryResolvers`. Misma colección de tests (582, mismos nombres), de 13 a 10 ficheros.
 - Fuera `GARMIN_ENABLED_TOOLS` y el parámetro `essential_only` del cliente MCP: era el filtro de herramientas del MCP de terceros anterior y `garmin_mcp` no lo lee. `.env.example` lo documentaba con herramientas que no existen. `tools/rebuild_tss_baseline.py` usaba `essential_only=False`; corregido (habría fallado al ejecutarse).

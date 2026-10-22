@@ -342,14 +342,24 @@ def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             continue
 
-        value = None
+        # Garmin devuelve los valores del día dentro de hrvSummary (la raíz solo trae lecturas y
+        # marcas de tiempo). Se acepta también la raíz por si algún día llega aplanado.
+        summary: dict[str, Any] = {}
         if isinstance(payload, dict):
-            for key in ("last_night_avg_hrv_ms", "lastNightAvg", "avgOvernightHrv", "averageHrv"):
-                raw = payload.get(key)
-                if raw not in (None, ""):
-                    value = raw
-                    break
-        trend.append({"date": day, "hrv": value})
+            nested = payload.get("hrvSummary")
+            summary = nested if isinstance(nested, dict) else payload
+        value = None
+        for key in ("lastNightAvg", "last_night_avg_hrv_ms", "avgOvernightHrv", "averageHrv"):
+            raw = summary.get(key)
+            if raw not in (None, ""):
+                value = raw
+                break
+        trend.append({
+            "date": day,
+            "hrv": value,
+            "weekly_avg": summary.get("weeklyAvg"),
+            "status": summary.get("status"),
+        })
 
     return {
         "start_date": start,

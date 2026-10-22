@@ -213,10 +213,11 @@ def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
     # Rangos de FC dentro de una zona
     for mr in re.finditer(r"(\d{3})\s*[–-]\s*(\d{3})", coaching):
         before = coaching[max(0, mr.start() - 25): mr.start()]
-        after = coaching[mr.end(): mr.end() + 6]
-        is_hr = "lpm" in after or re.search(r"(?i)(Z[1-5]|FC|lpm|recuper|resistencia|tempo|umbral|VO)", before)
-        if not is_hr or "TSS" in before:
-            continue  # la rúbrica juzga rangos de FC, no TSS ni otras cifras
+        after = coaching[mr.end(): mr.end() + 8]
+        # \bVO2: un "vo" suelto casaba con "objetivo" ("objetivo 120–180 mg/dL" de glucemia).
+        is_hr = "lpm" in after or re.search(r"(?i)(Z[1-5]|FC|lpm|recuper|resistencia|tempo|umbral|\bVO2)", before)
+        if not is_hr or "TSS" in before or re.match(r"\s*mg", after):
+            continue  # la rúbrica juzga rangos de FC, no TSS, glucemia ni otras cifras
         lo, hi = sorted((int(mr.group(1)), int(mr.group(2))))
         if not (100 <= lo <= 220):
             continue

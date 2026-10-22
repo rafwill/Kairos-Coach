@@ -41,6 +41,16 @@ class _FakeGarmin:
     def get_personal_record(self):
         return [{"record_type": "Fastest 5K", "value": "17:48"}]
 
+    def get_hrv_data(self, day: str):
+        # Forma real de Garmin: los valores del día van dentro de hrvSummary.
+        if day == "2026-09-02":
+            return None  # noche sin reloj
+        return {
+            "userProfilePk": 1,
+            "hrvReadings": [{"hrvValue": 70}],
+            "hrvSummary": {"calendarDate": day, "weeklyAvg": 60, "lastNightAvg": 55, "status": "BALANCED"},
+        }
+
 
 @pytest.fixture(autouse=True)
 def _reset_client_cache_state():
@@ -76,6 +86,18 @@ def test_training_load_trend_aggregates_per_day(monkeypatch):
     assert out["days_with_data"] == 2
     assert out["trend"][0]["trainingLoad"] == 15.5
     assert out["trend"][1]["trainingLoad"] == 20.0
+
+
+def test_hrv_trend_reads_values_from_hrv_summary(monkeypatch):
+    # Antes buscaba lastNightAvg en la raíz del payload: 0 días con datos aunque Garmin los tuviera,
+    # y el LLM acababa pidiendo get_hrv_data día a día hasta agotar las iteraciones.
+    monkeypatch.setattr(server, "_garmin_client", lambda: _FakeGarmin())
+
+    out = server._hrv_trend({"start_date": "2026-09-01", "end_date": "2026-09-03"})
+
+    assert out["days_with_data"] == 2
+    assert out["trend"][0] == {"date": "2026-09-01", "hrv": 55, "weekly_avg": 60, "status": "BALANCED"}
+    assert out["trend"][1] == {"date": "2026-09-02", "hrv": None, "weekly_avg": None, "status": None}
 
 
 def test_training_effect_reads_activity_fields(monkeypatch):
