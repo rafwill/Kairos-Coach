@@ -53,7 +53,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ### Added
 - `tools/run_bateria.py`: batería de preguntas con tiempo por respuesta (`--modelo` para comparar modelos; usuario en `KAIROS_USERNAME`; salida en `.tmp/bateria/`).
-- `docs/arquitectura.md`: el detalle técnico que estaba en el README, revisado (fuera `MCP_READ_ONLY` y `_apply_trail_overrides`, que ya no existen; añadida `activity_tss`).
+- `docs/arquitectura.md`: el detalle técnico que estaba en el README, revisado (fuera `_apply_trail_overrides`, que ya no existe; añadida `activity_tss`). Corrección del 22/10: `MCP_READ_ONLY` sí existe (activado por defecto) y se había omitido por error; vuelve a estar documentado.
 
 ### Changed
 - README reescrito: de 1 016 a unas 120 líneas.

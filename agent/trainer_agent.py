@@ -1056,7 +1056,12 @@ async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_m
         stored_row = stored.get(_activity_id_int(act))
         if stored_row is None and d_iso < last_stored_iso:
             continue  # anterior a la línea base: sin TSS guardado, no se inventa
-        native_load = _extract_training_load_tss(act)
+        # Carga Garmin = activityTrainingLoad (la guardada en activity_tss.native_load). No usar
+        # extract_training_load_tss: en bici con potencia devuelve el TSS de Garmin, no su carga.
+        native_load = (
+            stored_row.get("native_load") if stored_row is not None and stored_row.get("native_load") is not None
+            else _extract_activity_native_load(act)
+        )
         rows.append({
             "date": d_iso,
             "sport": sport,
@@ -3569,6 +3574,23 @@ def _resolve_tp_hr_threshold_for_date(profile: dict | None, d_iso: str) -> float
     return _resolve_profile_history_value(profile, "hr_threshold_tp_history", "bpm", d_iso, (120, 230))
 
 
+def _hr_zone_bounds_bpm(lthr: float) -> list[tuple[str, int, int]]:
+    """Zonas de FC en lpm a partir del umbral (% del LTHR, como TrainingPeaks).
+
+    recuperación < 85 % · resistencia 85–89 % · tempo 90–94 % · umbral 95–100 % · VO₂máx > 100 %.
+    """
+    def _bpm(pct: float) -> int:
+        return int(round(float(lthr) * pct / 100.0))
+
+    return [
+        ("recuperación", 0, _bpm(85) - 1),
+        ("resistencia", _bpm(85), _bpm(89)),
+        ("tempo", _bpm(90), _bpm(94)),
+        ("umbral", _bpm(95), _bpm(100)),
+        ("vo2max", _bpm(100) + 1, 250),
+    ]
+
+
 def _resolve_running_threshold_pace_for_date(profile: dict | None, d_iso: str) -> float | None:
     """Ritmo umbral (s/km) vigente en la fecha (performance.running_threshold_pace_history)."""
     return _resolve_profile_history_value(profile, "running_threshold_pace_history", "sec_per_km", d_iso, (150, 600))
@@ -4727,10 +4749,14 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
 
         # TSS de la actividad principal: el guardado en activity_tss. La carga de Garmin
         # se muestra aparte y nunca sustituye al TSS.
-        primary_garmin_load = _extract_training_load_tss(act_payload)
-        if primary_garmin_load is None:
-            primary_garmin_load = _extract_training_load_tss(primary)
+        # Carga Garmin = activityTrainingLoad (activity_tss.native_load); en bici con potencia
+        # extract_training_load_tss devolvería el TSS de Garmin en su lugar.
         primary_stored = stored_tss.get(_activity_id_int(primary)) if primary_id is not None else None
+        primary_garmin_load = (primary_stored or {}).get("native_load")
+        if primary_garmin_load is None:
+            primary_garmin_load = _extract_activity_native_load(act_payload)
+        if primary_garmin_load is None:
+            primary_garmin_load = _extract_activity_native_load(primary)
 
         primary_tss_value: float | None = None
         primary_tss_source = "pendiente de cálculo"
@@ -11101,16 +11127,14 @@ class TrainerAgent:
         anchors = []
         hr_thr, _, _ = _resolve_hr_threshold_bpm(self.user_profile)
         if hr_thr:
-            lthr = float(hr_thr)
-
-            def _bpm(pct: float) -> int:
-                return int(round(lthr * pct / 100.0))
-
-            anchors.append(f"- Umbral de FC (LTHR): {int(round(lthr))} lpm")
+            zones = {name: (lo, hi) for name, lo, hi in _hr_zone_bounds_bpm(float(hr_thr))}
+            anchors.append(f"- Umbral de FC (LTHR): {int(round(float(hr_thr)))} lpm")
             anchors.append(
                 "- Zonas de FC (% del umbral, como TrainingPeaks): "
-                f"recuperación < {_bpm(85)} lpm · resistencia {_bpm(85)}–{_bpm(89)} · tempo {_bpm(90)}–{_bpm(94)} · "
-                f"umbral {_bpm(95)}–{_bpm(100)} · VO₂máx > {_bpm(100)} lpm"
+                f"recuperación < {zones['resistencia'][0]} lpm · "
+                f"resistencia {zones['resistencia'][0]}–{zones['resistencia'][1]} · "
+                f"tempo {zones['tempo'][0]}–{zones['tempo'][1]} · "
+                f"umbral {zones['umbral'][0]}–{zones['umbral'][1]} · VO₂máx > {zones['umbral'][1]} lpm"
             )
         tp_thr = _resolve_tp_hr_threshold_for_date(self.user_profile, today_iso)
         if tp_thr and (not hr_thr or int(tp_thr) != int(hr_thr)):

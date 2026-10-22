@@ -84,6 +84,7 @@ tests/                   suite de pytest (sin red: Garmin, Supabase y LLM mockea
 tools/
   rebuild_tss_baseline.py   corrección del histórico de TSS (prueba; --apply escribe)
   run_bateria.py            batería de preguntas contra Kairos con tiempos por respuesta
+  juez_bateria.py           juez determinista de la batería (rúbrica fija frente a Supabase)
   garmin-mcp-frozen.*       lanzadores del servidor MCP
 docs/                    arquitectura, harness, bitácora, runbook del MCP y batería
 ```
@@ -93,8 +94,9 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 ## Tests
 
 ```powershell
-.venv\Scripts\python.exe -m pytest           # 564 passed, 6 skipped (21/10/2026)
-.venv\Scripts\python.exe tools\run_bateria.py --modelo nvidia/nemotron-3-ultra-550b-a55b
+.venv\Scripts\python.exe -m pytest           # 570 passed, 6 skipped (22/10/2026)
+.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy
+.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md   # comprueba cada respuesta contra Supabase
 ```
 
 La suite no necesita red. Los 6 tests saltados son la prueba de humo del MCP con Inspector (`RUN_MCP_INSPECTOR_SMOKE=1`). La CI (`.github/workflows/tests.yml`) ejecuta pytest en cada push y pull request. La batería (`docs/bateria_p55_preguntas_base.txt`) se lanza contra datos reales y necesita `KAIROS_USERNAME` en `.env`.

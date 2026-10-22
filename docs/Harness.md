@@ -115,7 +115,7 @@ Regla: declarar N (tamaño de muestra) y calidad del dato en toda afirmación so
 #### Suite de tests (estado validado en CI y local)
 **Directorio:** `tests/`
 
-Verifica que el harness no se rompe (2026-10-21: 556 passed, 6 skipped):
+Verifica que el harness no se rompe (2026-10-22: 570 passed, 6 skipped):
 - `test_trainer_agent.py` — funciones puras del agente y cálculo de TSS/PMC.
 - `test_running_tss.py`, `test_walk_hike_*.py`, `test_load_metrics_*.py` — modelos de TSS por deporte.
 - `test_storage.py` — capa de persistencia.
@@ -123,6 +123,18 @@ Verifica que el harness no se rompe (2026-10-21: 556 passed, 6 skipped):
 - `test_hooks_router.py`, `test_kairos_mcp_server.py`, `test_mcp_client.py`, `test_mcp_inspector_smoke.py` — hooks, router y MCP.
 
 Toda la capa de Supabase y Garmin está mockeada — no se realizan conexiones reales en ningún test.
+
+#### Batería y juez determinista
+**Herramientas:** `tools/run_bateria.py` y `tools/juez_bateria.py`
+
+`run_bateria.py` lanza las 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra Kairos real y guarda la transcripción con tiempos (`.tmp/bateria/`). `juez_bateria.py <transcripción>.md` la contrasta con Supabase (`load_metrics_daily`, `activity_tss`, perfil, planes) y, para los récords, con Garmin en solo lectura; reutiliza funciones de producción (`form_zone`, umbral por fecha, `_hr_zone_bounds_bpm`, familia de deporte). Rúbrica fijada antes de ver resultados (22/10/2026):
+
+- Globales (G1–G5): hay respuesta y coaching; Garmin accesible (si no, fallo de entorno); fechas DD/MM/AAAA; nada de "datos disponibles" sin cifras; sin turnos de usuario inventados.
+- Por pregunta: CTL/ATL/TSB y zona de Forma = serie del día; TSS semanal, diario y por actividad = `load_metrics_daily` / `activity_tss`; actividades de un rango ⊇ `activity_tss`; análisis de la actividad correcta con su TSS y su Carga Garmin (`native_load`); recuento y desglose por deporte; umbrales y su historial = perfil; plan activo = `training_plan`; récords = Garmin; objetivo = `goals`; últimas 20 por deporte = `activity_tss` (orden, TSS, carga, media y máximo).
+- En el texto del LLM: no atribuye a la CTL el máximo habitual de la ATL; cada rango de FC en lpm cabe en una zona; un ritmo citado como umbral es el vigente.
+- Tolerancias: ±0,1 en TSS/CTL/ATL/TSB, ±1 lpm, ±2 s/km. No juzga la calidad del consejo (revisión humana).
+
+Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera pasada (22/10): detectó que la "Carga Garmin" de las salidas en bici con potencia mostraba el TSS de Garmin.
 
 #### GitHub Actions CI
 **Archivo:** `.github/workflows/tests.yml`
@@ -249,6 +261,7 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 │  validación frente a TP     ✓ rebuild en prueba     │
 │  guardrail read-only        ✓ operativo             │
 │  suite de tests             ✓ operativo             │
+│  batería + juez             ✓ manual (tools/)       │
 │  CI GitHub Actions          ✓ operativo             │
 │  spike semanal >20%         ✓ operativo             │
 │  logging por niveles        ✓ operativo             │

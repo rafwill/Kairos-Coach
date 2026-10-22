@@ -122,6 +122,7 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 ## Seguridad
 
 - Contraseña de la app: hash PBKDF2-SHA256 (120 000 iteraciones). Contraseña de Garmin: cifrada con Fernet (`ENCRYPTION_KEY` del `.env`); `_sanitize_credentials_for_storage` impide guardarla en claro.
+- Solo lectura en Garmin: el MCP propio no expone escrituras y, además, `MCP_READ_ONLY` (activado por defecto) filtra las tools de escritura en `TrainerAgent.initialize()` y las bloquea en el bucle de tool-calls.
 - Tokens de Garmin en `~/.garminconnect/kairos/` (fuera del repo).
 - El identificador de cuota de Gemini usa SHA-256 de la clave.
 - Datos reales del atleta (exports de TP, payloads de Garmin, salidas de la batería) solo en rutas ignoradas por git: `_archivo/`, `fixtures/real_payloads/`, `.tmp/`.

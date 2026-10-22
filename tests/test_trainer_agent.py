@@ -7183,7 +7183,7 @@ class TestMcpFactualDeterministicRoute:
                             "activityType": "trail_running",
                             "startTimeLocal": "2026-08-30 07:00:00",
                             "duration": 3600,
-                            "trainingLoad": 120.0,
+                            "activityTrainingLoad": 120.0,
                         }
                     ]
                 return []
@@ -7196,7 +7196,7 @@ class TestMcpFactualDeterministicRoute:
                     "activityType": "trail_running",
                     "startTimeLocal": "2026-08-30 07:00:00",
                     "duration": 3600,
-                    "trainingLoad": 120.0,
+                    "activityTrainingLoad": 120.0,
                 }
             if tool_name == "get_training_effect":
                 return {
@@ -7861,3 +7861,25 @@ class TestRecentTssBySportRoute:
         assert "Rodaje antiguo" not in out
         rows = [line for line in out.splitlines() if line.endswith("|") and "/2026 | " in line]
         assert [r.split(" | ")[0] for r in rows] == ["| 20/10/2026", "| 18/10/2026", "| 09/10/2026", "| 05/10/2026"]
+
+    @pytest.mark.asyncio
+    async def test_power_ride_shows_garmin_load_not_garmin_tss(self):
+        # Caso real (juez, 22/10): con potenciómetro Garmin envía también su TSS
+        # (trainingStressScore) y salía en "Carga Garmin" en lugar de activityTrainingLoad.
+        import agent.trainer_agent as ta
+
+        activities = [{
+            "activityId": 7, "activityName": "Road. Un poquito de CDC", "activityType": "road_biking",
+            "startTimeLocal": "2026-07-28 09:00:00", "trainingStressScore": 101.3, "activityTrainingLoad": 256.971,
+        }]
+        stored = {7: {"activity_id": 7, "start_date": "2026-07-28", "tss": 102.446, "method": "TSS", "native_load": 256.971}}
+
+        async def _fake_call_tool(_session, _tool_name, _args):
+            return activities
+
+        with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
+             patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
+            out = await ta._build_recent_tss_by_sport_markdown(object(), {}, "¿Dime los TSS de mis 20 ultimas actividades de Ciclismo?")
+
+        assert "| 28/07/2026 | ciclismo | Road. Un poquito de CDC | 102.4 | 257.0 |" in out
+        assert "101.3" not in out
