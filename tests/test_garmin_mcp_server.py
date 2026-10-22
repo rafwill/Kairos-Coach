@@ -7,7 +7,7 @@ from garminconnect.exceptions import GarminConnectAuthenticationError
 from garminconnect.exceptions import GarminConnectConnectionError
 from garminconnect.exceptions import GarminConnectTooManyRequestsError
 
-from agent import kairos_mcp_server as server
+from garmin_mcp import server
 
 
 class _FakeGarmin:
@@ -410,3 +410,22 @@ def test_healthcheck_classifies_tool_results():
     assert hc.classify(True, "Garmin.get_daily_steps() missing 1 required positional argument: 'end'") == "ERROR"
     assert hc.classify(True, "Mobile login returned 429 — IP rate limited by Garmin") == "ENTORNO"
     assert hc.classify(True, "GarminConnectAuthenticationError: authentication failed") == "ENTORNO"
+
+
+def test_server_package_does_not_import_the_host():
+    # Arquitectura: garmin_mcp es un servidor MCP independiente del host (agent/). Kairos lo usa solo
+    # por el protocolo MCP (stdio); si el servidor importara agent/, quedarían acoplados.
+    import ast
+
+    pkg = Path(__file__).resolve().parent.parent / "garmin_mcp"
+    offenders = []
+    for py in pkg.rglob("*.py"):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            offenders += [f"{py.name}: {n}" for n in names if n == "agent" or n.startswith("agent.")]
+    assert not offenders, offenders

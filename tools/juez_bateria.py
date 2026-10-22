@@ -89,6 +89,25 @@ def _close(a: float, b: float, tol: float = TOL) -> bool:
 
 # ─── Verdad de referencia ────────────────────────────────────────────────────
 
+def _call_mcp_tool(name: str, args: dict | None = None):
+    """Llama a una tool del servidor MCP (python -m garmin_mcp) por stdio y devuelve su JSON."""
+    import asyncio
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    async def _run():
+        params = StdioServerParameters(command=sys.executable, args=["-m", "garmin_mcp"], cwd=str(ROOT), env=dict(os.environ))
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                res = await session.call_tool(name, args or {})
+                return "".join(getattr(c, "text", "") for c in res.content)
+
+    text = asyncio.run(_run())
+    parsed = ta._try_parse_json(text)
+    return parsed if parsed is not None else []
+
 class Truth:
     def __init__(self, username: str):
         user = storage.find_user_by_username(username)
@@ -132,8 +151,9 @@ class Truth:
     def pr_values(self) -> set[str]:
         """Marcas de Garmin formateadas como las muestra Kairos (mm:ss, hh:mm:ss o km)."""
         if self._prs is None:
-            from agent import kairos_mcp_server as mcp
-            raw = mcp._garmin_client().get_personal_record() or []
+            raw = _call_mcp_tool("get_personal_record")
+            if isinstance(raw, dict):
+                raw = [raw]
             vals: set[str] = set()
             for r in raw:
                 v = r.get("value")

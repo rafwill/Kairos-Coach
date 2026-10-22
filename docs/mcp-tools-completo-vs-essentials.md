@@ -5,7 +5,7 @@
 - Catálogo lógico usado por Kairos: 44 (`41 Garmin + 3 internas kairos_*`)
 
 Referencia canónica de catálogo en código:
-- `agent/mcp_client.py` -> `GARMIN_ESSENTIAL_TOOLS` y `ALL_ESSENTIAL_TOOLS`
+- `agent/mcp/client.py` -> `GARMIN_ESSENTIAL_TOOLS` y `ALL_ESSENTIAL_TOOLS`
 
 ## Tabla completa
 

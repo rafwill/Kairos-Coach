@@ -1,7 +1,8 @@
 """
-mcp_client.py
-Cliente que arranca el servidor MCP propio de Kairos como subproceso
-y expone sus herramientas para que el agente las use.
+agent/mcp/client.py — cliente MCP del host (Kairos).
+
+Arranca el servidor MCP (`garmin_mcp`, vía tools/garmin-mcp-frozen.*) como subproceso stdio,
+abre la sesión y expone sus herramientas para que el agente las use.
 """
 
 import os
@@ -17,13 +18,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from agent.mcp_adapter import (
+from agent.mcp.contracts import (
     cache_tool_response,
     normalize_tool_invocation,
     resolve_local_fastpath_response,
     resolve_cached_tool_response,
     validate_min_input_contract,
 )
+
+# Raíz del repositorio (este fichero vive en agent/mcp/).
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 log = logging.getLogger(__name__)
@@ -251,7 +255,7 @@ def get_configured_mcp_backend() -> str:
 
 def _resolve_frozen_command() -> str | None:
     """Resuelve el ejecutable del MCP local propio."""
-    project_root = Path(__file__).parent.parent
+    project_root = PROJECT_ROOT
 
     override = (os.environ.get("KAIROS_MCP_FROZEN_COMMAND") or "").strip()
     if override:
@@ -322,7 +326,7 @@ def _get_server_params(essential_only: bool = True, backend: str | None = None) 
     # Certificado SSL de Zscaler — necesario en redes con proxy SSL corporativo.
     # Se exporta automáticamente desde el almacén de Windows con:
     #   Get-ChildItem Cert:\LocalMachine\Root | Where Subject -match Zscaler
-    _project_root = Path(__file__).parent.parent
+    _project_root = PROJECT_ROOT
     _zscaler_pem = _project_root / "zscaler-ca.pem"
     ssl_overrides = {}
     if _zscaler_pem.exists():

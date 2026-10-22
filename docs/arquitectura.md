@@ -4,24 +4,27 @@ Referencia técnica de cómo funciona Kairos por dentro. El estado vigente del c
 
 ## Capas
 
+Con la terminología del estándar MCP: Kairos es el **host** (la aplicación con el LLM), `agent/mcp/` es su **cliente MCP** y `garmin_mcp/` es el **servidor MCP**. Un cliente por servidor (1:1): si Kairos usara otro servidor MCP, tendría otro cliente.
+
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  CLI (agent/main.py)                                         │
-│  Terminal interactivo · Rich UI · multiusuario · login       │
-└──────────────────────────────┬───────────────────────────────┘
-                               │
-┌──────────────────────────────▼───────────────────────────────┐
-│  TrainerAgent (agent/trainer_agent.py)                       │
-│  Rutas deterministas · capa de coaching LLM · motor de planes│
-│  TSS/PMC (agent/load_metrics.py, agent/running_tss.py)       │
-└──────────┬──────────────────────────────────┬────────────────┘
-           │                                  │
-┌──────────▼──────────────┐      ┌────────────▼────────────────┐
-│ MCP propio (solo lectura)│      │ Supabase (agent/storage.py) │
-│ agent/kairos_mcp_server  │      │ perfil · planes · TSS ·     │
-│ 41 tools Garmin · stdio  │      │ serie de carga · wellness   │
-└──────────────────────────┘      └─────────────────────────────┘
+┌─────────────────────── HOST: Kairos (agent/) ────────────────────────┐
+│  CLI (main.py) · TrainerAgent (trainer_agent.py)                     │
+│  Rutas deterministas · coaching LLM · motor de planes                │
+│  TSS/PMC (load_metrics.py, running_tss.py) · Supabase (storage.py)   │
+│                                                                      │
+│  ┌── cliente MCP (agent/mcp/) ──┐                                    │
+│  │ client.py     sesión stdio, call_tool, catálogo                  │
+│  │ contracts.py  contratos de argumentos, normalización, caché      │
+│  └───────────────┬──────────────┘                                    │
+└──────────────────┼───────────────────────────────────────────────────┘
+                   │ protocolo MCP (stdio, subproceso)
+┌──────────────────▼───────────────────────────────────────────────────┐
+│  SERVIDOR MCP: garmin_mcp/ (server.py) — independiente del host      │
+│  41 tools de Garmin Connect · solo lectura · garminconnect           │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+El servidor no importa nada de `agent/` (lo comprueba `test_server_package_does_not_import_the_host`): cualquier cliente MCP puede usarlo (Kairos, el Inspector MCP, `tools/healthcheck_mcp.py`, el juez de la batería).
 
 - **Datos (Python):** Garmin aporta las señales base; Kairos calcula en Python todo lo derivado (TSS, CTL/ATL/TSB, zonas de FC, ritmos, hidratación) antes de entregarlo al LLM.
 - **Coaching (LLM):** interpreta los datos ya calculados con el perfil del atleta. Nunca hace aritmética ni inventa métricas.
@@ -47,7 +50,7 @@ Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve p
 ```
 main.py → run_agent()
   ├─ login (usuario de la app) y selección de proveedor LLM
-  ├─ MCP propio: tools/garmin-mcp-frozen.* → python -m agent.kairos_mcp_server
+  ├─ MCP propio: tools/garmin-mcp-frozen.* → python -m garmin_mcp
   │     tokens de Garmin reutilizados en ~/.garminconnect/kairos/<hash del email>
   ├─ TrainerAgent.compute_and_persist_load_metrics()
   │     incremental (normal) · incremental_refresh (actividad nueva) · full_recalc (usuario nuevo / cambio de fórmula)
@@ -114,11 +117,11 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 
 ## Servidor MCP propio
 
-- `agent/kairos_mcp_server.py`, sobre la librería `garminconnect`, solo lectura, transporte stdio.
+- `garmin_mcp/server.py` (arranque: `python -m garmin_mcp`), sobre la librería `garminconnect`, solo lectura, transporte stdio. Paquete independiente del host.
 - Catálogo de 41 tools Garmin + 3 internas `kairos_*` (`kairos_load_trends`, `kairos_correlate`, `kairos_weekly_sport_breakdown`); detalle en `docs/mcp-tools-completo-vs-essentials.md`.
-- Contratos y normalización: `agent/mcp_adapter.py`; cliente: `agent/mcp_client.py`; operación e incidentes: `docs/mcp-frozen-runbook.md`.
+- Lado cliente en el host: `agent/mcp/client.py` (sesión y llamadas) y `agent/mcp/contracts.py` (contratos, normalización y caché; la clave del perfil `mcp_adapter_cache` se mantiene por compatibilidad). Operación e incidentes: `docs/mcp-frozen-runbook.md`.
 - Algunas listas llegan como objetos JSON concatenados (`_try_parse_json`) y `get_activity` trae las métricas en `summaryDTO` (`_flatten_garmin_activity`).
-- Guía de estilo MCP de apiaddicts ([mcps-style-guide](https://github.com/apiaddicts/mcps-style-guide)): cada tool tiene título, descripción (la que ve el LLM de Kairos para elegirla), descripción de cada parámetro y anotaciones de solo lectura (`readOnlyHint`, `idempotentHint`, `openWorldHint`). `tools/lint_mcp.py` (o `make lint-mcp`) pide `tools/list` por stdio y lo pasa por Spectral con `tools/mcp_lint/.spectral.yaml`: el ruleset anclado a un commit, sin las dos reglas no adoptadas (camelCase y `outputSchema`, con su motivo). Resultado el 22/10: 0 hallazgos (antes 217). `tests/test_kairos_mcp_server.py` lo garantiza sin red.
+- Guía de estilo MCP de apiaddicts ([mcps-style-guide](https://github.com/apiaddicts/mcps-style-guide)): cada tool tiene título, descripción (la que ve el LLM de Kairos para elegirla), descripción de cada parámetro y anotaciones de solo lectura (`readOnlyHint`, `idempotentHint`, `openWorldHint`). `tools/lint_mcp.py` (o `make lint-mcp`) pide `tools/list` por stdio y lo pasa por Spectral con `tools/mcp_lint/.spectral.yaml`: el ruleset anclado a un commit, sin las dos reglas no adoptadas (camelCase y `outputSchema`, con su motivo). Resultado el 22/10: 0 hallazgos (antes 217). `tests/test_garmin_mcp_server.py` lo garantiza sin red.
 - Contrato con `garminconnect`: cada tool llama a la librería con su firma real (verificado contra la versión instalada por un test sin red). El 22/10 se corrigieron 8 tools que fallaban siempre (`get_daily_steps`, `get_training_status`, `get_vo2max_trend`, `get_endurance_score`, `get_fitnessage_data`, `get_weekly_steps`, `get_weekly_stress`, `get_weekly_intensity_minutes`); comprobadas las 41 contra Garmin real. Healthcheck en vivo bajo demanda: `tools/healthcheck_mcp.py` (`make health-mcp`).
 
 ## Seguridad

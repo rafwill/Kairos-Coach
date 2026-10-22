@@ -3,7 +3,7 @@
 Uso:
     python tools/lint_mcp.py
 
-- Arranca agent.kairos_mcp_server por stdio (como lo hace Kairos), pide tools/list y lo guarda en
+- Arranca el servidor MCP (python -m garmin_mcp) por stdio (como lo hace Kairos), pide tools/list y lo guarda en
   .tmp/mcp-tools.json. No hace login en Garmin.
 - Ejecuta Spectral (npx, Node 18+) con tools/mcp_lint/.spectral.yaml: el ruleset de apiaddicts anclado
   a un commit, con las dos reglas no adoptadas desactivadas y su motivo.
@@ -30,7 +30,7 @@ async def dump_tools_list(out: Path) -> int:
     from mcp.client.stdio import stdio_client
 
     params = StdioServerParameters(
-        command=sys.executable, args=["-m", "agent.kairos_mcp_server"], cwd=str(ROOT), env=dict(os.environ)
+        command=sys.executable, args=["-m", "garmin_mcp"], cwd=str(ROOT), env=dict(os.environ)
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

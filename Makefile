@@ -23,7 +23,7 @@ test:
 	$(VENV_PY) -m pytest -q
 
 lint:
-	$(VENV_PY) -m ruff check agent tests tools
+	$(VENV_PY) -m ruff check agent garmin_mcp tests tools
 
 lint-mcp:
 	$(VENV_PY) tools/lint_mcp.py

@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Changed (organización)
+- Arquitectura MCP con la terminología del estándar: host, cliente y servidor en su sitio. El servidor sale de `agent/` a su propio paquete `garmin_mcp/` (`agent/kairos_mcp_server.py` → `garmin_mcp/server.py`, arranque `python -m garmin_mcp`), porque no depende del host y Kairos solo lo usa por el protocolo MCP. El lado cliente se agrupa en `agent/mcp/` (`mcp_client.py` → `client.py`, `mcp_adapter.py` → `contracts.py`). `git mv` conserva el historial; sin cambios de comportamiento.
+- El cliente calcula la raíz del proyecto con una constante (`PROJECT_ROOT`) adaptada a su nueva profundidad; lanzadores, `lint_mcp`, `healthcheck_mcp`, tests y documentación actualizados. El juez pide los récords por el protocolo MCP en vez de importar el servidor. La clave de perfil `mcp_adapter_cache` no cambia (datos ya guardados).
+- Test de arquitectura `test_server_package_does_not_import_the_host`; `make lint` incluye `garmin_mcp`.
+- Verificado: 575 tests, lint MCP 0 hallazgos, healthcheck 41 tools (37 OK, 4 vacías esperables, 0 errores), Inspector 6/6 y batería 25/25 con el juez.
+
 ### Added
 - `tools/healthcheck_mcp.py` (`make health-mcp`): healthcheck en vivo de las 41 tools contra Garmin, con estado por tool (OK, VACÍA, ERROR, ENTORNO), tiempos e informe en `.tmp/healthcheck/`; sale con 1 si alguna falla. Complementa al test de contrato sin red. Primera pasada: 37 OK, 4 VACÍA (esperables), 0 ERROR.
 - Test de contrato sin red `test_every_tool_calls_garminconnect_with_its_real_signature`: llama a las 41 tools con un cliente que valida los argumentos contra la firma real de `garminconnect`. Contra el código anterior señala las 8 tools rotas.
@@ -37,7 +43,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Ritmo umbral de running 4:00/km (240 s) desde el 22/10/2026 (antes 4:12), estimado con la carrera del 18/10 (24764615547): 27 min, NGP 3:49/km del pipeline de producción, llevado a 60 min con Riegel (×1.049). FC umbral sin cambios (168 lpm de media en los últimos 20 min frente a 169). Añadido al historial del perfil; el TSS ya guardado no cambia.
 
 ### Tests
-- 574 passed, 6 skipped. Los tests del PMC fijan su TSS sintético con un fixture explícito (antes dependían de que la carga de Garmin se usara como TSS). Nuevos: `test_daily_tss_comes_from_kairos_not_garmin_trend`, `test_garmin_load_is_never_the_final_tss`, zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
+- 575 passed, 6 skipped. Los tests del PMC fijan su TSS sintético con un fixture explícito (antes dependían de que la carga de Garmin se usara como TSS). Nuevos: `test_daily_tss_comes_from_kairos_not_garmin_trend`, `test_garmin_load_is_never_the_final_tss`, zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
 
 ## 2026-10-21 (esquema de Supabase en un solo fichero)
 

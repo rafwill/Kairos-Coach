@@ -22,7 +22,7 @@ import truststore
 from openai import AsyncOpenAI
 from mcp import ClientSession
 
-from agent.mcp_client import (
+from agent.mcp.client import (
     list_available_tools,
     call_tool,
     reset_tool_transparency_events,

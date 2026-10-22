@@ -44,7 +44,7 @@ def _is_error_text(raw) -> bool:
 async def _compute(username: str, start: str) -> dict:
     from agent import storage as st
     from agent import trainer_agent as ta
-    from agent.mcp_client import garmin_mcp_session
+    from agent.mcp.client import garmin_mcp_session
 
     row = st.find_user_by_username(username)
     if not row:

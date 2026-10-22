@@ -97,7 +97,7 @@ except (ImportError, AttributeError, RuntimeError):
 # Añadir el directorio raíz al path para imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent.mcp_client import garmin_mcp_session, get_configured_mcp_backend
+from agent.mcp.client import garmin_mcp_session, get_configured_mcp_backend
 from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile
 from agent.storage import (
     activate_training_plan,
@@ -1289,7 +1289,7 @@ async def main() -> None:
         # ── Verificación de acceso a Garmin ───────────────────────────────
         # Detectar si la contraseña ha cambiado en Garmin Connect antes de continuar.
         try:
-            from agent.mcp_client import call_tool
+            from agent.mcp.client import call_tool
             test_raw = await call_tool(session, "get_user_profile", {})
             garmin_auth_failed = (
                 test_raw is None

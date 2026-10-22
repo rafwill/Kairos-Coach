@@ -64,8 +64,9 @@ La sonda de re-login que se usó para diagnosticarlo (`mcp_relogin_probe.py`) es
 
 ## Mantenimiento
 - Si cambia el catálogo o contrato de tools, actualizar:
-  - `agent/mcp_client.py` (`GARMIN_ESSENTIAL_TOOLS`, `ALL_ESSENTIAL_TOOLS`).
-  - `agent/mcp_adapter.py` (`TOOL_CONTRACTS_V1`, normalización y fallback).
+  - `agent/mcp/client.py` (`GARMIN_ESSENTIAL_TOOLS`, `ALL_ESSENTIAL_TOOLS`).
+  - `agent/mcp/contracts.py` (`TOOL_CONTRACTS_V1`, normalización y fallback).
+  - `garmin_mcp/server.py` (definición de las tools; `make lint-mcp` y `make health-mcp` tras cambiarlas).
   - `tests/test_mcp_client.py` (drift-check y contrato).
 - Si cambia política de resiliencia, alinear también:
   - `docs/arquitectura.md` (sección Servidor MCP propio).

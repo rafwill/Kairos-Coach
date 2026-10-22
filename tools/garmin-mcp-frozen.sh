@@ -7,7 +7,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENV_PY="$PROJECT_ROOT/.venv/bin/python"
 
 if [ -x "$VENV_PY" ]; then
-  exec "$VENV_PY" -m agent.kairos_mcp_server "$@"
+  exec "$VENV_PY" -m garmin_mcp "$@"
 fi
 
 if ! command -v python >/dev/null 2>&1; then
@@ -16,4 +16,4 @@ if ! command -v python >/dev/null 2>&1; then
   exit 1
 fi
 
-exec python -m agent.kairos_mcp_server "$@"
+exec python -m garmin_mcp "$@"

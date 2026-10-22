@@ -1,6 +1,7 @@
 """
-kairos_mcp_server.py
-Servidor MCP propio de Kairos para consultas Garmin (sin dependencia de runtime en upstream).
+garmin_mcp/server.py — servidor MCP de Garmin Connect para Kairos (solo lectura, stdio).
+
+Independiente del host: no importa nada de `agent/`. Arranque: `python -m garmin_mcp`.
 """
 
 from __future__ import annotations

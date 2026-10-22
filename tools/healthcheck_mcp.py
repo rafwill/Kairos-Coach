@@ -3,12 +3,12 @@
 Uso:
     python tools/healthcheck_mcp.py [--pausa 0.3]
 
-- Arranca agent.kairos_mcp_server por stdio (como Kairos), con GARMIN_EMAIL/GARMIN_PASSWORD del .env.
+- Arranca el servidor MCP (python -m garmin_mcp) por stdio (como Kairos), con GARMIN_EMAIL/GARMIN_PASSWORD del .env.
 - Llama a cada tool con argumentos normales (ayer, las dos últimas semanas, la actividad más reciente).
   Todas son de solo lectura.
 - Clasifica cada tool: OK (con datos), VACÍA (sin datos: aviso, puede ser normal), ERROR (fallo de la tool)
   o ENTORNO (Garmin bloquea con 429 o la autenticación falla: no es un fallo de Kairos).
-- Complementa al test de contrato sin red (tests/test_kairos_mcp_server.py): ese detecta que llamamos mal a
+- Complementa al test de contrato sin red (tests/test_garmin_mcp_server.py): ese detecta que llamamos mal a
   garminconnect; este, que Garmin ha cambiado algo por su lado. Lanzarlo al actualizar garminconnect, antes de
   una batería o si algo parece raro. No en el arranque de Kairos (41 llamadas a Garmin).
 - Guarda el informe en .tmp/healthcheck/ (datos reales: ignorado por git). Sale con 1 si alguna tool falla,
@@ -74,7 +74,7 @@ async def run(pause_s: float) -> list[dict]:
     from mcp.client.stdio import stdio_client
 
     params = StdioServerParameters(
-        command=sys.executable, args=["-m", "agent.kairos_mcp_server"], cwd=str(ROOT), env=dict(os.environ)
+        command=sys.executable, args=["-m", "garmin_mcp"], cwd=str(ROOT), env=dict(os.environ)
     )
     results: list[dict] = []
     async with stdio_client(params) as (read, write):

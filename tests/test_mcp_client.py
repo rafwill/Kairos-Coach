@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent import mcp_client
-from agent import mcp_adapter
+from agent.mcp import client as mcp_client
+from agent.mcp import contracts as mcp_adapter
 
 
 @pytest.fixture

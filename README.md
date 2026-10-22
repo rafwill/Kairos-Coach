@@ -50,7 +50,7 @@ El setup crea `.venv`, instala dependencias, copia `.env.example` a `.env` y gen
 .venv/bin/python -m agent.main             # Unix/macOS
 ```
 
-Kairos pide el usuario, muestra los proveedores con clave configurada y arranca su servidor MCP propio (`agent/kairos_mcp_server.py`, solo lectura). Los tokens de Garmin se reutilizan entre arranques en `~/.garminconnect/kairos/`.
+Kairos pide el usuario, muestra los proveedores con clave configurada y arranca su servidor MCP propio (`garmin_mcp/`, solo lectura) como subproceso. Los tokens de Garmin se reutilizan entre arranques en `~/.garminconnect/kairos/`.
 
 | Comando | Qué hace |
 | --- | --- |
@@ -76,8 +76,11 @@ agent/
   load_metrics.py        TSS por deporte y PMC (CTL/ATL/TSB)
   running_tss.py         pipeline físico de running (NGP con pendiente, rTSS)
   storage.py             persistencia multiusuario en Supabase
-  kairos_mcp_server.py   servidor MCP propio sobre Garmin Connect (solo lectura)
-  mcp_client.py, mcp_adapter.py   cliente MCP y contratos de tools
+  mcp/
+    client.py            cliente MCP: arranca el servidor, sesión stdio y llamadas a tools
+    contracts.py         contratos de argumentos, normalización y caché de las tools
+garmin_mcp/              servidor MCP de Garmin Connect (41 tools, solo lectura), independiente de agent/
+  server.py              definición de las tools; arranque: python -m garmin_mcp
 prompts/                 system prompt (completo y compacto) y guía de tools MCP
 supabase/                schema.sql (esquema completo e idempotente)
 tests/                   suite de pytest (sin red: Garmin, Supabase y LLM mockeados)
@@ -91,6 +94,8 @@ tools/
 docs/                    arquitectura, harness, bitácora, runbook del MCP y batería
 ```
 
+Con la terminología MCP: Kairos (`agent/`) es el **host**, `agent/mcp/` su **cliente** y `garmin_mcp/` el **servidor**; el servidor no depende del host y Kairos lo usa solo por el protocolo MCP. Detalle en [`docs/arquitectura.md`](docs/arquitectura.md).
+
 Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (evidencias de calibración, exports de TP y herramientas de diagnóstico), `fixtures/real_payloads/` (datos reales de Garmin), `.tmp/` (salidas de la batería) y `memory/`.
 
 ## Tests y diagnóstico
@@ -98,7 +103,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | Qué | Con `make` | Sin `make` (Windows) | Cuándo |
 | --- | --- | --- | --- |
 | Tests (sin red) | `make test` | `.venv\Scripts\python.exe -m pytest` | Siempre; la CI los pasa en cada push |
-| Lint de código | `make lint` | `.venv\Scripts\python.exe -m ruff check agent tests tools` | Antes de commitear |
+| Lint de código | `make lint` | `.venv\Scripts\python.exe -m ruff check agent garmin_mcp tests tools` | Antes de commitear |
 | Guía de estilo del MCP | `make lint-mcp` | `.venv\Scripts\python.exe tools\lint_mcp.py` | Al añadir o cambiar tools del MCP |
 | Salud de las tools del MCP | `make health-mcp` | `.venv\Scripts\python.exe tools\healthcheck_mcp.py` | Al actualizar `garminconnect`, antes de una batería o si algo falla |
 | Batería de preguntas | — | `.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy` | Tras cambios en rutas, prompts o modelo |

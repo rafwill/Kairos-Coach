@@ -1,6 +1,9 @@
 """
-mcp_adapter.py
-Capa de adaptación estable entre Kairos y el servidor MCP.
+agent/mcp/contracts.py — capa del cliente MCP en el host (Kairos).
+
+Contratos mínimos de argumentos por tool, normalización de invocaciones (fechas, alias) y caché
+de contingencia por usuario. La clave del perfil `mcp_adapter_cache` se conserva por compatibilidad
+con los datos ya guardados en Supabase.
 """
 
 from __future__ import annotations

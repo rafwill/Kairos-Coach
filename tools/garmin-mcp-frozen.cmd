@@ -7,7 +7,7 @@ set "PROJECT_ROOT=%SCRIPT_DIR%.."
 set "VENV_PY=%PROJECT_ROOT%\.venv\Scripts\python.exe"
 
 if exist "%VENV_PY%" (
-  "%VENV_PY%" -m agent.kairos_mcp_server %*
+  "%VENV_PY%" -m garmin_mcp %*
   exit /b %ERRORLEVEL%
 )
 
@@ -18,4 +18,4 @@ if %ERRORLEVEL% NEQ 0 (
   exit /b 1
 )
 
-python -m agent.kairos_mcp_server %*
+python -m garmin_mcp %*
