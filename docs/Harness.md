@@ -106,8 +106,9 @@ Regla: declarar N (tamaño de muestra) y calidad del dato en toda afirmación so
 **Directorio:** `tests/`
 
 Verifica que el harness no se rompe (2026-10-22: 570 passed, 6 skipped):
-- `test_trainer_agent.py` — funciones puras del agente y cálculo de TSS/PMC.
-- `test_running_tss.py`, `test_walk_hike_*.py`, `test_load_metrics_*.py` — modelos de TSS por deporte.
+- `test_trainer_agent.py` — agente: rutas deterministas, coaching, planes (`TestStructuredPlanEngine`), pantalla de carga y umbrales por fecha.
+- `test_load_metrics.py` — TSS por deporte, PMC (CTL/ATL/TSB), zonas de Forma, duración de actividad y modelo de caminar/senderismo.
+- `test_running_tss.py` — pipeline físico de running (NGP, rTSS).
 - `test_storage.py` — capa de persistencia.
 - `test_main.py` — flujo principal y comandos de perfil.
 - `test_hooks_router.py`, `test_garmin_mcp_server.py`, `test_mcp_client.py`, `test_mcp_inspector_smoke.py` — hooks, router y MCP.

@@ -43,23 +43,24 @@ def test_get_server_params_frozen_requires_local_command(monkeypatch, garmin_cre
     monkeypatch.setattr(mcp_client, "_resolve_frozen_command", lambda: None)
 
     with pytest.raises(RuntimeError, match="launcher local del MCP propio"):
-        mcp_client._get_server_params(essential_only=True, backend="frozen")
+        mcp_client._get_server_params(backend="frozen")
 
 
 def test_get_server_params_frozen_uses_local_command(monkeypatch, garmin_creds):
     monkeypatch.setattr(mcp_client, "_resolve_frozen_command", lambda: "C:/bin/garmin-mcp-frozen.exe")
 
-    params = mcp_client._get_server_params(essential_only=True, backend="frozen")
+    params = mcp_client._get_server_params(backend="frozen")
 
     assert params.command.endswith("garmin-mcp-frozen.exe")
     assert params.env["KAIROS_MCP_BACKEND_EFFECTIVE"] == "frozen"
-    assert "GARMIN_ENABLED_TOOLS" in params.env
+    # Filtro del MCP de terceros que garmin_mcp no lee: ya no se envía (22/10/2026).
+    assert "GARMIN_ENABLED_TOOLS" not in params.env
 
 
 def test_get_server_params_ignores_upstream_and_uses_frozen(monkeypatch, garmin_creds):
     monkeypatch.setattr(mcp_client, "_resolve_frozen_command", lambda: "C:/bin/garmin-mcp-frozen.exe")
 
-    params = mcp_client._get_server_params(essential_only=True, backend="upstream")
+    params = mcp_client._get_server_params(backend="upstream")
 
     assert params.command.endswith("garmin-mcp-frozen.exe")
     assert params.args == []
@@ -79,8 +80,7 @@ async def test_garmin_mcp_session_opens_frozen_backend(monkeypatch):
 
     calls: list[str] = []
 
-    def fake_get_server_params(*, essential_only: bool, backend: str | None = None):
-        assert essential_only is True
+    def fake_get_server_params(*, backend: str | None = None):
         calls.append(backend or "")
         return SimpleNamespace(command="garmin-mcp", args=[], env={})
 
@@ -108,7 +108,7 @@ async def test_garmin_mcp_session_opens_frozen_backend(monkeypatch):
     monkeypatch.setattr(mcp_client, "stdio_client", lambda _params: DummyStdioCM())
     monkeypatch.setattr(mcp_client, "ClientSession", DummyClientSession)
 
-    async with mcp_client.garmin_mcp_session(essential_only=True) as session:
+    async with mcp_client.garmin_mcp_session() as session:
         assert session.initialized is True
 
     assert calls == ["frozen"]
@@ -119,15 +119,14 @@ async def test_garmin_mcp_session_opens_frozen_backend(monkeypatch):
 async def test_garmin_mcp_session_raises_when_frozen_unavailable(monkeypatch):
     monkeypatch.setenv("MCP_BACKEND", "frozen")
 
-    def fake_get_server_params(*, essential_only: bool, backend: str | None = None):
-        assert essential_only is True
+    def fake_get_server_params(*, backend: str | None = None):
         assert backend == "frozen"
         raise RuntimeError("frozen not found")
 
     monkeypatch.setattr(mcp_client, "_get_server_params", fake_get_server_params)
 
     with pytest.raises(RuntimeError, match="frozen not found"):
-        async with mcp_client.garmin_mcp_session(essential_only=True):
+        async with mcp_client.garmin_mcp_session():
             raise AssertionError("unreachable")
 
 

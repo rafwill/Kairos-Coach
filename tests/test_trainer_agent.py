@@ -33,20 +33,13 @@ from agent.trainer_agent import (
     _build_athlete_knowledge_context,
     _build_proactive_status_markdown,
     _build_post_activity_section_spec,
-    _build_activity_analysis_block,
     _format_activity_analysis_for_markdown,
     _build_load_trend_table,
-    _classify_running_session_with_confidence,
-    _classify_strength_session_with_confidence,
-    _classify_walk_hike_session_with_confidence,
     _format_body_battery_day,
     _format_sleep_day,
     _format_hrv_day,
     _pick_day_payload,
-    _estimate_session_tss,
-    _compute_load_fatigue_metrics,
     _format_load_fatigue_summary,
-    _resolve_sport_model_cfg,
     _build_recovery_fallback_snapshot,
     _compute_daily_plan_adjustment,
     _compute_plan_execution_feedback,
@@ -56,8 +49,6 @@ from agent.trainer_agent import (
     _extract_activities_list,
     _fetch_activities_for_load_calc,
     _extract_cycling_ftp_watts,
-    _infer_tss_model_tag,
-    _infer_tss_source_tag,
     _extract_threshold_pace_sec_per_km,
     _resolve_running_threshold_pace_sec_per_km,
     _resolve_hr_profile_values,
@@ -110,15 +101,6 @@ from agent.trainer_agent import (
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def pmc_tss_from_fixture(monkeypatch):
-    """Tests del PMC (CTL/ATL/TSB, rangos, avisos): el TSS de cada actividad sintética es su campo
-    trainingLoad. Aquí no se prueba el cálculo de TSS; en producción la carga de Garmin nunca es TSS."""
-    import agent.load_metrics as lm
-
-    monkeypatch.setattr(lm, "_estimate_session_tss", lambda act, **_kw: (float(act.get("trainingLoad") or 0.0), "TSS"))
 
 
 class TestSecondsToHhmmss:
@@ -2996,1868 +2978,6 @@ class TestPlanningFallbackAndRanges:
         assert plan["id"] == "plan-db-1"
 
 
-class TestSessionTssEstimation:
-    def test_compute_load_fatigue_metrics_returns_latest_and_ranges(self, pmc_tss_from_fixture):
-        today = date.today()
-        activities = []
-        for idx in range(21):
-            d = (today - timedelta(days=idx)).isoformat()
-            activities.append(
-                {
-                    "startTimeLocal": f"{d}T07:00:00.0",
-                    "trainingLoad": 40 + (idx % 4) * 10,
-                }
-            )
-
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={"load": []},
-            profile={},
-            days_window=42,
-        )
-
-        assert out is not None
-        assert out["latest"]["date"] == today.isoformat()
-        assert "atl" in out["latest"] and "ctl" in out["latest"] and "tsb" in out["latest"]
-        assert "tsb_low" in out["ranges"] and "tsb_high" in out["ranges"]
-        assert out["status"] in {"overload", "fatigue_high", "ready", "neutral"}
-
-    def test_compute_load_fatigue_metrics_detects_overload(self, pmc_tss_from_fixture):
-        today = date.today()
-        activities = [
-            {"startTimeLocal": f"{(today - timedelta(days=idx)).isoformat()}T07:00:00.0", "trainingLoad": 130}
-            for idx in range(14)
-        ]
-
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile={},
-            days_window=28,
-        )
-
-        assert out is not None
-        assert out["flags"]["sustained_overload"] or out["status"] in {"overload", "fatigue_high"}
-
-    def test_compute_load_fatigue_metrics_ignores_garmin_training_load_trend(self):
-        today = date.today()
-        trend = [{"date": (today - timedelta(days=idx)).isoformat(), "trainingLoad": 130} for idx in range(14)]
-
-        out = _compute_load_fatigue_metrics(activities=[], trend_payload={"points": trend}, profile={}, days_window=28)
-
-        assert out is None
-
-    def test_compute_load_fatigue_metrics_tsb_uses_previous_day_like_tp(self, pmc_tss_from_fixture):
-        today = date.today()
-        activities = [{"startTimeLocal": f"{today.isoformat()}T07:00:00.0", "trainingLoad": 100}]
-
-        out = _compute_load_fatigue_metrics(activities=activities, trend_payload={}, profile={}, days_window=28)
-
-        # Hoy entra TSS 100: ATL y CTL suben, pero la Forma usa los valores de ayer (0).
-        assert out["latest"]["atl"] > 0
-        assert out["latest"]["tsb"] == 0.0
-
-    def test_compute_load_fatigue_metrics_flags_weekly_spike_over_20_percent(self, pmc_tss_from_fixture):
-        import agent.trainer_agent as ta
-
-        class _FakeDate:
-            @staticmethod
-            def today():
-                from datetime import date as _Date
-
-                # Domingo fijo para garantizar semana completa (lunes->domingo)
-                return _Date(2026, 8, 16)
-
-            @staticmethod
-            def fromisoformat(value):
-                from datetime import date as _Date
-
-                return _Date.fromisoformat(value)
-
-        with patch.object(ta, "date", _FakeDate):
-            today = _FakeDate.today()
-            activities = []
-            for idx in range(14):
-                d = (today - timedelta(days=idx)).isoformat()
-                # Semana actual (0..6): 35 TSS/día; semana anterior (7..13): 20 TSS/día
-                load = 35 if idx <= 6 else 20
-                activities.append(
-                    {
-                        "startTimeLocal": f"{d}T07:00:00.0",
-                        "trainingLoad": load,
-                    }
-                )
-
-            out = _compute_load_fatigue_metrics(
-                activities=activities,
-                trend_payload={"load": []},
-                profile={},
-                days_window=28,
-            )
-
-        assert out is not None
-        assert out["flags"]["weekly_spike_alert"] is True
-        assert float(out["weekly"]["previous_tss"]) > 0.0
-        assert float(out["weekly"]["spike_delta_pct"]) > 20.0
-        if out["status"] in {"ready", "neutral"}:
-            assert "Spike semanal >20%" in str(out.get("recommendation") or "")
-
-    def test_format_load_fatigue_summary_handles_missing_data(self):
-        assert _format_load_fatigue_summary(None) == "sin datos suficientes"
-
-    # ── Tests por deporte ─────────────────────────────────────────────────────
-
-    def test_resolve_sport_model_cfg_uses_tp_pmc_constants_for_every_sport(self):
-        for sport in ("running", "trail running", "ciclismo", "triatlón", "patinaje"):
-            cfg = _resolve_sport_model_cfg({"goals": {"primary": sport}})
-            assert (cfg["ctl_tau_days"], cfg["atl_tau_days"]) == (42, 7), sport
-
-    def test_resolve_sport_model_cfg_unknown_sport_falls_back_to_running(self):
-        profile = {"goals": {"primary": "patinaje"}}
-        cfg = _resolve_sport_model_cfg(profile)
-        running_cfg = _resolve_sport_model_cfg({"goals": {"primary": "running"}})
-        assert cfg["atl_tau_days"] == running_cfg["atl_tau_days"]
-
-    def test_resolve_sport_model_cfg_ignores_taus_saved_in_profile_model(self):
-        # load_metrics.model lo reescribe Kairos; no debe fijar constantes antiguas (p. ej. ATL 8).
-        profile = {
-            "goals": {"primary": "trail running"},
-            "load_metrics": {"model": {"atl_tau_days": 8, "ctl_tau_days": 45, "tsb_low_pct": 0.3}},
-        }
-        cfg = _resolve_sport_model_cfg(profile)
-        assert (cfg["ctl_tau_days"], cfg["atl_tau_days"]) == (42, 7)
-        assert cfg["tsb_low_pct"] == 0.3
-
-    def test_compute_load_fatigue_metrics_trail_uses_sport_tau(self, pmc_tss_from_fixture):
-        today = date.today()
-        activities = [
-            {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0", "trainingLoad": 60}
-            for i in range(20)
-        ]
-        profile = {"goals": {"primary": "trail running"}}
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=profile,
-            days_window=28,
-        )
-        assert out is not None
-        assert out["model"]["sport"] == "trail running"
-        assert out["model"]["atl_tau_days"] == 7
-
-    def test_compute_load_fatigue_metrics_ciclismo_uses_sport_tau(self, pmc_tss_from_fixture):
-        today = date.today()
-        activities = [
-            {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0", "trainingLoad": 80}
-            for i in range(20)
-        ]
-        profile = {"goals": {"primary": "ciclismo"}}
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=profile,
-            days_window=28,
-        )
-        assert out is not None
-        assert out["model"]["sport"] == "ciclismo"
-        assert out["model"]["ctl_tau_days"] == 42
-
-    def test_form_zone_boundaries_relative_to_ctl(self):
-        # Zonas de Friel en % del CTL (como intervals.icu): >20 / 5..20 / -10..5 / -30..-10 / <-30.
-        from agent.load_metrics import form_zone
-        assert form_zone(27.0, 59.2)["key"] == "transition"   # +46 %
-        assert form_zone(12.0, 60.0)["key"] == "fresh"        # +20 % → aún Fresco (límite)
-        assert form_zone(3.0, 60.0)["key"] == "grey"          # +5 % exacto → gris (Fresco es > +5 %)
-        assert form_zone(-6.0, 60.0)["key"] == "grey"         # −10 % → gris (límite incluido)
-        assert form_zone(-12.2, 73.7)["key"] == "optimal"     # −17 %
-        assert form_zone(-18.0, 60.0)["key"] == "optimal"     # −30 % → óptimo (límite incluido)
-        assert form_zone(-18.1, 60.0)["key"] == "high_risk"
-        assert form_zone(5.0, 0.0)["form_pct"] == 0.0         # sin CTL no hay referencia
-
-    def test_load_status_follows_form_zone_not_personal_percentiles(self):
-        from agent.load_metrics import resolve_load_status
-        def _series(points):
-            return [{"date": f"2026-10-{i + 1:02d}", "tss": 50.0, "ctl": ctl, "atl": ctl - tsb, "tsb": tsb}
-                    for i, (tsb, ctl) in enumerate(points)]
-        # Bloque normal (−21 %): Óptimo → el motor mantiene, no "sobrecarga".
-        out = resolve_load_status(_series([(5.0, 70.0)] * 6 + [(-14.7, 70.1)]))
-        assert out["zone"]["key"] == "optimal" and out["status"] == "neutral"
-        # Riesgo alto (< −30 %) → descarga.
-        out = resolve_load_status(_series([(-25.0, 70.0)]))
-        assert out["zone"]["key"] == "high_risk" and out["status"] == "overload"
-        # 7 días seguidos en zona de carga (< −10 %) → suave / programar descarga.
-        out = resolve_load_status(_series([(-12.0, 70.0)] * 7))
-        assert out["status"] == "fatigue_high" and out["week_in_load"] is True
-        # Transición tras descargar (+46 %) → disponible, avisa de pérdida de forma.
-        out = resolve_load_status(_series([(27.0, 59.2)]))
-        assert out["zone"]["key"] == "transition" and out["status"] == "ready"
-        assert "perder forma" in out["recommendation"]
-
-    def test_sustained_overload_boundary_le_fix(self, pmc_tss_from_fixture):
-        """Cuando tsb_now == tsb_low (valor == percentil p15), debe detectarse como overload.
-        Antes del fix se usaba < estricto y el caso límite se escapaba."""
-        today = date.today()
-        # Serie con carga alta los últimos 7 días para que p15 == valor actual (TSB muy negativo)
-        activities = [
-            {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0",
-             "trainingLoad": 110 if i < 14 else 55}
-            for i in range(42)
-        ]
-        profile = {"goals": {"primary": "trail running"}}
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=profile,
-            days_window=56,
-        )
-        assert out is not None
-        # Con carga de 110 durante 14 días consecutivos, el status no debe ser "neutral" ni "ready"
-        assert out["status"] in {"overload", "fatigue_high"}
-
-    # ── Tests de warming_up ───────────────────────────────────────────────────
-
-    def test_warming_up_flag_true_with_few_training_days(self, pmc_tss_from_fixture):
-        """Con < 21 días de entrenamiento real, warming_up debe ser True."""
-        today = date.today()
-        activities = [
-            {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0",
-             "trainingLoad": 50}
-            for i in range(10)  # solo 10 días
-        ]
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile={"goals": {"primary": "trail running"}},
-            days_window=28,
-        )
-        assert out is not None
-        assert out["warming_up"] is True
-        assert out["flags"]["warming_up"] is True
-        assert out["warming_up_days_remaining"] > 0
-
-    def test_warming_up_flag_false_with_enough_history(self, pmc_tss_from_fixture):
-        """Con >= 21 días de entrenamiento real, warming_up debe ser False."""
-        today = date.today()
-        activities = [
-            {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0",
-             "trainingLoad": 50}
-            for i in range(25)  # 25 días
-        ]
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile={"goals": {"primary": "running"}},
-            days_window=42,
-        )
-        assert out is not None
-        assert out["warming_up"] is False
-        assert out["warming_up_days_remaining"] == 0
-
-    def test_proactive_markdown_shows_calibration_notice_when_warming_up(self):
-        """El estado proactivo debe incluir nota ⚙️ cuando warming_up=True."""
-        load_fatigue = {
-            "latest": {"tss": 50.0, "atl": 30.0, "ctl": 10.0, "tsb": -20.0},
-            "weekly": {"current_tss": 300.0},
-            "ranges": {"tsb_low": -22.0, "tsb_high": -5.0, "atl_high": 40.0, "tsb_abs_floor": -35.0},
-            "recommendation": "Mantén carga aeróbica controlada.",
-            "action": "carga estable",
-            "warming_up": True,
-            "warming_up_days_remaining": 11,
-            "days_with_load": 10,
-        }
-        snapshot = {
-            "body_battery": {"summary": "sin datos"},
-            "hrv": {"summary": "sin datos"},
-            "sleep": {"summary": "sin datos"},
-            "load_fatigue": load_fatigue,
-            "trainings": [],
-        }
-        out = _build_proactive_status_markdown(snapshot)
-        assert "calibracion" in out.lower() or "calibración" in out.lower()
-        assert "⚙️" in out
-
-    def test_proactive_markdown_no_calibration_notice_when_not_warming_up(self):
-        """Sin warming_up, la nota de calibración no debe aparecer."""
-        load_fatigue = {
-            "latest": {"tss": 50.0, "atl": 42.0, "ctl": 38.0, "tsb": -4.0},
-            "weekly": {"current_tss": 310.0},
-            "ranges": {"tsb_low": -12.0, "tsb_high": 4.0, "atl_high": 55.0, "tsb_abs_floor": -35.0},
-            "recommendation": "Puedes mantener sesión de calidad.",
-            "action": "buena disponibilidad",
-            "warming_up": False,
-            "warming_up_days_remaining": 0,
-            "days_with_load": 30,
-        }
-        snapshot = {
-            "body_battery": {"summary": "sin datos"},
-            "hrv": {"summary": "sin datos"},
-            "sleep": {"summary": "sin datos"},
-            "load_fatigue": load_fatigue,
-            "trainings": [],
-        }
-        out = _build_proactive_status_markdown(snapshot)
-        assert "⚙️" not in out
-
-    def test_load_trend_table_shows_warmup_note_when_ctl_low(self):
-        """La tabla /carga debe mostrar nota cuando CTL de primera fila < 15."""
-        today = date.today()
-        series = []
-        atl = ctl = 0.0
-        for i in range(28, -1, -1):
-            d = (today - timedelta(days=i)).isoformat()
-            tss = 50.0 if i % 7 != 0 else 0.0
-            atl = atl + (tss - atl) / 8
-            ctl = ctl + (tss - ctl) / 42
-            series.append({"date": d, "tss": round(tss, 1), "atl": round(atl, 1),
-                           "ctl": round(ctl, 1), "tsb": round(ctl - atl, 1)})
-        out = _build_load_trend_table(series, mode="weeks")
-        # CTL empieza < 15 → debe aparecer la nota
-        assert "⚙️" in out
-
-    # ── Tests de _build_load_trend_table ─────────────────────────────────────
-
-    def _make_series(self, n_days: int = 56, tss_value: float = 50.0) -> list[dict]:
-        today = date.today()
-        rows = []
-        atl = ctl = 0.0
-        for i in range(n_days, -1, -1):
-            d = (today - timedelta(days=i)).isoformat()
-            tss = tss_value if i % 7 != 0 else 0.0  # descanso un día por semana
-            atl = atl + (tss - atl) / 7
-            ctl = ctl + (tss - ctl) / 42
-            rows.append({"date": d, "tss": round(tss, 1), "atl": round(atl, 1), "ctl": round(ctl, 1), "tsb": round(ctl - atl, 1)})
-        return rows
-
-    def test_build_load_trend_table_weekly_returns_markdown_table(self):
-        series = self._make_series(56)
-        out = _build_load_trend_table(series, mode="weeks")
-        assert "| Semana |" in out
-        assert "TSS" in out and "ATL" in out and "CTL" in out and "TSB" in out
-
-    def test_build_load_trend_table_monthly_returns_markdown_table(self):
-        series = self._make_series(90)
-        out = _build_load_trend_table(series, mode="months")
-        assert "| Mes |" in out
-        assert "TSS total" in out
-
-    def test_build_load_trend_table_empty_series_returns_message(self):
-        out = _build_load_trend_table([], mode="weeks")
-        assert "Sin datos" in out
-
-    def test_build_load_trend_table_weekly_has_8_data_rows_max(self):
-        series = self._make_series(56)
-        out = _build_load_trend_table(series, mode="weeks")
-        # Contar filas de datos (empieza con |, no contiene --- ni encabezado de columnas)
-        data_rows = [
-            l for l in out.splitlines()
-            if l.startswith("|") and "---" not in l and "Semana" not in l
-        ]
-        assert len(data_rows) <= 8
-
-    def test_build_load_trend_table_contains_status_emoji(self):
-        series = self._make_series(56)
-        out = _build_load_trend_table(series, mode="weeks")
-        status_emojis = {"🟢", "🟠", "🔴", "🟡"}
-        assert any(e in out for e in status_emojis)
-
-
-class TestSportSpecificLoadProfiles:
-    @staticmethod
-    def _build_fake_activities(days: int, default_tss: float, high_tss_days: int = 0, high_tss: float = 0.0) -> list[dict]:
-        """Genera actividades ficticias con trainingLoad diario para pruebas del modelo."""
-        today = date.today()
-        out: list[dict] = []
-        for i in range(days):
-            d = (today - timedelta(days=i)).isoformat()
-            tss = high_tss if i < high_tss_days else default_tss
-            out.append(
-                {
-                    "activityId": 900000 + i,
-                    "startTimeLocal": f"{d}T08:00:00.0",
-                    "trainingLoad": float(tss),
-                }
-            )
-        return out
-
-    def test_running_profile_matches_tp_like_defaults(self, pmc_tss_from_fixture):
-        profile = {"goals": {"primary": "running"}}
-        activities = self._build_fake_activities(days=56, default_tss=55.0)
-
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=profile,
-            days_window=56,
-        )
-
-        assert out is not None
-        assert out["model"]["sport"] == "running"
-        assert out["model"]["atl_tau_days"] == 7
-        assert out["model"]["ctl_tau_days"] == 42
-        assert "tsb_abs_floor" not in out["ranges"]  # sin suelos fijos: decide la zona de Forma
-        assert out["latest"]["atl"] > 0 and out["latest"]["ctl"] > 0
-
-    def test_trail_profile_uses_tp_taus_and_deeper_tsb_floor(self, pmc_tss_from_fixture):
-        activities = self._build_fake_activities(days=56, default_tss=55.0)
-        running_profile = {"goals": {"primary": "running"}}
-        trail_profile = {"goals": {"primary": "trail running"}}
-
-        run_out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=running_profile,
-            days_window=56,
-        )
-        trail_out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=trail_profile,
-            days_window=56,
-        )
-
-        assert run_out is not None and trail_out is not None
-        assert trail_out["model"]["sport"] == "trail running"
-        assert trail_out["model"]["atl_tau_days"] == 7
-        assert trail_out["model"]["ctl_tau_days"] == 42
-        assert "tsb_abs_floor" not in trail_out["ranges"]
-        # Mismas constantes (PMC de TP): misma carga, mismo ATL.
-        assert float(trail_out["latest"]["atl"]) == float(run_out["latest"]["atl"])
-
-    def test_triathlon_profile_uses_longer_ctl_and_flags_recent_overload(self, pmc_tss_from_fixture):
-        # Bloque agudo reciente para simular sobrecarga en un atleta de triatlón.
-        activities = self._build_fake_activities(
-            days=56,
-            default_tss=45.0,
-            high_tss_days=10,
-            high_tss=140.0,
-        )
-        tri_profile = {"goals": {"primary": "triatlón"}}
-
-        out = _compute_load_fatigue_metrics(
-            activities=activities,
-            trend_payload={},
-            profile=tri_profile,
-            days_window=56,
-        )
-
-        assert out is not None
-        assert out["model"]["sport"] == "triatlón"
-        assert out["model"]["atl_tau_days"] == 7
-        assert out["model"]["ctl_tau_days"] == 42
-        assert "tsb_abs_floor" not in out["ranges"]
-        assert out["status"] in {"fatigue_high", "overload"}
-
-class TestLoadFatigueModel:
-    # ── Tests de _estimate_session_tss ────────────────────────────────────────
-
-    def test_estimate_tss_never_uses_garmin_training_load(self):
-        """La carga de Garmin nunca es TSS: con FC y duración, Kairos estima igual que sin ella."""
-        with_load, label = _estimate_session_tss({"trainingLoad": 95.0, "averageHR": 155, "duration": 3600})
-        without_load, _ = _estimate_session_tss({"averageHR": 155, "duration": 3600})
-        assert with_load == pytest.approx(without_load)
-        assert with_load != pytest.approx(95.0)
-        assert label == "hrTSS"
-
-    def test_estimate_tss_without_duration_is_zero_not_garmin_load(self):
-        act = {"trainingLoad": 999.0, "trainingStressScore": 999.0}
-        tss, _ = _estimate_session_tss(act)
-        assert tss == 0.0
-        assert _infer_tss_model_tag(act) == "generic:no_duration"
-
-    def test_estimate_tss_priority2_hr_based_z2(self):
-        """Sin trainingLoad, Z2 (avg_hr ~140, hr_rest 50, hr_max 185) → TSS razonable."""
-        act = {"averageHR": 140, "maxHR": 185, "duration": 3600}
-        tss, _ = _estimate_session_tss(act)
-        # Z2 1h → esperamos entre 50 y 80 TSS
-        assert 50 <= tss <= 80, f"TSS Z2 1h inesperado: {tss}"
-
-    def test_estimate_tss_priority2_hr_based_z4_higher_than_z2(self):
-        """Z4 debe producir más TSS que Z2 para la misma duración."""
-        z2, _ = _estimate_session_tss({"averageHR": 140, "maxHR": 185, "duration": 3600})
-        z4, _ = _estimate_session_tss({"averageHR": 165, "maxHR": 185, "duration": 3600})
-        assert z4 > z2
-
-    def test_estimate_tss_priority2_uses_max_hr_from_activity(self):
-        """max_hr de la actividad se usa como referencia; si no, se asume 185."""
-        with_max, _ = _estimate_session_tss({"averageHR": 150, "maxHR": 175, "duration": 3600})
-        without_max, _ = _estimate_session_tss({"averageHR": 150, "duration": 3600})
-        # Con max_hr real del reloj (175) vs estimado (185): la %HRR difiere → TSS difiere
-        assert with_max != without_max
-
-    def test_estimate_tss_priority2_uses_profile_hr_when_activity_has_no_max(self):
-        act = {"averageHR": 150, "duration": 3600}
-        default_tss, _ = _estimate_session_tss(act)
-        profile_tss, _ = _estimate_session_tss(act, hr_rest_bpm=60, hr_max_bpm=190)
-        assert profile_tss != default_tss
-        assert profile_tss < default_tss
-
-    def test_estimate_tss_priority3_training_effect_fallback(self):
-        """Sin HR ni trainingLoad, usa Training Effect aeróbico."""
-        act = {"aerobicTrainingEffect": 3.0, "duration": 3600}
-        tss, _ = _estimate_session_tss(act)
-        # TE 3.0 → IF ~0.77 → 1h → ~59 TSS
-        assert 45 <= tss <= 75, f"TSS con TE=3.0 inesperado: {tss}"
-
-    def test_estimate_tss_priority4_default_if_no_data(self):
-        """Sin ningún dato de intensidad, usa IF=0.68 → 1h → ~46 TSS."""
-        act = {"duration": 3600}
-        tss, _ = _estimate_session_tss(act)
-        expected = 0.68 ** 2 * 100
-        assert abs(tss - expected) < 1.0
-
-    def test_estimate_tss_rowing_uses_gym_cardio_route_over_hr_zones(self):
-        act = {"type": "rowing", "duration": 3600, "averageHR": 150, "maxHR": 185}
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 110,
-                    "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
-                {
-                    "zoneNumber": 4,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 152,
-                    "maxHeartRateIn": 165,
-                },
-                {
-                    "zoneNumber": 5,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 166,
-                    "maxHeartRateIn": 185,
-                },
-            ]
-        )
-
-        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw, hr_rest_bpm=50, hr_max_bpm=185)
-
-        assert label == "hrTSS"
-        # Dedicated gym-cardio fallback (avg HR + profile anchors) should override zones in rowing.
-        assert 76.0 <= tss <= 80.0
-
-    def test_estimate_tss_strength_ignores_native_and_uses_calibrated_hr_formula(self):
-        act = {
-            "type": "strength_training",
-            "duration": 3600,
-            "trainingLoad": 33.35,
-            "averageHR": 145,
-            "maxHR": 180,
-            "rpe": 9,
-            "name": "Fuerza maxima 5x5",
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 115,
-                    "maxHeartRateIn": 125,
-                }
-            ]
-        )
-
-        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-
-        assert label == "hrTSS"
-        assert abs(tss - 61.1) < 0.3
-
-    def test_estimate_tss_strength_without_hr_returns_zero(self):
-        act = {"type": "strength_training", "duration": 3600}
-        tss, label = _estimate_session_tss(act)
-
-        assert label == "hrTSS"
-        assert tss == 0.0
-
-    def test_estimate_tss_strength_uses_hr_only_even_with_rpe_and_text(self):
-        act = {
-            "type": "strength_training",
-            "duration": 3600,
-            "averageHR": 145,
-            "maxHR": 180,
-            "rpe": "7/10",
-            "name": "Movilidad suave",
-        }
-        hr_zones_raw = json.dumps([
-            {
-                "zoneNumber": 1,
-                "secsInZone": 60,
-                "minHeartRateIn": 115,
-                "maxHeartRateIn": 125,
-            }
-        ])
-
-        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-
-        assert label == "hrTSS"
-        assert abs(tss - 61.1) < 0.3
-
-    def test_estimate_tss_strength_native_label_kept_even_without_duration(self):
-        act = {
-            "type": "strength_training",
-            "trainingStressScore": 21.7,
-        }
-
-        tss, label = _estimate_session_tss(act)
-
-        assert label == "hrTSS"
-        assert tss == 0.0
-
-    def test_estimate_tss_strength_light_session_keyword(self):
-        act = {
-            "type": "strength_training",
-            "duration": 3600,
-            "name": "Movilidad y tonificación ligera",
-        }
-
-        tss, label = _estimate_session_tss(act)
-
-        assert label == "hrTSS"
-        assert tss == 0.0
-
-    def test_estimate_tss_strength_rpe_and_text_do_not_change_single_fallback(self):
-        act = {
-            "type": "strength_training",
-            "duration": 3600,
-            "rpe": 8,
-            "name": "Movilidad suave de descarga",
-        }
-
-        tss, label = _estimate_session_tss(act)
-
-        assert label == "hrTSS"
-        assert tss == 0.0
-
-    def test_estimate_tss_strength_supports_summary_dto_payload_shape(self):
-        act = {
-            "activityTypeDTO": {"typeKey": "strength_training"},
-            "summaryDTO": {
-                "duration": 2751.608,
-                "averageHR": 79.0,
-                "maxHR": 122.0,
-            },
-            "activityName": "Gimnasio. Trail - Estabilidad y core",
-        }
-
-        tss, label = _estimate_session_tss(act)
-
-        assert label == "hrTSS"
-        assert abs(tss - 26.23) < 0.5
-
-    def test_estimate_tss_strength_prefers_lthr_model_when_threshold_available(self):
-        act = {
-            "activityTypeDTO": {"typeKey": "strength_training"},
-            "summaryDTO": {
-                "duration": 2751.608,
-                "averageHR": 79.0,
-                "maxHR": 122.0,
-            },
-            "activityName": "Gimnasio. Trail - Estabilidad y core",
-            "activityId": 24301501111,
-        }
-
-        tss_lthr, label_lthr = _estimate_session_tss(
-            act,
-            hr_rest_bpm=40.714285714285715,
-            hr_threshold_bpm=169.0,
-        )
-        tss_fallback, _ = _estimate_session_tss(
-            act,
-            hr_rest_bpm=40.714285714285715,
-            hr_threshold_bpm=None,
-        )
-
-        assert label_lthr == "hrTSS"
-        # LTHR branch should match calibrated target (~24.53 for this known sample).
-        assert abs(tss_lthr - 24.53) < 0.6
-        # Ensure the production route truly switched from the old HR-reserve fallback.
-        assert abs(tss_lthr - tss_fallback) > 0.8
-
-    def test_estimate_tss_strength_falls_back_to_hr_reserve_when_lthr_missing(self):
-        act = {
-            "activityTypeDTO": {"typeKey": "strength_training"},
-            "summaryDTO": {
-                "duration": 2751.608,
-                "averageHR": 79.0,
-                "maxHR": 122.0,
-            },
-            "activityName": "Gimnasio. Trail - Estabilidad y core",
-        }
-
-        tss_fallback, label = _estimate_session_tss(
-            act,
-            hr_rest_bpm=40.714285714285715,
-            hr_threshold_bpm=None,
-            hr_max_bpm=185.0,
-        )
-
-        assert label == "hrTSS"
-        # Fallback branch (HR-reserve A) remains stable and non-zero.
-        assert abs(tss_fallback - 28.08) < 0.6
-
-    def test_strength_classification_labeled_sample_structured_first(self):
-        labeled = [
-            ({"rpe": 8, "name": "Movilidad suave"}, "heavy"),
-            ({"rpe": 3, "name": "Fuerza maxima"}, "light"),
-            ({"rpe": 5, "name": "Heavy day"}, "maintenance"),
-            ({"name": "Fuerza maxima 5x5"}, "heavy"),
-            ({"name": "Movilidad y tonificación"}, "light"),
-            ({"name": "Gimnasio general"}, "general"),
-        ]
-
-        # Mini-set orientativo: usar como smoke test de regresión, no como validación cerrada.
-        assert len(labeled) == 6
-
-        ok = 0
-        for payload, expected in labeled:
-            act = {"type": "strength_training", **payload}
-            cls = _classify_strength_session_with_confidence(act)
-            if cls["session_kind"] == expected:
-                ok += 1
-
-        accuracy = ok / len(labeled)
-        assert accuracy >= 1.0
-
-    def test_strength_tss_invariant_to_text_when_rpe_present(self):
-        base = {
-            "type": "strength_training",
-            "duration": 3600,
-            "rpe": 8,
-        }
-        act_a = dict(base)
-        act_a["name"] = "Movilidad suave"
-        act_b = dict(base)
-        act_b["name"] = "Fuerza maxima 1RM"
-
-        tss_a, _ = _estimate_session_tss(act_a)
-        tss_b, _ = _estimate_session_tss(act_b)
-
-        assert abs(tss_a - tss_b) < 1e-6
-
-    def test_walk_hike_tss_invariant_to_text_when_structured_signals_present(self):
-        base = {
-            "type": "walking",
-            "duration": 3600,
-            "distance": 6200,  # 6.2 km/h -> brisk por señal estructurada
-            "elevationGain": 0,
-        }
-        act_a = dict(base)
-        act_a["name"] = "Paseo suave"
-        act_b = dict(base)
-        act_b["name"] = "Mochila montaña power walking"
-
-        tss_a, _ = _estimate_session_tss(act_a)
-        tss_b, _ = _estimate_session_tss(act_b)
-
-        assert abs(tss_a - tss_b) < 1e-6
-
-    def test_walk_hike_classification_prefers_structured_over_text(self):
-        act = {
-            "type": "walking",
-            "duration": 3600,
-            "distance": 6200,
-            "elevationGain": 0,
-            "name": "Mochila montaña",
-        }
-        cls = _classify_walk_hike_session_with_confidence(act, hours=1.0)
-        assert cls["band"] == "brisk"
-        assert cls["source"] == "structured"
-        assert cls["confidence"] == "high"
-
-    def test_walk_hike_text_fallback_when_no_structured_signals(self):
-        act = {
-            "type": "walking",
-            "duration": 3600,
-            "name": "Power walking en montaña con mochila",
-        }
-
-        cls = _classify_walk_hike_session_with_confidence(act, hours=1.0)
-        tss, label = _estimate_session_tss(act)
-
-        assert cls["source"] == "text"
-        assert cls["band"] in {"brisk", "heavy"}
-        assert label == "TSS"
-        assert tss is not None
-        assert tss > 0
-
-    def test_strength_classification_reports_signal_source(self):
-        cls_rpe = _classify_strength_session_with_confidence(
-            {"type": "strength_training", "rpe": 8, "name": "Movilidad suave"}
-        )
-        assert cls_rpe["session_kind"] == "heavy"
-        assert cls_rpe["source"] == "rpe"
-        assert cls_rpe["confidence"] == "high"
-
-        cls_text = _classify_strength_session_with_confidence(
-            {"type": "strength_training", "name": "Fuerza maxima 5x5"}
-        )
-        assert cls_text["session_kind"] == "heavy"
-        assert cls_text["source"] == "text"
-        assert cls_text["confidence"] == "low"
-
-    def test_estimate_tss_running_prefers_threshold_pace_over_hr(self):
-        act = {
-            "type": "running",
-            "duration": 3600,
-            "distance": 10000,
-            "averageHR": 160,
-            "maxHR": 185,
-        }
-        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-        # TP-like canónico aplica leve ajuste de sesión sobre el baseline por ritmo.
-        assert label == "TSS"
-        assert abs(tss - 76.1) < 1.0
-
-    def test_estimate_tss_running_prefers_effective_pace_when_available(self):
-        act = {
-            "type": "running",
-            "duration": 3600,
-            "distance": 10000,
-            "averagePace": "6:00",
-            "normalizedPace": "5:00",
-        }
-        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-        # IF=1.0 y calibración TP-like para running continuo.
-        assert label == "TSS"
-        assert abs(tss - 101.0) <= 1.0
-
-    def test_estimate_tss_running_uses_distance_meters_for_pace_fallback(self):
-        act = {
-            "type": "running",
-            "duration_seconds": 3600,
-            "distance_meters": 10000,
-        }
-        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-        assert label == "TSS"
-        # 10k en 1h => 6:00/km. Umbral 5:00/km => IF=0.833... => ~69.4 TSS
-        assert abs(tss - 69.4) < 1.0
-
-    def test_extract_threshold_pace_from_lactate_speed_mps_scaled_value(self):
-        pace = _extract_threshold_pace_sec_per_km({"lactate_threshold_speed_mps": 0.4083})
-        assert pace is not None
-        # 0.4083*10 m/s => ~4:05/km
-        assert 230.0 <= pace <= 260.0
-
-    def test_estimate_tss_running_uses_higher_if_ceiling_than_trail(self):
-        running_act = {
-            "type": "running",
-            "duration": 3600,
-            "averagePace": "3:20",  # 3:20 min/km
-        }
-        trail_act = {
-            "type": "hiking",
-            "duration": 3600,
-            "averagePace": "3:20",  # 3:20 min/km
-        }
-
-        running_tss, running_label = _estimate_session_tss(
-            running_act,
-            running_threshold_pace_sec_per_km=300.0,
-        )
-        trail_tss, trail_label = _estimate_session_tss(
-            trail_act,
-            running_threshold_pace_sec_per_km=300.0,
-        )
-
-
-        def test_estimate_tss_running_interval_exam_always_on_increases_tss(self):
-            act = {
-                "type": "running",
-                "duration_seconds": 5278.944,
-                "distance_meters": 16168.79,
-                "avg_speed_mps": 3.063,
-                "max_speed_mps": 3.882,
-                "lap_count": 20,
-                "has_splits": True,
-                "vigorous_intensity_minutes": 85,
-                "workout_rpe": 80,
-                "training_effect_label": "LACTATE_THRESHOLD",
-                "name": "Fartlek cuestas",
-                "description": "6 x 4' Z4 + recuperacion",
-            }
-
-            tss_examined, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-
-            # Baseline (sin ajuste intervalico): IF=300/(5278.944/(16.16879)) ~= 0.919
-            # El examen intervalico debe elevar la carga por encima de ese baseline.
-            baseline_if = 300.0 / (5278.944 / 16.16879)
-            baseline_tss = (5278.944 / 3600.0) * (baseline_if ** 2) * 100.0
-
-            assert label == "TSS"
-            assert tss_examined > baseline_tss + 1.0
-
-        def test_estimate_tss_running_rodaje_not_artificially_inflated(self):
-            act = {
-                "type": "running",
-                "duration": 3600,
-                "distance": 10000,
-                "avg_speed_mps": 3.03,
-                "max_speed_mps": 3.33,
-                "lap_count": 17,
-                "has_splits": True,
-                "workout_rpe": 30,
-                "training_effect_label": "AEROBIC_BASE",
-                "name": "Rodaje suave",
-            }
-
-            tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-            assert label == "TSS"
-            # 10k en 1h => 6:00/km. Umbral 5:00/km => ~69.4 TSS (sin inflado intervalico)
-            assert abs(tss - 69.4) < 1.0
-        # Running no trail: clamp IF a 1.30 + ganancia de sesión TP-like.
-        assert running_label == "TSS"
-        assert abs(running_tss - 170.7) < 1.0
-
-        # Hike/walk usa bandas específicas (no clamp de running/trail).
-        assert trail_label == "TSS"
-        assert abs(trail_tss - 50.41) < 1.0
-
-    def test_estimate_tss_running_fartlek_not_overinflated_vs_pace_baseline(self):
-        act = {
-            "type": "running",
-            "duration_seconds": 4385.93,
-            "distance_meters": 15115.87,
-            "avg_speed_mps": 3.446,
-            "max_speed_mps": 4.647,
-            "lap_count": 27,
-            "vigorous_intensity_minutes": 70,
-            "workout_rpe": 80,
-            "training_effect_label": "VO2MAX",
-            "name": "Fartlek. 2x5' + 2x4' +4x2'",
-        }
-
-        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-
-        baseline_if = 300.0 / (4385.93 / 15.11587)
-        baseline_tss = (4385.93 / 3600.0) * (baseline_if ** 2) * 100.0
-
-        assert label == "TSS"
-        # Debe mantenerse controlado frente al baseline por ritmo.
-        assert tss >= baseline_tss
-        assert tss <= baseline_tss + 22.0
-
-    def test_estimate_tss_running_series_keeps_interval_uplift(self):
-        act = {
-            "type": "running",
-            "duration_seconds": 3475.483,
-            "distance_meters": 10776.09,
-            "avg_speed_mps": 3.101,
-            "max_speed_mps": 4.843,
-            "lap_count": 38,
-            "vigorous_intensity_minutes": 49,
-            "workout_rpe": 60,
-            "training_effect_label": "VO2MAX",
-            "name": "Series en el C.A.R. 8x500 REC 1'30",
-        }
-
-        tss, label = _estimate_session_tss(act, running_threshold_pace_sec_per_km=300.0)
-
-        baseline_if = 300.0 / (3475.483 / 10.77609)
-        baseline_tss = (3475.483 / 3600.0) * (baseline_if ** 2) * 100.0
-
-        assert label == "TSS"
-        # Mantener uplift en series para no perder el ajuste del caso 8x500.
-        assert tss > baseline_tss + 7.0
-
-    def test_classify_running_session_rodaje(self):
-        act = {
-            "type": "running",
-            "avg_speed_mps": 3.10,
-            "max_speed_mps": 3.35,
-            "lap_count": 10,
-            "vigorous_intensity_minutes": 12,
-            "workout_rpe": 30,
-            "training_effect_label": "AEROBIC_BASE",
-            "name": "Rodaje suave zona 2",
-        }
-        cls = _classify_running_session_with_confidence(act)
-        assert cls["session_kind"] == "rodaje"
-        assert cls["confidence"] in {"medium", "high"}
-
-    def test_classify_running_session_fartlek(self):
-        act = {
-            "type": "running",
-            "avg_speed_mps": 3.40,
-            "max_speed_mps": 4.55,
-            "lap_count": 22,
-            "vigorous_intensity_minutes": 55,
-            "workout_rpe": 75,
-            "training_effect_label": "VO2MAX",
-            "name": "Fartlek 6x3' rec 2'",
-        }
-        cls = _classify_running_session_with_confidence(act)
-        assert cls["session_kind"] == "fartlek"
-        assert cls["scores"]["fartlek"] >= cls["scores"]["series"]
-
-    def test_classify_running_session_series(self):
-        act = {
-            "type": "running",
-            "avg_speed_mps": 3.05,
-            "max_speed_mps": 4.80,
-            "lap_count": 34,
-            "vigorous_intensity_minutes": 48,
-            "workout_rpe": 65,
-            "training_effect_label": "VO2MAX",
-            "name": "Series 10x400 rec 1'",
-            "description": "Trabajo de reps en pista",
-        }
-        cls = _classify_running_session_with_confidence(act)
-        assert cls["session_kind"] == "series"
-        assert cls["scores"]["series"] > cls["scores"]["rodaje"]
-
-    def test_classify_running_session_rodaje_from_name_only(self):
-        act = {
-            "type": "running",
-            "name": "Rodaje suave Z2 60'",
-            "training_effect_label": "AEROBIC_BASE",
-        }
-        cls = _classify_running_session_with_confidence(act)
-        assert cls["session_kind"] == "rodaje"
-
-    def test_estimate_tss_trail_uses_pace_only_with_native_effective_signal(self):
-        act_hr = {
-            "type": "trail_running",
-            "duration": 7200,
-            "distance": 14000,
-            "averageHR": 150,
-            "maxHR": 180,
-            "rpe": 9,
-        }
-        tss_hr, label_hr = _estimate_session_tss(act_hr, running_threshold_pace_sec_per_km=320.0)
-        assert label_hr == "hrTSS"
-        assert tss_hr > 0
-
-        act_native_pace = {
-            "type": "trail_running",
-            "duration": 7200,
-            "distance": 14000,
-            "gradeAdjustedPace": "6:00",
-            "averageHR": 150,
-            "maxHR": 180,
-        }
-        tss_native, label_native = _estimate_session_tss(
-            act_native_pace,
-            running_threshold_pace_sec_per_km=320.0,
-        )
-        assert label_native == "TSS"
-        assert tss_native > 0
-
-        act_pace = {"type": "hiking", "duration": 7200, "distance": 14000}
-        tss_pace, label_pace = _estimate_session_tss(act_pace, running_threshold_pace_sec_per_km=320.0)
-        assert label_pace == "TSS"
-        assert tss_pace > 0
-
-        act_hike_hr = {
-            "type": "hiking",
-            "duration": 7200,
-            "distance": 14000,
-            "averageHR": 130,
-            "maxHR": 165,
-        }
-        tss_hike_hr, label_hike_hr = _estimate_session_tss(act_hike_hr, running_threshold_pace_sec_per_km=320.0)
-        assert label_hike_hr == "TSS"
-        assert tss_hike_hr > 0
-
-        act_rpe = {"type": "walking", "duration": 3600, "rpe": 6}
-        tss_rpe, label_rpe = _estimate_session_tss(act_rpe)
-        assert label_rpe == "TSS"
-        assert tss_rpe > 0
-
-    def test_estimate_tss_trail_uses_hr_zones_when_available(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 115,
-                    "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
-            ]
-        )
-
-        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-        tss_avg, label_avg = _estimate_session_tss(act)
-
-        assert label_zones == "hrTSS"
-        assert label_avg == "hrTSS"
-        assert tss_zones > 0
-        assert tss_zones < tss_avg
-
-    def test_estimate_tss_trail_hr_zones_uses_tp_like_zone_mapping(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 115,
-                    "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
-            ]
-        )
-
-        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-
-        assert label_zones == "hrTSS"
-        # 1h íntegra en Z1 (115-125) con mapeo TP-like por zonas de FC.
-        assert abs(tss_zones - 27.04) < 0.05
-
-        hike_act = {
-            "type": "hiking",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-        }
-        tss_hike_zones, label_hike_zones = _estimate_session_tss(hike_act, hr_zones_raw=hr_zones_raw)
-        assert label_hike_zones == "TSS"
-        # En hike/walk se usa banda específica y blend con zonas (sin factor trail).
-        assert 45.0 <= tss_hike_zones <= 60.0
-
-    def test_estimate_tss_trail_fast_pace_keeps_tp_like_zone_mapping(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-            "averagePaceSecPerKm": 330,
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 115,
-                    "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
-            ]
-        )
-
-        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-
-        assert label_zones == "hrTSS"
-        # El ritmo no cambia el fallback zonal TP-like cuando no hay NGP nativo.
-        assert abs(tss_zones - 27.04) < 0.05
-
-    def test_estimate_tss_trail_pace_at_6min_keeps_tp_like_zone_mapping(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-            "averagePaceSecPerKm": 360,
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 115,
-                    "maxHeartRateIn": 125,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 126,
-                    "maxHeartRateIn": 138,
-                },
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 139,
-                    "maxHeartRateIn": 151,
-                },
-            ]
-        )
-
-        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-
-        assert label_zones == "hrTSS"
-        # Sin NGP nativo, el ritmo no altera el fallback zonal TP-like.
-        assert abs(tss_zones - 27.04) < 0.05
-
-    def test_estimate_tss_trail_low_zone_floor_keeps_raw_hr_zones(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-            "averagePaceSecPerKm": 480,
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 46,
-                    "maxHeartRateIn": 141,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 142,
-                    "maxHeartRateIn": 152,
-                },
-            ]
-        )
-
-        tss_zones, label_zones = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-
-        act_fast = dict(act)
-        act_fast["averagePaceSecPerKm"] = 330
-        tss_raw_fast, label_raw_fast = _estimate_session_tss(act_fast, hr_zones_raw=hr_zones_raw)
-
-        assert label_zones == "hrTSS"
-        assert label_raw_fast == "hrTSS"
-        # El umbral de zonas ya define el resultado: no hay calibración adicional.
-        assert abs(tss_zones - tss_raw_fast) < 0.05
-
-    def test_activity_analysis_block_shows_stored_tss_only(self):
-        activity_raw = json.dumps(
-            {
-                "type": "trail_running",
-                "duration": 3600,
-                "distance": 10000,
-                "averageHR": 170,
-                "maxHR": 180,
-                "name": "Trail test",
-            }
-        )
-
-        out = _build_activity_analysis_block(
-            activity_raw=activity_raw,
-            stored_tss_row={"activity_id": 1, "tss": 123.4, "method": "hrTSS"},
-        )
-
-        assert "hrTSS (Kairos): 123.4" in out
-        assert "hrTSS bruto zonas" not in out
-        assert "hrTSS Kairos aplicado" not in out
-
-    def test_activity_analysis_block_without_stored_tss_is_pending_not_estimated(self):
-        activity_raw = json.dumps(
-            {
-                "type": "trail_running",
-                "duration": 3600,
-                "distance": 10000,
-                "averageHR": 170,
-                "maxHR": 180,
-                "activityTrainingLoad": 250.0,
-                "name": "Trail sin línea base",
-            }
-        )
-
-        with patch("agent.trainer_agent._estimate_session_tss") as estimate_mock:
-            out = _build_activity_analysis_block(activity_raw=activity_raw)
-
-        estimate_mock.assert_not_called()
-        assert "TSS (Kairos): pendiente de cálculo" in out
-        assert "Carga Garmin (no TSS): 250.0" in out
-        assert "Carga ALTA" not in out
-
-    def test_estimate_tss_walking_easy_uses_dedicated_model(self):
-        act = {
-            "type": "walking",
-            "duration": 3600,
-            "name": "Paseo regenerativo suave",
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {
-                    "zoneNumber": 3,
-                    "secsInZone": 3600,
-                    "minHeartRateIn": 145,
-                    "maxHeartRateIn": 155,
-                },
-                {
-                    "zoneNumber": 2,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 130,
-                    "maxHeartRateIn": 144,
-                },
-                {
-                    "zoneNumber": 1,
-                    "secsInZone": 0,
-                    "minHeartRateIn": 110,
-                    "maxHeartRateIn": 129,
-                },
-            ]
-        )
-
-        tss, label = _estimate_session_tss(act, hr_zones_raw=hr_zones_raw)
-
-        assert label == "TSS"
-        assert 15.0 <= tss <= 25.0
-
-    def test_estimate_tss_walking_power_band(self):
-        act = {
-            "type": "walking",
-            "duration": 3600,
-            "name": "Power walking ritmo vivo",
-        }
-
-        tss, label = _estimate_session_tss(act)
-
-        assert label == "TSS"
-        assert 25.0 <= tss <= 40.0
-
-    def test_estimate_tss_elliptical_fallback_uses_profile_hr_max(self):
-        act_elliptical = {
-            "duration": 1890,
-            "averageHR": 113,
-            "maxHR": 124,
-            "name": "Eliptica. Z1 suave",
-        }
-        act_generic = {
-            "duration": 1890,
-            "averageHR": 113,
-            "maxHR": 124,
-            "name": "Indoor suave",
-        }
-
-        tss_elliptical, label_elliptical = _estimate_session_tss(
-            act_elliptical,
-            hr_rest_bpm=50,
-            hr_max_bpm=185,
-        )
-        tss_generic, _ = _estimate_session_tss(
-            act_generic,
-            hr_rest_bpm=50,
-            hr_max_bpm=185,
-        )
-
-        assert label_elliptical == "hrTSS"
-        assert 20.0 <= tss_elliptical <= 32.0
-        assert tss_generic > tss_elliptical
-
-    def test_estimate_tss_rowing_lthr_sets_gym_cardio_source_tag(self):
-        act = {
-            "type": "rowing",
-            "duration": 3600,
-            "averageHR": 145,
-            "maxHR": 172,
-        }
-
-        tss, label = _estimate_session_tss(
-            act,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=169,
-        )
-        model = _infer_tss_model_tag(act)
-
-        assert label == "hrTSS"
-        assert 60.0 <= tss <= 66.0
-        assert model == "gym_cardio:lthr"
-
-    def test_estimate_tss_rowing_fallback_sets_gym_cardio_source_tag(self):
-        act = {
-            "type": "rowing",
-            "duration": 3600,
-            "averageHR": 145,
-        }
-
-        tss, label = _estimate_session_tss(
-            act,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=None,
-        )
-        model = _infer_tss_model_tag(act)
-
-        assert label == "hrTSS"
-        assert 68.0 <= tss <= 74.0
-        assert model == "gym_cardio:fallback_hr"
-
-    def test_estimate_tss_rowing_lthr_with_power_blends_mechanical_component(self):
-        act_base = {
-            "type": "rowing",
-            "duration": 3600,
-            "averageHR": 145,
-        }
-        act_power = {
-            "type": "rowing",
-            "duration": 3600,
-            "averageHR": 145,
-            "avgPower": 260,
-        }
-
-        tss_base, label_base = _estimate_session_tss(
-            act_base,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=169,
-        )
-        tss_power, label_power = _estimate_session_tss(
-            act_power,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=169,
-        )
-
-        model_base = _infer_tss_model_tag(act_base)
-        model_power = _infer_tss_model_tag(act_power)
-
-        assert label_base == "hrTSS"
-        assert label_power == "hrTSS"
-        assert model_base == "gym_cardio:lthr"
-        assert model_power == "gym_cardio:lthr_plus_mech"
-        assert tss_power > tss_base
-
-    def test_estimate_tss_elliptical_lthr_with_cadence_blends_mechanical_component(self):
-        act_base = {
-            "type": "elliptical",
-            "duration": 1800,
-            "averageHR": 120,
-        }
-        act_cad = {
-            "type": "elliptical",
-            "duration": 1800,
-            "averageHR": 120,
-            "avgCadence": 78,
-        }
-
-        tss_base, label_base = _estimate_session_tss(
-            act_base,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=169,
-        )
-        tss_cad, label_cad = _estimate_session_tss(
-            act_cad,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=169,
-        )
-
-        model_base = _infer_tss_model_tag(act_base)
-        model_cad = _infer_tss_model_tag(act_cad)
-
-        assert label_base == "hrTSS"
-        assert label_cad == "hrTSS"
-        assert model_base == "gym_cardio:lthr"
-        assert model_cad == "gym_cardio:lthr_plus_mech"
-        assert tss_cad > tss_base
-
-    def test_estimate_tss_elliptical_name_overrides_running_type_for_routing(self):
-        act = {
-            "type": "running",
-            "name": "Eliptica. 60'",
-            "duration": 3600,
-            "averageHR": 136,
-            "maxHR": 150,
-        }
-
-        tss, label = _estimate_session_tss(
-            act,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=169,
-        )
-        model = _infer_tss_model_tag(act)
-
-        assert label == "hrTSS"
-        assert model.startswith("gym_cardio:")
-        assert tss > 0.0
-
-    def test_estimate_tss_elliptical_accented_name_overrides_running_type_for_routing(self):
-        act = {
-            "type": "running",
-            "name": "Elíptica. 60'",
-            "duration": 3600,
-            "averageHR": 136,
-            "maxHR": 150,
-        }
-
-        tss, label = _estimate_session_tss(
-            act,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-            hr_threshold_bpm=169,
-        )
-        model = _infer_tss_model_tag(act)
-
-        assert label == "hrTSS"
-        assert model.startswith("gym_cardio:")
-        assert tss > 0.0
-
-    def test_estimate_tss_words_inside_description_do_not_route_to_gym_cardio(self):
-        # Casos reales: 23966766696 ("remontar"), 22248446621 ("podremos"), 22915678572 ("volveremos").
-        cases = [
-            ("running", 'Fartlek. 8x45" cuestas', "Me he tenido que comer un gel para remontar."),
-            ("running", "Fartlek. 4 x 4 km RCM REC 3'", "algo podremos hacer en la maratón"),
-            ("trail_running", "Trail. Ruta del Cobre", "Volveremos con más energía y en elíptica no."),
-        ]
-        for act_type, name, description in cases:
-            act = {
-                "type": act_type,
-                "name": name,
-                "description": description,
-                "duration": 3600,
-                "averageHR": 150,
-                "maxHR": 170,
-            }
-            _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190, hr_threshold_bpm=169)
-            assert not _infer_tss_model_tag(act).startswith("gym_cardio:"), name
-
-    @staticmethod
-    def _trail_hr_details(hr: float, seconds: int = 3600, step: int = 10) -> str:
-        return json.dumps([{"timeInSeconds": t, "heartRate": hr} for t in range(0, seconds, step)])
-
-    def _slow_trail(self) -> dict:
-        # 10:00/km: trail normal (no rápido).
-        return {"type": "trail_running", "duration": 3600, "distance": 6000, "averageSpeed": 1.667}
-
-    def test_trail_tp_zones_rate_by_hr_band_vs_tp_threshold(self):
-        # TSS/h por tramo de FC/umbral TP (166): <85 % = 40.8, 85-95 % = 72.7, >= 100 % = 100.
-        for hr, expected in ((130, 40.8), (150, 72.7), (170, 100.0)):
-            act = self._slow_trail()
-            tss, label = _estimate_session_tss(
-                act,
-                hr_rest_bpm=40,
-                hr_threshold_bpm=169,
-                hr_threshold_tp_bpm=166,
-                activity_details_raw=self._trail_hr_details(hr),
-            )
-            assert label == "hrTSS"
-            assert _infer_tss_model_tag(act) == "trail:tp_zones"
-            assert tss == pytest.approx(expected, abs=0.3), hr
-
-    def test_trail_tp_zones_ignores_resting_hr(self):
-        values = []
-        for hr_rest in (37, 50):
-            tss, _ = _estimate_session_tss(
-                self._slow_trail(),
-                hr_rest_bpm=hr_rest,
-                hr_threshold_bpm=169,
-                hr_threshold_tp_bpm=166,
-                activity_details_raw=self._trail_hr_details(135),
-            )
-            values.append(tss)
-        assert values[0] == values[1]
-
-    def test_trail_tp_zones_uses_tp_threshold_and_falls_back_to_lthr(self):
-        # 143 lpm: 86 % de 166 (tramo 72.7) pero 84.6 % de 169 (tramo 40.8).
-        details = self._trail_hr_details(143)
-        tss_tp, _ = _estimate_session_tss(
-            self._slow_trail(), hr_threshold_bpm=169, hr_threshold_tp_bpm=166, activity_details_raw=details
-        )
-        tss_lthr, _ = _estimate_session_tss(self._slow_trail(), hr_threshold_bpm=169, activity_details_raw=details)
-        assert tss_tp == pytest.approx(72.7, abs=0.3)
-        assert tss_lthr == pytest.approx(40.8, abs=0.3)
-
-    def test_fast_trail_uses_running_rtss_pipeline(self):
-        act = {"type": "trail_running", "duration": 3600, "distance": 11000, "averageSpeed": 3.06}
-        with patch("agent.load_metrics._estimate_running_tss_from_activity_details_pipeline", return_value=88.0) as pipe:
-            tss, label = _estimate_session_tss(
-                act,
-                hr_threshold_bpm=169,
-                hr_threshold_tp_bpm=166,
-                running_threshold_pace_sec_per_km=252,
-                activity_details_raw=self._trail_hr_details(150),
-            )
-        assert pipe.called
-        assert (tss, label) == (88.0, "TSS")
-        assert _infer_tss_model_tag(act) == "trail:fast_rtss"
-
-    def test_cycling_power_tss_uses_garmin_norm_power(self):
-        # Caso real 28/07: avgPower 125, normPower 165, FTP 205, 1.58 h -> TP 101 TSS.
-        act = {"type": "road_biking", "duration": 1.58 * 3600, "avgPower": 125.0, "normPower": 165.0}
-        tss, label = _estimate_session_tss(act, ftp=205.0)
-        assert label == "TSS"
-        assert _infer_tss_model_tag(act) == "cycling:power_ftp"
-        assert tss == pytest.approx(1.58 * (165 / 205) ** 2 * 100, abs=0.1)
-
-    def test_cycling_without_power_uses_tp_hr_zones(self):
-        act = {"type": "gravel_cycling", "duration": 3600, "averageHR": 120}
-        tss, label = _estimate_session_tss(
-            act, ftp=205.0, hr_threshold_bpm=169, hr_threshold_tp_bpm=166,
-            activity_details_raw=self._trail_hr_details(120),
-        )
-        assert (label, _infer_tss_model_tag(act)) == ("hrTSS", "cycling:tp_zones")
-        assert tss == pytest.approx(40.8, abs=0.3)
-
-    def test_walk_tss_is_capped_by_tp_hrtss(self):
-        # Caminata rápida (6.8 km/h, FC 100): el modelo metabólico no puede superar el hrTSS de TP.
-        act = {"type": "hiking", "duration": 3600, "distance": 6800, "averageSpeed": 1.89, "averageHR": 100}
-        with patch("agent.load_metrics._estimate_walk_hike_tss", return_value=(99.0, "TSS")):
-            tss, label = _estimate_session_tss(
-                act, hr_threshold_bpm=169, hr_threshold_tp_bpm=166,
-                activity_details_raw=self._trail_hr_details(100),
-            )
-        assert (label, _infer_tss_model_tag(act)) == ("hrTSS", "walk_hike:tp_hr_cap")
-        assert tss == pytest.approx(40.8, abs=0.3)
-
-    def test_walk_tss_below_tp_hrtss_keeps_metabolic_model(self):
-        act = {"type": "walking", "duration": 3600, "distance": 2500, "averageSpeed": 0.7, "averageHR": 60}
-        with patch("agent.load_metrics._estimate_walk_hike_tss", return_value=(15.0, "TSS")):
-            tss, _ = _estimate_session_tss(
-                act, hr_threshold_bpm=169, hr_threshold_tp_bpm=166,
-                activity_details_raw=self._trail_hr_details(60),
-            )
-        assert _infer_tss_model_tag(act) == "walk_hike:metabolico"
-        assert tss == 15.0
-
-    def test_resolve_tp_hr_threshold_for_date_picks_value_in_force(self):
-        from agent.trainer_agent import _resolve_tp_hr_threshold_for_date
-
-        profile = {
-            "performance": {
-                "hr_threshold_bpm": 169,
-                "hr_threshold_tp_history": [
-                    {"date": "2026-10-21", "bpm": 169},
-                    {"date": "2026-01-30", "bpm": 166},
-                ],
-            }
-        }
-        assert _resolve_tp_hr_threshold_for_date(profile, "2026-01-29") is None
-        assert _resolve_tp_hr_threshold_for_date(profile, "2026-05-01") == 166
-        assert _resolve_tp_hr_threshold_for_date(profile, "2026-10-21") == 169
-        assert _resolve_tp_hr_threshold_for_date({"performance": {}}, "2026-05-01") is None
-
-    def test_resolve_running_threshold_pace_for_date_picks_value_in_force(self):
-        from agent.trainer_agent import _resolve_running_threshold_pace_for_date
-
-        profile = {
-            "performance": {
-                "running_threshold_pace_sec_per_km": 252.0,
-                "running_threshold_pace_history": [
-                    {"date": "2026-01-30", "sec_per_km": 230},
-                    {"date": "2026-05-09", "sec_per_km": 252},
-                ],
-            }
-        }
-        assert _resolve_running_threshold_pace_for_date(profile, "2026-01-29") is None
-        assert _resolve_running_threshold_pace_for_date(profile, "2026-05-08") == 230
-        assert _resolve_running_threshold_pace_for_date(profile, "2026-05-09") == 252
-        assert _resolve_running_threshold_pace_for_date({"performance": {}}, "2026-05-01") is None
-
-    def test_estimate_tss_rowing_word_in_name_routes_to_gym_cardio(self):
-        act = {
-            "type": "running",
-            "name": "Remo. 20' Z2",
-            "duration": 1200,
-            "averageHR": 130,
-            "maxHR": 140,
-        }
-        _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190, hr_threshold_bpm=169)
-        assert _infer_tss_model_tag(act).startswith("gym_cardio:")
-
-    def test_estimate_tss_trail_uses_embedded_hr_zones_payload(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-            "heartRateZones": [
-                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
-                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
-                {"zoneNumber": 3, "secsInZone": 0, "minHeartRateIn": 139, "maxHeartRateIn": 151},
-            ],
-        }
-
-        tss_embedded, label_embedded = _estimate_session_tss(act)
-        tss_avg_only, _ = _estimate_session_tss({
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 170,
-            "maxHR": 180,
-        })
-
-        assert label_embedded == "hrTSS"
-        assert tss_embedded > 0
-        assert tss_embedded < tss_avg_only
-
-    def test_estimate_tss_trail_prefers_stream_karvonen_when_coverage_is_good(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 160,
-            "maxHR": 190,
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
-                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
-            ]
-        )
-        details_raw = json.dumps(
-            {
-                "samples": [
-                    {"seconds": idx * 30, "heartRate": 160}
-                    for idx in range(120)
-                ]
-            }
-        )
-
-        tss_stream, label_stream = _estimate_session_tss(
-            act,
-            hr_zones_raw=hr_zones_raw,
-            activity_details_raw=details_raw,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-        )
-        tss_zones, _ = _estimate_session_tss(
-            act,
-            hr_zones_raw=hr_zones_raw,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-        )
-
-        assert label_stream == "hrTSS"
-        assert tss_stream < tss_zones
-        assert abs(tss_stream - 61.73) < 0.2
-
-    def test_estimate_tss_trail_stream_low_coverage_falls_back_to_zones(self):
-        act = {
-            "type": "trail_running",
-            "duration": 3600,
-            "averageHR": 160,
-            "maxHR": 190,
-        }
-        hr_zones_raw = json.dumps(
-            [
-                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
-                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
-            ]
-        )
-        details_raw = json.dumps(
-            {
-                "samples": [
-                    {"seconds": 0, "heartRate": 160},
-                    {"seconds": 10, "heartRate": 161},
-                    {"seconds": 20, "heartRate": 159},
-                ]
-            }
-        )
-
-        tss_stream_low_cov, label_low_cov = _estimate_session_tss(
-            act,
-            hr_zones_raw=hr_zones_raw,
-            activity_details_raw=details_raw,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-        )
-        tss_zones, _ = _estimate_session_tss(
-            act,
-            hr_zones_raw=hr_zones_raw,
-            hr_rest_bpm=50,
-            hr_max_bpm=190,
-        )
-
-        assert label_low_cov == "hrTSS"
-        assert abs(tss_stream_low_cov - tss_zones) < 0.05
-
-    def test_estimate_tss_cycling_prefers_power_ftp_then_hr_zones_then_hr(self):
-        act_pow = {
-            "type": "cycling",
-            "duration": 3600,
-            "normalizedPower": 210,
-            "averageHR": 160,
-            "maxHR": 185,
-        }
-        tss_pow, label_pow = _estimate_session_tss(act_pow, ftp=250.0)
-        assert label_pow == "TSS"
-        assert abs(tss_pow - 70.6) < 1.0
-
-        hr_zones_raw = json.dumps(
-            [
-                {"zoneNumber": 1, "secsInZone": 3600, "minHeartRateIn": 115, "maxHeartRateIn": 125},
-                {"zoneNumber": 2, "secsInZone": 0, "minHeartRateIn": 126, "maxHeartRateIn": 138},
-                {"zoneNumber": 3, "secsInZone": 0, "minHeartRateIn": 139, "maxHeartRateIn": 151},
-            ]
-        )
-
-        # Sin FTP (aunque haya potencia), usa zonas FC.
-        tss_no_ftp, label_no_ftp = _estimate_session_tss(act_pow, ftp=None, hr_zones_raw=hr_zones_raw)
-        tss_no_ftp_hr_only, _ = _estimate_session_tss(act_pow, ftp=None)
-        assert label_no_ftp == "hrTSS"
-        assert tss_no_ftp > 0
-        assert abs(tss_no_ftp - tss_no_ftp_hr_only) > 0.5
-
-        # Sin potencia (aunque haya FTP), usa zonas FC.
-        act_no_power = {"type": "cycling", "duration": 3600, "averageHR": 145, "maxHR": 175}
-        tss_zones, label_zones = _estimate_session_tss(act_no_power, ftp=250.0, hr_zones_raw=hr_zones_raw)
-        tss_no_zones_hr_only, _ = _estimate_session_tss(act_no_power, ftp=250.0)
-        assert label_zones == "hrTSS"
-        assert tss_zones > 0
-        assert abs(tss_zones - tss_no_zones_hr_only) > 0.5
-
-        # Sin zonas, fallback final a FC media.
-        act_hr = {"type": "cycling", "duration": 3600, "averageHR": 145, "maxHR": 175}
-        tss_hr, label_hr = _estimate_session_tss(act_hr, ftp=250.0)
-        assert label_hr == "hrTSS"
-        assert tss_hr > 0
-
-    def test_estimate_tss_zero_duration_returns_zero(self):
-        act = {"averageHR": 145, "duration": 0}
-        tss, _ = _estimate_session_tss(act)
-        assert tss == 0.0
-
-    def test_estimate_tss_invalid_activity_returns_zero(self):
-        tss1, _ = _estimate_session_tss(None)
-        tss2, _ = _estimate_session_tss("not a dict")
-        assert tss1 == 0.0
-        assert tss2 == 0.0
-
-
 class TestCyclingFtpResolution:
     def test_extract_cycling_ftp_watts_accepts_common_shapes(self):
         assert _extract_cycling_ftp_watts({"cyclingFtp": 261}) == 261.0
@@ -4894,560 +3014,6 @@ class TestCyclingFtpResolution:
         assert ftp == 248.0
         call_mock.assert_not_awaited()
         save_mock.assert_not_called()
-
-
-class TestTssSourceTagging:
-    def test_cycling_power_ftp_is_kairos_model(self):
-        act = {"type": "gravel_cycling", "normalizedPower": 180, "duration": 3600, "activityTrainingLoad": 140.0}
-        tss, label = _estimate_session_tss(act, ftp=260.0)
-        assert label == "TSS"
-        assert tss > 0.0
-        assert _infer_tss_source_tag(act, label, ftp=260.0, hr_zones_raw=None) == "kairos_model"
-        assert _infer_tss_model_tag(act) == "cycling:power_ftp"
-
-    def test_cycling_hr_avg_without_ftp_is_kairos_model(self):
-        act = {"type": "mountain_biking", "averageHR": 150, "duration": 3600}
-        _tss, label = _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190)
-        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) == "kairos_model"
-        assert _infer_tss_model_tag(act) == "cycling:hr_avg"
-
-    @pytest.mark.parametrize(
-        ("act", "expected_model"),
-        [
-            (
-                {
-                    "type": "running",
-                    "duration": 3600,
-                    "distance": 12000.0,
-                    "averageHR": 150,
-                    "maxHR": 170,
-                    "activityTrainingLoad": 250.0,
-                },
-                "running:tp_like_adjusted",
-            ),
-            (
-                {
-                    "type": "walking",
-                    "duration": 3600,
-                    "distance": 5500.0,
-                    "averageHR": 105,
-                    "activityTrainingLoad": 40.0,
-                },
-                "walk_hike:metabolico",
-            ),
-            (
-                {
-                    "type": "hiking",
-                    "duration": 3 * 3600,
-                    "distance": 12000.0,
-                    "elevationGain": 900.0,
-                    "averageHR": 125,
-                    "activityTrainingLoad": 180.0,
-                },
-                "walk_hike:metabolico",
-            ),
-        ],
-        ids=["running", "walking", "hiking"],
-    )
-    def test_native_load_present_but_kairos_computes_is_not_garmin_native(self, act, expected_model):
-        tss, label = _estimate_session_tss(
-            act,
-            hr_rest_bpm=37.0,
-            hr_max_bpm=190.0,
-            hr_threshold_bpm=169.0,
-            running_threshold_pace_sec_per_km=252.0,
-        )
-        assert tss > 0.0
-        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) == "kairos_model"
-        assert _infer_tss_model_tag(act) == expected_model
-        assert tss != pytest.approx(act["activityTrainingLoad"])
-
-    def test_garmin_load_is_never_the_final_tss(self):
-        # Antes: sin duración (o sin modelo para el deporte) se devolvía la carga de Garmin como TSS.
-        act = {"type": "other", "duration": 0, "activityTrainingLoad": 42.0}
-        tss, label = _estimate_session_tss(act)
-        assert tss == 0.0
-        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) != "garmin_native"
-        assert _infer_tss_model_tag(act) == "generic:no_duration"
-        unknown_sport = {"type": "swimming", "duration": 3600, "averageHR": 140, "activityTrainingLoad": 42.0}
-        tss2, _ = _estimate_session_tss(unknown_sport, hr_rest_bpm=50, hr_max_bpm=190)
-        assert tss2 > 0 and tss2 != pytest.approx(42.0)
-        assert _infer_tss_model_tag(unknown_sport).startswith("generic:")
-
-    def test_tags_reset_between_estimates_on_same_dict(self):
-        act = {"type": "other", "duration": 0, "activityTrainingLoad": 42.0}
-        _estimate_session_tss(act)
-        act["duration"] = 3600
-        act["averageHR"] = 140
-        del act["activityTrainingLoad"]
-        _tss, label = _estimate_session_tss(act, hr_rest_bpm=50, hr_max_bpm=190)
-        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) != "garmin_native"
-
-    def test_estimate_tss_double_session_same_day_accumulates(self):
-        """Dos sesiones en el mismo día deben sumar sus TSS en el modelo."""
-        morning = {"averageHR": 145, "maxHR": 185, "duration": 3600}
-        afternoon = {"averageHR": 160, "maxHR": 185, "duration": 2700}
-        tss_morning, _ = _estimate_session_tss(morning)
-        tss_afternoon, _ = _estimate_session_tss(afternoon)
-        # Ambas > 0 y distintas, y el modelo las sumará en tss_by_day
-        assert tss_morning > 0 and tss_afternoon > 0
-        assert tss_morning != tss_afternoon
-
-    def test_get_active_training_plan_falls_back_to_profile_when_storage_unavailable(self):
-        profile = {"training_plan": {"active": True, "title": "Plan local", "status": "active"}}
-        with patch("agent.trainer_agent._storage.get_active_training_plan", side_effect=RuntimeError("db down")):
-            plan = _get_active_training_plan(profile)
-
-        assert plan is not None
-        assert plan["title"] == "Plan local"
-
-    def test_build_startup_plan_recommendation_includes_title(self):
-        msg = _build_startup_plan_recommendation({"title": "Plan 10K", "active": True})
-        assert "Plan 10K" in msg
-
-    def test_build_goal_plan_fallback_contains_target(self):
-        profile = {
-            "goals": {
-                "target_race": "Zara Speed Run 10k",
-                "target_race_date": "2026-11-22",
-                "target_time": "0:35:59",
-            },
-            "health": {"injuries": ["DT 1"]},
-        }
-        out = _build_goal_plan_fallback(profile)
-        assert "Zara Speed Run 10k" in out
-        assert "Estructura semanal propuesta" in out
-
-    def test_build_training_plan_status_markdown_no_plan_is_explicit(self):
-        profile = {
-            "goals": {
-                "target_race": "Trail 42K",
-                "target_race_date": "2026-11-22",
-                "target_time": "05:30:00",
-                "weekly_training_hours": 10,
-            }
-        }
-        out = _build_training_plan_status_markdown(profile)
-        assert "No tienes plan asignado" in out
-        assert "22/11/2026" in out
-
-    def test_build_training_plan_status_markdown_active_plan_uses_plan_entity(self):
-        profile = {
-            "goals": {"target_race": "Trail 42K", "target_race_date": "2026-11-22"},
-            "training_plan": {
-                "active": True,
-                "status": "active",
-                "title": "Plan Trail 42K",
-                "target_race": "Trail 42K",
-                "target_race_date": "2026-11-22",
-                "today_focus": "Rodaje Z2 50 min",
-            },
-        }
-        out = _build_training_plan_status_markdown(profile)
-        assert "Sí, tienes un plan activo: Plan Trail 42K." in out
-        assert "22/11/2026" in out
-        assert "Rodaje Z2 50 min" in out
-
-    def test_generate_structured_plan_payload_returns_plan_and_sessions(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
-                "weekly_training_hours": 7,
-            },
-            "health": {},
-        }
-        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
-        assert plan["title"].startswith("Plan hacia")
-        assert plan["duration_weeks"] >= 4
-        assert len(sessions) == plan["duration_weeks"] * 7
-        assert all(isinstance(s.get("structured_workout"), dict) for s in sessions)
-
-        week_indexes = sorted({int(s.get("week_index") or 0) for s in sessions})
-        assert week_indexes[0] == 1
-        assert week_indexes[-1] == plan["duration_weeks"]
-
-    @staticmethod
-    def _hm_profile(weeks_ahead: int = 12, hours: float = 10.0) -> dict:
-        return {
-            "goals": {
-                "primary": "running",
-                "target_race": "Media Maratón de Santa Pola (21,1 km)",
-                "target_race_date": (date.today() + timedelta(days=7 * weeks_ahead)).isoformat(),
-                "target_time": "01:22:59",
-                "weekly_training_hours": hours,
-            },
-            "health": {},
-        }
-
-    @staticmethod
-    def _week_minutes(sessions: list[dict], week: int) -> int:
-        return sum(int(s.get("duration_min") or 0) for s in sessions if int(s.get("week_index") or 0) == week)
-
-    def test_plan_starts_from_real_recent_volume_and_never_jumps_more_than_10pct(self):
-        ctx = {"recent_weekly_minutes": 300.0, "longest_recent_min": 100.0, "ctl": 60.0, "atl": 40.0, "tsb": 20.0, "status": "ready"}
-        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
-        weeks = [self._week_minutes(sessions, w) for w in range(1, plan["duration_weeks"] + 1)]
-        # La semana 1 no supera lo sostenido +10 % (con margen por mínimos de sesión).
-        assert weeks[0] <= 300 * 1.10 + 40
-        sustained = 300.0
-        for w in weeks:
-            assert w <= sustained * 1.10 + 40
-            sustained = max(sustained, w)
-        assert weeks[0] < 10 * 60 * 0.8  # muy por debajo de las 10 h declaradas
-        assert "Punto de partida: 300 min/semana reales" in plan["description"]
-        assert plan["plan_data"]["load_context"]["status"] == "ready"
-
-    def test_plan_long_session_grows_from_longest_recent(self):
-        ctx = {"recent_weekly_minutes": 600.0, "longest_recent_min": 90.0}
-        _, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
-        long_w1 = max(int(s["duration_min"]) for s in sessions if s["week_index"] == 1 and s["session_type"] == "long_run")
-        assert long_w1 <= round(90 * 1.10)
-
-    def test_plan_with_fatigue_softens_first_week(self):
-        ctx = {"recent_weekly_minutes": 400.0, "status": "fatigue_high", "tsb": -25.0, "ctl": 60.0, "atl": 85.0}
-        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
-        w1_quality = [s for s in sessions if s["week_index"] == 1 and s["session_type"] == "running_quality"]
-        assert w1_quality and all(s["intensity"] == "RPE 5-6" for s in w1_quality)
-        assert "Inicio con fatiga" in plan["description"]
-
-    def test_plan_derives_half_marathon_target_pace(self):
-        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan")
-        # 1:22:59 / 21,0975 km = 236 s/km = 3:56/km
-        assert plan["plan_data"]["target_pace_sec_per_km"] == pytest.approx(236.0, abs=0.5)
-        assert any("min/km" in str(s.get("notes")) for s in sessions if s["session_type"] == "running_quality")
-
-    def test_plan_ignores_past_target_race(self):
-        profile = self._hm_profile()
-        profile["goals"]["target_race_date"] = (date.today() - timedelta(days=12)).isoformat()
-        plan, _ = _generate_structured_plan_payload(profile, "créame un plan")
-        assert plan["duration_weeks"] == 8
-        assert "ya pasó" in plan["description"]
-        assert plan["plan_data"]["target_race_date"] == ""
-
-    def test_structured_hr_targets_are_percent_of_lthr(self):
-        _, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan")
-        quality = next(s for s in sessions if s["session_type"] == "running_quality")
-        targets = quality["structured_workout"]["targets"]
-        # Umbral = 95-100 % del LTHR (zonas de TP), no 88-92.
-        assert targets["primary"]["metric"] == "hr_pct"
-        assert targets["primary"]["range"][0] >= 85
-
-    def test_generate_structured_plan_payload_structured_workout_contract(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
-                "weekly_training_hours": 8,
-            },
-            "health": {},
-        }
-        _, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
-        sample = next((s for s in sessions if str(s.get("session_type")) != "rest"), sessions[0])
-        sw = sample.get("structured_workout") or {}
-
-        assert sw.get("schema") == "kairos-workout-v1"
-        assert sw.get("sessionType") == sample.get("session_type")
-        assert isinstance(sw.get("steps"), list) and sw.get("steps")
-
-        first_step = sw["steps"][0]
-        assert isinstance(first_step.get("name"), str) and first_step.get("name")
-        assert isinstance(first_step.get("type"), str) and first_step.get("type")
-        assert isinstance(first_step.get("intensityClass"), str) and first_step.get("intensityClass")
-
-    def test_generate_structured_plan_payload_rest_sessions_have_rest_step(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
-                "weekly_training_hours": 8,
-                "availability": {"unavailable_days": ["domingo"]},
-            },
-            "health": {},
-        }
-        _, sessions = _generate_structured_plan_payload(profile, "Planifícame")
-        rest = next((s for s in sessions if str(s.get("session_type") or "").lower() == "rest"), None)
-        assert rest is not None
-        sw = rest.get("structured_workout") or {}
-        assert sw.get("schema") == "kairos-workout-v1"
-        assert isinstance(sw.get("steps"), list) and sw.get("steps")
-        assert sw["steps"][0].get("type") == "rest"
-
-    def test_generate_structured_plan_payload_has_weekly_progression(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=98)).isoformat(),
-                "weekly_training_hours": 8,
-            },
-            "health": {},
-        }
-        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para 10K")
-        weekly_totals = []
-        for wi in range(1, int(plan["duration_weeks"]) + 1):
-            rows = [s for s in sessions if int(s.get("week_index") or 0) == wi]
-            weekly_totals.append(sum(int((r or {}).get("duration_min") or 0) for r in rows))
-
-        assert len(set(weekly_totals)) >= 3
-        assert weekly_totals[-1] < max(weekly_totals)  # taper final
-
-    def test_generate_structured_plan_payload_respects_unavailable_days(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
-                "weekly_training_hours": 8,
-                "availability": {
-                    "unavailable_days": ["sabado", "domingo"],
-                },
-            },
-            "health": {},
-        }
-        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame")
-        assert plan.get("plan_data", {}).get("constraints")
-        assert len(sessions) == int(plan["duration_weeks"]) * 7
-
-        for s in sessions:
-            if int(s.get("day_index") or 0) in {6, 7}:
-                assert str(s.get("session_type") or "").lower() == "rest"
-
-    def test_generate_structured_plan_payload_respects_day_max_minutes(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
-                "weekly_training_hours": 8,
-                "availability": {
-                    "max_minutes_per_day": {"lunes": 40, "martes": 45, "miércoles": 50, "jueves": 45, "viernes": 0, "sábado": 70, "domingo": 35},
-                },
-            },
-            "health": {},
-        }
-        _, sessions = _generate_structured_plan_payload(profile, "Plan general")
-        caps = {1: 40, 2: 45, 3: 50, 4: 45, 5: 0, 6: 70, 7: 35}
-        for s in sessions:
-            d = int(s.get("day_index") or 0)
-            dur = int(s.get("duration_min") or 0)
-            assert dur <= caps[d]
-            if d == 5:
-                assert str(s.get("session_type") or "").lower() == "rest"
-
-    def test_trail_plan_uses_trail_session_types(self):
-        """Plan con 'trail running' debe tener session_types específicos de trail."""
-        profile = {
-            "goals": {
-                "primary": "trail running",
-                "target_race": "Ultra Pirineos 55K",
-                "target_race_date": (date.today() + timedelta(days=84)).isoformat(),
-                "weekly_training_hours": 11,
-            },
-            "health": {"injuries": []},
-        }
-        _, sessions = _generate_structured_plan_payload(profile, "Crea plan para la ultra")
-        session_types = {s["session_type"] for s in sessions}
-        assert "trail_long" in session_types
-        assert "trail_hills" in session_types
-        assert "trail_z2" in session_types
-        assert "trail_tempo" in session_types
-        # No deben quedar tipos genéricos de running
-        assert "running_quality" not in session_types
-        assert "long_run" not in session_types
-
-    def test_trail_plan_long_run_notes_mention_desnivel(self):
-        """La tirada larga de trail debe mencionar desnivel en las notas."""
-        profile = {
-            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
-                      "weekly_training_hours": 10},
-            "health": {"injuries": []},
-        }
-        _, sessions = _generate_structured_plan_payload(profile, "plan trail")
-        long_sessions = [s for s in sessions if s["session_type"] == "trail_long"]
-        assert long_sessions, "Debe existir al menos una sesión trail_long"
-        notes = long_sessions[0].get("notes", "")
-        assert "desnivel" in notes.lower()
-
-    def test_trail_plan_hills_mention_bajadas(self):
-        """La sesión de cuestas de trail debe mencionar técnica de bajada."""
-        profile = {
-            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
-                      "weekly_training_hours": 10},
-            "health": {"injuries": []},
-        }
-        _, sessions = _generate_structured_plan_payload(profile, "plan trail")
-        hills = [s for s in sessions if s["session_type"] == "trail_hills"]
-        assert hills
-        all_text = " ".join([
-            " ".join(hills[0].get("exercises", [])),
-            hills[0].get("notes", ""),
-        ]).lower()
-        assert "bajada" in all_text
-
-    def test_non_trail_plan_does_not_use_trail_types(self):
-        """Un plan de running estándar no debe tener session_types de trail."""
-        profile = {
-            "goals": {"primary": "running", "target_race": "10K",
-                      "weekly_training_hours": 7},
-            "health": {"injuries": []},
-        }
-        _, sessions = _generate_structured_plan_payload(profile, "plan running")
-        session_types = {s["session_type"] for s in sessions}
-        assert "trail_long" not in session_types
-        assert "trail_hills" not in session_types
-
-    def test_multisport_preferences_add_cycling_and_gym_sessions(self):
-        profile = {
-            "goals": {
-                "primary": "running",
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=70)).isoformat(),
-                "weekly_training_hours": 9,
-            },
-            "health": {"injuries": []},
-        }
-        _, sessions = _generate_structured_plan_payload(
-            profile,
-            "Quiero alternar gimnasio, ciclismo de carretera, de montaña y trail",
-        )
-        types = {str(s.get("session_type") or "") for s in sessions}
-        assert any("strength" in t for t in types)
-        assert any("cycl" in t for t in types)
-
-    # ── Punto E: plan con lesión informa del ajuste de dificultad ────────────
-
-    def test_plan_with_injury_has_difficulty_reason_in_description(self):
-        """La descripción del plan debe mencionar la razón del ajuste de dificultad."""
-        profile = {
-            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
-                      "weekly_training_hours": 11},
-            "health": {"injuries": ["tendinitis rotuliana leve"]},
-        }
-        plan, _ = _generate_structured_plan_payload(profile, "plan trail")
-        assert plan["difficulty"] == "easy"
-        # La descripción debe mencionar la lesión
-        assert "lesi" in plan["description"].lower() or "lesi" in (plan.get("plan_data") or {}).get("difficulty_reason", "").lower()
-
-    def test_plan_with_injury_stores_difficulty_reason_in_plan_data(self):
-        """plan_data.difficulty_reason debe explicar el motivo del ajuste."""
-        profile = {
-            "goals": {"primary": "running", "target_race": "10K", "weekly_training_hours": 8},
-            "health": {"injuries": ["fascitis plantar"]},
-        }
-        plan, _ = _generate_structured_plan_payload(profile, "plan running")
-        reason = (plan.get("plan_data") or {}).get("difficulty_reason", "")
-        assert "easy" in reason.lower()
-        assert "fascitis plantar" in reason.lower()
-
-    def test_plan_without_injury_high_hours_has_hard_reason(self):
-        """Con ≥10h y sin lesión, difficulty_reason debe indicar 'hard'."""
-        profile = {
-            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
-                      "weekly_training_hours": 12},
-            "health": {"injuries": []},
-        }
-        plan, _ = _generate_structured_plan_payload(profile, "plan trail")
-        reason = (plan.get("plan_data") or {}).get("difficulty_reason", "")
-        assert plan["difficulty"] == "hard"
-        assert "hard" in reason.lower()
-
-    def test_validate_structured_plan_flags_invalid_session_day(self):
-        plan = {
-            "title": "Plan",
-            "objective": "Objetivo",
-            "duration_weeks": 8,
-        }
-        sessions = [{"day_index": 9, "duration_min": 40, "session_type": "running_z2"}]
-        errors = _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 6}})
-        assert any("día fuera de rango" in e for e in errors)
-
-    def test_validate_structured_plan_flags_flat_weekly_template(self):
-        plan = {
-            "title": "Plan",
-            "objective": "Objetivo",
-            "duration_weeks": 8,
-        }
-        base_week = [
-            (1, "strength", 40, "RPE 4-5"),
-            (2, "running_quality", 45, "RPE 7-8"),
-            (3, "running_z2", 40, "RPE 3-4"),
-            (4, "running_quality", 45, "RPE 7-8"),
-            (5, "rest", 0, "RPE 1-2"),
-            (6, "long_run", 80, "RPE 4-5"),
-            (7, "recovery", 30, "RPE 2-3"),
-        ]
-        sessions = []
-        for wi in range(1, 9):
-            for day, stype, dur, intensity in base_week:
-                sessions.append(
-                    {
-                        "week_index": wi,
-                        "day_index": day,
-                        "session_type": stype,
-                        "duration_min": dur,
-                        "intensity": intensity,
-                        "notes": "template",
-                        "structured_workout": {
-                            "schema": "kairos-workout-v1",
-                            "sessionType": stype,
-                            "steps": (
-                                [{"name": "Rest", "type": "rest", "duration_min": 0, "reps": 1, "intensityClass": "recovery"}]
-                                if stype == "rest"
-                                else [
-                                    {"name": "Warm-up", "type": "warmup", "duration_min": max(5, int(dur * 0.2)), "reps": 1, "intensityClass": "endurance"},
-                                    {"name": "Main", "type": "steady", "duration_min": max(1, dur - max(5, int(dur * 0.2)) - max(5, int(dur * 0.2))), "reps": 1, "intensityClass": "tempo" if "quality" in stype else "endurance"},
-                                    {"name": "Cool-down", "type": "cooldown", "duration_min": max(5, int(dur * 0.2)), "reps": 1, "intensityClass": "recovery"},
-                                ]
-                            ),
-                        },
-                    }
-                )
-        errors = _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 8}})
-        assert any("demasiado plano" in e or "repiten" in e for e in errors)
-
-    def test_validate_structured_plan_requires_structured_workout_for_non_rest(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
-                "weekly_training_hours": 8,
-            },
-            "health": {},
-        }
-        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
-        first_active = next((s for s in sessions if str(s.get("session_type") or "") != "rest"), None)
-        assert first_active is not None
-        first_active.pop("structured_workout", None)
-
-        errors = _validate_structured_plan(plan, sessions, profile)
-        assert any("structured_workout" in e for e in errors)
-
-    def test_validate_structured_plan_flags_invalid_structured_order(self):
-        profile = {
-            "goals": {
-                "target_race": "10K",
-                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
-                "weekly_training_hours": 8,
-            },
-            "health": {},
-        }
-        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
-        first_active = next((s for s in sessions if str(s.get("session_type") or "") != "rest"), None)
-        assert first_active is not None
-        sw = first_active.get("structured_workout") or {}
-        steps = list(sw.get("steps") or [])
-        assert len(steps) >= 3
-        sw["steps"] = [steps[-1]] + steps[1:-1] + [steps[0]]
-
-        errors = _validate_structured_plan(plan, sessions, profile)
-        assert any("warmup" in e.lower() and "cooldown" in e.lower() for e in errors)
-
-    def test_summarize_plan_changes_includes_duration_and_volume(self):
-        previous_plan = {"duration_weeks": 8, "difficulty": "moderate"}
-        new_plan = {"duration_weeks": 10, "difficulty": "hard"}
-        previous_sessions = [{"duration_min": 40}, {"duration_min": 60}]
-        new_sessions = [{"duration_min": 50}, {"duration_min": 70}]
-        out = _summarize_plan_changes(previous_plan, new_plan, previous_sessions, new_sessions)
-        assert "Duración" in out
-        assert "Volumen semanal estimado" in out
 
 
 class TestPlanStatusChatRoute:
@@ -7922,3 +5488,556 @@ class TestRecentTssBySportRoute:
 
         assert "| 28/07/2026 | ciclismo | Road. Un poquito de CDC | 102.4 | 257.0 |" in out
         assert "101.3" not in out
+
+
+class TestLoadTrendDisplay:
+    """Pantalla de carga: tabla /carga y resumen del estado de carga."""
+
+    def _make_series(self, n_days: int = 56, tss_value: float = 50.0) -> list[dict]:
+        today = date.today()
+        rows = []
+        atl = ctl = 0.0
+        for i in range(n_days, -1, -1):
+            d = (today - timedelta(days=i)).isoformat()
+            tss = tss_value if i % 7 != 0 else 0.0  # descanso un día por semana
+            atl = atl + (tss - atl) / 7
+            ctl = ctl + (tss - ctl) / 42
+            rows.append({"date": d, "tss": round(tss, 1), "atl": round(atl, 1), "ctl": round(ctl, 1), "tsb": round(ctl - atl, 1)})
+        return rows
+
+    def test_format_load_fatigue_summary_handles_missing_data(self):
+        assert _format_load_fatigue_summary(None) == "sin datos suficientes"
+
+    def test_build_load_trend_table_weekly_returns_markdown_table(self):
+        series = self._make_series(56)
+        out = _build_load_trend_table(series, mode="weeks")
+        assert "| Semana |" in out
+        assert "TSS" in out and "ATL" in out and "CTL" in out and "TSB" in out
+
+    def test_build_load_trend_table_monthly_returns_markdown_table(self):
+        series = self._make_series(90)
+        out = _build_load_trend_table(series, mode="months")
+        assert "| Mes |" in out
+        assert "TSS total" in out
+
+    def test_build_load_trend_table_empty_series_returns_message(self):
+        out = _build_load_trend_table([], mode="weeks")
+        assert "Sin datos" in out
+
+    def test_build_load_trend_table_weekly_has_8_data_rows_max(self):
+        series = self._make_series(56)
+        out = _build_load_trend_table(series, mode="weeks")
+        # Contar filas de datos (empieza con |, no contiene --- ni encabezado de columnas)
+        data_rows = [
+            l for l in out.splitlines()
+            if l.startswith("|") and "---" not in l and "Semana" not in l
+        ]
+        assert len(data_rows) <= 8
+
+    def test_build_load_trend_table_contains_status_emoji(self):
+        series = self._make_series(56)
+        out = _build_load_trend_table(series, mode="weeks")
+        status_emojis = {"🟢", "🟠", "🔴", "🟡"}
+        assert any(e in out for e in status_emojis)
+
+
+class TestThresholdHistoryResolvers:
+    """Umbrales del perfil con historial por fecha (ritmo, FC de TP) y lectura del umbral de Garmin."""
+
+    def test_extract_threshold_pace_from_lactate_speed_mps_scaled_value(self):
+        pace = _extract_threshold_pace_sec_per_km({"lactate_threshold_speed_mps": 0.4083})
+        assert pace is not None
+        # 0.4083*10 m/s => ~4:05/km
+        assert 230.0 <= pace <= 260.0
+
+    def test_resolve_tp_hr_threshold_for_date_picks_value_in_force(self):
+        from agent.trainer_agent import _resolve_tp_hr_threshold_for_date
+
+        profile = {
+            "performance": {
+                "hr_threshold_bpm": 169,
+                "hr_threshold_tp_history": [
+                    {"date": "2026-10-21", "bpm": 169},
+                    {"date": "2026-01-30", "bpm": 166},
+                ],
+            }
+        }
+        assert _resolve_tp_hr_threshold_for_date(profile, "2026-01-29") is None
+        assert _resolve_tp_hr_threshold_for_date(profile, "2026-05-01") == 166
+        assert _resolve_tp_hr_threshold_for_date(profile, "2026-10-21") == 169
+        assert _resolve_tp_hr_threshold_for_date({"performance": {}}, "2026-05-01") is None
+
+    def test_resolve_running_threshold_pace_for_date_picks_value_in_force(self):
+        from agent.trainer_agent import _resolve_running_threshold_pace_for_date
+
+        profile = {
+            "performance": {
+                "running_threshold_pace_sec_per_km": 252.0,
+                "running_threshold_pace_history": [
+                    {"date": "2026-01-30", "sec_per_km": 230},
+                    {"date": "2026-05-09", "sec_per_km": 252},
+                ],
+            }
+        }
+        assert _resolve_running_threshold_pace_for_date(profile, "2026-01-29") is None
+        assert _resolve_running_threshold_pace_for_date(profile, "2026-05-08") == 230
+        assert _resolve_running_threshold_pace_for_date(profile, "2026-05-09") == 252
+        assert _resolve_running_threshold_pace_for_date({"performance": {}}, "2026-05-01") is None
+
+
+class TestStructuredPlanEngine:
+    """Motor de planes estructurados: volumen real, progresión, restricciones, trail, multideporte y validación."""
+
+    @staticmethod
+    def _week_minutes(sessions: list[dict], week: int) -> int:
+        return sum(int(s.get("duration_min") or 0) for s in sessions if int(s.get("week_index") or 0) == week)
+
+    @staticmethod
+    def _hm_profile(weeks_ahead: int = 12, hours: float = 10.0) -> dict:
+        return {
+            "goals": {
+                "primary": "running",
+                "target_race": "Media Maratón de Santa Pola (21,1 km)",
+                "target_race_date": (date.today() + timedelta(days=7 * weeks_ahead)).isoformat(),
+                "target_time": "01:22:59",
+                "weekly_training_hours": hours,
+            },
+            "health": {},
+        }
+
+    def test_get_active_training_plan_falls_back_to_profile_when_storage_unavailable(self):
+        profile = {"training_plan": {"active": True, "title": "Plan local", "status": "active"}}
+        with patch("agent.trainer_agent._storage.get_active_training_plan", side_effect=RuntimeError("db down")):
+            plan = _get_active_training_plan(profile)
+
+        assert plan is not None
+        assert plan["title"] == "Plan local"
+
+    def test_build_startup_plan_recommendation_includes_title(self):
+        msg = _build_startup_plan_recommendation({"title": "Plan 10K", "active": True})
+        assert "Plan 10K" in msg
+
+    def test_build_goal_plan_fallback_contains_target(self):
+        profile = {
+            "goals": {
+                "target_race": "Zara Speed Run 10k",
+                "target_race_date": "2026-11-22",
+                "target_time": "0:35:59",
+            },
+            "health": {"injuries": ["DT 1"]},
+        }
+        out = _build_goal_plan_fallback(profile)
+        assert "Zara Speed Run 10k" in out
+        assert "Estructura semanal propuesta" in out
+
+    def test_build_training_plan_status_markdown_no_plan_is_explicit(self):
+        profile = {
+            "goals": {
+                "target_race": "Trail 42K",
+                "target_race_date": "2026-11-22",
+                "target_time": "05:30:00",
+                "weekly_training_hours": 10,
+            }
+        }
+        out = _build_training_plan_status_markdown(profile)
+        assert "No tienes plan asignado" in out
+        assert "22/11/2026" in out
+
+    def test_build_training_plan_status_markdown_active_plan_uses_plan_entity(self):
+        profile = {
+            "goals": {"target_race": "Trail 42K", "target_race_date": "2026-11-22"},
+            "training_plan": {
+                "active": True,
+                "status": "active",
+                "title": "Plan Trail 42K",
+                "target_race": "Trail 42K",
+                "target_race_date": "2026-11-22",
+                "today_focus": "Rodaje Z2 50 min",
+            },
+        }
+        out = _build_training_plan_status_markdown(profile)
+        assert "Sí, tienes un plan activo: Plan Trail 42K." in out
+        assert "22/11/2026" in out
+        assert "Rodaje Z2 50 min" in out
+
+    def test_generate_structured_plan_payload_returns_plan_and_sessions(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 7,
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
+        assert plan["title"].startswith("Plan hacia")
+        assert plan["duration_weeks"] >= 4
+        assert len(sessions) == plan["duration_weeks"] * 7
+        assert all(isinstance(s.get("structured_workout"), dict) for s in sessions)
+
+        week_indexes = sorted({int(s.get("week_index") or 0) for s in sessions})
+        assert week_indexes[0] == 1
+        assert week_indexes[-1] == plan["duration_weeks"]
+
+    def test_plan_starts_from_real_recent_volume_and_never_jumps_more_than_10pct(self):
+        ctx = {"recent_weekly_minutes": 300.0, "longest_recent_min": 100.0, "ctl": 60.0, "atl": 40.0, "tsb": 20.0, "status": "ready"}
+        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
+        weeks = [self._week_minutes(sessions, w) for w in range(1, plan["duration_weeks"] + 1)]
+        # La semana 1 no supera lo sostenido +10 % (con margen por mínimos de sesión).
+        assert weeks[0] <= 300 * 1.10 + 40
+        sustained = 300.0
+        for w in weeks:
+            assert w <= sustained * 1.10 + 40
+            sustained = max(sustained, w)
+        assert weeks[0] < 10 * 60 * 0.8  # muy por debajo de las 10 h declaradas
+        assert "Punto de partida: 300 min/semana reales" in plan["description"]
+        assert plan["plan_data"]["load_context"]["status"] == "ready"
+
+    def test_plan_long_session_grows_from_longest_recent(self):
+        ctx = {"recent_weekly_minutes": 600.0, "longest_recent_min": 90.0}
+        _, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
+        long_w1 = max(int(s["duration_min"]) for s in sessions if s["week_index"] == 1 and s["session_type"] == "long_run")
+        assert long_w1 <= round(90 * 1.10)
+
+    def test_plan_with_fatigue_softens_first_week(self):
+        ctx = {"recent_weekly_minutes": 400.0, "status": "fatigue_high", "tsb": -25.0, "ctl": 60.0, "atl": 85.0}
+        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan", load_context=ctx)
+        w1_quality = [s for s in sessions if s["week_index"] == 1 and s["session_type"] == "running_quality"]
+        assert w1_quality and all(s["intensity"] == "RPE 5-6" for s in w1_quality)
+        assert "Inicio con fatiga" in plan["description"]
+
+    def test_plan_derives_half_marathon_target_pace(self):
+        plan, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan")
+        # 1:22:59 / 21,0975 km = 236 s/km = 3:56/km
+        assert plan["plan_data"]["target_pace_sec_per_km"] == pytest.approx(236.0, abs=0.5)
+        assert any("min/km" in str(s.get("notes")) for s in sessions if s["session_type"] == "running_quality")
+
+    def test_plan_ignores_past_target_race(self):
+        profile = self._hm_profile()
+        profile["goals"]["target_race_date"] = (date.today() - timedelta(days=12)).isoformat()
+        plan, _ = _generate_structured_plan_payload(profile, "créame un plan")
+        assert plan["duration_weeks"] == 8
+        assert "ya pasó" in plan["description"]
+        assert plan["plan_data"]["target_race_date"] == ""
+
+    def test_structured_hr_targets_are_percent_of_lthr(self):
+        _, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan")
+        quality = next(s for s in sessions if s["session_type"] == "running_quality")
+        targets = quality["structured_workout"]["targets"]
+        # Umbral = 95-100 % del LTHR (zonas de TP), no 88-92.
+        assert targets["primary"]["metric"] == "hr_pct"
+        assert targets["primary"]["range"][0] >= 85
+
+    def test_generate_structured_plan_payload_structured_workout_contract(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
+        sample = next((s for s in sessions if str(s.get("session_type")) != "rest"), sessions[0])
+        sw = sample.get("structured_workout") or {}
+
+        assert sw.get("schema") == "kairos-workout-v1"
+        assert sw.get("sessionType") == sample.get("session_type")
+        assert isinstance(sw.get("steps"), list) and sw.get("steps")
+
+        first_step = sw["steps"][0]
+        assert isinstance(first_step.get("name"), str) and first_step.get("name")
+        assert isinstance(first_step.get("type"), str) and first_step.get("type")
+        assert isinstance(first_step.get("intensityClass"), str) and first_step.get("intensityClass")
+
+    def test_generate_structured_plan_payload_rest_sessions_have_rest_step(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+                "availability": {"unavailable_days": ["domingo"]},
+            },
+            "health": {},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "Planifícame")
+        rest = next((s for s in sessions if str(s.get("session_type") or "").lower() == "rest"), None)
+        assert rest is not None
+        sw = rest.get("structured_workout") or {}
+        assert sw.get("schema") == "kairos-workout-v1"
+        assert isinstance(sw.get("steps"), list) and sw.get("steps")
+        assert sw["steps"][0].get("type") == "rest"
+
+    def test_generate_structured_plan_payload_has_weekly_progression(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=98)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para 10K")
+        weekly_totals = []
+        for wi in range(1, int(plan["duration_weeks"]) + 1):
+            rows = [s for s in sessions if int(s.get("week_index") or 0) == wi]
+            weekly_totals.append(sum(int((r or {}).get("duration_min") or 0) for r in rows))
+
+        assert len(set(weekly_totals)) >= 3
+        assert weekly_totals[-1] < max(weekly_totals)  # taper final
+
+    def test_generate_structured_plan_payload_respects_unavailable_days(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+                "availability": {
+                    "unavailable_days": ["sabado", "domingo"],
+                },
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame")
+        assert plan.get("plan_data", {}).get("constraints")
+        assert len(sessions) == int(plan["duration_weeks"]) * 7
+
+        for s in sessions:
+            if int(s.get("day_index") or 0) in {6, 7}:
+                assert str(s.get("session_type") or "").lower() == "rest"
+
+    def test_generate_structured_plan_payload_respects_day_max_minutes(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+                "availability": {
+                    "max_minutes_per_day": {"lunes": 40, "martes": 45, "miércoles": 50, "jueves": 45, "viernes": 0, "sábado": 70, "domingo": 35},
+                },
+            },
+            "health": {},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "Plan general")
+        caps = {1: 40, 2: 45, 3: 50, 4: 45, 5: 0, 6: 70, 7: 35}
+        for s in sessions:
+            d = int(s.get("day_index") or 0)
+            dur = int(s.get("duration_min") or 0)
+            assert dur <= caps[d]
+            if d == 5:
+                assert str(s.get("session_type") or "").lower() == "rest"
+
+    def test_trail_plan_uses_trail_session_types(self):
+        """Plan con 'trail running' debe tener session_types específicos de trail."""
+        profile = {
+            "goals": {
+                "primary": "trail running",
+                "target_race": "Ultra Pirineos 55K",
+                "target_race_date": (date.today() + timedelta(days=84)).isoformat(),
+                "weekly_training_hours": 11,
+            },
+            "health": {"injuries": []},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "Crea plan para la ultra")
+        session_types = {s["session_type"] for s in sessions}
+        assert "trail_long" in session_types
+        assert "trail_hills" in session_types
+        assert "trail_z2" in session_types
+        assert "trail_tempo" in session_types
+        # No deben quedar tipos genéricos de running
+        assert "running_quality" not in session_types
+        assert "long_run" not in session_types
+
+    def test_trail_plan_long_run_notes_mention_desnivel(self):
+        """La tirada larga de trail debe mencionar desnivel en las notas."""
+        profile = {
+            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
+                      "weekly_training_hours": 10},
+            "health": {"injuries": []},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "plan trail")
+        long_sessions = [s for s in sessions if s["session_type"] == "trail_long"]
+        assert long_sessions, "Debe existir al menos una sesión trail_long"
+        notes = long_sessions[0].get("notes", "")
+        assert "desnivel" in notes.lower()
+
+    def test_trail_plan_hills_mention_bajadas(self):
+        """La sesión de cuestas de trail debe mencionar técnica de bajada."""
+        profile = {
+            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
+                      "weekly_training_hours": 10},
+            "health": {"injuries": []},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "plan trail")
+        hills = [s for s in sessions if s["session_type"] == "trail_hills"]
+        assert hills
+        all_text = " ".join([
+            " ".join(hills[0].get("exercises", [])),
+            hills[0].get("notes", ""),
+        ]).lower()
+        assert "bajada" in all_text
+
+    def test_non_trail_plan_does_not_use_trail_types(self):
+        """Un plan de running estándar no debe tener session_types de trail."""
+        profile = {
+            "goals": {"primary": "running", "target_race": "10K",
+                      "weekly_training_hours": 7},
+            "health": {"injuries": []},
+        }
+        _, sessions = _generate_structured_plan_payload(profile, "plan running")
+        session_types = {s["session_type"] for s in sessions}
+        assert "trail_long" not in session_types
+        assert "trail_hills" not in session_types
+
+    def test_multisport_preferences_add_cycling_and_gym_sessions(self):
+        profile = {
+            "goals": {
+                "primary": "running",
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=70)).isoformat(),
+                "weekly_training_hours": 9,
+            },
+            "health": {"injuries": []},
+        }
+        _, sessions = _generate_structured_plan_payload(
+            profile,
+            "Quiero alternar gimnasio, ciclismo de carretera, de montaña y trail",
+        )
+        types = {str(s.get("session_type") or "") for s in sessions}
+        assert any("strength" in t for t in types)
+        assert any("cycl" in t for t in types)
+
+    def test_plan_with_injury_has_difficulty_reason_in_description(self):
+        """La descripción del plan debe mencionar la razón del ajuste de dificultad."""
+        profile = {
+            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
+                      "weekly_training_hours": 11},
+            "health": {"injuries": ["tendinitis rotuliana leve"]},
+        }
+        plan, _ = _generate_structured_plan_payload(profile, "plan trail")
+        assert plan["difficulty"] == "easy"
+        # La descripción debe mencionar la lesión
+        assert "lesi" in plan["description"].lower() or "lesi" in (plan.get("plan_data") or {}).get("difficulty_reason", "").lower()
+
+    def test_plan_with_injury_stores_difficulty_reason_in_plan_data(self):
+        """plan_data.difficulty_reason debe explicar el motivo del ajuste."""
+        profile = {
+            "goals": {"primary": "running", "target_race": "10K", "weekly_training_hours": 8},
+            "health": {"injuries": ["fascitis plantar"]},
+        }
+        plan, _ = _generate_structured_plan_payload(profile, "plan running")
+        reason = (plan.get("plan_data") or {}).get("difficulty_reason", "")
+        assert "easy" in reason.lower()
+        assert "fascitis plantar" in reason.lower()
+
+    def test_plan_without_injury_high_hours_has_hard_reason(self):
+        """Con ≥10h y sin lesión, difficulty_reason debe indicar 'hard'."""
+        profile = {
+            "goals": {"primary": "trail running", "target_race": "Ultra 55K",
+                      "weekly_training_hours": 12},
+            "health": {"injuries": []},
+        }
+        plan, _ = _generate_structured_plan_payload(profile, "plan trail")
+        reason = (plan.get("plan_data") or {}).get("difficulty_reason", "")
+        assert plan["difficulty"] == "hard"
+        assert "hard" in reason.lower()
+
+    def test_validate_structured_plan_flags_invalid_session_day(self):
+        plan = {
+            "title": "Plan",
+            "objective": "Objetivo",
+            "duration_weeks": 8,
+        }
+        sessions = [{"day_index": 9, "duration_min": 40, "session_type": "running_z2"}]
+        errors = _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 6}})
+        assert any("día fuera de rango" in e for e in errors)
+
+    def test_validate_structured_plan_flags_flat_weekly_template(self):
+        plan = {
+            "title": "Plan",
+            "objective": "Objetivo",
+            "duration_weeks": 8,
+        }
+        base_week = [
+            (1, "strength", 40, "RPE 4-5"),
+            (2, "running_quality", 45, "RPE 7-8"),
+            (3, "running_z2", 40, "RPE 3-4"),
+            (4, "running_quality", 45, "RPE 7-8"),
+            (5, "rest", 0, "RPE 1-2"),
+            (6, "long_run", 80, "RPE 4-5"),
+            (7, "recovery", 30, "RPE 2-3"),
+        ]
+        sessions = []
+        for wi in range(1, 9):
+            for day, stype, dur, intensity in base_week:
+                sessions.append(
+                    {
+                        "week_index": wi,
+                        "day_index": day,
+                        "session_type": stype,
+                        "duration_min": dur,
+                        "intensity": intensity,
+                        "notes": "template",
+                        "structured_workout": {
+                            "schema": "kairos-workout-v1",
+                            "sessionType": stype,
+                            "steps": (
+                                [{"name": "Rest", "type": "rest", "duration_min": 0, "reps": 1, "intensityClass": "recovery"}]
+                                if stype == "rest"
+                                else [
+                                    {"name": "Warm-up", "type": "warmup", "duration_min": max(5, int(dur * 0.2)), "reps": 1, "intensityClass": "endurance"},
+                                    {"name": "Main", "type": "steady", "duration_min": max(1, dur - max(5, int(dur * 0.2)) - max(5, int(dur * 0.2))), "reps": 1, "intensityClass": "tempo" if "quality" in stype else "endurance"},
+                                    {"name": "Cool-down", "type": "cooldown", "duration_min": max(5, int(dur * 0.2)), "reps": 1, "intensityClass": "recovery"},
+                                ]
+                            ),
+                        },
+                    }
+                )
+        errors = _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 8}})
+        assert any("demasiado plano" in e or "repiten" in e for e in errors)
+
+    def test_validate_structured_plan_requires_structured_workout_for_non_rest(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
+        first_active = next((s for s in sessions if str(s.get("session_type") or "") != "rest"), None)
+        assert first_active is not None
+        first_active.pop("structured_workout", None)
+
+        errors = _validate_structured_plan(plan, sessions, profile)
+        assert any("structured_workout" in e for e in errors)
+
+    def test_validate_structured_plan_flags_invalid_structured_order(self):
+        profile = {
+            "goals": {
+                "target_race": "10K",
+                "target_race_date": (date.today() + timedelta(days=56)).isoformat(),
+                "weekly_training_hours": 8,
+            },
+            "health": {},
+        }
+        plan, sessions = _generate_structured_plan_payload(profile, "Planifícame para mi 10K")
+        first_active = next((s for s in sessions if str(s.get("session_type") or "") != "rest"), None)
+        assert first_active is not None
+        sw = first_active.get("structured_workout") or {}
+        steps = list(sw.get("steps") or [])
+        assert len(steps) >= 3
+        sw["steps"] = [steps[-1]] + steps[1:-1] + [steps[0]]
+
+        errors = _validate_structured_plan(plan, sessions, profile)
+        assert any("warmup" in e.lower() and "cooldown" in e.lower() for e in errors)
+
+    def test_summarize_plan_changes_includes_duration_and_volume(self):
+        previous_plan = {"duration_weeks": 8, "difficulty": "moderate"}
+        new_plan = {"duration_weeks": 10, "difficulty": "hard"}
+        previous_sessions = [{"duration_min": 40}, {"duration_min": 60}]
+        new_sessions = [{"duration_min": 50}, {"duration_min": 70}]
+        out = _summarize_plan_changes(previous_plan, new_plan, previous_sessions, new_sessions)
+        assert "Duración" in out
+        assert "Volumen semanal estimado" in out

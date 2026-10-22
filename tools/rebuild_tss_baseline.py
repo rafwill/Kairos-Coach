@@ -74,7 +74,7 @@ async def _compute(username: str, start: str) -> dict:
         tool_errors[tool_name] += 1
         return raw
 
-    async with garmin_mcp_session(essential_only=False) as session:
+    async with garmin_mcp_session() as session:
         agent = ta.TrainerAgent(mcp_session=session, provider="nvidia")
         agent.user_profile = ta._load_user_profile()
         with patch.object(ta, "call_tool", side_effect=_throttled_call_tool), \

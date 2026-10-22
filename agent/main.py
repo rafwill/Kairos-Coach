@@ -1277,7 +1277,7 @@ async def main() -> None:
         border_style="green",
     ))
 
-    async with garmin_mcp_session(essential_only=True) as session:
+    async with garmin_mcp_session() as session:
         effective_backend = (os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or requested_backend).strip()
         console.print(f"[dim]MCP backend efectivo: {effective_backend}[/dim]")
         agent = TrainerAgent(mcp_session=session, provider=provider)

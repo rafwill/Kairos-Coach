@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Changed (tests y cliente MCP)
+- Tests organizados por módulo: `tests/test_load_metrics.py` reúne los tests de TSS/PMC que estaban en `test_trainer_agent.py` y los cuatro ficheros pequeños de `load_metrics` (duración, caminar/senderismo). En `test_trainer_agent.py`, los 30 tests del motor de planes que estaban mezclados en `TestTssSourceTagging` pasan a `TestStructuredPlanEngine`, y los de la tabla `/carga` y de umbrales por fecha a `TestLoadTrendDisplay` y `TestThresholdHistoryResolvers`. Misma colección de tests (582, mismos nombres), de 13 a 10 ficheros.
+- Fuera `GARMIN_ENABLED_TOOLS` y el parámetro `essential_only` del cliente MCP: era el filtro de herramientas del MCP de terceros anterior y `garmin_mcp` no lo lee. `.env.example` lo documentaba con herramientas que no existen. `tools/rebuild_tss_baseline.py` usaba `essential_only=False`; corregido (habría fallado al ejecutarse).
+
 ### Changed (prompts)
 - `prompts/` deja solo lo que recibe el LLM (`system_prompt.md` y `system_prompt_compact.md`). `prompts/mcp_tool_routing_guide.md` no se inyectaba al LLM y duplicaba lo que ya cubren las descripciones de las tools, `garmin_mcp/README.md` y el "Checklist mínimo por intención" del prompt: pasa a `_archivo/docs/`. Sus reglas de ahorro de tokens (resumen antes que detalle, `limit` 1–5, no repetir llamadas, no reintentar en bucle) pasan a los dos system prompts como "Uso eficiente de herramientas".
 

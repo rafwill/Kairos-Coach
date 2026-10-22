@@ -291,7 +291,7 @@ def _resolve_frozen_command() -> str | None:
     return _resolve_command("garmin-mcp-frozen")
 
 
-def _get_server_params(essential_only: bool = True, backend: str | None = None) -> StdioServerParameters:
+def _get_server_params(backend: str | None = None) -> StdioServerParameters:
     """Construye los parámetros de arranque del servidor MCP propio de Kairos."""
     email = os.environ.get("GARMIN_EMAIL")
     password = os.environ.get("GARMIN_PASSWORD")
@@ -303,16 +303,6 @@ def _get_server_params(essential_only: bool = True, backend: str | None = None) 
         )
 
     selected_backend = "frozen"
-
-    # Herramientas esenciales para un agente entrenador personal.
-    # Reduce el contexto de ~31k tokens (126 tools) a ~5k tokens (~40 tools).
-    # Se puede sobreescribir con la variable GARMIN_ENABLED_TOOLS en .env.
-    default_tools_csv = ",".join(GARMIN_ESSENTIAL_TOOLS)
-    # Si essential_only=False y no hay override en .env, no se filtra (todas las herramientas)
-    if essential_only:
-        enabled_tools = os.environ.get("GARMIN_ENABLED_TOOLS", default_tools_csv)
-    else:
-        enabled_tools = os.environ.get("GARMIN_ENABLED_TOOLS", "")
 
     frozen_cmd = _resolve_frozen_command()
     if not frozen_cmd:
@@ -345,14 +335,13 @@ def _get_server_params(essential_only: bool = True, backend: str | None = None) 
             "GARMIN_EMAIL": email,
             "GARMIN_PASSWORD": password,
             "KAIROS_MCP_BACKEND_EFFECTIVE": selected_backend,
-            **({"GARMIN_ENABLED_TOOLS": enabled_tools} if enabled_tools else {}),
             **ssl_overrides,
         },
     )
 
 
 @asynccontextmanager
-async def garmin_mcp_session(essential_only: bool = True):
+async def garmin_mcp_session():
     """
     Context manager que inicia el servidor MCP propio y devuelve
     una sesión lista para llamar herramientas.
@@ -373,7 +362,7 @@ async def garmin_mcp_session(essential_only: bool = True):
                 return
             raise
 
-    params = _get_server_params(essential_only=essential_only, backend="frozen")
+    params = _get_server_params(backend="frozen")
     os.environ["KAIROS_MCP_BACKEND_EFFECTIVE"] = "frozen"
     async for _session in _open_and_yield(params):
         yield _session
