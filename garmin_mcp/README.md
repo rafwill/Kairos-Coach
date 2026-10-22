@@ -419,7 +419,7 @@ Carga nativa de Garmin por día (suma de activityTrainingLoad de sus actividades
 <a id="get-vo2max-trend"></a>
 #### `get_vo2max_trend` — Tendencia de VO2máx
 
-VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas, muestreado cada 7 días más el último día del rango (cambia despacio).
+VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas, muestreado cada 7 días más el último día del rango (cambia despacio). Devuelve una fila por muestra: fecha, running y cycling.
 
 | Parámetro | Tipo | Por defecto | Descripción |
 |---|---|---|---|

@@ -100,6 +100,26 @@ def test_hrv_trend_reads_values_from_hrv_summary(monkeypatch):
     assert out["trend"][1] == {"date": "2026-09-02", "hrv": None, "weekly_avg": None, "status": None}
 
 
+def test_vo2max_trend_returns_flat_series(monkeypatch):
+    # Antes devolvía el payload completo de get_max_metrics por muestra y el host solo pasaba 4 al LLM.
+    class _Fake:
+        def get_max_metrics(self, day: str):
+            if day == "2026-09-08":
+                raise RuntimeError("sin datos")
+            return [{"generic": {"vo2MaxPreciseValue": 57.3, "vo2MaxValue": 57.0},
+                     "cycling": None if day == "2026-09-01" else {"vo2MaxValue": 52.0},
+                     "heatAltitudeAcclimation": {"heatTrend": "ACCLIMATIZED"}}]
+
+    monkeypatch.setattr(server, "_garmin_client", lambda: _Fake())
+
+    out = server._vo2max_trend({"start_date": "2026-09-01", "end_date": "2026-09-10"})
+
+    assert out["days_with_data"] == 2
+    assert out["trend"][0] == {"date": "2026-09-01", "running": 57.3, "cycling": None}
+    assert out["trend"][1]["running"] is None and "error" in out["trend"][1]
+    assert out["trend"][2] == {"date": "2026-09-10", "running": 57.3, "cycling": 52.0}
+
+
 def test_training_effect_reads_activity_fields(monkeypatch):
     monkeypatch.setattr(server, "_garmin_client", lambda: _FakeGarmin())
 

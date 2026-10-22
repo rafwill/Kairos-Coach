@@ -374,15 +374,36 @@ def _vo2max_trend(args: dict[str, Any]) -> dict[str, Any]:
     end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
     days = _iso_date_iter(start, end)
     sample = sorted(set(days[::7]) | {days[-1]})  # el VO2máx cambia despacio: una consulta por semana
-    metrics: list[dict[str, Any]] = []
+    # Serie plana (fecha, carrera, ciclismo): get_max_metrics trae además ~600 caracteres de aclimatación
+    # al calor y la altitud por muestra, y con ellos el host solo podía pasar 4 muestras al LLM.
+    trend: list[dict[str, Any]] = []
     for day in sample:
         try:
-            metrics.append({"date": day, "metrics": _invoke_with_auth_retry("get_max_metrics", day)})
+            payload = _invoke_with_auth_retry("get_max_metrics", day)
         except GarminConnectAuthenticationError:
             raise
         except Exception as exc:  # un día sin datos no invalida el resto del rango
-            metrics.append({"date": day, "error": str(exc)[:120]})
-    return {"start_date": start, "end_date": end, "sampled_every_days": 7, "metrics": metrics}
+            trend.append({"date": day, "running": None, "cycling": None, "error": str(exc)[:120]})
+            continue
+        item = next((x for x in (payload if isinstance(payload, list) else [payload]) if isinstance(x, dict)), {})
+        trend.append({
+            "date": day,
+            "running": _vo2max_value(item.get("generic")),
+            "cycling": _vo2max_value(item.get("cycling")),
+        })
+    return {
+        "start_date": start,
+        "end_date": end,
+        "sampled_every_days": 7,
+        "days_with_data": sum(1 for r in trend if r["running"] is not None or r["cycling"] is not None),
+        "trend": trend,
+    }
+
+
+def _vo2max_value(block: Any) -> Any:
+    if not isinstance(block, dict):
+        return None
+    return block.get("vo2MaxPreciseValue") if block.get("vo2MaxPreciseValue") is not None else block.get("vo2MaxValue")
 
 
 def _activities_fordate(args: dict[str, Any]) -> Any:
@@ -693,7 +714,7 @@ def get_hrv_trend(start_date: StartDate = None, end_date: EndDate = None, date: 
 
 @_tool("get_vo2max_trend", "Tendencia de VO2máx",
        "VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas, muestreado cada 7 días más el "
-       "último día del rango (cambia despacio).")
+       "último día del rango (cambia despacio). Devuelve una fila por muestra: fecha, running y cycling.")
 def get_vo2max_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_vo2max_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 

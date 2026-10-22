@@ -634,6 +634,41 @@ class TestCompactToolResult:
         assert parsed["rows"][-1] == [rows[-1]["date"], 123.45]
 
 
+# ─── Contexto de la sesión anterior ─────────────────────────────────────────
+
+class TestPreviousSessionContext:
+    """De la sesión anterior solo llegan al LLM las preguntas, nunca las respuestas (cifras viejas)."""
+
+    def _agent(self, history):
+        agent = TrainerAgent.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.conversation_history = []
+        agent.knowledge_chunks = []
+        agent._build_system_prompt = lambda: "SYSTEM"
+        return agent, {"history": history}
+
+    def test_restores_only_user_questions_and_no_old_answers(self, monkeypatch):
+        import agent.trainer_agent as ta
+        agent, ctx = self._agent([
+            {"role": "user", "content": "¿Cómo ha evolucionado mi HRV?"},
+            {"role": "assistant", "content": "No hay datos de HRV (0 días con datos)."},
+        ])
+        monkeypatch.setattr(ta, "_load_session_context", lambda: ctx)
+        agent._restore_previous_session()
+        assert agent.previous_session_questions == ("¿Cómo ha evolucionado mi HRV?",)
+        assert agent.conversation_history == []
+
+        messages = agent._build_messages("¿Y hoy?")
+        text = "\n".join(m["content"] for m in messages)
+        assert "¿Cómo ha evolucionado mi HRV?" in text
+        assert "0 días con datos" not in text
+        assert [m["role"] for m in messages] == ["system", "system", "user"]
+
+    def test_no_note_without_previous_session(self):
+        agent, _ = self._agent([])
+        assert [m["role"] for m in agent._build_messages("hola")] == ["system", "user"]
+
+
 # ─── Base de conocimiento del atleta (RAG) ──────────────────────────────────
 
 class TestAthleteKnowledgeRag:

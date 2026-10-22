@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Fixed (historial entre sesiones, VO2máx y entorno)
+- Kairos restauraba al arrancar los 6 últimos mensajes de la sesión anterior, respuestas incluidas, y el LLM repetía cifras viejas o erróneas sin consultar las tools (pasó con "0 días con datos" de HRV). Ahora solo recupera las preguntas del usuario, en una nota de sistema que dice que no traen datos (`_restore_previous_session`, `previous_session_questions`). El historial de la sesión en curso no cambia.
+- `get_vo2max_trend` devolvía el payload entero de `get_max_metrics` por muestra (~600 caracteres de aclimatación al calor y la altitud cada una) y el host solo podía pasar 4 muestras al LLM. Devuelve ahora una serie plana (`date`, `running`, `cycling`) con `days_with_data`, y el host la envía completa como las otras series.
+- Desinstalado del `.venv` el MCP de terceros `garmin-mcp` 0.1.0 (Taxuspt/garmin_mcp): nadie lo usaba y, con el mismo nombre de paquete, tapaba al `garmin_mcp` del repo en scripts lanzados fuera de la raíz.
+- Verificado: healthcheck 41 tools (37 OK, 4 vacías, 0 errores); preguntas de tendencia de HRV y VO2máx sin vaciar el historial, con los valores reales de Garmin.
+
 ### Fixed (preguntas de tendencia de HRV)
 - "¿Cómo ha evolucionado mi HRV en las últimas dos semanas?" iba a la ruta factual de un día (`mcp_factual`) y respondía con los datos de hoy. `_is_mcp_factual_query_intent` excluye ahora las preguntas de evolución o de periodo (evolución, tendencia, "ha ido", últimas semanas, este mes…), que pasan al LLM; las de un día siguen en la ruta determinista.
 - `get_hrv_trend` (servidor) buscaba `lastNightAvg` en la raíz del payload de Garmin, que lo trae dentro de `hrvSummary`: devolvía 0 días con datos. Ahora lee `hrvSummary` y añade la media semanal y el estado de cada día.

@@ -448,7 +448,7 @@ def _compact_personal_records(data: list) -> str:
 
 # Tools que devuelven una serie diaria dentro de un objeto ({..., "trend": [{date, ...}, ...]}).
 # La poda genérica deja 4 elementos de cada lista anidada: con 15 días el LLM recibía 4 e inventaba el resto.
-_DAILY_SERIES_TOOLS = {"get_hrv_trend": "trend", "get_training_load_trend": "trend"}
+_DAILY_SERIES_TOOLS = {"get_hrv_trend": "trend", "get_training_load_trend": "trend", "get_vo2max_trend": "trend"}
 
 
 def _compact_daily_series(data: dict, key: str) -> str:
@@ -9582,6 +9582,9 @@ class TrainerAgent:
     automáticamente según lo que necesite para responder al usuario.
     """
 
+    # Preguntas del usuario en la sesión anterior (se rellena en initialize); tupla: no se comparte mutable.
+    previous_session_questions: tuple[str, ...] = ()
+
     def __init__(self, mcp_session: ClientSession, provider: str = "vpn"):
         self.mcp_session = mcp_session
         self.set_provider(provider)
@@ -9682,13 +9685,17 @@ class TrainerAgent:
         # Añadir herramientas internas Kairos (no requieren MCP)
         self.tools_schema.extend(_KAIROS_INTERNAL_TOOLS)
 
-        # Restaurar los últimos 6 mensajes del historial persistido
+        self._restore_previous_session()
+
+    def _restore_previous_session(self) -> None:
+        """De la sesión anterior solo se recuperan las preguntas del usuario (temas), no las respuestas:
+        con ellas en el contexto el LLM repetía cifras viejas o erróneas sin volver a consultar las tools."""
         ctx = _load_session_context()
-        for entry in ctx.get("history", [])[-6:]:
-            role = entry.get("role")
-            content = entry.get("content", "")
-            if role in ("user", "assistant") and content:
-                self.conversation_history.append({"role": role, "content": content})
+        self.previous_session_questions = tuple(
+            str(entry.get("content") or "").strip()
+            for entry in ctx.get("history", [])[-6:]
+            if entry.get("role") == "user" and str(entry.get("content") or "").strip()
+        )
 
     async def _get_or_refresh_cycling_ftp(self, force_refresh: bool = False) -> float | None:
         """Obtiene FTP de ciclismo desde perfil o MCP y lo persiste en DB si aparece."""
@@ -11301,7 +11308,14 @@ class TrainerAgent:
         rag_context = _build_athlete_knowledge_context(user_message, self.knowledge_chunks)
         if rag_context:
             messages.append({"role": "system", "content": rag_context})
-        # Solo los últimos 6 mensajes del historial (3 intercambios)
+        previous = self.previous_session_questions
+        if previous:
+            messages.append({"role": "system", "content": (
+                "Preguntas del usuario en la sesión anterior (solo para saber de qué se habló; no incluyen "
+                "datos: cualquier cifra se vuelve a consultar con las herramientas):\n"
+                + "\n".join(f"- {q[:200]}" for q in previous)
+            )})
+        # Solo los últimos 6 mensajes del historial de esta sesión (3 intercambios)
         messages.extend(self.conversation_history[-6:])
         messages.append({"role": "user", "content": user_message})
         return messages
