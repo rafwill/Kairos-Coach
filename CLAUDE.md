@@ -67,7 +67,6 @@ Anclajes por fecha (perfil `performance`):
 
 ## Pendiente
 
-- Prueba de humo del Inspector MCP (`RUN_MCP_INSPECTOR_SMOKE=1`): `get_activities` devuelve isError con el Inspector (también antes del 22/10); con el cliente de Kairos funciona.
 - Trail rápido: vigilar con más sesiones (16/08: Kairos 128.0 frente a TP 112.4 rTSS).
 - Series cortas de running (6x500, 6x1000, 4x400, 8x500) en +11 % a +20 % frente a TP; 23966766696 (13/08, 8x45" cuestas) ×1.20.
 - Bici sin potencia > 2 h: 07/08 Kairos 65.9 frente a TP 93 (la tabla no tiene datos de bici por encima del 85 %).

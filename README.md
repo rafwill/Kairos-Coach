@@ -104,7 +104,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | Batería de preguntas | — | `.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy` | Tras cambios en rutas, prompts o modelo |
 | Juez de la batería | — | `.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md` | Justo después de la batería |
 
-- **Tests:** 574 passed, 6 skipped (22/10/2026). No necesitan red. Los 6 saltados son la prueba de humo con el Inspector oficial de MCP (`RUN_MCP_INSPECTOR_SMOKE=1`, con `GARMIN_EMAIL` y `GARMIN_PASSWORD` en el entorno).
+- **Tests:** 574 passed, 6 skipped (22/10/2026). No necesitan red. Los 6 saltados son la prueba de humo con el Inspector oficial de MCP 2.12.0 (`RUN_MCP_INSPECTOR_SMOKE=1`, con `GARMIN_EMAIL` y `GARMIN_PASSWORD` en el entorno; 6/6 el 22/10).
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
 - **`healthcheck_mcp`:** llama a las 41 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
 - **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.

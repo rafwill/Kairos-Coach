@@ -27,7 +27,6 @@
 
 ### Prioridad media
 
-0. MCP: revisar `get_activities` con el Inspector MCP (`RUN_MCP_INSPECTOR_SMOKE=1`): devuelve isError solo ahí.
 1. Bici sin potencia de más de 2 h: la tabla hrTSS no tiene datos de bici por encima del 85 % del umbral.
 2. Revalidación periódica con un export nuevo de TP (prueba sin escribir, criterio fijado antes, solo filas esperadas).
 3. Capturar RPE de fuerza post-sesión (persistencia por activity_id).

@@ -26,6 +26,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TMP_DIR = REPO_ROOT / "tmp" / "mcp_inspector_smoke"
 NPX_BIN = shutil.which("npx") or shutil.which("npx.cmd")
+# Versión fijada: las opciones del CLI cambian entre versiones (p. ej. --tool-args-json ya no existe).
+INSPECTOR_PKG = "@modelcontextprotocol/inspector@2.12.0"
 
 _RUN_SMOKE = str(os.environ.get("RUN_MCP_INSPECTOR_SMOKE", "")).strip().lower() in {
     "1",
@@ -84,7 +86,7 @@ def _run_inspector_cli(*, method: str, output_name: str, extra_args: list[str] |
     cmd = [
         str(NPX_BIN),
         "-y",
-        "@modelcontextprotocol/inspector",
+        INSPECTOR_PKG,
         "--cli",
         *server_env_pairs,
         str(server_cmd),
@@ -101,6 +103,10 @@ def _run_inspector_cli(*, method: str, output_name: str, extra_args: list[str] |
         cwd=REPO_ROOT,
         env=env,
         text=True,
+        # UTF-8 explícito: en Windows el defecto es cp1252 y los emojis de los nombres de actividad
+        # rompían la lectura (stdout vacío → "no devolvio result").
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         timeout=180,
         check=False,
@@ -193,8 +199,9 @@ def test_06_get_activities_call_ok():
         extra_args=[
             "--tool-name",
             "get_activities",
-            "--tool-args-json",
-            '{"start":0,"limit":5}',
+            "--tool-arg",
+            "start=0",
+            "limit=5",
         ],
     )
     assert "result" in payload, "tools/call get_activities no devolvio result"
