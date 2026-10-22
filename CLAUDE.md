@@ -40,7 +40,7 @@ Tabla hrTSS de TP (`TP_HRTSS_RATES`): FC/umbral TP < 85 % → 40.8 TSS/h; 85–9
 Anclajes por fecha (perfil `performance`):
 
 - `hr_threshold_tp_history`: umbral de FC con el que TP calcula su hrTSS (166 desde 30/01/2026, 169 desde 21/10/2026). Distinto del umbral fisiológico `hr_threshold_bpm` = 169 (Garmin; VT2 de la prueba de esfuerzo).
-- `running_threshold_pace_history`: 3:50/km (230 s) desde 30/01/2026, 4:12 (252 s) desde 09/05/2026. VT2 de la prueba: 4:15.
+- `running_threshold_pace_history`: 3:50/km (230 s) desde 30/01/2026, 4:12 (252 s) desde 09/05/2026, 4:00 (240 s) desde 22/10/2026 (test: carrera del 18/10, actividad 24764615547, 27 min, NGP 3:49 llevado a 60 min con Riegel ×1.049; el usuario lo cambia también en TP y Connect). VT2 de la prueba de esfuerzo: 4:15.
 - hr_rest = media del RHR de los 14 días previos. FTP bici 205 (igual que TP). Umbral de marcha = anclaje del perfil.
 
 ## Prompts y planes (2026-10-21)
