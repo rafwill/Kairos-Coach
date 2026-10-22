@@ -1169,3 +1169,40 @@ Sesión de cierre del cálculo de carga frente a TrainingPeaks. Referencia: expo
       - Serie frente a TP reconstruida: TSB 6.5/51.7 → 3.0/12.7 (media/máx).
       - El export de TP omite 7 sesiones de fuerza de agosto que sí están en el calendario de TP; Kairos las tiene bien.
 6. Documentación: README, Harness, CLAUDE.md, CHANGELOG, TODO y prompts actualizados al estado vigente. `/perfil umbral` ahora añade la entrada de hoy al historial de ritmo umbral (antes el historial lo ignoraba).
+
+
+
+
+
+22/10/2026 22:38
+
+En la carpeta docs, creo que podemos borrar ya proximos pasos. Creo que mcp-frozen-runbook no aporta y si aporta deberia de fusionarse con el documento del mcp. Dame tu opinión y lo trabajamos
+
+limite 20 tools, metatooling
+
+comprobación harness
+
+documentación de la tools numero 42
+
+
+
+
+
+Hecho como propones: Garmin manda, Kairos lee sus zonas por MCP y las tiene guardadas en Supabase. Está en el commit 0f60e10, sin subir.
+
+Lectura: he añadido al servidor MCP una herramienta nueva, get_heart_rate_zones (ya son 42), que devuelve las zonas de Garmin de cada deporte.
+Guardado: en cada arranque Kairos las consulta (una llamada de 0,5 s) y solo escribe en Supabase si han cambiado. La versión anterior se conserva en un historial con fechas. Si Garmin no responde, usa las guardadas. Ya están en tu perfil y las he leído de vuelta:
+Carrera: Z1 115–134 · Z2 135–145 · Z3 146–157 · Z4 158–168 · Z5 169–179.
+Ciclismo: 105 · 125 · 136 · 146 · 159 (suelos de cada zona).
+Una sola fuente: las mismas zonas, con los nombres de TP en español (Recuperación, Aeróbica, Tempo, Subumbral, Supraumbral), en el contexto del LLM, en los análisis de actividad y en el juez. Antes los análisis llamaban "Suave" a la Z2 y el resto de Kairos usaba otros límites.
+Respaldo sin huecos: si algún día no hubiera zonas de Garmin, se calculan por % de la FC umbral, ya sin los huecos de 151 y 160 lpm.
+Sin efecto en la carga: el TSS, y con él CTL, ATL y TSB, no cambia, porque no depende de las zonas.
+Pasan los 590 tests y el healthcheck de las 42 herramientas, sin errores. La batería sale 23/25 con el juez. El LLM ya prescribe con las zonas de Garmin (por ejemplo, "Z2 Aeróbica 135–145 lpm"), y han desaparecido tanto el error de la pregunta 1 como las referencias a % LTHR.
+
+Necesito que decidas una cosa. Los dos fallos son rangos bien nombrados que recorren dos zonas: "Calentamiento Z1–Z2 (115–145)" y "Z2 alto / Z3 bajo (135–150)". El juez exige que cada rango quepa en una sola zona. ¿Lo aceptamos cuando el rango nombra las zonas que recorre (un calentamiento progresivo es así) o prefieres obligar al LLM a dar una zona por tramo? Es un cambio de criterio del juez, por eso no lo he tocado.
+
+Tres cosas más:
+
+Planes: los objetivos internos de los planes siguen guardados en % del umbral. No se muestran en ningún sitio, y el prompt ya obliga a hablarte en zonas de Garmin.
+Memoria entre sesiones: el bloque "Memoria de sesiones anteriores" incluye 200 caracteres de la última respuesta de cada sesión, otra vía por la que pueden volver cifras viejas al LLM. Si quieres, lo quito como hice con el historial.
+docs/proximos_pasos.md: tiene cambios que no son míos (lo tienes abierto), así que lo he dejado fuera del commit.
