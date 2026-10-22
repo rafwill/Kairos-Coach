@@ -5,6 +5,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 ## 2026-10-22
 
 ### Added
+- Test de contrato sin red `test_every_tool_calls_garminconnect_with_its_real_signature`: llama a las 41 tools con un cliente que valida los argumentos contra la firma real de `garminconnect`. Contra el código anterior señala las 8 tools rotas.
 - Guía de estilo MCP de apiaddicts (`mcps-style-guide`) en el servidor: las 41 tools tienen título, descripción y descripción de cada parámetro (54), y anotaciones de solo lectura (`readOnlyHint`, `destructiveHint=false`, `idempotentHint`, `openWorldHint`). Antes 40 de 41 llegaban sin descripción, también al LLM de Kairos. Mismos nombres y parámetros.
 - `tools/lint_mcp.py` / `make lint-mcp` y `tools/mcp_lint/.spectral.yaml`: ruleset anclado a un commit, sin las reglas de camelCase y `outputSchema` (no adoptadas, con su motivo). 217 hallazgos → 0. Test sin red `test_all_tools_follow_mcp_style_guide`.
 - `tools/juez_bateria.py`: juez determinista de la batería. Contrasta cada respuesta con Supabase (y Garmin para los récords) con una rúbrica fijada antes de ver resultados (`docs/Harness.md`). Primera pasada: 23/25; tras corregir el fallo de la Carga Garmin y un falso positivo del propio juez (un rango de TSS leído como FC), 25/25. Verificado que detecta errores introducidos a propósito (CTL, TSS semanal, fecha ISO, rango de FC).
@@ -17,6 +18,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - `/carga`, resumen semanal, estado de arranque, estado de hoy, contexto del LLM y prompts muestran la zona y su % del CTL.
 
 ### Fixed
+- 8 tools del MCP fallaban siempre por llamar a `garminconnect` 0.3.2 con argumentos que no casan con su firma: `get_daily_steps` (inicio y fin), `get_training_status` y `get_fitnessage_data` (fecha; nuevo parámetro `date`), `get_vo2max_trend` (`get_max_metrics` admite una fecha: muestreo cada 7 días + último día), `get_endurance_score` (nuevos `start_date`/`end_date`), `get_weekly_steps` y `get_weekly_stress` (fin y nº de semanas), `get_weekly_intensity_minutes` (inicio y fin); las semanales, por defecto 4 semanas. Detectadas al comprobar que el LLM elegía `get_vo2max_trend`/`get_daily_steps` y no obtenía datos. Las 41 tools comprobadas contra Garmin real.
 - La carga de Garmin ya no puede usarse como TSS en ningún camino (CLAUDE.md: "la carga nativa de Garmin nunca es TSS"). Auditoría del 22/10:
   - `_estimate_session_tss` devolvía la carga/TSS de Garmin como TSS (`garmin:native_load`) en dos respaldos: actividad sin duración y deporte sin modelo propio (natación, esquí…). Ninguna de las 222 actividades guardadas lo usó; ahora sin duración es 0 y sin modelo se estima por FC (`generic:*`).
   - Ruta del día ("¿qué hice el …?"): "TSS del día" salía primero de `get_training_load_trend` (suma de `activityTrainingLoad` de Garmin). Ahora sale de la serie de Kairos o de `activity_tss`, y la carga de Garmin va en su propia fila "Carga Garmin del día (no TSS)".
@@ -33,7 +35,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Ritmo umbral de running 4:00/km (240 s) desde el 22/10/2026 (antes 4:12), estimado con la carrera del 18/10 (24764615547): 27 min, NGP 3:49/km del pipeline de producción, llevado a 60 min con Riegel (×1.049). FC umbral sin cambios (168 lpm de media en los últimos 20 min frente a 169). Añadido al historial del perfil; el TSS ya guardado no cambia.
 
 ### Tests
-- 572 passed, 6 skipped. Los tests del PMC fijan su TSS sintético con un fixture explícito (antes dependían de que la carga de Garmin se usara como TSS). Nuevos: `test_daily_tss_comes_from_kairos_not_garmin_trend`, `test_garmin_load_is_never_the_final_tss`, zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
+- 573 passed, 6 skipped. Los tests del PMC fijan su TSS sintético con un fixture explícito (antes dependían de que la carga de Garmin se usara como TSS). Nuevos: `test_daily_tss_comes_from_kairos_not_garmin_trend`, `test_garmin_load_is_never_the_final_tss`, zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
 
 ## 2026-10-21 (esquema de Supabase en un solo fichero)
 

@@ -91,6 +91,16 @@ def _iso_date_iter(start_iso: str, end_iso: str) -> list[str]:
     return [(start_d + timedelta(days=i)).isoformat() for i in range(days + 1)]
 
 
+def _weekly_range(args: dict[str, Any]) -> tuple[str, str, int]:
+    """Rango para las tools semanales: fin (por defecto hoy), inicio (por defecto 4 semanas antes) y nº de semanas."""
+    end = _as_iso_day(args.get("end_date"))
+    start = _as_iso_day(args.get("start_date"), default=(date.fromisoformat(end) - timedelta(days=27)).isoformat())
+    if start > end:
+        start, end = end, start
+    weeks = max(1, ((date.fromisoformat(end) - date.fromisoformat(start)).days // 7) + 1)
+    return start, end, weeks
+
+
 def _load_value(payload: Any) -> float:
     if not isinstance(payload, dict):
         return 0.0
@@ -259,7 +269,6 @@ def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
         "get_rhr_day",
         "get_spo2_data",
         "get_hrv_data",
-        "get_daily_steps",
         "get_hydration_data",
     }:
         return _invoke_with_auth_retry(method_name, _as_iso_day(args.get("date")))
@@ -271,6 +280,27 @@ def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
 
     if tool_name in {"get_training_readiness", "get_morning_training_readiness"}:
         return _invoke_with_auth_retry(method_name, _as_iso_day(args.get("date")))
+
+    # Firmas de garminconnect 0.3.2 (verificadas el 22/10/2026; antes estas tools fallaban siempre).
+    if tool_name == "get_daily_steps":  # (start, end)
+        day = _as_iso_day(args.get("date"))
+        return _invoke_with_auth_retry(method_name, day, day)
+
+    if tool_name in {"get_training_status", "get_fitnessage_data"}:  # (cdate)
+        return _invoke_with_auth_retry(method_name, _as_iso_day(args.get("date")))
+
+    if tool_name == "get_endurance_score":  # (startdate, enddate=None)
+        start = _as_iso_day(args.get("start_date"))
+        end = _as_iso_day(args.get("end_date") or start, default=start)
+        return _invoke_with_auth_retry(method_name, start, end)
+
+    if tool_name in {"get_weekly_steps", "get_weekly_stress"}:  # (end, weeks)
+        start, end, weeks = _weekly_range(args)
+        return _invoke_with_auth_retry(method_name, end, weeks)
+
+    if tool_name == "get_weekly_intensity_minutes":  # (start, end)
+        start, end, _weeks = _weekly_range(args)
+        return _invoke_with_auth_retry(method_name, start, end)
 
     cleaned = {k: v for k, v in args.items() if v not in (None, "")}
     try:
@@ -331,8 +361,17 @@ def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
 def _vo2max_trend(args: dict[str, Any]) -> dict[str, Any]:
     start = _as_iso_day(args.get("start_date") or args.get("date"))
     end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
-    payload = _invoke_with_auth_retry("get_max_metrics", start, end)
-    return {"start_date": start, "end_date": end, "metrics": payload}
+    days = _iso_date_iter(start, end)
+    sample = sorted(set(days[::7]) | {days[-1]})  # el VO2máx cambia despacio: una consulta por semana
+    metrics: list[dict[str, Any]] = []
+    for day in sample:
+        try:
+            metrics.append({"date": day, "metrics": _invoke_with_auth_retry("get_max_metrics", day)})
+        except GarminConnectAuthenticationError:
+            raise
+        except Exception as exc:  # un día sin datos no invalida el resto del rango
+            metrics.append({"date": day, "error": str(exc)[:120]})
+    return {"start_date": start, "end_date": end, "sampled_every_days": 7, "metrics": metrics}
 
 
 def _activities_fordate(args: dict[str, Any]) -> Any:
@@ -615,8 +654,8 @@ def get_morning_training_readiness(date: Day = None):
 @_tool("get_training_status", "Estado de entrenamiento de Garmin",
        "Estado de entrenamiento según Garmin (productivo, mantenimiento, sobrecarga…), VO2máx y carga aguda de "
        "Garmin. Es la valoración de Garmin, no el estado de carga de Kairos.")
-def get_training_status():
-    return _dispatch("get_training_status", {})
+def get_training_status(date: Day = None):
+    return _dispatch("get_training_status", {"date": date})
 
 
 @_tool("get_training_load_trend", "Carga Garmin por día (no TSS)",
@@ -642,21 +681,22 @@ def get_hrv_trend(start_date: StartDate = None, end_date: EndDate = None, date: 
 
 
 @_tool("get_vo2max_trend", "Tendencia de VO2máx",
-       "VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas.")
+       "VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas, muestreado cada 7 días más el "
+       "último día del rango (cambia despacio).")
 def get_vo2max_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_vo2max_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 
 
 @_tool("get_endurance_score", "Endurance Score",
-       "Puntuación de resistencia de Garmin (Endurance Score) y su clasificación.")
-def get_endurance_score():
-    return _dispatch("get_endurance_score", {})
+       "Puntuación de resistencia de Garmin (Endurance Score) por día en el rango, y su clasificación.")
+def get_endurance_score(start_date: StartDate = None, end_date: EndDate = None):
+    return _dispatch("get_endurance_score", {"start_date": start_date, "end_date": end_date})
 
 
 @_tool("get_fitnessage_data", "Edad física",
        "Edad física (Fitness Age) estimada por Garmin y los factores que la determinan.")
-def get_fitnessage_data():
-    return _dispatch("get_fitnessage_data", {})
+def get_fitnessage_data(date: Day = None):
+    return _dispatch("get_fitnessage_data", {"date": date})
 
 
 @_tool("get_lactate_threshold", "Umbral de lactato de Garmin",
@@ -685,19 +725,20 @@ def get_personal_record():
 
 
 @_tool("get_weekly_steps", "Pasos por semana",
-       "Pasos acumulados por semana en el rango.")
+       "Pasos acumulados por semana en el rango. Por defecto, las 4 últimas semanas.")
 def get_weekly_steps(start_date: StartDate = None, end_date: EndDate = None):
     return _dispatch("get_weekly_steps", {"start_date": start_date, "end_date": end_date})
 
 
 @_tool("get_weekly_intensity_minutes", "Minutos de intensidad por semana",
-       "Minutos de intensidad moderada y vigorosa por semana en el rango, con el objetivo semanal.")
+       "Minutos de intensidad moderada y vigorosa por semana en el rango, con el objetivo semanal. Por defecto, "
+       "las 4 últimas semanas.")
 def get_weekly_intensity_minutes(start_date: StartDate = None, end_date: EndDate = None):
     return _dispatch("get_weekly_intensity_minutes", {"start_date": start_date, "end_date": end_date})
 
 
 @_tool("get_weekly_stress", "Estrés por semana",
-       "Estrés medio por semana en el rango.")
+       "Estrés medio por semana en el rango. Por defecto, las 4 últimas semanas.")
 def get_weekly_stress(start_date: StartDate = None, end_date: EndDate = None):
     return _dispatch("get_weekly_stress", {"start_date": start_date, "end_date": end_date})
 

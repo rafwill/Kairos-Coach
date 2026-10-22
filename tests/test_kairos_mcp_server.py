@@ -350,3 +350,45 @@ def test_all_tools_follow_mcp_style_guide():
             assert prop.get("description"), f"{tool.name}.{prop_name}"
         assert tool.annotations is not None and tool.annotations.readOnlyHint is True, tool.name
         assert tool.annotations.destructiveHint is False, tool.name
+
+
+def test_every_tool_calls_garminconnect_with_its_real_signature(monkeypatch):
+    # Contrato sin red: cada tool llama a garminconnect con argumentos que encajan con la firma
+    # de la versión instalada. Habría detectado las 8 tools rotas del 22/10 (get_daily_steps,
+    # get_training_status, get_vo2max_trend…) y detectará cambios de firma al actualizar la librería.
+    import asyncio
+    import inspect
+
+    from garminconnect import Garmin
+
+    calls: list[tuple[str, tuple, dict]] = []
+
+    class _SignatureCheckingClient:
+        def __getattr__(self, name):
+            real = getattr(Garmin, name)
+
+            def _call(*args, **kwargs):
+                inspect.signature(real).bind(None, *args, **kwargs)  # TypeError si no casan
+                calls.append((name, args, kwargs))
+                return {}
+
+            return _call
+
+    monkeypatch.setattr(server, "_garmin_client", lambda: _SignatureCheckingClient())
+    tools = asyncio.run(server.mcp.list_tools())
+    failures = []
+    for tool in tools:
+        props = tool.inputSchema.get("properties") or {}
+        args = {}
+        if "activity_id" in props:
+            args["activity_id"] = 123
+        if "start_date" in props:
+            args.update({"start_date": "2026-10-08", "end_date": "2026-10-21"})
+        elif "date" in props:
+            args["date"] = "2026-10-21"
+        try:
+            asyncio.run(server.mcp.call_tool(tool.name, args))
+        except Exception as exc:  # noqa: BLE001 — se informa de todas a la vez
+            failures.append(f"{tool.name}: {exc}")
+    assert not failures, "\n".join(failures)
+    assert len({name for name, _, _ in calls}) >= 30

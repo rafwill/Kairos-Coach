@@ -52,6 +52,7 @@ Anclajes por fecha (perfil `performance`):
 - El MCP devuelve algunas listas como objetos JSON concatenados (récords, zonas): usar `_try_parse_json`. `get_activity` trae las métricas en `summaryDTO`: usar `_flatten_garmin_activity`.
 - Batería de preguntas: `docs/bateria_p55_preguntas_base.txt` (25 preguntas). Se lanza con `tools/run_bateria.py [--modelo M]` (usuario de `KAIROS_USERNAME`; salida con tiempos en `.tmp/bateria/`, ignorada por git) y se juzga con `tools/juez_bateria.py <salida>.md` (rúbrica fija en `docs/Harness.md`; 25/25 el 22/10).
 - Login de Garmin: el MCP reutiliza tokens en `~/.garminconnect/kairos/<hash del email>` (o `GARMINTOKENS`); solo hace login real si faltan o no valen (si Garmin los rechaza al cargarlos, p. ej. tras cambiar la contraseña, se borran y entra con la del perfil). Antes cada arranque hacía login completo y Garmin bloqueaba la IP (429) tras varias pasadas.
+- MCP: las 41 tools llaman a `garminconnect` con su firma real; `test_every_tool_calls_garminconnect_with_its_real_signature` lo comprueba sin red (8 estaban rotas hasta el 22/10). `get_vo2max_trend` muestrea cada 7 días; las semanales, por defecto 4 semanas.
 - Capa de coaching: `_coaching_horizon` fija el horizonte (hoy, mañana o los días que quedan de la semana); `_strip_simulated_user_turn` limpia turnos de usuario inventados por el LLM.
 - LLM de pruebas: NVIDIA `nemotron-3-ultra-550b-a55b` vía `NVIDIA_MODEL` en `.env` (el defecto del código sigue siendo `nemotron-3.5-lightning-30b-a3b`). Con la batería del 21/10 fue más coherente y más lento (158 s frente a 75 s en las 4 preguntas con LLM). Varios modelos del catálogo de NVIDIA dan 404 con esta clave (Kimi K2.6, Nemotron 3 Super, Mistral Large 2).
 
@@ -66,7 +67,6 @@ Anclajes por fecha (perfil `performance`):
 
 ## Pendiente
 
-- MCP: 8 tools fallan siempre por argumentos que no casan con `garminconnect` (get_daily_steps, get_training_status, get_vo2max_trend, get_endurance_score, get_fitnessage_data, get_weekly_steps, get_weekly_stress, get_weekly_intensity_minutes). Detectadas el 22/10 al probar la elección de tools del LLM.
 - Prueba de humo del Inspector MCP (`RUN_MCP_INSPECTOR_SMOKE=1`): `get_activities` devuelve isError con el Inspector (también antes del 22/10); con el cliente de Kairos funciona.
 - Trail rápido: vigilar con más sesiones (16/08: Kairos 128.0 frente a TP 112.4 rTSS).
 - Series cortas de running (6x500, 6x1000, 4x400, 8x500) en +11 % a +20 % frente a TP; 23966766696 (13/08, 8x45" cuestas) ×1.20.
