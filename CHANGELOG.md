@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Added (documentación del MCP)
+- `garmin_mcp/README.md`: qué es el servidor, arranque (también desde otros clientes MCP), configuración, mantenimiento y catálogo de las 41 tools por categorías, con descripción, parámetros (tipo, valor por defecto, descripción) y anotaciones. El catálogo lo genera `tools/gen_mcp_docs.py` (`make docs-mcp`) desde el propio servidor; `test_tool_catalog_readme_is_up_to_date` falla si se cambia una tool sin regenerarlo.
+- `docs/mcp-tools-completo-vs-essentials.md` (catálogo del MCP de terceros de 126 tools, anterior al servidor propio) pasa a `_archivo/docs/`.
+
 ### Changed (organización)
 - Arquitectura MCP con la terminología del estándar: host, cliente y servidor en su sitio. El servidor sale de `agent/` a su propio paquete `garmin_mcp/` (`agent/kairos_mcp_server.py` → `garmin_mcp/server.py`, arranque `python -m garmin_mcp`), porque no depende del host y Kairos solo lo usa por el protocolo MCP. El lado cliente se agrupa en `agent/mcp/` (`mcp_client.py` → `client.py`, `mcp_adapter.py` → `contracts.py`). `git mv` conserva el historial; sin cambios de comportamiento.
 - El cliente calcula la raíz del proyecto con una constante (`PROJECT_ROOT`) adaptada a su nueva profundidad; lanzadores, `lint_mcp`, `healthcheck_mcp`, tests y documentación actualizados. El juez pide los récords por el protocolo MCP en vez de importar el servidor. La clave de perfil `mcp_adapter_cache` no cambia (datos ya guardados).
@@ -43,7 +47,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Ritmo umbral de running 4:00/km (240 s) desde el 22/10/2026 (antes 4:12), estimado con la carrera del 18/10 (24764615547): 27 min, NGP 3:49/km del pipeline de producción, llevado a 60 min con Riegel (×1.049). FC umbral sin cambios (168 lpm de media en los últimos 20 min frente a 169). Añadido al historial del perfil; el TSS ya guardado no cambia.
 
 ### Tests
-- 575 passed, 6 skipped. Los tests del PMC fijan su TSS sintético con un fixture explícito (antes dependían de que la carga de Garmin se usara como TSS). Nuevos: `test_daily_tss_comes_from_kairos_not_garmin_trend`, `test_garmin_load_is_never_the_final_tss`, zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
+- 576 passed, 6 skipped. Los tests del PMC fijan su TSS sintético con un fixture explícito (antes dependían de que la carga de Garmin se usara como TSS). Nuevos: `test_daily_tss_comes_from_kairos_not_garmin_trend`, `test_garmin_load_is_never_the_final_tss`, zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
 
 ## 2026-10-21 (esquema de Supabase en un solo fichero)
 

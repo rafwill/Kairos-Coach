@@ -429,3 +429,19 @@ def test_server_package_does_not_import_the_host():
                 names = [node.module]
             offenders += [f"{py.name}: {n}" for n in names if n == "agent" or n.startswith("agent.")]
     assert not offenders, offenders
+
+
+def test_tool_catalog_readme_is_up_to_date():
+    # garmin_mcp/README.md lleva un catálogo generado desde el servidor; si se cambia una tool sin
+    # regenerarlo (python tools/gen_mcp_docs.py), este test falla.
+    import asyncio
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gen_mcp_docs", Path(__file__).resolve().parent.parent / "tools" / "gen_mcp_docs.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    expected = gen.render(asyncio.run(server.mcp.list_tools()))
+    assert gen.current_block(gen.README.read_text(encoding="utf-8")) == expected, (
+        "garmin_mcp/README.md desfasado: ejecuta python tools/gen_mcp_docs.py"
+    )

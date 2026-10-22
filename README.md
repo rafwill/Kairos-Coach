@@ -80,6 +80,7 @@ agent/
     client.py            cliente MCP: arranca el servidor, sesión stdio y llamadas a tools
     contracts.py         contratos de argumentos, normalización y caché de las tools
 garmin_mcp/              servidor MCP de Garmin Connect (41 tools, solo lectura), independiente de agent/
+  README.md              arranque, configuración y catálogo de las 41 tools
   server.py              definición de las tools; arranque: python -m garmin_mcp
 prompts/                 system prompt (completo y compacto) y guía de tools MCP
 supabase/                schema.sql (esquema completo e idempotente)
@@ -90,6 +91,7 @@ tools/
   juez_bateria.py           juez determinista de la batería (rúbrica fija frente a Supabase)
   lint_mcp.py, mcp_lint/    guía de estilo MCP de apiaddicts sobre las tools del servidor (Spectral)
   healthcheck_mcp.py        healthcheck en vivo: llama a todas las tools contra Garmin y dice cuáles fallan
+  gen_mcp_docs.py           regenera el catálogo de tools de garmin_mcp/README.md
   garmin-mcp-frozen.*       lanzadores del servidor MCP
 docs/                    arquitectura, harness, bitácora, runbook del MCP y batería
 ```
@@ -105,6 +107,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | Tests (sin red) | `make test` | `.venv\Scripts\python.exe -m pytest` | Siempre; la CI los pasa en cada push |
 | Lint de código | `make lint` | `.venv\Scripts\python.exe -m ruff check agent garmin_mcp tests tools` | Antes de commitear |
 | Guía de estilo del MCP | `make lint-mcp` | `.venv\Scripts\python.exe tools\lint_mcp.py` | Al añadir o cambiar tools del MCP |
+| Catálogo de tools del MCP | `make docs-mcp` | `.venv\Scripts\python.exe tools\gen_mcp_docs.py` | Al añadir o cambiar tools (un test falla si está desfasado) |
 | Salud de las tools del MCP | `make health-mcp` | `.venv\Scripts\python.exe tools\healthcheck_mcp.py` | Al actualizar `garminconnect`, antes de una batería o si algo falla |
 | Batería de preguntas | — | `.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy` | Tras cambios en rutas, prompts o modelo |
 | Juez de la batería | — | `.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md` | Justo después de la batería |
@@ -123,6 +126,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Capas, tablas de Supabase, flujos de arranque, cálculo y chat, MCP y seguridad |
 | [`docs/Harness.md`](docs/Harness.md) | Hooks, router determinista y sensores de calidad |
 | [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Bitácora de investigación |
+| [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración y catálogo de las 41 tools (generado) |
 | [`docs/mcp-frozen-runbook.md`](docs/mcp-frozen-runbook.md) | Operación del servidor MCP e incidentes 429/403 |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`TODO.md`](TODO.md) | Cambios y hoja de ruta |
 
