@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-22
+
+### Fixed
+- Estado de arranque: si Garmin devuelve el registro del día sin valores (reloj sin sincronizar), Body Battery y sueño decían "datos disponibles". Ahora dicen "sin datos" y una línea avisa de qué falta ("Garmin aún no tiene … sincroniza el reloj con la app y vuelve a arrancar Kairos").
+
+### Tests
+- 569 passed, 6 skipped.
+
 ## 2026-10-21 (esquema de Supabase en un solo fichero)
 
 ### Changed

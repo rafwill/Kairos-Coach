@@ -40,6 +40,7 @@ from agent.trainer_agent import (
     _classify_strength_session_with_confidence,
     _classify_walk_hike_session_with_confidence,
     _format_body_battery_day,
+    _format_sleep_day,
     _format_hrv_day,
     _pick_day_payload,
     _estimate_session_tss,
@@ -1226,6 +1227,36 @@ class TestStartupProactive:
         assert "Trail suave" in out
         assert "Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma))" in out
         assert "No tienes plan asignado" in out
+
+    def test_proactive_status_flags_unsynced_today_instead_of_datos_disponibles(self):
+        # Caso real (22/10): Garmin devuelve el registro de hoy sin valores (reloj sin sincronizar).
+        today, yday = "2026-10-22", "2026-10-21"
+        payload = {
+            "dates": {"today": today, "yesterday": yday},
+            "body_battery": {
+                "today": [{"date": today, "charged": None, "drained": None, "bodyBatteryValuesArray": [[1, None]]}],
+                "yesterday": [{"date": yday, "charged": 48, "drained": 15}],
+            },
+            "hrv": {"today": None, "yesterday": {"calendarDate": yday, "lastNightAvg": 56, "weeklyAvg": 61, "status": "BALANCED"}},
+            "sleep": {
+                "today": {"calendarDate": today, "sleepTimeSeconds": None},
+                "yesterday": {"calendarDate": yday, "sleepTimeSeconds": 29040, "sleepScore": 69},
+            },
+            "load_fatigue": {},
+            "trainings": [],
+        }
+
+        out = _build_proactive_status_markdown(payload)
+
+        assert "datos disponibles" not in out
+        assert "noche anterior=8 h 04 min · puntuación 69" in out
+        assert "Garmin aún no tiene Body Battery de hoy, HRV de anoche, sueño de anoche" in out
+        assert "sincroniza el reloj" in out
+
+    def test_format_wellness_day_without_values_says_sin_datos(self):
+        today = date.today().isoformat()
+        assert _format_body_battery_day([{"date": today, "charged": None, "drained": None}], today) == "sin datos"
+        assert _format_sleep_day({"calendarDate": today, "sleepTimeSeconds": None}, today) == "sin datos"
 
     def test_format_body_battery_day_prefers_level_from_most_informative_entry(self):
         payload = [

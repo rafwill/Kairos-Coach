@@ -1425,7 +1425,8 @@ def _format_body_battery_day(payload: Any, target_date: str) -> str:
 
     if parts:
         return " · ".join(parts)
-    return "datos disponibles"
+    # Registro del día sin valores (p. ej., el reloj aún no ha sincronizado la noche).
+    return "sin datos"
 
 
 def _format_hrv_day(payload: Any, target_date: str) -> str:
@@ -1453,7 +1454,8 @@ def _format_hrv_day(payload: Any, target_date: str) -> str:
 
     if parts:
         return " · ".join(parts)
-    return "datos disponibles"
+    # Registro del día sin valores (p. ej., el reloj aún no ha sincronizado la noche).
+    return "sin datos"
 
 
 def _format_sleep_day(payload: Any, target_date: str) -> str:
@@ -1481,7 +1483,8 @@ def _format_sleep_day(payload: Any, target_date: str) -> str:
 
     if parts:
         return " · ".join(parts)
-    return "datos disponibles"
+    # Registro del día sin valores (p. ej., el reloj aún no ha sincronizado la noche).
+    return "sin datos"
 
 
 def _format_rhr_day(payload: Any, target_date: str) -> str:
@@ -2320,6 +2323,20 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     lines.append("- Body Battery: " + _normalize_wellness_text(body_summary))
     lines.append("- HRV: " + _normalize_wellness_text(hrv_summary))
     lines.append("- Sueño: " + _normalize_wellness_text(sleep_summary))
+    missing_today = [
+        label
+        for label, fmt, payload in (
+            ("Body Battery de hoy", _format_body_battery_day, body_battery.get("today")),
+            ("HRV de anoche", _format_hrv_day, hrv.get("today")),
+            ("sueño de anoche", _format_sleep_day, sleep.get("today")),
+        )
+        if fmt(payload, today_iso) == "sin datos"
+    ]
+    if missing_today:
+        lines.append(
+            f"- ⚠️ Garmin aún no tiene {', '.join(missing_today)}: sincroniza el reloj con la app "
+            "de Garmin Connect y vuelve a arrancar Kairos."
+        )
     if wellness_sources:
         log.debug("proactive status: wellness origen %s", wellness_sources)
     lines.append("- Carga/Fatiga (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)): " + _format_load_fatigue_summary(load_fatigue))
