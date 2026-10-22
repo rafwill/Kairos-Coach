@@ -136,6 +136,11 @@ Toda la capa de Supabase y Garmin está mockeada — no se realizan conexiones r
 
 Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera pasada (22/10): detectó que la "Carga Garmin" de las salidas en bici con potencia mostraba el TSS de Garmin.
 
+#### Guía de estilo del MCP
+**Herramienta:** `tools/lint_mcp.py` (`make lint-mcp`)
+
+Pasa la guía de estilo MCP de apiaddicts (`mcps-style-guide`, Spectral) sobre el `tools/list` real del servidor: título, descripción y parámetros descritos en cada tool, `inputSchema` de tipo object. Configuración en `tools/mcp_lint/.spectral.yaml` (ruleset anclado a un commit; camelCase y `outputSchema` desactivadas con su motivo). 22/10: 0 hallazgos. Un test sin red (`test_all_tools_follow_mcp_style_guide`) lo mantiene en la CI.
+
 #### GitHub Actions CI
 **Archivo:** `.github/workflows/tests.yml`
 
@@ -262,6 +267,7 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 │  guardrail read-only        ✓ operativo             │
 │  suite de tests             ✓ operativo             │
 │  batería + juez             ✓ manual (tools/)       │
+│  guía de estilo MCP         ✓ lint + test en CI     │
 │  CI GitHub Actions          ✓ operativo             │
 │  spike semanal >20%         ✓ operativo             │
 │  logging por niveles        ✓ operativo             │

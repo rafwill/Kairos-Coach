@@ -118,6 +118,8 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 - Catálogo de 41 tools Garmin + 3 internas `kairos_*` (`kairos_load_trends`, `kairos_correlate`, `kairos_weekly_sport_breakdown`); detalle en `docs/mcp-tools-completo-vs-essentials.md`.
 - Contratos y normalización: `agent/mcp_adapter.py`; cliente: `agent/mcp_client.py`; operación e incidentes: `docs/mcp-frozen-runbook.md`.
 - Algunas listas llegan como objetos JSON concatenados (`_try_parse_json`) y `get_activity` trae las métricas en `summaryDTO` (`_flatten_garmin_activity`).
+- Guía de estilo MCP de apiaddicts ([mcps-style-guide](https://github.com/apiaddicts/mcps-style-guide)): cada tool tiene título, descripción (la que ve el LLM de Kairos para elegirla), descripción de cada parámetro y anotaciones de solo lectura (`readOnlyHint`, `idempotentHint`, `openWorldHint`). `tools/lint_mcp.py` (o `make lint-mcp`) pide `tools/list` por stdio y lo pasa por Spectral con `tools/mcp_lint/.spectral.yaml`: el ruleset anclado a un commit, sin las dos reglas no adoptadas (camelCase y `outputSchema`, con su motivo). Resultado el 22/10: 0 hallazgos (antes 217). `tests/test_kairos_mcp_server.py` lo garantiza sin red.
+- Tools rotas detectadas el 22/10 (fallan siempre: llaman a `garminconnect` con argumentos que no corresponden): get_daily_steps, get_training_status, get_vo2max_trend, get_endurance_score, get_fitnessage_data, get_weekly_steps, get_weekly_stress, get_weekly_intensity_minutes. Pendiente.
 
 ## Seguridad
 

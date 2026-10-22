@@ -11,12 +11,14 @@ import shutil
 from datetime import date
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from garminconnect import Garmin
 from garminconnect.exceptions import GarminConnectAuthenticationError
 from garminconnect.exceptions import GarminConnectConnectionError
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+from pydantic import Field
 
 mcp = FastMCP("kairos-garmin-mcp", instructions="Kairos local Garmin MCP server")
 
@@ -407,39 +409,68 @@ def _dispatch(tool_name: str, args: dict[str, Any]) -> Any:
     return _invoke_passthrough(tool_name, args)
 
 
-@mcp.tool(name="get_user_profile")
+# ─── Definición de las tools (MCP) ─────────────────────────────────────────────
+# Todas son de solo lectura sobre Garmin Connect. Título, descripción y descripción de cada
+# parámetro siguen la guía de estilo MCP de apiaddicts (mcps-style-guide); ver tools/lint_mcp.py.
+_READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+
+Day = Annotated[str | None, Field(description="Día en formato AAAA-MM-DD. Por defecto, hoy.")]
+StartDate = Annotated[str | None, Field(description="Inicio del rango, AAAA-MM-DD (incluido).")]
+EndDate = Annotated[str | None, Field(description="Fin del rango, AAAA-MM-DD (incluido). Por defecto, igual que el inicio.")]
+SingleDay = Annotated[str | None, Field(description="Alternativa a start_date/end_date para un solo día (AAAA-MM-DD).")]
+ActivityId = Annotated[int, Field(description="ID de la actividad en Garmin (activityId), p. ej. de get_activities_by_date.")]
+
+
+def _tool(name: str, title: str, description: str):
+    return mcp.tool(name=name, title=title, description=description, annotations=_READ_ONLY)
+
+
+@_tool("get_user_profile", "Perfil del usuario en Garmin",
+       "Perfil del usuario en Garmin Connect: sexo, peso, altura, fecha de nacimiento y datos fisiológicos básicos.")
 def get_user_profile():
     return _dispatch("get_user_profile", {})
 
 
-@mcp.tool(name="get_activities")
-def get_activities(start: int = 0, limit: int = 50):
+@_tool("get_activities", "Últimas actividades",
+       "Lista de actividades más recientes, de la más nueva a la más antigua (resumen de cada una: tipo, fecha, "
+       "duración, distancia, FC). Para un rango de fechas usa get_activities_by_date.")
+def get_activities(
+    start: Annotated[int, Field(description="Posición desde la que empezar (0 = la más reciente).")] = 0,
+    limit: Annotated[int, Field(description="Número máximo de actividades a devolver.")] = 50,
+):
     return _dispatch("get_activities", {"start": start, "limit": limit})
 
 
-@mcp.tool(name="get_activity")
-def get_activity(activity_id: int):
+@_tool("get_activity", "Resumen de una actividad",
+       "Resumen completo de una actividad: duración, distancia, ritmo, FC, desnivel, potencia, calorías y "
+       "Training Effect (las métricas vienen en summaryDTO).")
+def get_activity(activity_id: ActivityId):
     return _dispatch("get_activity", {"activity_id": activity_id})
 
 
-@mcp.tool(name="get_activity_details")
-def get_activity_details(activity_id: int):
+@_tool("get_activity_details", "Detalle segundo a segundo",
+       "Series temporales de una actividad (velocidad, FC, altitud, distancia, potencia…) a lo largo de la sesión. "
+       "Respuesta grande: úsala solo si necesitas el detalle por tramos.")
+def get_activity_details(activity_id: ActivityId):
     return _dispatch("get_activity_details", {"activity_id": activity_id})
 
 
-@mcp.tool(name="get_activity_hr_in_timezones")
-def get_activity_hr_in_timezones(activity_id: int):
+@_tool("get_activity_hr_in_timezones", "Tiempo por zonas de FC",
+       "Tiempo pasado en cada zona de frecuencia cardiaca durante una actividad, con los límites de zona de Garmin.")
+def get_activity_hr_in_timezones(activity_id: ActivityId):
     return _dispatch("get_activity_hr_in_timezones", {"activity_id": activity_id})
 
 
-@mcp.tool(name="get_activities_by_date")
+@_tool("get_activities_by_date", "Actividades de un rango de fechas",
+       "Actividades entre dos fechas, paginadas (count, page, has_more, activities). Es la forma recomendada de "
+       "localizar actividades por fecha.")
 def get_activities_by_date(
-    start_date: str | None = None,
-    end_date: str | None = None,
-    startdate: str | None = None,
-    enddate: str | None = None,
-    page: int = 0,
-    page_size: int = 100,
+    start_date: StartDate = None,
+    end_date: EndDate = None,
+    startdate: Annotated[str | None, Field(description="Alias de start_date (compatibilidad).")] = None,
+    enddate: Annotated[str | None, Field(description="Alias de end_date (compatibilidad).")] = None,
+    page: Annotated[int, Field(description="Página a devolver, empezando en 0.")] = 0,
+    page_size: Annotated[int, Field(description="Actividades por página.")] = 100,
 ):
     return _dispatch(
         "get_activities_by_date",
@@ -454,183 +485,227 @@ def get_activities_by_date(
     )
 
 
-@mcp.tool(name="get_activities_fordate")
-def get_activities_fordate(date: str | None = None, startdate: str | None = None, enddate: str | None = None):
+@_tool("get_activities_fordate", "Actividades de un día",
+       "Actividades de un día concreto (con date) o de un rango (con startdate/enddate).")
+def get_activities_fordate(
+    date: Day = None,
+    startdate: Annotated[str | None, Field(description="Inicio del rango, AAAA-MM-DD (si no se da date).")] = None,
+    enddate: Annotated[str | None, Field(description="Fin del rango, AAAA-MM-DD (si no se da date).")] = None,
+):
     return _dispatch("get_activities_fordate", {"date": date, "startdate": startdate, "enddate": enddate})
 
 
-@mcp.tool(name="get_activity_splits")
-def get_activity_splits(activity_id: int):
+@_tool("get_activity_splits", "Parciales (laps) de una actividad",
+       "Parciales o vueltas de una actividad: distancia, tiempo, ritmo, FC y desnivel de cada lap.")
+def get_activity_splits(activity_id: ActivityId):
     return _dispatch("get_activity_splits", {"activity_id": activity_id})
 
 
-@mcp.tool(name="get_activity_exercise_sets")
-def get_activity_exercise_sets(activity_id: int):
+@_tool("get_activity_exercise_sets", "Series de una sesión de fuerza",
+       "Ejercicios, series, repeticiones y pesos registrados en una actividad de fuerza.")
+def get_activity_exercise_sets(activity_id: ActivityId):
     return _dispatch("get_activity_exercise_sets", {"activity_id": activity_id})
 
 
-@mcp.tool(name="get_activity_power_in_timezones")
-def get_activity_power_in_timezones(activity_id: int):
+@_tool("get_activity_power_in_timezones", "Tiempo por zonas de potencia",
+       "Tiempo pasado en cada zona de potencia durante una actividad (solo con potenciómetro).")
+def get_activity_power_in_timezones(activity_id: ActivityId):
     return _dispatch("get_activity_power_in_timezones", {"activity_id": activity_id})
 
 
-@mcp.tool(name="get_stats")
-def get_stats(date: str | None = None):
+@_tool("get_stats", "Resumen diario",
+       "Resumen del día: pasos, calorías, FC en reposo, estrés medio, minutos de intensidad y Body Battery.")
+def get_stats(date: Day = None):
     return _dispatch("get_stats", {"date": date})
 
 
-@mcp.tool(name="get_sleep_data")
-def get_sleep_data(date: str | None = None):
+@_tool("get_sleep_data", "Sueño (completo)",
+       "Datos completos del sueño de la noche que termina en la fecha: fases, puntuación, respiración y SpO2. "
+       "Para un resumen compacto usa get_sleep_summary.")
+def get_sleep_data(date: Day = None):
     return _dispatch("get_sleep_data", {"date": date})
 
 
-@mcp.tool(name="get_heart_rates_summary")
-def get_heart_rates_summary(date: str | None = None):
+@_tool("get_heart_rates_summary", "Resumen de FC del día",
+       "FC en reposo, mínima, máxima y media del día.")
+def get_heart_rates_summary(date: Day = None):
     return _dispatch("get_heart_rates_summary", {"date": date})
 
 
-@mcp.tool(name="get_stress_summary")
-def get_stress_summary(date: str | None = None):
+@_tool("get_stress_summary", "Estrés del día",
+       "Estrés del día según Garmin (media, máximo y reparto por niveles).")
+def get_stress_summary(date: Day = None):
     return _dispatch("get_stress_summary", {"date": date})
 
 
-@mcp.tool(name="get_respiration_summary")
-def get_respiration_summary(date: str | None = None):
+@_tool("get_respiration_summary", "Respiración del día",
+       "Frecuencia respiratoria del día y de la noche (media, mínima y máxima).")
+def get_respiration_summary(date: Day = None):
     return _dispatch("get_respiration_summary", {"date": date})
 
 
-@mcp.tool(name="get_all_day_stress")
-def get_all_day_stress(date: str | None = None):
+@_tool("get_all_day_stress", "Estrés a lo largo del día",
+       "Serie de estrés y Body Battery a lo largo de todo el día.")
+def get_all_day_stress(date: Day = None):
     return _dispatch("get_all_day_stress", {"date": date})
 
 
-@mcp.tool(name="get_all_day_events")
-def get_all_day_events(date: str | None = None):
+@_tool("get_all_day_events", "Eventos del día",
+       "Eventos registrados durante el día (actividades, siestas, periodos de estrés o de recuperación).")
+def get_all_day_events(date: Day = None):
     return _dispatch("get_all_day_events", {"date": date})
 
 
-@mcp.tool(name="get_body_battery")
-def get_body_battery(start_date: str | None = None, end_date: str | None = None, date: str | None = None):
+@_tool("get_body_battery", "Body Battery",
+       "Body Battery por día: nivel, cargado, drenado y serie a lo largo del día.")
+def get_body_battery(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_body_battery", {"start_date": start_date, "end_date": end_date, "date": date})
 
 
-@mcp.tool(name="get_rhr_day")
-def get_rhr_day(date: str | None = None):
+@_tool("get_rhr_day", "FC en reposo",
+       "Frecuencia cardiaca en reposo del día.")
+def get_rhr_day(date: Day = None):
     return _dispatch("get_rhr_day", {"date": date})
 
 
-@mcp.tool(name="get_spo2_data")
-def get_spo2_data(date: str | None = None):
+@_tool("get_spo2_data", "SpO2",
+       "Saturación de oxígeno en sangre (SpO2) del día y de la noche.")
+def get_spo2_data(date: Day = None):
     return _dispatch("get_spo2_data", {"date": date})
 
 
-@mcp.tool(name="get_hrv_data")
-def get_hrv_data(date: str | None = None):
+@_tool("get_hrv_data", "HRV de la noche",
+       "Variabilidad de la frecuencia cardiaca (HRV) de la noche que termina en la fecha: media nocturna, media "
+       "semanal, estado (BALANCED, UNBALANCED…) y línea base.")
+def get_hrv_data(date: Day = None):
     return _dispatch("get_hrv_data", {"date": date})
 
 
-@mcp.tool(name="get_daily_steps")
-def get_daily_steps(date: str | None = None):
+@_tool("get_daily_steps", "Pasos del día",
+       "Pasos del día y objetivo de pasos.")
+def get_daily_steps(date: Day = None):
     return _dispatch("get_daily_steps", {"date": date})
 
 
-@mcp.tool(name="get_hydration_data")
-def get_hydration_data(date: str | None = None):
+@_tool("get_hydration_data", "Hidratación",
+       "Hidratación registrada en el día (consumo y objetivo).")
+def get_hydration_data(date: Day = None):
     return _dispatch("get_hydration_data", {"date": date})
 
 
-@mcp.tool(name="get_body_composition")
-def get_body_composition(start_date: str | None = None, end_date: str | None = None, date: str | None = None):
+@_tool("get_body_composition", "Composición corporal",
+       "Peso y composición corporal (grasa, masa muscular, IMC) registrados en el rango.")
+def get_body_composition(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_body_composition", {"start_date": start_date, "end_date": end_date, "date": date})
 
 
-@mcp.tool(name="get_training_readiness")
-def get_training_readiness(date: str | None = None):
+@_tool("get_training_readiness", "Training Readiness",
+       "Disposición para entrenar de Garmin (0–100) y sus factores (sueño, recuperación, HRV, carga aguda). "
+       "Indicador de Garmin: complementa, no sustituye, el estado de carga de Kairos.")
+def get_training_readiness(date: Day = None):
     return _dispatch("get_training_readiness", {"date": date})
 
 
-@mcp.tool(name="get_morning_training_readiness")
-def get_morning_training_readiness(date: str | None = None):
+@_tool("get_morning_training_readiness", "Training Readiness al despertar",
+       "Training Readiness calculado al despertar (el valor de la mañana, sin la evolución del día).")
+def get_morning_training_readiness(date: Day = None):
     return _dispatch("get_morning_training_readiness", {"date": date})
 
 
-@mcp.tool(name="get_training_status")
+@_tool("get_training_status", "Estado de entrenamiento de Garmin",
+       "Estado de entrenamiento según Garmin (productivo, mantenimiento, sobrecarga…), VO2máx y carga aguda de "
+       "Garmin. Es la valoración de Garmin, no el estado de carga de Kairos.")
 def get_training_status():
     return _dispatch("get_training_status", {})
 
 
-@mcp.tool(name="get_training_load_trend")
-def get_training_load_trend(start_date: str | None = None, end_date: str | None = None, date: str | None = None):
-    """Carga nativa de Garmin por día (suma de activityTrainingLoad de sus actividades).
-
-    NO es TSS y no sirve para CTL/ATL/TSB: en otra escala (×0.07 a ×2 frente al TSS). Para el TSS
-    y la serie CTL/ATL/TSB de Kairos usa `kairos_load_trends`. Si la citas, llámala "Carga Garmin".
-    """
+@_tool("get_training_load_trend", "Carga Garmin por día (no TSS)",
+       "Carga nativa de Garmin por día (suma de activityTrainingLoad de sus actividades). NO es TSS y no sirve "
+       "para CTL/ATL/TSB: está en otra escala (×0.07 a ×2 frente al TSS). Para el TSS y la serie CTL/ATL/TSB de "
+       "Kairos usa kairos_load_trends. Si la citas, llámala 'Carga Garmin'.")
+def get_training_load_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_training_load_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 
 
-@mcp.tool(name="get_training_effect")
-def get_training_effect(activity_id: int | None = None):
+@_tool("get_training_effect", "Training Effect de una actividad",
+       "Training Effect aeróbico y anaeróbico de una actividad (0–5) y su etiqueta (AEROBIC_BASE, TEMPO, VO2MAX…).")
+def get_training_effect(
+    activity_id: Annotated[int | None, Field(description="ID de la actividad en Garmin (activityId).")] = None,
+):
     return _dispatch("get_training_effect", {"activity_id": activity_id})
 
 
-@mcp.tool(name="get_hrv_trend")
-def get_hrv_trend(start_date: str | None = None, end_date: str | None = None, date: str | None = None):
+@_tool("get_hrv_trend", "Tendencia de HRV",
+       "HRV nocturna día a día en un rango (máximo 90 días).")
+def get_hrv_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_hrv_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 
 
-@mcp.tool(name="get_vo2max_trend")
-def get_vo2max_trend(start_date: str | None = None, end_date: str | None = None, date: str | None = None):
+@_tool("get_vo2max_trend", "Tendencia de VO2máx",
+       "VO2máx estimado por Garmin (carrera y ciclismo) en un rango de fechas.")
+def get_vo2max_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_vo2max_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 
 
-@mcp.tool(name="get_endurance_score")
+@_tool("get_endurance_score", "Endurance Score",
+       "Puntuación de resistencia de Garmin (Endurance Score) y su clasificación.")
 def get_endurance_score():
     return _dispatch("get_endurance_score", {})
 
 
-@mcp.tool(name="get_fitnessage_data")
+@_tool("get_fitnessage_data", "Edad física",
+       "Edad física (Fitness Age) estimada por Garmin y los factores que la determinan.")
 def get_fitnessage_data():
     return _dispatch("get_fitnessage_data", {})
 
 
-@mcp.tool(name="get_lactate_threshold")
+@_tool("get_lactate_threshold", "Umbral de lactato de Garmin",
+       "Umbral de lactato estimado por Garmin (velocidad y FC). Solo informativo: el ritmo y la FC umbral que "
+       "usa Kairos para zonas, TSS y planes son los del perfil de Kairos.")
 def get_lactate_threshold():
     return _dispatch("get_lactate_threshold", {})
 
 
-@mcp.tool(name="get_cycling_ftp")
+@_tool("get_cycling_ftp", "FTP de ciclismo en Garmin",
+       "FTP de ciclismo registrado en Garmin (vatios).")
 def get_cycling_ftp():
     return _dispatch("get_cycling_ftp", {})
 
 
-@mcp.tool(name="get_race_predictions")
+@_tool("get_race_predictions", "Predicciones de carrera",
+       "Tiempos previstos por Garmin para 5K, 10K, media maratón y maratón.")
 def get_race_predictions():
     return _dispatch("get_race_predictions", {})
 
 
-@mcp.tool(name="get_personal_record")
+@_tool("get_personal_record", "Récords personales",
+       "Récords personales del usuario en Garmin (distancias de carrera, ciclismo, natación…), con su fecha.")
 def get_personal_record():
     return _dispatch("get_personal_record", {})
 
 
-@mcp.tool(name="get_weekly_steps")
-def get_weekly_steps(start_date: str | None = None, end_date: str | None = None):
+@_tool("get_weekly_steps", "Pasos por semana",
+       "Pasos acumulados por semana en el rango.")
+def get_weekly_steps(start_date: StartDate = None, end_date: EndDate = None):
     return _dispatch("get_weekly_steps", {"start_date": start_date, "end_date": end_date})
 
 
-@mcp.tool(name="get_weekly_intensity_minutes")
-def get_weekly_intensity_minutes(start_date: str | None = None, end_date: str | None = None):
+@_tool("get_weekly_intensity_minutes", "Minutos de intensidad por semana",
+       "Minutos de intensidad moderada y vigorosa por semana en el rango, con el objetivo semanal.")
+def get_weekly_intensity_minutes(start_date: StartDate = None, end_date: EndDate = None):
     return _dispatch("get_weekly_intensity_minutes", {"start_date": start_date, "end_date": end_date})
 
 
-@mcp.tool(name="get_weekly_stress")
-def get_weekly_stress(start_date: str | None = None, end_date: str | None = None):
+@_tool("get_weekly_stress", "Estrés por semana",
+       "Estrés medio por semana en el rango.")
+def get_weekly_stress(start_date: StartDate = None, end_date: EndDate = None):
     return _dispatch("get_weekly_stress", {"start_date": start_date, "end_date": end_date})
 
 
-@mcp.tool(name="get_sleep_summary")
-def get_sleep_summary(date: str | None = None):
+@_tool("get_sleep_summary", "Sueño (resumen)",
+       "Resumen del sueño de la noche que termina en la fecha: duración total, puntuación y segundos en sueño "
+       "profundo, ligero, REM y despierto.")
+def get_sleep_summary(date: Day = None):
     d = _as_iso_day(date)
     payload = _invoke_with_auth_retry("get_sleep_data", d)
     if not isinstance(payload, dict):

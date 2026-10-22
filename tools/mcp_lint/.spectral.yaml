@@ -1,0 +1,15 @@
+# Guía de estilo MCP de apiaddicts (mcps-style-guide), anclada a un commit concreto para que un
+# cambio en su repositorio no altere nuestro resultado sin revisarlo.
+# Se aplica al resultado de tools/list del MCP de Kairos con: python tools/lint_mcp.py
+extends:
+  - https://raw.githubusercontent.com/apiaddicts/mcps-style-guide/4d31626e8092c4a08ce9728c6c80bbe6b02ba68a/mcp-ruleset.yaml
+
+rules:
+  # No adoptada: exige camelCase (getActivities). El protocolo MCP admite guiones bajos y snake_case
+  # es lo habitual en servidores MCP en Python; renombrar rompería router, contratos, prompts y caché
+  # sin mejora para el agente. Decisión del 22/10/2026.
+  tool-name-required-and-casing: off
+
+  # No adoptada: declarar outputSchema obliga a devolver structuredContent conforme en cada respuesta,
+  # y nuestras tools devuelven el JSON de Garmin, que varía según endpoint y dispositivo. Decisión del 22/10/2026.
+  tool-output-schema-defined: off

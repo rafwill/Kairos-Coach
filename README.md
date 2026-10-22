@@ -65,7 +65,7 @@ Kairos pide el usuario, muestra los proveedores con clave configurada y arranca 
 
 Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué sesión me recomiendas para esta semana?"*, *"Créame un plan para mi media maratón"*.
 
-Con `make` disponible: `make setup`, `make serve`, `make test`, `make lint`.
+Con `make` disponible: `make setup`, `make serve`, `make test`, `make lint`, `make lint-mcp` (guía de estilo MCP).
 
 ## Estructura
 
@@ -85,6 +85,7 @@ tools/
   rebuild_tss_baseline.py   corrección del histórico de TSS (prueba; --apply escribe)
   run_bateria.py            batería de preguntas contra Kairos con tiempos por respuesta
   juez_bateria.py           juez determinista de la batería (rúbrica fija frente a Supabase)
+  lint_mcp.py, mcp_lint/    guía de estilo MCP de apiaddicts sobre las tools del servidor (Spectral)
   garmin-mcp-frozen.*       lanzadores del servidor MCP
 docs/                    arquitectura, harness, bitácora, runbook del MCP y batería
 ```

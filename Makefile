@@ -1,4 +1,4 @@
-.PHONY: setup setup-win login serve test lint
+.PHONY: setup setup-win login serve test lint lint-mcp
 
 VENV := .venv
 ifeq ($(OS),Windows_NT)
@@ -24,3 +24,6 @@ test:
 
 lint:
 	$(VENV_PY) -m ruff check agent tests tools
+
+lint-mcp:
+	$(VENV_PY) tools/lint_mcp.py

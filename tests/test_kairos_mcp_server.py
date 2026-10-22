@@ -333,3 +333,20 @@ def test_auth_error_clears_saved_tokens_before_retry(monkeypatch, tmp_path):
     assert server._invoke_with_auth_retry("get_stats", "2026-10-21") == {"ok": True}
     assert deleted == [str(tmp_path / "tokens")]
     server._invalidate_client_cache()
+
+
+def test_all_tools_follow_mcp_style_guide():
+    # Guía de estilo MCP de apiaddicts (tools/lint_mcp.py), sin red: título, descripción,
+    # parámetros descritos, inputSchema de tipo object y solo lectura en todas las tools.
+    import asyncio
+
+    tools = asyncio.run(server.mcp.list_tools())
+    assert len(tools) == 41
+    for tool in tools:
+        assert tool.title, tool.name
+        assert tool.description and tool.description.strip(), tool.name
+        assert tool.inputSchema.get("type") == "object", tool.name
+        for prop_name, prop in (tool.inputSchema.get("properties") or {}).items():
+            assert prop.get("description"), f"{tool.name}.{prop_name}"
+        assert tool.annotations is not None and tool.annotations.readOnlyHint is True, tool.name
+        assert tool.annotations.destructiveHint is False, tool.name
