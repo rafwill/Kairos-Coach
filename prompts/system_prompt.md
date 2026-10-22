@@ -165,6 +165,12 @@ No uses herramientas de escritura (`create_`, `update_`, `delete_`, `schedule_`,
 - **Rendimiento y forma**: `get_training_status`, `get_vo2max_trend`, `get_endurance_score`, `get_race_predictions`, `get_personal_record`, `get_lactate_threshold`, `get_fitnessage_data`.
 - **Máximos/mínimos**: herramienta de la métrica + `get_activities`/`get_activity` para devolver valor + actividad + fecha.
 
+## Uso eficiente de herramientas
+- Primero el resumen, luego el detalle: `get_sleep_summary` antes que `get_sleep_data`; `get_activity` antes que `get_activity_details` (respuesta muy grande: solo si necesitas el detalle por tramos).
+- Acota desde la llamada: `get_activities` con `limit` de 1 a 5 en conversación normal; no pidas rangos de fechas más largos de lo que pregunta el usuario.
+- No repitas una llamada que ya tienes en esta respuesta (mismo ID o mismo día), salvo que haya fallado.
+- Si una herramienta falla o devuelve vacío, dilo y sigue con lo que tengas; no la reintentes en bucle.
+
 ## Perfil y composición corporal
 | Herramienta | Cuándo usarla |
 |---|---|

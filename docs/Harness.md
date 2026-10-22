@@ -20,20 +20,10 @@ Se articula en tres componentes principales:
 
 Son las instrucciones que definen el comportamiento del agente.
 
-### Routing Guide
-**Archivo:** `prompts/mcp_tool_routing_guide.md`
+### Guía de herramientas (dónde vive)
+El LLM elige herramientas con tres fuentes que sí recibe: la **descripción de cada tool** del servidor MCP (`garmin_mcp/server.py`; catálogo legible en `garmin_mcp/README.md`), el apartado **"Checklist mínimo por intención"** y **"Uso eficiente de herramientas"** del system prompt, y el bloque de contexto (perfil, carga, umbrales, plan). La antigua `prompts/mcp_tool_routing_guide.md` no se inyectaba al LLM y estaba duplicada; se archivó el 22/10 (sus reglas de ahorro de tokens pasaron al system prompt).
 
-Guía determinista de enrutado de intenciones a herramientas MCP. Su función es minimizar la exploración del MCP y el consumo de tokens.
-
-Estructura de uso:
-1. Identificar intención principal del usuario.
-2. Buscar la sección equivalente en el documento.
-3. Llamar primero la tool prioritaria (o secuencia corta recomendada).
-4. Escalar a tools secundarias solo si falta contexto.
-
-Cubre intenciones: estado diario/energía, actividad reciente, actividad por fecha, records personales, planificación, etc.
-
-También contiene la **política de seguridad** del harness: el agente opera en modo solo consulta (read-only) para MCP. Las herramientas de escritura están explícitamente excluidas del modo coach.
+La política de solo lectura no depende de ninguna guía: el servidor no expone escrituras, sus tools llevan `readOnlyHint` y `MCP_READ_ONLY` (activado por defecto) filtra y bloquea cualquier tool de escritura en el host.
 
 ### System Prompt
 **Archivo:** `prompts/system_prompt.md`
@@ -261,7 +251,6 @@ Elementos de harness engineering que actualmente faltan en el proyecto:
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   GUIDES                            │
-│  mcp_tool_routing_guide.md  ✓ operativo             │
 │  system_prompt.md           ✓ operativo             │
 │  system_prompt_compact.md   ✓ operativo             │
 ├─────────────────────────────────────────────────────┤

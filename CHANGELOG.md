@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Changed (prompts)
+- `prompts/` deja solo lo que recibe el LLM (`system_prompt.md` y `system_prompt_compact.md`). `prompts/mcp_tool_routing_guide.md` no se inyectaba al LLM y duplicaba lo que ya cubren las descripciones de las tools, `garmin_mcp/README.md` y el "Checklist mínimo por intención" del prompt: pasa a `_archivo/docs/`. Sus reglas de ahorro de tokens (resumen antes que detalle, `limit` 1–5, no repetir llamadas, no reintentar en bucle) pasan a los dos system prompts como "Uso eficiente de herramientas".
+
 ### Added (documentación del MCP)
 - `garmin_mcp/README.md`: qué es el servidor, arranque (también desde otros clientes MCP), configuración, mantenimiento y catálogo de las 41 tools por categorías, con descripción, parámetros (tipo, valor por defecto, descripción) y anotaciones. El catálogo lo genera `tools/gen_mcp_docs.py` (`make docs-mcp`) desde el propio servidor; `test_tool_catalog_readme_is_up_to_date` falla si se cambia una tool sin regenerarlo.
 - `docs/mcp-tools-completo-vs-essentials.md` (catálogo del MCP de terceros de 126 tools, anterior al servidor propio) pasa a `_archivo/docs/`.

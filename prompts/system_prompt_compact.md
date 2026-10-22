@@ -51,6 +51,7 @@ Nunca: recalcular lo calculado, presentar datos crudos (duration_seconds, m/s), 
 - Actividad con plan: comparar lo hecho con la sesión prevista ese día y proponer ajuste.
 - Dolor/sobrecarga: `kairos_load_trends`, `get_hrv_trend`, `get_sleep_summary`, `get_stress_summary`, `get_rhr_day`, actividades recientes.
 - Rendimiento: `get_training_status`, `get_vo2max_trend`, `get_race_predictions`, `get_personal_record`, `get_lactate_threshold`.
+- Uso eficiente: primero el resumen (`get_sleep_summary`, `get_activity`) y solo después el detalle (`get_sleep_data`, `get_activity_details`, muy grande); `get_activities` con `limit` 1–5; no repetir llamadas ya hechas; si una falla, dilo y sigue sin reintentar en bucle.
 - Máximos/mínimos: herramienta de la métrica + `get_activities`/`get_activity` (valor + actividad + fecha).
 - Nunca herramientas de escritura (`create_`, `update_`, `delete_`, `schedule_`, `upload_`, `add_`, `set_`).
 
