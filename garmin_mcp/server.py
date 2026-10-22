@@ -403,6 +403,33 @@ def _vo2max_value(block: Any) -> Any:
     return block.get("vo2MaxPreciseValue") if block.get("vo2MaxPreciseValue") is not None else block.get("vo2MaxValue")
 
 
+# Zonas de FC configuradas en Garmin Connect (las del reloj). La librería no tiene método propio.
+_HR_ZONES_URL = "/biometric-service/heartRateZones"
+
+
+def _heart_rate_zones(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _invoke_with_auth_retry("connectapi", _HR_ZONES_URL)
+    sports: list[dict[str, Any]] = []
+    for item in payload if isinstance(payload, list) else [payload]:
+        if not isinstance(item, dict):
+            continue
+        floors = [item.get(f"zone{i}Floor") for i in range(1, 6)]
+        if any(not isinstance(f, (int, float)) for f in floors):
+            continue
+        max_hr = item.get("maxHeartRateUsed")
+        # Cada zona va de su suelo al suelo de la siguiente menos 1; la 5, hasta la FC máxima.
+        uppers = [int(floors[i + 1]) - 1 for i in range(4)] + [int(max_hr) if max_hr else None]
+        sports.append({
+            "sport": str(item.get("sport") or "").lower(),
+            "method": item.get("trainingMethod"),
+            "resting_hr": item.get("restingHeartRateUsed"),
+            "max_hr": max_hr,
+            "lactate_threshold_hr": item.get("lactateThresholdHeartRateUsed"),
+            "zones": [{"zone": i + 1, "min_bpm": int(floors[i]), "max_bpm": uppers[i]} for i in range(5)],
+        })
+    return {"sports": sports}
+
+
 def _activities_fordate(args: dict[str, Any]) -> Any:
     if args.get("date"):
         return _invoke_with_auth_retry("get_activities_fordate", _as_iso_day(args.get("date")))
@@ -474,6 +501,8 @@ def _dispatch(tool_name: str, args: dict[str, Any]) -> Any:
         return _respiration_summary(args)
     if tool_name == "get_training_effect":
         return _training_effect(args)
+    if tool_name == "get_heart_rate_zones":
+        return _heart_rate_zones(args)
     return _invoke_passthrough(tool_name, args)
 
 
@@ -728,9 +757,16 @@ def get_fitnessage_data(date: Day = None):
     return _dispatch("get_fitnessage_data", {"date": date})
 
 
+@_tool("get_heart_rate_zones", "Zonas de FC de Garmin",
+       "Zonas de frecuencia cardiaca configuradas en Garmin Connect (las que usa el reloj), por deporte "
+       "(default, running, cycling): método, FC de reposo, máxima y umbral, y las cinco zonas en lpm.")
+def get_heart_rate_zones():
+    return _dispatch("get_heart_rate_zones", {})
+
+
 @_tool("get_lactate_threshold", "Umbral de lactato de Garmin",
        "Umbral de lactato estimado por Garmin (velocidad y FC). Solo informativo: el ritmo y la FC umbral que "
-       "usa Kairos para zonas, TSS y planes son los del perfil de Kairos.")
+       "usa Kairos para TSS y planes son los del perfil de Kairos; las zonas, las de get_heart_rate_zones.")
 def get_lactate_threshold():
     return _dispatch("get_lactate_threshold", {})
 

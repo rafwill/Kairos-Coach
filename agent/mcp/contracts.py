@@ -56,6 +56,7 @@ TOOL_CONTRACTS_V1: dict[str, dict] = {
     "get_endurance_score": {},
     "get_fitnessage_data": {},
     "get_lactate_threshold": {},
+    "get_heart_rate_zones": {},
     "get_cycling_ftp": {},
     "get_race_predictions": {},
     "get_personal_record": {},

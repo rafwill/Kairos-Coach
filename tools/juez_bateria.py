@@ -123,7 +123,8 @@ class Truth:
         self.plan = storage.get_active_training_plan()
         lthr, _, _ = ta._resolve_hr_threshold_bpm(self.profile)
         self.lthr = float(lthr) if lthr else None
-        self.zones = ta._hr_zone_bounds_bpm(self.lthr) if self.lthr else []
+        # Zonas de carrera de Garmin guardadas en el perfil (las del reloj y TP); sin ellas, % del LTHR.
+        self.zones, self.zones_source = ta._resolve_hr_zones(self.profile, "running")
         self.pace_today = ta._resolve_running_threshold_pace_for_date(self.profile, self.today.isoformat())
         self._prs: set[str] | None = None
 

@@ -79,8 +79,8 @@ agent/
   mcp/
     client.py            cliente MCP: arranca el servidor, sesión stdio y llamadas a tools
     contracts.py         contratos de argumentos, normalización y caché de las tools
-garmin_mcp/              servidor MCP de Garmin Connect (41 tools, solo lectura), independiente de agent/
-  README.md              arranque, configuración y catálogo de las 41 tools
+garmin_mcp/              servidor MCP de Garmin Connect (42 tools, solo lectura), independiente de agent/
+  README.md              arranque, configuración y catálogo de las 42 tools
   server.py              definición de las tools; arranque: python -m garmin_mcp
 prompts/                 system prompt del LLM (completo; compacto solo para GitHub Models)
 supabase/                schema.sql (esquema completo e idempotente)
@@ -114,7 +114,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 
 - **Tests:** 574 passed, 6 skipped (22/10/2026). No necesitan red. Los 6 saltados son la prueba de humo con el Inspector oficial de MCP 2.12.0 (`RUN_MCP_INSPECTOR_SMOKE=1`, con `GARMIN_EMAIL` y `GARMIN_PASSWORD` en el entorno; 6/6 el 22/10).
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
-- **`healthcheck_mcp`:** llama a las 41 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
+- **`healthcheck_mcp`:** llama a las 42 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
 - **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
 - Las salidas con datos reales van a `.tmp/`, que está en `.gitignore`.
 
@@ -126,7 +126,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Capas, tablas de Supabase, flujos de arranque, cálculo y chat, MCP y seguridad |
 | [`docs/Harness.md`](docs/Harness.md) | Hooks, router determinista y sensores de calidad |
 | [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Bitácora de investigación |
-| [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración y catálogo de las 41 tools (generado) |
+| [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración y catálogo de las 42 tools (generado) |
 | [`docs/mcp-frozen-runbook.md`](docs/mcp-frozen-runbook.md) | Operación del servidor MCP e incidentes 429/403 |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`TODO.md`](TODO.md) | Cambios y hoja de ruta |
 

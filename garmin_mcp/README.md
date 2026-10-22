@@ -51,14 +51,14 @@ Al añadir una tool: definirla en `server.py` con `_tool(nombre, título, descri
 
 <!-- BEGIN: catálogo generado por tools/gen_mcp_docs.py (no editar a mano) -->
 
-## Catálogo de tools (41)
+## Catálogo de tools (42)
 
 | Categoría | Tools |
 |---|---|
 | Actividades | [`get_activities`](#get-activities), [`get_activities_by_date`](#get-activities-by-date), [`get_activities_fordate`](#get-activities-fordate), [`get_activity`](#get-activity), [`get_activity_details`](#get-activity-details), [`get_activity_splits`](#get-activity-splits), [`get_activity_hr_in_timezones`](#get-activity-hr-in-timezones), [`get_activity_power_in_timezones`](#get-activity-power-in-timezones), [`get_activity_exercise_sets`](#get-activity-exercise-sets), [`get_training_effect`](#get-training-effect) |
 | Salud diaria | [`get_stats`](#get-stats), [`get_heart_rates_summary`](#get-heart-rates-summary), [`get_rhr_day`](#get-rhr-day), [`get_stress_summary`](#get-stress-summary), [`get_all_day_stress`](#get-all-day-stress), [`get_all_day_events`](#get-all-day-events), [`get_body_battery`](#get-body-battery), [`get_respiration_summary`](#get-respiration-summary), [`get_spo2_data`](#get-spo2-data), [`get_daily_steps`](#get-daily-steps), [`get_hydration_data`](#get-hydration-data), [`get_body_composition`](#get-body-composition) |
 | Sueño y recuperación | [`get_sleep_data`](#get-sleep-data), [`get_sleep_summary`](#get-sleep-summary), [`get_hrv_data`](#get-hrv-data), [`get_hrv_trend`](#get-hrv-trend), [`get_training_readiness`](#get-training-readiness), [`get_morning_training_readiness`](#get-morning-training-readiness) |
-| Rendimiento | [`get_training_status`](#get-training-status), [`get_training_load_trend`](#get-training-load-trend), [`get_vo2max_trend`](#get-vo2max-trend), [`get_endurance_score`](#get-endurance-score), [`get_fitnessage_data`](#get-fitnessage-data), [`get_lactate_threshold`](#get-lactate-threshold), [`get_cycling_ftp`](#get-cycling-ftp), [`get_race_predictions`](#get-race-predictions), [`get_personal_record`](#get-personal-record) |
+| Rendimiento | [`get_training_status`](#get-training-status), [`get_training_load_trend`](#get-training-load-trend), [`get_vo2max_trend`](#get-vo2max-trend), [`get_endurance_score`](#get-endurance-score), [`get_fitnessage_data`](#get-fitnessage-data), [`get_lactate_threshold`](#get-lactate-threshold), [`get_heart_rate_zones`](#get-heart-rate-zones), [`get_cycling_ftp`](#get-cycling-ftp), [`get_race_predictions`](#get-race-predictions), [`get_personal_record`](#get-personal-record) |
 | Resúmenes semanales | [`get_weekly_steps`](#get-weekly-steps), [`get_weekly_intensity_minutes`](#get-weekly-intensity-minutes), [`get_weekly_stress`](#get-weekly-stress) |
 | Perfil | [`get_user_profile`](#get-user-profile) |
 
@@ -455,7 +455,16 @@ Edad física (Fitness Age) estimada por Garmin y los factores que la determinan.
 <a id="get-lactate-threshold"></a>
 #### `get_lactate_threshold` — Umbral de lactato de Garmin
 
-Umbral de lactato estimado por Garmin (velocidad y FC). Solo informativo: el ritmo y la FC umbral que usa Kairos para zonas, TSS y planes son los del perfil de Kairos.
+Umbral de lactato estimado por Garmin (velocidad y FC). Solo informativo: el ritmo y la FC umbral que usa Kairos para TSS y planes son los del perfil de Kairos; las zonas, las de get_heart_rate_zones.
+
+Sin parámetros.
+
+*solo lectura, no destructiva, idempotente, consulta un servicio externo (Garmin)*
+
+<a id="get-heart-rate-zones"></a>
+#### `get_heart_rate_zones` — Zonas de FC de Garmin
+
+Zonas de frecuencia cardiaca configuradas en Garmin Connect (las que usa el reloj), por deporte (default, running, cycling): método, FC de reposo, máxima y umbral, y las cinco zonas en lpm.
 
 Sin parámetros.
 

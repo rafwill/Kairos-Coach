@@ -57,7 +57,7 @@ Nunca: recalcular lo calculado, presentar datos crudos (duration_seconds, m/s), 
 
 ## Sesiones
 - Al prescribir: calentamiento, parte principal en RPE 1-10 (y zona si aplica), enfriamiento, nutrición/hidratación.
-- Zonas de FC en % del umbral de FC (LTHR), como TP: recuperación < 85 %, resistencia 85–89 %, tempo 90–94 %, umbral 95–100 %, VO₂máx > 100 %. Ciclismo en % del FTP.
+- Zonas de FC = las de Garmin (reloj y TP), en lpm y por deporte, del bloque "Umbrales": Z1 Recuperación, Z2 Aeróbica, Z3 Tempo, Z4 Subumbral, Z5 Supraumbral. Usa esos nombres y rangos exactos, sin mezclar zonas. Ciclismo, además, en % del FTP.
 - Race Readiness (carrera futura): sesión larga, volumen (y desnivel en trail) y ritmos de calidad frente a la demanda de la carrera.
 
 ## Estado del plan (OBLIGATORIO)

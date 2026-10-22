@@ -6,7 +6,7 @@ Operar Kairos con backend MCP propio local (`frozen`) como única ruta de ejecuc
 ## Estado operativo
 - Backend por defecto: `MCP_BACKEND=frozen`.
 - Señal en runtime: `KAIROS_MCP_BACKEND_EFFECTIVE`.
-- Catálogo Essentials: 44 tools (`41 Garmin + 3 Kairos internas`).
+- Catálogo Essentials: 45 tools (`42 Garmin + 3 Kairos internas`).
 - Contratos versionados: `mcp-adapter-v1`.
 - Ruta de invocación por defecto: single-path directo a MCP.
 - Fallback de contingencia: desactivado por defecto (activar con `KAIROS_MCP_ENABLE_FALLBACK=true`).

@@ -3651,21 +3651,64 @@ def _resolve_tp_hr_threshold_for_date(profile: dict | None, d_iso: str) -> float
     return _resolve_profile_history_value(profile, "hr_threshold_tp_history", "bpm", d_iso, (120, 230))
 
 
-def _hr_zone_bounds_bpm(lthr: float) -> list[tuple[str, int, int]]:
-    """Zonas de FC en lpm a partir del umbral (% del LTHR, como TrainingPeaks).
+# Nombres de zona de FC: los de TrainingPeaks, en español. Los mismos en el contexto del LLM, en los
+# análisis de actividad y en el juez (antes convivían los de Garmin, "Suave" para Z2, y los de Kairos).
+HR_ZONE_NAMES_ES = {1: "Recuperación", 2: "Aeróbica", 3: "Tempo", 4: "Subumbral", 5: "Supraumbral"}
 
-    recuperación < 85 % · resistencia 85–89 % · tempo 90–94 % · umbral 95–100 % · VO₂máx > 100 %.
+
+def _zones_from_floors(floors: list[int], top: int) -> list[tuple[str, int, int]]:
+    """Zonas contiguas: cada una va de su suelo al de la siguiente menos 1; la última, hasta `top`."""
+    uppers = [floors[i + 1] - 1 for i in range(len(floors) - 1)] + [top]
+    return [(f"Z{i + 1} {HR_ZONE_NAMES_ES[i + 1]}", floors[i], uppers[i]) for i in range(len(floors))]
+
+
+def _hr_zone_bounds_bpm(lthr: float) -> list[tuple[str, int, int]]:
+    """Respaldo cuando no hay zonas de Garmin guardadas: % del LTHR como TrainingPeaks.
+
+    Z1 < 85 % · Z2 85–89 % · Z3 90–94 % · Z4 95–99 % · Z5 ≥ 100 %, contiguas (antes 151 y 160 lpm
+    no caían en ninguna zona por redondeo).
     """
     def _bpm(pct: float) -> int:
         return int(round(float(lthr) * pct / 100.0))
 
-    return [
-        ("recuperación", 0, _bpm(85) - 1),
-        ("resistencia", _bpm(85), _bpm(89)),
-        ("tempo", _bpm(90), _bpm(94)),
-        ("umbral", _bpm(95), _bpm(100)),
-        ("vo2max", _bpm(100) + 1, 250),
-    ]
+    return _zones_from_floors([0, _bpm(85), _bpm(90), _bpm(95), _bpm(100)], 250)
+
+
+def _resolve_hr_zones(profile: dict | None, sport: str = "running") -> tuple[list[tuple[str, int, int]], str]:
+    """Zonas de FC en lpm para el deporte y su fuente.
+
+    Fuente de verdad: las zonas de Garmin Connect (las del reloj y TrainingPeaks), que Kairos lee con
+    get_heart_rate_zones y guarda en performance.hr_zones_garmin. Sin ellas, % del LTHR del perfil.
+    """
+    perf = (profile or {}).get("performance") or {}
+    stored = perf.get("hr_zones_garmin") or {}
+    by_sport = {str(x.get("sport") or ""): x for x in stored.get("sports") or [] if isinstance(x, dict)}
+    item = by_sport.get(sport) or by_sport.get("default")
+    if item:
+        zones = item.get("zones") or []
+        floors = [int(z["min_bpm"]) for z in zones if z.get("min_bpm") is not None]
+        top = item.get("max_hr") or (zones[-1].get("max_bpm") if zones else None) or 250
+        if len(floors) == 5:
+            method = {"HR_RESERVE": "reserva de FC", "LACTATE_THRESHOLD": "% del umbral",
+                      "PERCENT_MAX_HR": "% de la FC máxima"}.get(str(item.get("method") or ""), str(item.get("method") or ""))
+            return _zones_from_floors(floors, int(top)), f"Garmin ({method})" if method else "Garmin"
+    lthr, _, _ = _resolve_hr_threshold_bpm(profile)
+    if lthr:
+        return _hr_zone_bounds_bpm(float(lthr)), "% del LTHR (sin zonas de Garmin guardadas)"
+    return [], ""
+
+
+def _normalize_garmin_hr_zones(payload: Any) -> dict | None:
+    """Salida de get_heart_rate_zones → {"sports": [{sport, method, resting_hr, max_hr, lactate_threshold_hr, zones}]}."""
+    data = _try_parse_json(payload) if isinstance(payload, str) else payload
+    sports = data.get("sports") if isinstance(data, dict) else None
+    clean = []
+    for item in sports or []:
+        zones = item.get("zones") if isinstance(item, dict) else None
+        if not zones or len(zones) != 5 or any(z.get("min_bpm") is None for z in zones):
+            continue
+        clean.append({k: item.get(k) for k in ("sport", "method", "resting_hr", "max_hr", "lactate_threshold_hr", "zones")})
+    return {"sports": sorted(clean, key=lambda x: str(x.get("sport") or ""))} if clean else None
 
 
 def _resolve_running_threshold_pace_for_date(profile: dict | None, d_iso: str) -> float | None:
@@ -8584,14 +8627,8 @@ def _parse_hr_zones_list(raw: str | None) -> list[dict] | None:
     return normalized if normalized else None
 
 
-# Nombres de zonas FC de Garmin en español (zona número → nombre)
-_GARMIN_ZONE_NAMES_ES = {
-    1: "Calentamiento",
-    2: "Suave",
-    3: "Aeróbica",
-    4: "Umbral",
-    5: "Máximo",
-}
+# Nombres de las zonas en los análisis de actividad: los mismos que en el resto de Kairos.
+_GARMIN_ZONE_NAMES_ES = HR_ZONE_NAMES_ES
 
 # Mapeo de typeKey de actividades Garmin → nombre en español
 _GARMIN_ACTIVITY_NAMES_ES: dict[str, str] = {
@@ -9714,6 +9751,37 @@ class TrainerAgent:
         self.tools_schema.extend(_KAIROS_INTERNAL_TOOLS)
 
         self._restore_previous_session()
+        await self._refresh_hr_zones_from_garmin()
+
+    async def _refresh_hr_zones_from_garmin(self) -> None:
+        """Lee las zonas de FC de Garmin y las guarda en el perfil solo si cambian.
+
+        Fuente de verdad de las zonas (reloj y TrainingPeaks). Una llamada por arranque; si Garmin falla,
+        se siguen usando las guardadas. La versión anterior pasa a hr_zones_garmin_history con su fecha.
+        """
+        try:
+            raw = await call_tool(self.mcp_session, "get_heart_rate_zones", {})
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError) as exc:
+            log.info("Zonas de FC: Garmin no responde, se usan las guardadas (%s)", exc)
+            return
+        live = _normalize_garmin_hr_zones(raw)
+        if not live or not isinstance(self.user_profile, dict):
+            log.info("Zonas de FC: Garmin no devolvió zonas válidas; se usan las guardadas")
+            return
+        perf = self.user_profile.setdefault("performance", {})
+        stored = perf.get("hr_zones_garmin") or {}
+        if stored.get("sports") == live["sports"]:
+            return
+        today_iso = date.today().isoformat()
+        if stored.get("sports"):
+            history = perf.setdefault("hr_zones_garmin_history", [])
+            history.append({"valid_from": stored.get("updated_at"), "valid_until": today_iso, "sports": stored["sports"]})
+        perf["hr_zones_garmin"] = {"updated_at": today_iso, **live}
+        try:
+            _save_user_profile(self.user_profile)
+            log.info("Zonas de FC: actualizadas desde Garmin (%s)", today_iso)
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            log.warning("Zonas de FC: no se pudieron guardar en el perfil: %s", exc)
 
     def _restore_previous_session(self) -> None:
         """De la sesión anterior solo se recuperan las preguntas del usuario (temas), no las respuestas:
@@ -11212,15 +11280,15 @@ class TrainerAgent:
         anchors = []
         hr_thr, _, _ = _resolve_hr_threshold_bpm(self.user_profile)
         if hr_thr:
-            zones = {name: (lo, hi) for name, lo, hi in _hr_zone_bounds_bpm(float(hr_thr))}
             anchors.append(f"- Umbral de FC (LTHR): {int(round(float(hr_thr)))} lpm")
-            anchors.append(
-                "- Zonas de FC (% del umbral, como TrainingPeaks): "
-                f"recuperación < {zones['resistencia'][0]} lpm · "
-                f"resistencia {zones['resistencia'][0]}–{zones['resistencia'][1]} · "
-                f"tempo {zones['tempo'][0]}–{zones['tempo'][1]} · "
-                f"umbral {zones['umbral'][0]}–{zones['umbral'][1]} · VO₂máx > {zones['umbral'][1]} lpm"
-            )
+        for sport, label in (("running", "carrera"), ("cycling", "ciclismo")):
+            zones, source = _resolve_hr_zones(self.user_profile, sport)
+            if zones:
+                anchors.append(
+                    f"- Zonas de FC de {label} [{source}]: "
+                    + " · ".join(f"{name} < {hi + 1}" if lo <= 0 else f"{name} {lo}–{hi}" for name, lo, hi in zones)
+                    + " lpm"
+                )
         tp_thr = _resolve_tp_hr_threshold_for_date(self.user_profile, today_iso)
         if tp_thr and (not hr_thr or int(tp_thr) != int(hr_thr)):
             anchors.append(f"- Umbral de FC de referencia de TrainingPeaks (hrTSS): {int(tp_thr)} lpm")

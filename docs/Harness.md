@@ -122,7 +122,7 @@ Toda la capa de Supabase y Garmin está mockeada — no se realizan conexiones r
 
 - Globales (G1–G5): hay respuesta y coaching; Garmin accesible (si no, fallo de entorno); fechas DD/MM/AAAA; nada de "datos disponibles" sin cifras; sin turnos de usuario inventados.
 - Por pregunta: CTL/ATL/TSB y zona de Forma = serie del día; TSS semanal, diario y por actividad = `load_metrics_daily` / `activity_tss`; actividades de un rango ⊇ `activity_tss`; análisis de la actividad correcta con su TSS y su Carga Garmin (`native_load`); recuento y desglose por deporte; umbrales y su historial = perfil; plan activo = `training_plan`; récords = Garmin; objetivo = `goals`; últimas 20 por deporte = `activity_tss` (orden, TSS, carga, media y máximo).
-- En el texto del LLM: no atribuye a la CTL el máximo habitual de la ATL; cada rango de FC en lpm cabe en una zona; un ritmo citado como umbral es el vigente.
+- En el texto del LLM: no atribuye a la CTL el máximo habitual de la ATL; cada rango de FC en lpm cabe en una zona (zonas de carrera de Garmin guardadas en el perfil, las del reloj y TP; desde el 22/10, antes % del LTHR); un ritmo citado como umbral es el vigente.
 - Tolerancias: ±0,1 en TSS/CTL/ATL/TSB, ±1 lpm, ±2 s/km. No juzga la calidad del consejo (revisión humana).
 
 Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera pasada (22/10): detectó que la "Carga Garmin" de las salidas en bici con potencia mostraba el TSS de Garmin.
@@ -136,7 +136,7 @@ Pasa la guía de estilo MCP de apiaddicts (`mcps-style-guide`, Spectral) sobre e
 **Herramientas:** test de contrato (`test_every_tool_calls_garminconnect_with_its_real_signature`, en CI) y `tools/healthcheck_mcp.py` (`make health-mcp`, bajo demanda)
 
 - El test de contrato, sin red, comprueba que cada tool llama a `garminconnect` con argumentos válidos para la versión instalada (habría detectado las 8 tools rotas del 22/10 y detecta cambios de firma al actualizar la librería).
-- El healthcheck en vivo llama a las 41 tools contra Garmin (ayer, últimas dos semanas, actividad más reciente) y clasifica cada una: OK, VACÍA (aviso), ERROR o ENTORNO (429/autenticación: no es fallo de Kairos). Informe en `.tmp/healthcheck/`; sale con 1 si alguna tool falla. Lanzarlo al actualizar `garminconnect`, antes de una batería o si algo parece raro; no en el arranque de Kairos. 22/10: 37 OK, 4 VACÍA (potencia sin potenciómetro, Training Readiness no disponible en el Fénix 6X Pro, sin eventos), 0 ERROR.
+- El healthcheck en vivo llama a las 42 tools contra Garmin (ayer, últimas dos semanas, actividad más reciente) y clasifica cada una: OK, VACÍA (aviso), ERROR o ENTORNO (429/autenticación: no es fallo de Kairos). Informe en `.tmp/healthcheck/`; sale con 1 si alguna tool falla. Lanzarlo al actualizar `garminconnect`, antes de una batería o si algo parece raro; no en el arranque de Kairos. 22/10: 37 OK, 4 VACÍA (potencia sin potenciómetro, Training Readiness no disponible en el Fénix 6X Pro, sin eventos), 0 ERROR.
 
 #### GitHub Actions CI
 **Archivo:** `.github/workflows/tests.yml`

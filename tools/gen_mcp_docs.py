@@ -35,7 +35,7 @@ CATEGORIES: list[tuple[str, list[str]]] = [
     ]),
     ("Rendimiento", [
         "get_training_status", "get_training_load_trend", "get_vo2max_trend", "get_endurance_score",
-        "get_fitnessage_data", "get_lactate_threshold", "get_cycling_ftp", "get_race_predictions",
+        "get_fitnessage_data", "get_lactate_threshold", "get_heart_rate_zones", "get_cycling_ftp", "get_race_predictions",
         "get_personal_record",
     ]),
     ("Resúmenes semanales", ["get_weekly_steps", "get_weekly_intensity_minutes", "get_weekly_stress"]),

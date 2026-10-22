@@ -4,6 +4,14 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-22
 
+### Changed (zonas de FC: las de Garmin mandan)
+- Kairos usaba dos juegos de zonas: los análisis de actividad mostraban las de Garmin (reserva de FC: Z2 135–145) y el contexto del LLM, las prescripciones y el juez, las suyas por % del LTHR (resistencia 144–150). El LLM mezclaba ambas (fallo de la pregunta 1 de la batería). Decisión del usuario: mandan las de Garmin, que son las del reloj y las de TrainingPeaks.
+- Nueva tool `get_heart_rate_zones` (42): zonas configuradas en Garmin Connect por deporte (default, running, cycling), con método, FC de reposo, máxima y umbral, y las cinco zonas cerradas en lpm.
+- Al arrancar, Kairos las lee y las guarda en el perfil (`performance.hr_zones_garmin`) solo si cambian; la versión anterior pasa a `hr_zones_garmin_history` con sus fechas. Si Garmin falla, usa las guardadas.
+- `_resolve_hr_zones(perfil, deporte)` es la fuente única: contexto del LLM (zonas de carrera y de ciclismo con nombre y lpm), análisis de actividad (mismos nombres) y juez. Nombres de TP en español: Z1 Recuperación, Z2 Aeróbica, Z3 Tempo, Z4 Subumbral, Z5 Supraumbral (antes "Calentamiento/Suave/…" en los análisis y "recuperación/resistencia/…" en el resto).
+- Respaldo sin zonas de Garmin: % del LTHR, ahora sin huecos (151 y 160 lpm no caían en ninguna zona por redondeo).
+- No cambia el TSS: el hrTSS usa sus tramos de % del umbral de TP (`TP_HRTSS_RATES`). Los objetivos `hr_pct` del JSON de los planes siguen en % del LTHR (no se muestran).
+
 ### Changed (series de tendencia e instalación)
 - `get_vo2max_trend` pide el rango en una sola llamada al endpoint `maxmet/daily/{inicio}/{fin}` de Garmin (el mismo que usa `get_max_metrics`, que solo lo llama con un día) y devuelve todos los días con estimación. Antes consultaba un día de cada 7 y muchas muestras caían en días sin estimación: en dos meses, 31 valores en vez de 4–6, en 0,6 s.
 - Series de tendencia en el host: además de las filas, `rows_total` y `summary` por columna (n, mín, máx, media, primero y último; recuento por valor en las de texto), calculados sobre todas las filas. Los dos system prompts piden citar `summary` en vez de contar o promediar (el LLM decía "13/14 días" con 14 de 15).

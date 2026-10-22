@@ -197,6 +197,7 @@ GARMIN_ESSENTIAL_TOOLS: tuple[str, ...] = (
     "get_endurance_score",
     "get_fitnessage_data",
     "get_lactate_threshold",
+    "get_heart_rate_zones",
     "get_cycling_ftp",
     # Predicciones y récords personales
     "get_race_predictions",

@@ -126,6 +126,31 @@ def test_vo2max_trend_returns_every_estimate_in_one_range_call(monkeypatch):
     ]
 
 
+def test_heart_rate_zones_returns_closed_zones_per_sport(monkeypatch):
+    class _Fake:
+        def connectapi(self, path: str):
+            assert path == "/biometric-service/heartRateZones"
+            return [
+                {"trainingMethod": "HR_RESERVE", "restingHeartRateUsed": 40, "lactateThresholdHeartRateUsed": 166,
+                 "zone1Floor": 115, "zone2Floor": 135, "zone3Floor": 146, "zone4Floor": 158, "zone5Floor": 169,
+                 "maxHeartRateUsed": 179, "sport": "RUNNING"},
+                {"trainingMethod": "HR_RESERVE", "sport": "SWIMMING", "zone1Floor": None},  # sin zonas: se omite
+            ]
+
+    monkeypatch.setattr(server, "_garmin_client", lambda: _Fake())
+
+    out = server._heart_rate_zones({})
+
+    assert len(out["sports"]) == 1
+    running = out["sports"][0]
+    assert running["sport"] == "running" and running["method"] == "HR_RESERVE" and running["max_hr"] == 179
+    assert running["zones"] == [
+        {"zone": 1, "min_bpm": 115, "max_bpm": 134}, {"zone": 2, "min_bpm": 135, "max_bpm": 145},
+        {"zone": 3, "min_bpm": 146, "max_bpm": 157}, {"zone": 4, "min_bpm": 158, "max_bpm": 168},
+        {"zone": 5, "min_bpm": 169, "max_bpm": 179},
+    ]
+
+
 def test_training_effect_reads_activity_fields(monkeypatch):
     monkeypatch.setattr(server, "_garmin_client", lambda: _FakeGarmin())
 
@@ -391,7 +416,7 @@ def test_all_tools_follow_mcp_style_guide():
     import asyncio
 
     tools = asyncio.run(server.mcp.list_tools())
-    assert len(tools) == 41
+    assert len(tools) == 42
     for tool in tools:
         assert tool.title, tool.name
         assert tool.description and tool.description.strip(), tool.name

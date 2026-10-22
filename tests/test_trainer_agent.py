@@ -6129,3 +6129,89 @@ class TestStructuredPlanEngine:
         out = _summarize_plan_changes(previous_plan, new_plan, previous_sessions, new_sessions)
         assert "Duración" in out
         assert "Volumen semanal estimado" in out
+
+
+class TestHrZonesFromGarmin:
+    """Zonas de FC: las de Garmin (reloj y TP) guardadas en el perfil; respaldo % LTHR sin huecos."""
+
+    GARMIN = {"sports": [
+        {"sport": "cycling", "method": "HR_RESERVE", "resting_hr": 40, "max_hr": 179, "lactate_threshold_hr": 153,
+         "zones": [{"zone": i + 1, "min_bpm": f, "max_bpm": None} for i, f in enumerate((105, 125, 136, 146, 159))]},
+        {"sport": "running", "method": "HR_RESERVE", "resting_hr": 40, "max_hr": 179, "lactate_threshold_hr": 166,
+         "zones": [{"zone": i + 1, "min_bpm": f, "max_bpm": None} for i, f in enumerate((115, 135, 146, 158, 169))]},
+    ]}
+
+    def _profile(self, zones=None):
+        perf = {"hr_threshold_bpm": 169}
+        if zones:
+            perf["hr_zones_garmin"] = {"updated_at": "2026-10-22", **zones}
+        return {"performance": perf}
+
+    def test_uses_garmin_zones_per_sport(self):
+        import agent.trainer_agent as ta
+        zones, source = ta._resolve_hr_zones(self._profile(self.GARMIN), "running")
+        assert source == "Garmin (reserva de FC)"
+        assert zones == [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
+                         ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
+        cycling, _ = ta._resolve_hr_zones(self._profile(self.GARMIN), "cycling")
+        assert cycling[1] == ("Z2 Aeróbica", 125, 135)
+        # Deporte sin zonas propias y sin "default": no inventa; cae al respaldo por LTHR.
+        other, source = ta._resolve_hr_zones(self._profile(self.GARMIN), "swimming")
+        assert source.startswith("% del LTHR")
+
+    def test_lthr_fallback_has_no_gaps(self):
+        import agent.trainer_agent as ta
+        zones, source = ta._resolve_hr_zones(self._profile(), "running")
+        assert source.startswith("% del LTHR")
+        covered = {bpm for _, lo, hi in zones for bpm in range(lo, hi + 1)}
+        assert set(range(100, 200)) <= covered  # antes 151 y 160 no caían en ninguna zona
+        assert [z[0] for z in zones][1] == "Z2 Aeróbica"
+
+    def test_context_block_lists_garmin_zones(self):
+        agent = TrainerAgent.__new__(TrainerAgent)
+        agent.user_profile = self._profile(self.GARMIN)
+        out = agent._load_and_anchors_context_block()
+        assert "Zonas de FC de carrera [Garmin (reserva de FC)]: Z1 Recuperación 115–134 · Z2 Aeróbica 135–145" in out
+        assert "Zonas de FC de ciclismo [Garmin (reserva de FC)]: Z1 Recuperación 105–124" in out
+
+    def _agent_with_tool(self, payload, profile):
+        agent = TrainerAgent.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = profile
+        return agent, patch("agent.trainer_agent.call_tool", AsyncMock(return_value=payload))
+
+    def _payload(self, z2_floor=135):
+        return json.dumps({"sports": [
+            {**s, "zones": [dict(z, min_bpm=(z2_floor if s["sport"] == "running" and z["zone"] == 2 else z["min_bpm"]))
+                            for z in s["zones"]]}
+            for s in self.GARMIN["sports"]]})
+
+    @pytest.mark.asyncio
+    async def test_refresh_saves_only_when_zones_change(self):
+        profile = self._profile(self.GARMIN)
+        agent, tool_patch = self._agent_with_tool(self._payload(), profile)
+        with tool_patch, patch("agent.trainer_agent._save_user_profile") as save_mock:
+            await agent._refresh_hr_zones_from_garmin()
+        save_mock.assert_not_called()
+
+        agent, tool_patch = self._agent_with_tool(self._payload(z2_floor=136), profile)
+        with tool_patch, patch("agent.trainer_agent._save_user_profile") as save_mock:
+            await agent._refresh_hr_zones_from_garmin()
+        save_mock.assert_called_once()
+        perf = profile["performance"]
+        running = next(s for s in perf["hr_zones_garmin"]["sports"] if s["sport"] == "running")
+        assert running["zones"][1]["min_bpm"] == 136
+        assert perf["hr_zones_garmin"]["updated_at"] == date.today().isoformat()
+        assert perf["hr_zones_garmin_history"][-1]["valid_from"] == "2026-10-22"
+
+    @pytest.mark.asyncio
+    async def test_refresh_keeps_stored_zones_when_garmin_fails(self):
+        profile = self._profile(self.GARMIN)
+        agent = TrainerAgent.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = profile
+        with patch("agent.trainer_agent.call_tool", AsyncMock(side_effect=TimeoutError("sin red"))), \
+             patch("agent.trainer_agent._save_user_profile") as save_mock:
+            await agent._refresh_hr_zones_from_garmin()
+        save_mock.assert_not_called()
+        assert profile["performance"]["hr_zones_garmin"]["sports"] == self.GARMIN["sports"]
