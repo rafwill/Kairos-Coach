@@ -1,4 +1,4 @@
-.PHONY: setup setup-win login serve test lint lint-mcp
+.PHONY: setup setup-win login serve test lint lint-mcp health-mcp
 
 VENV := .venv
 ifeq ($(OS),Windows_NT)
@@ -27,3 +27,6 @@ lint:
 
 lint-mcp:
 	$(VENV_PY) tools/lint_mcp.py
+
+health-mcp:
+	$(VENV_PY) tools/healthcheck_mcp.py

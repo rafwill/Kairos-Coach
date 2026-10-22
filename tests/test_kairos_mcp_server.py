@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from garminconnect.exceptions import GarminConnectAuthenticationError
 from garminconnect.exceptions import GarminConnectConnectionError
@@ -392,3 +394,19 @@ def test_every_tool_calls_garminconnect_with_its_real_signature(monkeypatch):
             failures.append(f"{tool.name}: {exc}")
     assert not failures, "\n".join(failures)
     assert len({name for name, _, _ in calls}) >= 30
+
+
+def test_healthcheck_classifies_tool_results():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("healthcheck_mcp", Path(__file__).resolve().parent.parent / "tools" / "healthcheck_mcp.py")
+    hc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hc)
+
+    assert hc.classify(False, '{"totalSteps": 5557}') == "OK"
+    assert hc.classify(False, "") == "VACÍA"
+    assert hc.classify(False, "[]") == "VACÍA"
+    assert hc.classify(False, '{"avg": null, "max": null}') == "VACÍA"
+    assert hc.classify(True, "Garmin.get_daily_steps() missing 1 required positional argument: 'end'") == "ERROR"
+    assert hc.classify(True, "Mobile login returned 429 — IP rate limited by Garmin") == "ENTORNO"
+    assert hc.classify(True, "GarminConnectAuthenticationError: authentication failed") == "ENTORNO"
