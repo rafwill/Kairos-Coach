@@ -15,6 +15,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - `/carga`, resumen semanal, estado de arranque, estado de hoy, contexto del LLM y prompts muestran la zona y su % del CTL.
 
 ### Fixed
+- La carga de Garmin ya no puede usarse como TSS en ningún camino (CLAUDE.md: "la carga nativa de Garmin nunca es TSS"). Auditoría del 22/10:
+  - `_estimate_session_tss` devolvía la carga/TSS de Garmin como TSS (`garmin:native_load`) en dos respaldos: actividad sin duración y deporte sin modelo propio (natación, esquí…). Ninguna de las 222 actividades guardadas lo usó; ahora sin duración es 0 y sin modelo se estima por FC (`generic:*`).
+  - Ruta del día ("¿qué hice el …?"): "TSS del día" salía primero de `get_training_load_trend` (suma de `activityTrainingLoad` de Garmin). Ahora sale de la serie de Kairos o de `activity_tss`, y la carga de Garmin va en su propia fila "Carga Garmin del día (no TSS)".
+  - Contexto del LLM en el análisis de actividad: el bloque "CARGA DE ENTRENAMIENTO" pasa a "CARGA GARMIN (… NO es TSS …)", y la tool `get_training_load_trend` del MCP tiene descripción que lo aclara y remite a `kairos_load_trends`.
+  - Contingencia del adaptador MCP (desactivada por defecto): devolvía el TSS de Kairos con el nombre `trainingLoad` de Garmin; ya no.
 - "Carga Garmin" en bici con potencia mostraba el TSS que calcula Garmin (`trainingStressScore`) en vez de su carga (`activityTrainingLoad`, la guardada en `activity_tss.native_load`): en "últimas N actividades" y en el análisis de una actividad.
 - Ritmo umbral por fecha también en los cálculos de respaldo (análisis de actividad sin TSS guardado, adherencia al plan, verificación incremental): usaban el umbral actual y, tras un cambio, habrían calculado actividades anteriores con el nuevo. El TSS guardado ya no se recalculaba; ahora tampoco se muestra un valor provisional con el umbral equivocado.
 - Estado de arranque: si Garmin devuelve el registro del día sin valores (reloj sin sincronizar), Body Battery y sueño decían "datos disponibles". Ahora dicen "sin datos" y una línea avisa de qué falta ("Garmin aún no tiene … sincroniza el reloj con la app y vuelve a arrancar Kairos").
@@ -26,7 +31,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Ritmo umbral de running 4:00/km (240 s) desde el 22/10/2026 (antes 4:12), estimado con la carrera del 18/10 (24764615547): 27 min, NGP 3:49/km del pipeline de producción, llevado a 60 min con Riegel (×1.049). FC umbral sin cambios (168 lpm de media en los últimos 20 min frente a 169). Añadido al historial del perfil; el TSS ya guardado no cambia.
 
 ### Tests
-- 570 passed, 6 skipped. Nuevos: zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
+- 571 passed, 6 skipped. Los tests del PMC fijan su TSS sintético con un fixture explícito (antes dependían de que la carga de Garmin se usara como TSS). Nuevos: `test_daily_tss_comes_from_kairos_not_garmin_trend`, `test_garmin_load_is_never_the_final_tss`, zonas de Forma, `test_threshold_change_applies_only_from_its_date`, `test_power_ride_shows_garmin_load_not_garmin_tss`.
 
 ## 2026-10-21 (esquema de Supabase en un solo fichero)
 

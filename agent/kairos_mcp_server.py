@@ -561,6 +561,11 @@ def get_training_status():
 
 @mcp.tool(name="get_training_load_trend")
 def get_training_load_trend(start_date: str | None = None, end_date: str | None = None, date: str | None = None):
+    """Carga nativa de Garmin por día (suma de activityTrainingLoad de sus actividades).
+
+    NO es TSS y no sirve para CTL/ATL/TSB: en otra escala (×0.07 a ×2 frente al TSS). Para el TSS
+    y la serie CTL/ATL/TSB de Kairos usa `kairos_load_trends`. Si la citas, llámala "Carga Garmin".
+    """
     return _dispatch("get_training_load_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 
 

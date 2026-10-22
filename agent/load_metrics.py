@@ -3454,7 +3454,6 @@ def _estimate_session_tss(
     is_running_non_trail = _is_running_non_trail_activity(act_type)
     is_elliptical = _is_elliptical_activity(activity, act_type)
     is_rowing = _is_rowing_activity(activity, act_type)
-    tss_native = _extract_training_load_tss(activity)
 
     details_payload = (
         activity_details_raw
@@ -3473,13 +3472,7 @@ def _estimate_session_tss(
             # Fuerza: no usar carga nativa; sin duración no se puede aplicar fórmula HR.
             _set_tss_resolution_meta(activity, model_tag="strength:no_duration")
             return 0.0, "hrTSS"
-        if tss_native is not None:
-            _set_tss_resolution_meta(
-                activity,
-                model_tag="garmin:native_load",
-                used_native_tss=True,
-            )
-            return tss_native, "TSS"
+        # La carga de Garmin nunca es TSS (CLAUDE.md): sin duración no hay cálculo posible.
         _set_tss_resolution_meta(activity, model_tag="generic:no_duration")
         return 0.0, "hrTSS"
 
@@ -3772,14 +3765,7 @@ def _estimate_session_tss(
         _set_tss_resolution_meta(activity, model_tag="strength:insufficient_signal")
         return 0.0, "hrTSS"
 
-    if tss_native is not None:
-        _set_tss_resolution_meta(
-            activity,
-            model_tag="garmin:native_load",
-            used_native_tss=True,
-        )
-        return tss_native, "TSS"
-
+    # Deportes sin modelo propio: estimación de Kairos por FC (nunca la carga de Garmin como TSS).
     tss_hr_zones_generic = _estimate_hr_tss_from_zones(
         activity,
         hours=hours,

@@ -111,6 +111,16 @@ from agent.trainer_agent import (
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
 
+
+@pytest.fixture
+def pmc_tss_from_fixture(monkeypatch):
+    """Tests del PMC (CTL/ATL/TSB, rangos, avisos): el TSS de cada actividad sintética es su campo
+    trainingLoad. Aquí no se prueba el cálculo de TSS; en producción la carga de Garmin nunca es TSS."""
+    import agent.load_metrics as lm
+
+    monkeypatch.setattr(lm, "_estimate_session_tss", lambda act, **_kw: (float(act.get("trainingLoad") or 0.0), "TSS"))
+
+
 class TestSecondsToHhmmss:
     def test_below_one_hour_returns_mmss(self):
         assert _seconds_to_hhmmss(90) == "00:01:30"
@@ -2987,7 +2997,7 @@ class TestPlanningFallbackAndRanges:
 
 
 class TestSessionTssEstimation:
-    def test_compute_load_fatigue_metrics_returns_latest_and_ranges(self):
+    def test_compute_load_fatigue_metrics_returns_latest_and_ranges(self, pmc_tss_from_fixture):
         today = date.today()
         activities = []
         for idx in range(21):
@@ -3012,7 +3022,7 @@ class TestSessionTssEstimation:
         assert "tsb_low" in out["ranges"] and "tsb_high" in out["ranges"]
         assert out["status"] in {"overload", "fatigue_high", "ready", "neutral"}
 
-    def test_compute_load_fatigue_metrics_detects_overload(self):
+    def test_compute_load_fatigue_metrics_detects_overload(self, pmc_tss_from_fixture):
         today = date.today()
         activities = [
             {"startTimeLocal": f"{(today - timedelta(days=idx)).isoformat()}T07:00:00.0", "trainingLoad": 130}
@@ -3037,7 +3047,7 @@ class TestSessionTssEstimation:
 
         assert out is None
 
-    def test_compute_load_fatigue_metrics_tsb_uses_previous_day_like_tp(self):
+    def test_compute_load_fatigue_metrics_tsb_uses_previous_day_like_tp(self, pmc_tss_from_fixture):
         today = date.today()
         activities = [{"startTimeLocal": f"{today.isoformat()}T07:00:00.0", "trainingLoad": 100}]
 
@@ -3047,7 +3057,7 @@ class TestSessionTssEstimation:
         assert out["latest"]["atl"] > 0
         assert out["latest"]["tsb"] == 0.0
 
-    def test_compute_load_fatigue_metrics_flags_weekly_spike_over_20_percent(self):
+    def test_compute_load_fatigue_metrics_flags_weekly_spike_over_20_percent(self, pmc_tss_from_fixture):
         import agent.trainer_agent as ta
 
         class _FakeDate:
@@ -3118,7 +3128,7 @@ class TestSessionTssEstimation:
         assert (cfg["ctl_tau_days"], cfg["atl_tau_days"]) == (42, 7)
         assert cfg["tsb_low_pct"] == 0.3
 
-    def test_compute_load_fatigue_metrics_trail_uses_sport_tau(self):
+    def test_compute_load_fatigue_metrics_trail_uses_sport_tau(self, pmc_tss_from_fixture):
         today = date.today()
         activities = [
             {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0", "trainingLoad": 60}
@@ -3135,7 +3145,7 @@ class TestSessionTssEstimation:
         assert out["model"]["sport"] == "trail running"
         assert out["model"]["atl_tau_days"] == 7
 
-    def test_compute_load_fatigue_metrics_ciclismo_uses_sport_tau(self):
+    def test_compute_load_fatigue_metrics_ciclismo_uses_sport_tau(self, pmc_tss_from_fixture):
         today = date.today()
         activities = [
             {"startTimeLocal": f"{(today - timedelta(days=i)).isoformat()}T08:00:00.0", "trainingLoad": 80}
@@ -3183,7 +3193,7 @@ class TestSessionTssEstimation:
         assert out["zone"]["key"] == "transition" and out["status"] == "ready"
         assert "perder forma" in out["recommendation"]
 
-    def test_sustained_overload_boundary_le_fix(self):
+    def test_sustained_overload_boundary_le_fix(self, pmc_tss_from_fixture):
         """Cuando tsb_now == tsb_low (valor == percentil p15), debe detectarse como overload.
         Antes del fix se usaba < estricto y el caso límite se escapaba."""
         today = date.today()
@@ -3206,7 +3216,7 @@ class TestSessionTssEstimation:
 
     # ── Tests de warming_up ───────────────────────────────────────────────────
 
-    def test_warming_up_flag_true_with_few_training_days(self):
+    def test_warming_up_flag_true_with_few_training_days(self, pmc_tss_from_fixture):
         """Con < 21 días de entrenamiento real, warming_up debe ser True."""
         today = date.today()
         activities = [
@@ -3225,7 +3235,7 @@ class TestSessionTssEstimation:
         assert out["flags"]["warming_up"] is True
         assert out["warming_up_days_remaining"] > 0
 
-    def test_warming_up_flag_false_with_enough_history(self):
+    def test_warming_up_flag_false_with_enough_history(self, pmc_tss_from_fixture):
         """Con >= 21 días de entrenamiento real, warming_up debe ser False."""
         today = date.today()
         activities = [
@@ -3369,7 +3379,7 @@ class TestSportSpecificLoadProfiles:
             )
         return out
 
-    def test_running_profile_matches_tp_like_defaults(self):
+    def test_running_profile_matches_tp_like_defaults(self, pmc_tss_from_fixture):
         profile = {"goals": {"primary": "running"}}
         activities = self._build_fake_activities(days=56, default_tss=55.0)
 
@@ -3387,7 +3397,7 @@ class TestSportSpecificLoadProfiles:
         assert "tsb_abs_floor" not in out["ranges"]  # sin suelos fijos: decide la zona de Forma
         assert out["latest"]["atl"] > 0 and out["latest"]["ctl"] > 0
 
-    def test_trail_profile_uses_tp_taus_and_deeper_tsb_floor(self):
+    def test_trail_profile_uses_tp_taus_and_deeper_tsb_floor(self, pmc_tss_from_fixture):
         activities = self._build_fake_activities(days=56, default_tss=55.0)
         running_profile = {"goals": {"primary": "running"}}
         trail_profile = {"goals": {"primary": "trail running"}}
@@ -3413,7 +3423,7 @@ class TestSportSpecificLoadProfiles:
         # Mismas constantes (PMC de TP): misma carga, mismo ATL.
         assert float(trail_out["latest"]["atl"]) == float(run_out["latest"]["atl"])
 
-    def test_triathlon_profile_uses_longer_ctl_and_flags_recent_overload(self):
+    def test_triathlon_profile_uses_longer_ctl_and_flags_recent_overload(self, pmc_tss_from_fixture):
         # Bloque agudo reciente para simular sobrecarga en un atleta de triatlón.
         activities = self._build_fake_activities(
             days=56,
@@ -3440,17 +3450,19 @@ class TestSportSpecificLoadProfiles:
 class TestLoadFatigueModel:
     # ── Tests de _estimate_session_tss ────────────────────────────────────────
 
-    def test_estimate_tss_priority1_uses_garmin_training_load(self):
-        """Si la actividad tiene trainingLoad, se usa directamente."""
-        act = {"trainingLoad": 95.0, "averageHR": 155, "duration": 3600}
-        tss, label = _estimate_session_tss(act)
-        assert tss == 95.0
-        assert label == "TSS"
+    def test_estimate_tss_never_uses_garmin_training_load(self):
+        """La carga de Garmin nunca es TSS: con FC y duración, Kairos estima igual que sin ella."""
+        with_load, label = _estimate_session_tss({"trainingLoad": 95.0, "averageHR": 155, "duration": 3600})
+        without_load, _ = _estimate_session_tss({"averageHR": 155, "duration": 3600})
+        assert with_load == pytest.approx(without_load)
+        assert with_load != pytest.approx(95.0)
+        assert label == "hrTSS"
 
-    def test_estimate_tss_priority1_allows_over_500(self):
-        act = {"trainingLoad": 999.0}
+    def test_estimate_tss_without_duration_is_zero_not_garmin_load(self):
+        act = {"trainingLoad": 999.0, "trainingStressScore": 999.0}
         tss, _ = _estimate_session_tss(act)
-        assert tss == 999.0
+        assert tss == 0.0
+        assert _infer_tss_model_tag(act) == "generic:no_duration"
 
     def test_estimate_tss_priority2_hr_based_z2(self):
         """Sin trainingLoad, Z2 (avg_hr ~140, hr_rest 50, hr_max 185) → TSS razonable."""
@@ -4950,13 +4962,17 @@ class TestTssSourceTagging:
         assert _infer_tss_model_tag(act) == expected_model
         assert tss != pytest.approx(act["activityTrainingLoad"])
 
-    def test_native_used_only_when_it_is_the_final_tss(self):
+    def test_garmin_load_is_never_the_final_tss(self):
+        # Antes: sin duración (o sin modelo para el deporte) se devolvía la carga de Garmin como TSS.
         act = {"type": "other", "duration": 0, "activityTrainingLoad": 42.0}
         tss, label = _estimate_session_tss(act)
-        assert tss == pytest.approx(42.0)
-        assert label == "TSS"
-        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) == "garmin_native"
-        assert _infer_tss_model_tag(act) == "garmin:native_load"
+        assert tss == 0.0
+        assert _infer_tss_source_tag(act, label, ftp=None, hr_zones_raw=None) != "garmin_native"
+        assert _infer_tss_model_tag(act) == "generic:no_duration"
+        unknown_sport = {"type": "swimming", "duration": 3600, "averageHR": 140, "activityTrainingLoad": 42.0}
+        tss2, _ = _estimate_session_tss(unknown_sport, hr_rest_bpm=50, hr_max_bpm=190)
+        assert tss2 > 0 and tss2 != pytest.approx(42.0)
+        assert _infer_tss_model_tag(unknown_sport).startswith("generic:")
 
     def test_tags_reset_between_estimates_on_same_dict(self):
         act = {"type": "other", "duration": 0, "activityTrainingLoad": 42.0}
@@ -4970,7 +4986,7 @@ class TestTssSourceTagging:
     def test_estimate_tss_double_session_same_day_accumulates(self):
         """Dos sesiones en el mismo día deben sumar sus TSS en el modelo."""
         morning = {"averageHR": 145, "maxHR": 185, "duration": 3600}
-        afternoon = {"trainingLoad": 80.0}
+        afternoon = {"averageHR": 160, "maxHR": 185, "duration": 2700}
         tss_morning, _ = _estimate_session_tss(morning)
         tss_afternoon, _ = _estimate_session_tss(afternoon)
         # Ambas > 0 y distintas, y el modelo las sumará en tss_by_day
@@ -7531,6 +7547,29 @@ class TestMcpFactualDeterministicRoute:
         assert m is not None
         assert float(m.group(1)) == pytest.approx(70.5)
         assert "79.4" not in out.split("Carga Garmin")[0]
+
+    @pytest.mark.asyncio
+    async def test_daily_tss_comes_from_kairos_not_garmin_trend(self):
+        # Antes: "TSS del día" se tomaba primero de get_training_load_trend (carga nativa de Garmin).
+        import agent.trainer_agent as ta
+
+        target_iso = "2026-10-18"
+
+        async def _fake_call_tool(_session, tool_name, _args):
+            if tool_name == "get_training_load_trend":
+                return {"trend": [{"date": target_iso, "trainingLoad": 250.0}]}
+            return {}
+
+        profile = {"load_metrics": {"series": [{"date": target_iso, "tss": 62.3}]}}
+        with patch("agent.trainer_agent.call_tool", _fake_call_tool), patch(
+            "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
+        ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value={}):
+            out = await ta._build_mcp_factual_query_markdown(
+                mcp_session=object(), profile=profile, user_message="¿Qué hice el 18/10?"
+            )
+
+        assert "| TSS del día | 62.3 | load_metrics(series) |" in out
+        assert "| Carga Garmin del día (no TSS) | 250.0 | get_training_load_trend |" in out
 
 
 class TestRunningThresholdDeterministicRoute:

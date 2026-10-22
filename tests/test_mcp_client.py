@@ -302,25 +302,21 @@ def test_resolve_cached_tool_response_ignores_cached_errors(monkeypatch):
     assert out is None
 
 
-def test_resolve_local_fastpath_response_builds_training_load_payload(monkeypatch):
+def test_fastpath_never_returns_kairos_tss_as_garmin_training_load(monkeypatch):
+    # get_training_load_trend es la carga nativa de Garmin: la contingencia no la sustituye por el
+    # TSS de Kairos (antes devolvía load_metrics_daily.tss con el nombre trainingLoad).
     monkeypatch.setattr(
         mcp_adapter._storage,
         "get_load_metrics_series",
-        lambda days: [
-            {"date": "2026-09-01", "tss": 10.0},
-            {"date": "2026-09-02", "tss": 20.5},
-            {"date": "2026-09-05", "tss": 99.0},
-        ],
+        lambda days: [{"date": "2026-09-02", "tss": 20.5}],
     )
+    monkeypatch.setattr(mcp_adapter, "resolve_cached_tool_response", lambda *_args, **_kwargs: None)
     out = mcp_adapter.resolve_local_fastpath_response(
         "get_training_load_trend",
         {"start_date": "2026-09-01", "end_date": "2026-09-03"},
         backend_effective="frozen",
     )
-    assert out is not None
-    assert '"date": "2026-09-01"' in out
-    assert '"trainingLoad": 20.5' in out
-    assert '"date": "2026-09-05"' not in out
+    assert out is None
 
 
 @pytest.mark.asyncio

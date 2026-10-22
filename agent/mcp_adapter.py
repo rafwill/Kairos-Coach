@@ -231,48 +231,13 @@ def validate_min_input_contract(tool_name: str, arguments: dict) -> str | None:
 
 
 def resolve_local_fastpath_response(tool_name: str, arguments: dict, backend_effective: str | None) -> str | None:
-    """Devuelve respuesta local para tools críticas en backend frozen, o None para usar MCP."""
+    """Devuelve respuesta local (caché) para tools críticas en backend frozen, o None para usar MCP.
+
+    get_training_load_trend no se sustituye por el TSS de Kairos: es la carga nativa de Garmin y
+    darla con el nombre trainingLoad mezclaría escalas. Usa la caché genérica como el resto.
+    """
     if str(backend_effective or "").strip().lower() != "frozen":
         return None
-
     if tool_name in NO_FASTPATH_CACHE_TOOLS:
         return None
-
-    if tool_name != "get_training_load_trend":
-        return resolve_cached_tool_response(tool_name, arguments, backend_effective)
-
-    start_d = _parse_iso_date(arguments.get("start_date"))
-    end_d = _parse_iso_date(arguments.get("end_date"))
-    if not start_d or not end_d:
-        return resolve_cached_tool_response(tool_name, arguments, backend_effective)
-
-    if end_d < start_d:
-        start_d, end_d = end_d, start_d
-
-    window_days = max(14, (end_d - start_d).days + 7)
-
-    try:
-        series = _storage.get_load_metrics_series(days=window_days)
-    except Exception:
-        return resolve_cached_tool_response(tool_name, arguments, backend_effective)
-
-    if not isinstance(series, list):
-        return resolve_cached_tool_response(tool_name, arguments, backend_effective)
-
-    rows: list[dict] = []
-    for row in series:
-        d = _parse_iso_date((row or {}).get("date"))
-        if not d or d < start_d or d > end_d:
-            continue
-        rows.append(
-            {
-                "date": d.isoformat(),
-                "trainingLoad": float((row or {}).get("tss") or 0.0),
-            }
-        )
-
-    rows.sort(key=lambda x: x["date"])
-    if rows:
-        return json.dumps(rows, ensure_ascii=False)
-
     return resolve_cached_tool_response(tool_name, arguments, backend_effective)

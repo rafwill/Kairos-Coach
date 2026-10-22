@@ -4864,28 +4864,28 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         if hrv_fmt_probe in {"sin datos", "datos disponibles"} and db_hrv_payload is not None:
             hrv_payload = db_hrv_payload
 
-    # TSS del día: priorizar tendencia MCP; fallback a serie local calculada desde Garmin.
+    # TSS del día: solo el de Kairos (serie diaria; si no, suma de activity_tss). La tendencia
+    # de Garmin (get_training_load_trend) es su carga nativa y va aparte, nunca como TSS.
+    garmin_load_day: float | None = None
+    for row in _extract_training_load_points(trend_payload):
+        if str(row.get("date") or "") == target_iso:
+            try:
+                garmin_load_day = float(row.get("tss") or 0.0)
+            except (TypeError, ValueError):
+                garmin_load_day = None
+            break
+
     tss_day: float | None = None
-    trend_points = _extract_training_load_points(trend_payload)
-    for row in trend_points:
+    tss_source = "no disponible"
+    series = ((profile or {}).get("load_metrics") or {}).get("series") or []
+    for row in series:
         if str(row.get("date") or "") == target_iso:
             try:
                 tss_day = float(row.get("tss") or 0.0)
+                tss_source = "load_metrics(series)"
             except (TypeError, ValueError):
                 tss_day = None
             break
-
-    tss_source = "get_training_load_trend"
-    if tss_day is None:
-        series = ((profile or {}).get("load_metrics") or {}).get("series") or []
-        for row in series:
-            if str(row.get("date") or "") == target_iso:
-                try:
-                    tss_day = float(row.get("tss") or 0.0)
-                    tss_source = "load_metrics(series)"
-                except (TypeError, ValueError):
-                    tss_day = None
-                break
 
     if activity_tss_day > 0 and (tss_day is None or float(tss_day) <= 0.0):
         tss_day = activity_tss_day
@@ -4918,6 +4918,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         "|---|---|---|",
         f"| Fecha consultada | {target_d.strftime('%d/%m/%Y')} | consulta factual MCP |",
         f"| TSS del día | {f'{tss_day:.1f}' if tss_day is not None else 'sin datos'} | {tss_source if tss_day is not None else 'no disponible'} |",
+        f"| Carga Garmin del día (no TSS) | {f'{garmin_load_day:.1f}' if garmin_load_day is not None else 'sin datos'} | get_training_load_trend |",
         f"| FC en reposo | {rhr_display} | Garmin RHR |",
         f"| Sueño | {_format_sleep_day(sleep_payload, target_iso)} | Garmin sleep |",
         f"| Estrés | {_format_stress_day(stress_summary_payload, all_day_stress_payload, target_iso)} | Garmin stress_summary/all_day_stress |",
@@ -11879,7 +11880,10 @@ class TrainerAgent:
                     tl_data = _compact_tool_result(raw_tl, "get_training_load_trend")
                     log.debug(f"training_load: {tl_data[:80] if tl_data else 'None'}")
                     if tl_data and tl_data != "(sin datos)":
-                        context_parts.append(f"CARGA DE ENTRENAMIENTO:\n{tl_data}")
+                        context_parts.append(
+                            "CARGA GARMIN (carga nativa de Garmin, NO es TSS; el TSS de Kairos va en el resumen):\n"
+                            f"{tl_data}"
+                        )
 
                 # Guardar en caché para collect_startup_snapshot_48h (evita re-fetch si es hoy)
                 if user_date == date.today().isoformat():
