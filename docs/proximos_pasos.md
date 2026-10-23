@@ -1182,7 +1182,12 @@ limite 20 tools, metatooling
 
 comprobación harness
 
-documentación de la tools numero 42
+
+quitar copilot de la lista de contributors en github
+
+Siguen pendientes la ENCRYPTION_KEY del otro ordenador, para la batería y el juez, y quitar las respuestas viejas de la memoria entre sesiones.
+
+
 
 
 
