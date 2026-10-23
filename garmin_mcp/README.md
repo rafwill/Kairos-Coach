@@ -7,8 +7,7 @@ Es un paquete independiente: no importa nada de `agent/` (lo comprueba un test),
 ## Arranque
 
 ```powershell
-.venv\Scripts\python.exe -m garmin_mcp          # transporte stdio
-tools\garmin-mcp-frozen.cmd                      # lanzador que usa Kairos (tools/garmin-mcp-frozen.sh en Unix)
+.venv\Scripts\python.exe -m garmin_mcp          # transporte stdio (Kairos lo lanza igual, con su propio Python)
 ```
 
 Kairos lo arranca solo como subproceso. Para usarlo desde otro cliente MCP (por ejemplo, Claude Desktop), basta con apuntar a ese comando:
@@ -60,8 +59,7 @@ La mayoría de las tools llaman a un método de la librería y devuelven su resp
 - **`get_heart_rate_zones`**: la librería no tiene método para las zonas configuradas. Consulta `/biometric-service/heartRateZones` y devuelve `{"sports": [...]}` con un elemento por deporte configurado (`default`, `running`, `cycling`…): `sport`, `method` (`HR_RESERVE`, `LACTATE_THRESHOLD` o `PERCENT_MAX_HR`), `resting_hr`, `max_hr`, `lactate_threshold_hr` y `zones`, con las cinco zonas como `{zone, min_bpm, max_bpm}`. Garmin solo da el suelo de cada zona; el techo es el suelo de la siguiente menos 1, y el de la Z5, la FC máxima, así que las zonas quedan cerradas y sin huecos. Se omiten los deportes sin los cinco suelos. Kairos la llama al arrancar y guarda el resultado en el perfil (ver [`docs/arquitectura.md`](../docs/arquitectura.md#zonas-de-fc)).
 - **`get_vo2max_trend`**: pide el rango en una sola llamada a `maxmet/daily/{inicio}/{fin}` y devuelve una serie plana (`date`, `running`, `cycling`) con los días que tienen estimación.
 
-Al añadir una tool: definirla en `server.py` con `_tool(nombre, título, descripción)` y parámetros descritos con `Annotated[..., Field(description=...)]`, añadirla a una categoría en `tools/gen_mcp_docs.py`, regenerar este catálogo y, si Kairos debe usarla, añadirla en el host al catálogo esencial (`GARMIN_ESSENTIAL_TOOLS` en `agent/mcp/client.py`) y a los contratos de argumentos (`TOOL_CONTRACTS_V1` en `agent/mcp/contracts.py`). Los tests del catálogo fallan si falta una de las dos o si cambia el número de tools (`test_essentials_catalog_counts_and_uniqueness`, `test_contract_registry_covers_all_essential_tools`). Si cambia el lanzador, revisar `tools/garmin-mcp-frozen.cmd` y `.sh`.
-
+Al añadir una tool: definirla en `server.py` con `_tool(nombre, título, descripción)` y parámetros descritos con `Annotated[..., Field(description=...)]`, añadirla a una categoría en `tools/gen_mcp_docs.py`, regenerar este catálogo y, si Kairos debe usarla, añadirla en el host al catálogo esencial (`GARMIN_ESSENTIAL_TOOLS` en `agent/mcp/client.py`) y a los contratos de argumentos (`TOOL_CONTRACTS_V1` en `agent/mcp/contracts.py`). Los tests del catálogo fallan si falta una de las dos o si cambia el número de tools (`test_essentials_catalog_counts_and_uniqueness`, `test_contract_registry_covers_all_essential_tools`).
 <!-- BEGIN: catálogo generado por tools/gen_mcp_docs.py (no editar a mano) -->
 
 ## Catálogo de tools (42)

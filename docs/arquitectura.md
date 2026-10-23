@@ -50,7 +50,7 @@ Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve p
 ```
 main.py → run_agent()
   ├─ login (usuario de la app) y selección de proveedor LLM
-  ├─ MCP propio: tools/garmin-mcp-frozen.* → python -m garmin_mcp
+  ├─ MCP propio: python -m garmin_mcp (mismo Python que Kairos)
   │     tokens de Garmin reutilizados en ~/.garminconnect/kairos/<hash del email>
   ├─ TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
   │     get_heart_rate_zones; escribe en el perfil solo si las zonas cambian
@@ -139,7 +139,7 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 
 ### Cliente MCP (`agent/mcp/`)
 
-- **Arranque del servidor:** `_resolve_frozen_command()` usa `KAIROS_MCP_FROZEN_COMMAND` si está definido; si no, el lanzador del repo (`tools/garmin-mcp-frozen.cmd` o `.sh`), que ejecuta `python -m garmin_mcp` con el `.venv` o el Python del PATH. El subproceso recibe el entorno de Kairos más las credenciales de Garmin del usuario. `MCP_BACKEND` solo admite `frozen` (el nombre viene de la migración al MCP propio; cualquier otro valor se avisa y se ignora). El backend en uso se anota en `KAIROS_MCP_BACKEND_EFFECTIVE` y se muestra al arrancar ("MCP backend efectivo: frozen").
+- **Arranque del servidor:** `_get_server_params()` lanza `python -m garmin_mcp` con el mismo intérprete que Kairos (`sys.executable`, el del `.venv`) y la raíz del repo como `cwd`, igual que las herramientas de `tools/`. El subproceso recibe el entorno de Kairos más las credenciales de Garmin del usuario. (Hasta el 23/10 lo hacía a través de los lanzadores `tools/garmin-mcp-frozen.*` y `MCP_BACKEND=frozen`, restos del MCP de terceros.)
 - **Catálogo esencial:** 45 tools, las 42 de Garmin (`GARMIN_ESSENTIAL_TOOLS`) y las 3 internas `kairos_*`. Los tests fallan si cambia el número o si a una le falta su contrato.
 - **Antes de cada llamada:** `normalize_tool_invocation` corrige alias y formas de los argumentos (por ejemplo, `date` → `start_date`/`end_date` en `get_body_battery`), y `validate_min_input_contract` comprueba los argumentos obligatorios de `TOOL_CONTRACTS_V1`. Si faltan, devuelve un error de contrato (`mcp-adapter-v1`) sin llamar a Garmin.
 - **Ruta única por defecto:** cada llamada va al servidor, sin caché ni rutas alternativas. Los errores de Garmin se clasifican (tipo, código HTTP, `retry_after`) y se registran.

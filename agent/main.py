@@ -97,7 +97,7 @@ except (ImportError, AttributeError, RuntimeError):
 # Añadir el directorio raíz al path para imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent.mcp.client import garmin_mcp_session, get_configured_mcp_backend
+from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile
 from agent.storage import (
     activate_training_plan,
@@ -1268,18 +1268,14 @@ async def main() -> None:
     _check_env(provider)
 
     _, label, note = _PROVIDER_INFO[provider]
-    requested_backend = get_configured_mcp_backend()
     console.print(Panel.fit(
         f"[bold green]Kairos Coach[/] — Tu entrenador personal con IA\n"
         f"[dim]{label} · {note}[/dim]\n"
-        f"[dim]MCP backend solicitado: {requested_backend}[/dim]\n"
         "[dim]Conectando con Garmin Connect...[/]",
         border_style="green",
     ))
 
     async with garmin_mcp_session() as session:
-        effective_backend = (os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or requested_backend).strip()
-        console.print(f"[dim]MCP backend efectivo: {effective_backend}[/dim]")
         agent = TrainerAgent(mcp_session=session, provider=provider)
 
         console.print("[dim]Cargando herramientas de Garmin...[/]")

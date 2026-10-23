@@ -1,13 +1,11 @@
 """
 agent/mcp/client.py — cliente MCP del host (Kairos).
 
-Arranca el servidor MCP (`garmin_mcp`, vía tools/garmin-mcp-frozen.*) como subproceso stdio,
+Arranca el servidor MCP (`python -m garmin_mcp`, con el mismo Python que Kairos) como subproceso stdio,
 abre la sesión y expone sus herramientas para que el agente las use.
 """
 
 import os
-import site
-import shutil
 import sys
 import logging
 import re
@@ -217,82 +215,7 @@ KAIROS_INTERNAL_ESSENTIAL_TOOLS: tuple[str, ...] = (
 ALL_ESSENTIAL_TOOLS: tuple[str, ...] = GARMIN_ESSENTIAL_TOOLS + KAIROS_INTERNAL_ESSENTIAL_TOOLS
 
 
-def _resolve_command(command_name: str) -> str | None:
-    """Resuelve un ejecutable por PATH o por la carpeta Scripts del Python activo."""
-    found = shutil.which(command_name)
-    if found:
-        return found
-
-    search_dirs: list[Path] = [Path(sys.executable).parent]
-
-    user_base = site.getuserbase()
-    if user_base:
-        search_dirs.append(Path(user_base) / "Scripts")
-
-    if os.name == "nt":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            py_tag = f"Python{sys.version_info.major}{sys.version_info.minor}"
-            search_dirs.append(Path(appdata) / "Python" / py_tag / "Scripts")
-
-    for scripts_dir in search_dirs:
-        candidates = [scripts_dir / command_name]
-        if os.name == "nt":
-            candidates.append(scripts_dir / f"{command_name}.exe")
-        for candidate in candidates:
-            if candidate.exists() and candidate.is_file():
-                return str(candidate)
-    return None
-
-
-def get_configured_mcp_backend() -> str:
-    """Devuelve el backend MCP operativo (solo frozen en MCP propio)."""
-    raw = (os.environ.get("MCP_BACKEND") or "frozen").strip().lower()
-    if raw == "frozen":
-        return "frozen"
-    log.warning("MCP_BACKEND no válido (%s). Se usará backend local 'frozen'.", raw)
-    return "frozen"
-
-
-def _resolve_frozen_command() -> str | None:
-    """Resuelve el ejecutable del MCP local propio."""
-    project_root = PROJECT_ROOT
-
-    override = (os.environ.get("KAIROS_MCP_FROZEN_COMMAND") or "").strip()
-    if override:
-        direct = Path(override)
-        if direct.exists() and direct.is_file():
-            return str(direct)
-        resolved_override = _resolve_command(override)
-        if resolved_override:
-            return resolved_override
-
-    # Wrapper local del repo para backend frozen (prioridad sobre PATH).
-    local_candidates = []
-    if os.name == "nt":
-        local_candidates.extend(
-            [
-                project_root / "tools" / "garmin-mcp-frozen.cmd",
-                project_root / "tools" / "garmin-mcp-frozen.bat",
-            ]
-        )
-    else:
-        local_candidates.extend(
-            [
-                project_root / "tools" / "garmin-mcp-frozen",
-                project_root / "tools" / "garmin-mcp-frozen.sh",
-            ]
-        )
-
-    for candidate in local_candidates:
-        if candidate.exists() and candidate.is_file():
-            return str(candidate)
-
-    # Convención por defecto para binario local congelado.
-    return _resolve_command("garmin-mcp-frozen")
-
-
-def _get_server_params(backend: str | None = None) -> StdioServerParameters:
+def _get_server_params() -> StdioServerParameters:
     """Construye los parámetros de arranque del servidor MCP propio de Kairos."""
     email = os.environ.get("GARMIN_EMAIL")
     password = os.environ.get("GARMIN_PASSWORD")
@@ -302,17 +225,6 @@ def _get_server_params(backend: str | None = None) -> StdioServerParameters:
             "Las variables GARMIN_EMAIL y GARMIN_PASSWORD son obligatorias. "
             "Copia .env.example a .env y rellena tus credenciales."
         )
-
-    selected_backend = "frozen"
-
-    frozen_cmd = _resolve_frozen_command()
-    if not frozen_cmd:
-        raise RuntimeError(
-            "No se encontró el launcher local del MCP propio.\n"
-            "Define KAIROS_MCP_FROZEN_COMMAND o verifica tools/garmin-mcp-frozen.*"
-        )
-    command = frozen_cmd
-    args = []
 
     # Certificado SSL de Zscaler — necesario en redes con proxy SSL corporativo.
     # Se exporta automáticamente desde el almacén de Windows con:
@@ -328,14 +240,15 @@ def _get_server_params(backend: str | None = None) -> StdioServerParameters:
             "SSL_CERT_FILE": _pem_path,
         }
 
+    # Mismo intérprete que Kairos (el del .venv) y raíz del repo como cwd, como las herramientas de tools/.
     return StdioServerParameters(
-        command=command,
-        args=args,
+        command=sys.executable,
+        args=["-m", "garmin_mcp"],
+        cwd=str(PROJECT_ROOT),
         env={
             **os.environ,
             "GARMIN_EMAIL": email,
             "GARMIN_PASSWORD": password,
-            "KAIROS_MCP_BACKEND_EFFECTIVE": selected_backend,
             **ssl_overrides,
         },
     )
@@ -363,8 +276,7 @@ async def garmin_mcp_session():
                 return
             raise
 
-    params = _get_server_params(backend="frozen")
-    os.environ["KAIROS_MCP_BACKEND_EFFECTIVE"] = "frozen"
+    params = _get_server_params()
     async for _session in _open_and_yield(params):
         yield _session
 
@@ -393,20 +305,15 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
         if contract_error:
             return contract_error
 
-        backend_effective = (os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or "").strip().lower()
         fallback_enabled = _is_mcp_fallback_enabled()
 
         if fallback_enabled:
-            local_fastpath = resolve_local_fastpath_response(
-                normalized_tool_name,
-                normalized_args,
-                backend_effective=backend_effective,
-            )
+            local_fastpath = resolve_local_fastpath_response(normalized_tool_name, normalized_args)
             if local_fastpath is not None:
                 _record_tool_transparency_event(
                     normalized_tool_name,
                     mode="fallback_fastpath",
-                    reason="resolved via local fastpath/cache in frozen backend",
+                    reason="resolved via local fastpath/cache",
                 )
                 cache_tool_response(normalized_tool_name, normalized_args, local_fastpath)
                 return local_fastpath
@@ -446,7 +353,6 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
             cached = resolve_cached_tool_response(
                 normalized_tool_name if 'normalized_tool_name' in locals() else tool_name,
                 normalized_args if 'normalized_args' in locals() else arguments,
-                backend_effective=(os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") or "").strip().lower(),
             )
             if cached is not None:
                 _record_tool_transparency_event(
