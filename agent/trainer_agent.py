@@ -79,6 +79,14 @@ def _load_session_summaries() -> list[dict]:
     return _storage.load_session_summaries()
 
 
+def _strip_previous_reply(summary: str) -> str:
+    """Quita la "Última respuesta: …" de los resúmenes guardados antes del 23/10.
+
+    Las respuestas viejas traen cifras caducadas; al LLM solo le llegan los temas.
+    """
+    return re.sub(r"\s*Última respuesta:.*\Z", "", summary, flags=re.DOTALL).strip()
+
+
 def get_gemini_daily_usage(api_key: str) -> int:
     """Obtiene los tokens consumidos hoy para una API key específica."""
     return _storage.get_gemini_daily_usage(api_key)
@@ -11348,15 +11356,19 @@ class TrainerAgent:
         if summaries:
             recent = summaries[-3:]  # últimas 3 sesiones
             _MAX_SUMMARY = 350  # caracteres máximos por resumen
+            texts = [(s["date"], _strip_previous_reply(str(s.get("summary") or ""))) for s in recent]
             lines = "\n".join(
-                f"- **{s['date']}**: {s['summary'][:_MAX_SUMMARY]}{'…' if len(s['summary']) > _MAX_SUMMARY else ''}"
-                for s in recent
+                f"- **{d}**: {t[:_MAX_SUMMARY]}{'…' if len(t) > _MAX_SUMMARY else ''}"
+                for d, t in texts
+                if t
             )
-            memory_context = (
-                f"\n\n## Memoria de sesiones anteriores\n"
-                f"Estas son las conversaciones previas resumidas. Úsalas como contexto para dar continuidad:\n"
-                f"{lines}\n"
-            )
+            if lines:
+                memory_context = (
+                    f"\n\n## Memoria de sesiones anteriores\n"
+                    f"Temas que el usuario trató en sesiones previas (solo sus preguntas; "
+                    f"los datos actuales se piden con las herramientas):\n"
+                    f"{lines}\n"
+                )
 
         kb_context = ""
         if self.knowledge_sources:
@@ -12753,28 +12765,17 @@ class TrainerAgent:
         if not self.conversation_history:
             return ""
 
+        # Solo las preguntas: las respuestas traen cifras que caducan (como en _restore_previous_session).
         user_msgs = [
             str(msg.get("content") or "").strip()
             for msg in self.conversation_history
             if msg.get("role") == "user" and str(msg.get("content") or "").strip()
         ]
-        assistant_msgs = [
-            str(msg.get("content") or "").strip()
-            for msg in self.conversation_history
-            if msg.get("role") == "assistant" and str(msg.get("content") or "").strip()
-        ]
 
-        if not user_msgs and not assistant_msgs:
+        if not user_msgs:
             return ""
 
-        topics = " | ".join(user_msgs[-4:]) if user_msgs else "sin preguntas registradas"
-        last_reply = assistant_msgs[-1] if assistant_msgs else "sin respuesta registrada"
-        last_reply = re.sub(r"\s+", " ", last_reply)[:200]
-
-        return (
-            f"Temas recientes: {topics}. "
-            f"Última respuesta: {last_reply}"
-        )
+        return f"Temas recientes: {' | '.join(user_msgs[-4:])}."
 
     def save_session_summary_checkpoint(self) -> None:
         """Persiste un checkpoint diario del resumen de sesión (upsert por fecha)."""
