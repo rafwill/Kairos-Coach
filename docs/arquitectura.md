@@ -26,7 +26,7 @@ Con la terminología del estándar MCP: Kairos es el **host** (la aplicación co
 
 El servidor no importa nada de `agent/` (lo comprueba `test_server_package_does_not_import_the_host`): cualquier cliente MCP puede usarlo (Kairos, el Inspector MCP, `tools/healthcheck_mcp.py`, el juez de la batería).
 
-- **Datos (Python):** Garmin aporta las señales base; Kairos calcula en Python todo lo derivado (TSS, CTL/ATL/TSB, zonas de FC, ritmos, hidratación) antes de entregarlo al LLM.
+- **Datos (Python):** Garmin aporta las señales base y las zonas de FC del reloj; Kairos calcula en Python todo lo derivado (TSS, CTL/ATL/TSB, ritmos, hidratación) antes de entregarlo al LLM.
 - **Coaching (LLM):** interpreta los datos ya calculados con el perfil del atleta. Nunca hace aritmética ni inventa métricas.
 
 ## Qué guarda Kairos en Supabase
@@ -52,11 +52,24 @@ main.py → run_agent()
   ├─ login (usuario de la app) y selección de proveedor LLM
   ├─ MCP propio: tools/garmin-mcp-frozen.* → python -m garmin_mcp
   │     tokens de Garmin reutilizados en ~/.garminconnect/kairos/<hash del email>
+  ├─ TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
+  │     get_heart_rate_zones; escribe en el perfil solo si las zonas cambian
   ├─ TrainerAgent.compute_and_persist_load_metrics()
   │     incremental (normal) · incremental_refresh (actividad nueva) · full_recalc (usuario nuevo / cambio de fórmula)
   └─ TrainerAgent.build_startup_status_markdown()
         snapshot de 48 h (body battery, HRV, sueño, entrenamientos) + estado de carga + plan activo
 ```
+
+## Zonas de FC
+
+Mandan las zonas configuradas en Garmin Connect, que son las del reloj y las de TrainingPeaks (decisión del 22/10). Kairos no las calcula.
+
+- **Lectura:** al arrancar, `_refresh_hr_zones_from_garmin()` llama una vez a `get_heart_rate_zones` (formato en [`garmin_mcp/README.md`](../garmin_mcp/README.md#tools-que-no-son-un-método-de-garminconnect)).
+- **Guardado:** en el perfil, `performance.hr_zones_garmin` (`updated_at` y las zonas por deporte). Solo se escribe si las zonas cambian. La versión anterior pasa a `performance.hr_zones_garmin_history` con `valid_from` y `valid_until`.
+- **Si Garmin falla** o no devuelve zonas válidas, se usan las guardadas.
+- **Fuente única:** `_resolve_hr_zones(perfil, deporte)` da las zonas del deporte pedido (o las de `default`) en lpm. La usan el contexto del LLM (bloque "Umbrales"), los análisis de actividad y el juez de la batería. Nombres de TP en español: Z1 Recuperación, Z2 Aeróbica, Z3 Tempo, Z4 Subumbral, Z5 Supraumbral.
+- **Respaldo:** sin zonas de Garmin guardadas, se calculan por % del umbral de FC del perfil (`_hr_zone_bounds_bpm`), sin huecos entre zonas.
+- **Sin efecto en la carga:** el hrTSS usa los tramos de % del umbral de TP (`TP_HRTSS_RATES`), no estas zonas. Los objetivos `hr_pct` de los planes siguen en % del umbral, como formato interno.
 
 ## Cálculo de TSS y PMC
 
@@ -122,7 +135,7 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 - Lado cliente en el host: `agent/mcp/client.py` (sesión y llamadas) y `agent/mcp/contracts.py` (contratos, normalización y caché; la clave del perfil `mcp_adapter_cache` se mantiene por compatibilidad). Operación e incidentes: `docs/mcp-frozen-runbook.md`.
 - Algunas listas llegan como objetos JSON concatenados (`_try_parse_json`) y `get_activity` trae las métricas en `summaryDTO` (`_flatten_garmin_activity`).
 - Guía de estilo MCP de apiaddicts ([mcps-style-guide](https://github.com/apiaddicts/mcps-style-guide)): cada tool tiene título, descripción (la que ve el LLM de Kairos para elegirla), descripción de cada parámetro y anotaciones de solo lectura (`readOnlyHint`, `idempotentHint`, `openWorldHint`). `tools/lint_mcp.py` (o `make lint-mcp`) pide `tools/list` por stdio y lo pasa por Spectral con `tools/mcp_lint/.spectral.yaml`: el ruleset anclado a un commit, sin las dos reglas no adoptadas (camelCase y `outputSchema`, con su motivo). Resultado el 22/10: 0 hallazgos (antes 217). `tests/test_garmin_mcp_server.py` lo garantiza sin red.
-- Contrato con `garminconnect`: cada tool llama a la librería con su firma real (verificado contra la versión instalada por un test sin red). El 22/10 se corrigieron 8 tools que fallaban siempre (`get_daily_steps`, `get_training_status`, `get_vo2max_trend`, `get_endurance_score`, `get_fitnessage_data`, `get_weekly_steps`, `get_weekly_stress`, `get_weekly_intensity_minutes`); comprobadas las 41 contra Garmin real. Healthcheck en vivo bajo demanda: `tools/healthcheck_mcp.py` (`make health-mcp`).
+- Contrato con `garminconnect`: cada tool llama a la librería con su firma real (verificado contra la versión instalada por un test sin red). El 22/10 se corrigieron 8 tools que fallaban siempre (`get_daily_steps`, `get_training_status`, `get_vo2max_trend`, `get_endurance_score`, `get_fitnessage_data`, `get_weekly_steps`, `get_weekly_stress`, `get_weekly_intensity_minutes`); comprobadas las 41 contra Garmin real, y las 42 tras añadir `get_heart_rate_zones` (22/10 y 23/10: 0 errores). Healthcheck en vivo bajo demanda: `tools/healthcheck_mcp.py` (`make health-mcp`).
 
 ## Seguridad
 

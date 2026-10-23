@@ -2,6 +2,16 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-23
+
+### Changed (rangos de FC al prescribir)
+- Un tramo continuo se prescribe en una sola zona de Garmin ("Z2 alto / Z3 bajo" queda prohibido). Solo un tramo progresivo (calentamiento, vuelta a la calma, rodaje progresivo) puede recorrer varias zonas, y se escribe "de Zx a Zy" con la FC de inicio y de fin (115→145 lpm). En los dos system prompts.
+- Juez de la batería: acepta un rango entre zonas solo si en la misma línea se presenta como progresivo y nombra las zonas, con la FC de inicio en la más baja y la de fin en la más alta (`_progressive_range_ok`). Criterio decidido por el usuario y anotado en `docs/Harness.md`. Los dos fallos de la batería del 22/10 eran de este tipo; falta repetirla con el criterio nuevo.
+
+### Docs (tool 42, `get_heart_rate_zones`)
+- `garmin_mcp/README.md`: 42 tools en la introducción (decía 41) y nueva sección sobre las tools que consultan un endpoint de Garmin directamente porque `garminconnect` no tiene método (`get_heart_rate_zones`, `get_vo2max_trend`): endpoint, formato de respuesta y cómo se cierran las zonas.
+- `docs/arquitectura.md`: nueva sección "Zonas de FC" (lectura al arrancar, guardado e historial en el perfil, respaldo, fuente única `_resolve_hr_zones` y sin efecto en el TSS), el paso en el diagrama de arranque, y corregido que Kairos calculaba las zonas.
+
 ## 2026-10-22
 
 ### Changed (zonas de FC: las de Garmin mandan)
