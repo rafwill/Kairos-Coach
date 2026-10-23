@@ -361,6 +361,89 @@ class TestResolveRunningThresholdFromProfile:
         assert 269.0 <= out <= 271.0
 
 
+class TestOutputSensors:
+    """Autocorrección en vivo (docs/Harness.md §6): sensores sobre el texto del LLM con un reintento."""
+
+    ZONES = [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
+             ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
+
+    def _agent(self, monkeypatch, replies):
+        import agent.trainer_agent as ta
+        from agent.trainer_agent import TrainerAgent
+
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: (self.ZONES, "Garmin"))
+        monkeypatch.setattr(ta, "_resolve_running_threshold_pace_for_date", lambda profile, iso: 240.0)
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {}
+        agent.model = "test-model"
+        agent.provider = "nvidia"
+        agent.total_prompt_tokens = 0
+        agent.total_completion_tokens = 0
+        responses = []
+        for text in replies:
+            r = MagicMock()
+            r.choices = [MagicMock(message=MagicMock(content=text))]
+            r.usage = None
+            responses.append(r)
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=responses)
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_bad_range_is_fixed_by_one_retry(self, monkeypatch):
+        agent = self._agent(monkeypatch, ["- Rodaje Z2 (135–145 lpm)."])
+        context = [{"role": "system", "content": "sys"}, {"role": "user", "content": "¿qué hago hoy?"}]
+        out = await agent._apply_output_sensors("- Rodaje Z2 alto / Z3 bajo (140–152 lpm).", context, "coaching")
+
+        assert out == "- Rodaje Z2 (135–145 lpm)."
+        kwargs = agent.client.chat.completions.create.await_args.kwargs
+        assert "tools" not in kwargs
+        correction = kwargs["messages"][-1]["content"]
+        assert "140–152" in correction and "Z2 135–145" in correction
+        assert kwargs["messages"][-2] == {"role": "assistant", "content": "- Rodaje Z2 alto / Z3 bajo (140–152 lpm)."}
+
+    @pytest.mark.asyncio
+    async def test_persisting_failure_keeps_best_and_adds_notice(self, monkeypatch):
+        agent = self._agent(monkeypatch, ["- Series Z4–Z5 (160–175 lpm)."])
+        out = await agent._apply_output_sensors("- Series Z4–Z5 (160–175 lpm).", [], "coaching")
+
+        agent.client.chat.completions.create.assert_awaited_once()
+        assert out.startswith("- Series Z4–Z5 (160–175 lpm).")
+        assert "Comprobación de Kairos" in out and "rango 160–175 lpm" in out
+        assert "LLM:" not in out
+
+    @pytest.mark.asyncio
+    async def test_clean_text_needs_no_extra_call(self, monkeypatch):
+        agent = self._agent(monkeypatch, [])
+        out = await agent._apply_output_sensors("- Rodaje suave Z1–Z2 (115–145 lpm), umbral 4:00/km.", [], "coaching")
+
+        assert out == "- Rodaje suave Z1–Z2 (115–145 lpm), umbral 4:00/km."
+        agent.client.chat.completions.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_iso_dates_are_fixed_without_llm(self, monkeypatch):
+        agent = self._agent(monkeypatch, [])
+        out = await agent._apply_output_sensors("- El 2026-10-23 corriste 10 km.", [], "llm")
+
+        assert out == "- El 23/10/2026 corriste 10 km."
+        agent.client.chat.completions.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_retry_never_sees_tool_results(self, monkeypatch):
+        agent = self._agent(monkeypatch, ["- Rodaje Z2 (135–145 lpm)."])
+        tool_call_msg = MagicMock()  # mensaje del SDK con tool_calls: no es un dict
+        context = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "analiza"},
+            tool_call_msg,
+            {"role": "tool", "tool_call_id": "1", "content": "{...}"},
+        ]
+        await agent._apply_output_sensors("- Series Z4–Z5 (160–175 lpm).", context, "llm")
+
+        sent = agent.client.chat.completions.create.await_args.kwargs["messages"]
+        assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
+
+
 class TestPromptFiles:
     """Los textos para el LLM viven en prompts/ (23/10); el código solo los compone."""
 

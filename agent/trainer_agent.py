@@ -19,6 +19,7 @@ from typing import Any, Awaitable
 from openai import AsyncOpenAI
 from mcp import ClientSession
 
+from agent import sensors as _sensors
 from agent.sensors import strip_simulated_user_turn as _strip_simulated_user_turn
 from agent.mcp.client import (
     list_available_tools,
@@ -11335,6 +11336,72 @@ class TrainerAgent:
             f" extra={extra}" if extra else "",
         )
 
+    def _retry_findings(self, text: str) -> list[_sensors.Finding]:
+        """Sensores que piden reintento, con las zonas y el ritmo umbral vigentes del perfil."""
+        zones, _ = _resolve_hr_zones(self.user_profile, "running")
+        zones_cycling, _ = _resolve_hr_zones(self.user_profile, "cycling")
+        pace = _resolve_running_threshold_pace_for_date(self.user_profile, date.today().isoformat())
+        return _sensors.findings_to_retry(text, zones, zones_cycling, pace)
+
+    async def _apply_output_sensors(self, text: str, context_messages: list, kind: str) -> str:
+        """Pasa los sensores al texto del LLM antes de enseñarlo (docs/Harness.md §6).
+
+        Corrige sin LLM las fechas ISO; si otro sensor falla, devuelve al LLM las pistas en una sola
+        llamada más (sin tools) y se queda con la versión con menos fallos. Lo que siga fallando se avisa
+        al pie y queda en el log.
+        """
+        text = _sensors.fix_iso_dates(text)
+        findings = self._retry_findings(text)
+        if not findings or not text.strip():
+            return text
+        log.info("[SENSOR] %s: %s", kind, " | ".join(f"{f.sensor} {f.message}" for f in findings))
+        # El reintento ve los mensajes de sistema y de usuario y su propia respuesta, no los resultados de tools.
+        base = [
+            m for m in context_messages
+            if isinstance(m, dict) and (m.get("role") in {"system", "user"} or (m.get("role") == "assistant" and not m.get("tool_calls")))
+        ]
+        retry_messages = base + [
+            {"role": "assistant", "content": text},
+            {"role": "user", "content": _render_prompt(
+                "system/sensor_correction", fallos="\n".join(f"- {f.hint or f.message}" for f in findings)
+            )},
+        ]
+        try:
+            _t0 = time.perf_counter()
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=retry_messages,
+                    **({
+                        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
+                    } if getattr(self, "provider", "") == "nvidia" else {}),
+                ),
+                timeout=_llm_timeout_seconds(),
+            )
+            log.info("[SENSOR] %s reintento elapsed=%.1fs", kind, time.perf_counter() - _t0)
+            if getattr(response, "usage", None):
+                p_toks = getattr(response.usage, "prompt_tokens", 0) or 0
+                c_toks = getattr(response.usage, "completion_tokens", 0) or 0
+                self.total_prompt_tokens += p_toks
+                self.total_completion_tokens += c_toks
+                if getattr(self, "_api_key", None):
+                    update_gemini_daily_usage(self._api_key, p_toks + c_toks)
+            fixed = _strip_simulated_user_turn(str(response.choices[0].message.content or "").strip())
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, KeyError, IndexError) as exc:
+            self._log_chat_error(stage=f"sensor_retry_{kind}", error=exc)
+            fixed = ""
+        if fixed:
+            fixed = _sensors.fix_iso_dates(fixed)
+            remaining = self._retry_findings(fixed)
+            if len(remaining) < len(findings):
+                text, findings = fixed, remaining
+        if findings:
+            log.warning("[SENSOR] %s sin corregir: %s", kind, " | ".join(f"{f.sensor} {f.message}" for f in findings))
+            text += "\n\n> ⚠️ Comprobación de Kairos: revisa esto, no cuadra con tus datos:\n" + "\n".join(
+                f"> - {_sensors.user_notice(f)}" for f in findings
+            )
+        return text
+
     async def _augment_with_llm_coaching_if_needed(
         self,
         user_message: str,
@@ -11404,6 +11471,7 @@ class TrainerAgent:
             coaching_text = _strip_simulated_user_turn(
                 str((coaching_response.choices[0].message.content or "")).strip()
             )
+            coaching_text = await self._apply_output_sensors(coaching_text, coaching_messages, "coaching")
             if not coaching_text:
                 return (
                     deterministic_reply
@@ -12319,7 +12387,7 @@ class TrainerAgent:
                 continue
 
             # Respuesta final del agente
-            assistant_reply = message.content or ""
+            assistant_reply = await self._apply_output_sensors(message.content or "", messages, "llm")
 
             # Fallback para récords personales cuando el modelo responde
             # con "sin acceso" pese a tener herramientas MCP activas.
@@ -12483,6 +12551,7 @@ class TrainerAgent:
                             if getattr(self, "_api_key", None):
                                 update_gemini_daily_usage(self._api_key, p_toks + c_toks)
                         rescue_text = str((rescue_response.choices[0].message.content or "")).strip()
+                        rescue_text = await self._apply_output_sensors(rescue_text, rescue_messages, "rescue")
                         if rescue_text:
                             assistant_reply = rescue_text
                     except Exception as exc:
