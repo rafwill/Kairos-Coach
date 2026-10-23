@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Docs (`docs/Harness.md` reescrito)
+- Especificación del harness a partir de Böckeler/Fowler (guías y sensores, computacional e inferencial, bucle de gobierno) y de Harness² de Google Research (ocho componentes, Proponer–Probar–Componer, biblioteca de experiencia, guía separada de la rúbrica). Catálogo con 12 guías (G1–G12) y 24 sensores (S1–S24): dónde vive cada uno, qué hace si detecta un fallo y su estado real.
+- Corrige lo que estaba mal clasificado o desfasado: reglas del prompt contadas como sensores, pasos del arranque llamados hooks, umbrales de alerta viejos (HRV 15 %, body battery 30), recuento de tests.
+- Hueco principal: los controles sobre la respuesta del LLM (zonas, ritmo umbral, CTL/ATL, fechas) solo existen en el juez. Diseño de autocorrección en vivo con un módulo de sensores compartido y siguientes pasos ordenados. La rúbrica de la batería no cambia.
+
 ### Removed (limpieza de restos)
 - Lanzadores `tools/garmin-mcp-frozen.cmd/.sh` y el concepto de "backend frozen" (restos del MCP de terceros): `MCP_BACKEND`, `KAIROS_MCP_FROZEN_COMMAND`, `KAIROS_MCP_BACKEND_EFFECTIVE`, `get_configured_mcp_backend`, el parámetro `backend_effective` de la caché de contingencia y las líneas "MCP backend" del arranque. El cliente lanza `python -m garmin_mcp` con el mismo intérprete que Kairos y la raíz del repo como `cwd`, como ya hacían las herramientas de `tools/`. Comprobado en vivo (sesión, 42 tools, llamada a Garmin).
 - `fitparse` de `requirements.txt` (lo usaba `tools/fit_tss_probe.py`, que ya no existe); `form_zone_label` (`load_metrics`) y `_parse_iso_date` (`contracts`), sin uso; `make login`, idéntico a `make serve`; del `.gitignore`, `.garmin-mcp/`, `node_modules/`, `.venv2/`, `tmp/` y `.tmp_*`.

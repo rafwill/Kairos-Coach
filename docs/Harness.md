@@ -1,281 +1,156 @@
-# Harness Engineering — Kairos Coach
+# Harness de Kairos
 
-## ¿Qué es Harness Engineering en IA?
+Especificación de todo lo que rodea al LLM de Kairos para que sus respuestas sean deterministas donde pueden serlo y comprobables donde no. Cada guía y cada sensor tiene un identificador, el sitio del código donde vive, cómo actúa y su estado real. Revisado el 23/10/2026.
 
-En el ecosistema de agentes e IA, **harness engineering** es la disciplina de diseñar y construir toda la infraestructura que envuelve y controla al LLM. No es el modelo: es **todo lo que lo rodea** — políticas de comportamiento, mecanismos de observabilidad, puntos de intervención en el ciclo de vida y validación del sistema.
+Estados: ✓ funciona · ◐ existe pero incompleto o incoherente · ✗ propuesto, no existe.
 
-Se articula en tres componentes principales:
+## 1. Marco
 
-| Componente | Definición | Analogía |
-|---|---|---|
-| **Guides** | Instrucciones que dirigen al agente — qué hacer, cuándo, en qué orden | Manuales de operación |
-| **Sensors** | Mecanismos que observan y miden — estado del atleta y del sistema | Instrumentación de telemetría |
-| **Hooks** | Puntos de intervención en el ciclo de vida — antes/después de eventos clave | Callbacks del pipeline |
+Dos referencias, adaptadas a un coach (no a un agente de código):
 
-> La idea central: **el harness es tan crítico como el modelo**. Un LLM sin harness bien diseñado es impredecible; con uno sólido, es confiable y auditable.
+- **Guías y sensores** (Birgitta Böckeler, [Harness engineering for coding agent users](https://martinfowler.com/articles/harness-engineering.html)):
+  - Una **guía** (feedforward) dirige al agente *antes* de actuar para que acierte a la primera. Un **sensor** (feedback) observa *después* y le ayuda a corregirse; funciona mejor si su mensaje está escrito para que el LLM pueda actuar con él.
+  - Solo guías: las reglas nunca se comprueban. Solo sensores: el agente repite los mismos errores.
+  - Cada control es **computacional** (código determinista: rápido, barato, fiable) o **inferencial** (otro modelo que juzga: más rico, más caro, no determinista).
+  - **Calidad a la izquierda:** cuanto antes se detecta un fallo, más barato es corregirlo.
+  - **Bucle de gobierno:** cuando un fallo se repite, se mejora la guía o el sensor para que deje de ocurrir; el humano dirige el harness, no cada respuesta.
+- **Harness²** de Google Research ([repositorio](https://github.com/google-research/harness2), [artículo](https://arxiv.org/abs/2610.14224)):
+  - Un harness es todo lo que rodea al modelo, con ocho componentes editables: system prompt, guardrails, memoria y skills (construyen el contexto); tool guidance y scripts (interfaz de herramientas); subagentes (delegación); plugins (middleware).
+  - Mejora el harness sin tocar el modelo con **Proponer–Probar–Componer**: proponer cambios, probarlos sobre la misma tarea y quedarse con lo que la evidencia sostiene comparando ejecuciones.
+  - Guarda una **biblioteca de experiencia**: por cada cambio adoptado, la señal que lo motivó, la lección y la evidencia.
+  - Separa cambios **invariantes** (valen para cualquier tarea) de cambios **de dominio**.
+  - Las guías describen *el trabajo*, nunca *cómo se mide*: el texto del juez no entra en el prompt.
 
----
+**Qué adoptamos.** El vocabulario de guías y sensores con su eje computacional/inferencial; el bucle de gobierno; Proponer–Probar–Componer hecho a mano con la batería como prueba (cada cambio de prompt o de sensor se contrasta con una batería antes y después); la biblioteca de experiencia como entradas de la bitácora con señal, lección y evidencia; y la separación entre guía y rúbrica.
 
-## Guides
+**Qué no adoptamos.** La optimización automática y recursiva de Harness² (un modelo que reescribe el harness): Kairos tiene un solo dominio, un usuario y una batería de 25 preguntas, y las reglas de método de `CLAUDE.md` piden criterios fijados antes de ver resultados y cambios revisados por una persona.
 
-Son las instrucciones que definen el comportamiento del agente.
+## 2. Principio de control
 
-### Guía de herramientas (dónde vive)
-El LLM elige herramientas con tres fuentes que sí recibe: la **descripción de cada tool** del servidor MCP (`garmin_mcp/server.py`; catálogo legible en `garmin_mcp/README.md`), el apartado **"Checklist mínimo por intención"** y **"Uso eficiente de herramientas"** del system prompt, y el bloque de contexto (perfil, carga, umbrales, plan). La antigua `prompts/mcp_tool_routing_guide.md` no se inyectaba al LLM y estaba duplicada; se archivó el 22/10 (sus reglas de ahorro de tokens pasaron al system prompt).
+Los números los calcula Python; el LLM solo interpreta. Por orden de preferencia, para cada cosa que Kairos debe hacer bien:
 
-La política de solo lectura no depende de ninguna guía: el servidor no expone escrituras, sus tools llevan `readOnlyHint` y `MCP_READ_ONLY` (activado por defecto) filtra y bloquea cualquier tool de escritura en el host.
+1. **Que no la haga el LLM.** Ruta determinista sin LLM (router) o cálculo en Python que el LLM recibe hecho.
+2. **Guía.** Si la tiene que hacer el LLM, darle el dato ya calculado y la regla explícita.
+3. **Sensor en vivo con autocorrección.** Comprobar la respuesta antes de enseñarla; si falla, devolverle el fallo concreto una vez.
+4. **Sensor fuera de línea.** Tests, batería y juez: detectan lo que se escapó y alimentan el bucle de gobierno.
 
-### System Prompt
-**Archivo:** `prompts/system_prompt.md`
+## 3. Componentes de Harness² en Kairos
 
-Documento central de comportamiento del agente. Define:
-- Rol e identidad del coach.
-- Arquitectura de dos capas: capa de datos (Python) vs capa de coaching (LLM).
-- Reglas de lo que el agente NUNCA debe hacer (no recalcular datos ya procesados, no presentar datos crudos, no inventar).
-- Cuándo consultar herramientas vs cuándo usar datos pre-computados.
-- Protocolos especiales: Diabetes Tipo 1, Race Readiness, revisión post-sesión.
-- Flags de anomalías biométricas (ver sección Sensors).
-- Reglas de prompting: tendencia junto al valor puntual, transparencia de muestra, relaciones > valores aislados.
-- Contrato de formato unificado obligatorio (4 secciones): resumen, métricas clave, recomendación y próximo paso.
+| Componente | En Kairos |
+| --- | --- |
+| System prompt | G1, G2 |
+| Guardrails | S4, S5, S7, S9 |
+| Memoria | G9 (historial y resúmenes), G11 (base de conocimiento) |
+| Skills | G7, G8 (motores de decisión y de planes: conocimiento procedimental en Python) |
+| Tool guidance | G6, G10 |
+| Scripts | `tools/` (batería, juez, healthcheck, reconstrucción del TSS) |
+| Subagentes | No hay (un solo agente; la capa de coaching es una llamada aparte con contexto propio) |
+| Plugins / middleware | G5 (router), `HookManager` (sin suscriptores; ver §7) |
 
-### System Prompt Compacto
-**Archivo:** `prompts/system_prompt_compact.md`
+## 4. Guías
 
-Versión reducida del system prompt para modelos con límite bajo de tokens (GitHub Models en red corporativa con Zscaler). Mantiene las mismas reglas esenciales, incluyendo la plantilla única de salida.
+| ID | Guía | Tipo | Dónde | Estado |
+| --- | --- | --- | --- | --- |
+| G1 | System prompt: rol, dos capas (datos en Python, coaching en el LLM), qué no hacer nunca, cuándo usar tools, protocolos (diabetes tipo 1, preparación de carrera, revisión post-sesión), anomalías biométricas con los umbrales del motor diario (HRV < 90 % de su media semanal, body battery < 35, sueño < 6 h o < 60), zonas de Garmin, formato de salida | Texto | `prompts/system_prompt.md`; `system_prompt_compact.md` solo para GitHub Models | ✓ |
+| G2 | Prompt de la capa de coaching: interpretar solo el bloque factual, secciones de readiness, reglas de carga | Texto | `_augment_with_llm_coaching_if_needed` (`agent/trainer_agent.py`) | ◐ repite reglas de G1 con otra redacción y pide "% del umbral de FC", en contra de la regla de zonas de Garmin |
+| G3 | Contexto del atleta: perfil, "Estado de carga actual", "Umbrales" con zonas en lpm, "Plan activo" (hoy y dos días) | Computacional (datos) | `_profile_context_block`, `_load_and_anchors_context_block`, `_plan_context_block`; zonas de `_resolve_hr_zones` | ✓ |
+| G4 | Horizonte de la respuesta (hoy, mañana o lo que queda de semana) | Computacional | `_coaching_horizon` | ✓ |
+| G5 | Router determinista: 15 intenciones (TSS, actividades, umbrales, plan, objetivo, récords, readiness…) se responden sin LLM | Computacional | `ToolRouter` (`KAIROS_DETERMINISTIC_ROUTER`, activo por defecto) | ✓ |
+| G6 | Descripción de cada tool y de sus parámetros, la que lee el LLM para elegirla | Texto | `garmin_mcp/server.py`; catálogo en `garmin_mcp/README.md` | ✓ |
+| G7 | Decisión diaria: mantener, suavizar o descansar según carga, HRV, sueño y body battery | Computacional | `_compute_daily_plan_adjustment` | ◐ el LLM recibe la decisión dentro del bloque factual, no como marco obligatorio de la sesión (ver G12) |
+| G8 | Motor de planes: parte del volumen real de 4 semanas, ninguna semana > 10 % sobre lo sostenido, plan genérico si el objetivo ya pasó | Computacional | `_generate_structured_plan_payload`, `_build_plan_load_context` | ✓ |
+| G9 | Memoria entre sesiones: solo las preguntas del usuario, nunca respuestas con cifras viejas | Computacional | `_restore_previous_session`, `generate_session_summary_checkpoint`, `_strip_previous_reply` | ✓ |
+| G10 | Resultados de tools compactados (3 000 caracteres; series diarias completas en columnas) | Computacional | `_compact_tool_result`, `_DAILY_SERIES_TOOLS` | ✓ |
+| G11 | Base de conocimiento del atleta (fragmentos relevantes de sus notas) | Computacional | `_build_athlete_knowledge_context`, `ATHLETE_KB_PATHS` | ✓ |
+| G12 | Marco de la sesión de hoy: tipo, zonas permitidas y duración máxima ya calculados a partir de G7, para que el LLM redacte y no decida | Computacional | — | ✗ |
 
----
+## 5. Sensores
 
-## Sensors
+"Acción" es lo que hace el sensor cuando detecta un fallo: **bloquea** (no deja pasar), **corrige** (arregla sin LLM), **reintenta** (devuelve el fallo al LLM una vez), **avisa** (lo muestra al usuario) o **registra** (solo log o informe).
 
-Mecanismos que observan y miden el estado — tanto del atleta como del propio sistema.
+### En vivo, al arrancar
 
-### Sensores biométricos (sobre el atleta)
+| ID | Comprueba | Tipo | Acción | Dónde | Estado |
+| --- | --- | --- | --- | --- | --- |
+| S1 | Acceso a Garmin (contraseña cambiada, 401) | Computacional | Bloquea y pide credenciales | `get_user_profile` en `agent/main.py` | ✓ |
+| S2 | Zonas de FC de Garmin al día | Computacional | Corrige el perfil (con historial) | `_refresh_hr_zones_from_garmin` | ✓ |
+| S3 | Pico de carga semanal > 20 % | Computacional | Avisa | `_compute_weekly_spike_signal` (`load_metrics.py`) | ✓ |
 
-#### Snapshot proactivo de 48h
-**Función:** `TrainerAgent.collect_startup_snapshot_48h()` / `_build_proactive_status_markdown()`
+### En vivo, en cada llamada a tools
 
-Al arrancar el sistema, se recopilan automáticamente:
-- Body battery (últimas 48h)
-- HRV
-- Sueño
-- Entrenamientos recientes
-- Recomendación de plan activo (si existe)
+| ID | Comprueba | Tipo | Acción | Dónde | Estado |
+| --- | --- | --- | --- | --- | --- |
+| S4 | Ninguna tool de escritura | Computacional | Bloquea (las oculta al LLM y las rechaza en el bucle) | `MCP_READ_ONLY`, `_is_write_mcp_tool` | ✓ |
+| S5 | Argumentos obligatorios de cada tool | Computacional | Bloquea con error de contrato, sin llamar a Garmin | `validate_min_input_contract` (`agent/mcp/contracts.py`) | ✓ |
+| S6 | Errores de Garmin (tipo, HTTP, `retry_after`) | Computacional | Avisa (bloque "Transparencia de datos") | `_classify_mcp_error_text` (`agent/mcp/client.py`) | ✓ |
+| S7 | Bucle de tools acotado | Computacional | Bloquea a las 15 iteraciones | `_MAX_TOOL_ITER` | ✓ |
 
-Genera un resumen operativo que el coach presenta al usuario sin que este lo pida.
+### En vivo, sobre la respuesta del LLM
 
-#### Detección de anomalías biométricas
-**Definido en:** `prompts/system_prompt.md`
+| ID | Comprueba | Tipo | Acción | Dónde | Estado |
+| --- | --- | --- | --- | --- | --- |
+| S8 | Turnos de usuario inventados | Computacional | Corrige (los recorta) | `_strip_simulated_user_turn` | ✓ |
+| S9 | Plan generado válido (sesiones, duraciones, progresión) | Computacional | Bloquea el plan | `_validate_structured_plan` | ✓ |
+| S10 | Cada rango de FC cabe en una zona de Garmin (Z1–Z2 en rodaje suave; progresivos "de Zx a Zy") | Computacional | Reintenta | Hoy solo en el juez (`check_state_and_coaching`) | ◐ |
+| S11 | Un ritmo citado como umbral es el vigente en la fecha | Computacional | Reintenta | Solo en el juez | ◐ |
+| S12 | No atribuye a la CTL el máximo habitual de la ATL | Computacional | Reintenta | Solo en el juez | ◐ |
+| S13 | Fechas DD/MM/AAAA, nunca ISO | Computacional | Corrige | Solo en el juez (G3) | ◐ |
+| S14 | Cifras citadas (CTL, ATL, TSB, TSS, HRV) = las del bloque determinista | Computacional | Reintenta | — | ✗ |
+| S15 | La sesión propuesta respeta la decisión del motor diario (descanso o suave → ni series ni Z4–Z5) | Computacional | Reintenta | — | ✗ |
+| S16 | Nota de seguridad glucémica si el perfil tiene diabetes con insulina | Computacional | Corrige (añade la nota fija) | — | ✗ |
+| S17 | Responde al horizonte preguntado | Inferencial (no hay forma fiable de comprobarlo con código) | Registra | — | ✗ (solo si S10–S16 no bastan) |
 
-Flags activos que el coach debe detectar y reportar:
-- FC en reposo elevada sin carga previa.
-- Sueño malo ≥ 2 noches consecutivas.
-- HRV > 15% por debajo de la media de 7 días.
-- Body battery < 30 durante ≥ 2 días.
+### Fuera de línea
 
-#### Modelo de carga y fatiga TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)
-**Función:** `TrainerAgent.compute_and_persist_load_metrics()`; datos en `activity_tss` y `load_metrics_daily` (Supabase)
+| ID | Comprueba | Tipo | Cuándo | Dónde | Estado |
+| --- | --- | --- | --- | --- | --- |
+| S18 | Suite de tests sin red (585) | Computacional | Cada push (CI) y antes de commitear | `tests/`, `.github/workflows/tests.yml` | ✓ |
+| S19 | Batería de 25 preguntas contra datos reales y juez con rúbrica fija | Computacional | Tras cambios en rutas, prompts o modelo | `tools/run_bateria.py`, `tools/juez_bateria.py` (§8) | ✓ |
+| S20 | Guía de estilo MCP sobre `tools/list` | Computacional | CI (test) y al cambiar tools | `tools/lint_mcp.py`, `test_all_tools_follow_mcp_style_guide` | ✓ |
+| S21 | Cada tool llama a `garminconnect` con su firma real; healthcheck en vivo de las 42 | Computacional | CI (test) y bajo demanda | `test_every_tool_calls_garminconnect_with_its_real_signature`, `tools/healthcheck_mcp.py` | ✓ |
+| S22 | TSS frente a TrainingPeaks (mediana, MAPE, ±10 %) | Computacional | Al cambiar una fórmula | `tools/rebuild_tss_baseline.py` y el export de TP | ✓ |
+| S23 | Tests antes de cada commit | Computacional | Pre-commit local | — | ✗ (pendiente en `CLAUDE.md`) |
+| S24 | Deriva: código muerto y estilo (ruff) | Computacional | CI | — | ✗ (ruff tiene 409 avisos sin revisar) |
 
-Sensor continuo de carga y fatiga, calculado como TrainingPeaks:
-- Un TSS por actividad, calculado una vez con el método de su deporte y guardado en `activity_tss` con el modelo y los anclajes usados. Nunca se recalcula hacia atrás (línea base desde el 22/02/2026).
-- EWMA con las constantes del PMC de TP (CTL 42, ATL 7) para todos los deportes; Forma = CTL de ayer − ATL de ayer.
-- Anclajes con fecha en el perfil (umbral de FC de TP, ritmo umbral) aplicados según la fecha de cada actividad.
-- Percentiles individualizados por atleta para las alertas.
-- Integrado en el snapshot proactivo con regla aplicada de actuación.
+No hay sensores inferenciales (LLM como juez) a propósito: son caros, no deterministas y, para un consejo de entrenamiento, el criterio final es del usuario. La calidad del consejo queda en revisión humana.
 
-#### Validación frente a TrainingPeaks
-**Herramientas:** `tools/rebuild_tss_baseline.py`, export de TP (`_archivo/datos_tp/workouts.csv`, local)
+## 6. Autocorrección (diseño de S10–S16)
 
-Sensor de exactitud del propio cálculo:
-- `rebuild_tss_baseline.py` recalcula todo por la ruta de producción con las escrituras interceptadas (prueba) y deja un CSV por actividad; con `--apply` persiste.
-- Cada cambio de fórmula se valida contra el export de TP con criterios fijados antes de ver resultados (mediana Kairos/TP, MAPE, sesiones dentro de ±10 %) y comprobando que solo cambian las filas esperadas.
-- Estado a 2026-10-21: running MAPE 6.3 %, trail 1.6 %, bici con potencia 1.6 %; serie frente a TP con diferencia media CTL 2.1 · ATL 2.7 · TSB 3.0.
+Los sensores de la respuesta del LLM viven en un único módulo (`agent/sensors.py`) que usan a la vez Kairos en vivo y el juez de la batería, para que haya una sola definición de cada regla.
 
-#### Tendencia junto al valor puntual
-**Definido en:** `prompts/system_prompt.md`
+1. El LLM responde.
+2. Se pasan S8, S13 y S16, que corrigen sin LLM.
+3. Se pasan S10, S11, S12, S14 y S15. Si alguno falla, se hace **una** llamada más con el fallo redactado para que el LLM actúe, por ejemplo: "El rango 115–150 lpm no cabe en ninguna zona. Zonas: Z1 115–134, Z2 135–145, Z3 146–157. Reescribe esa línea con una sola zona, o Z1–Z2 si es un rodaje suave."
+4. Si el segundo intento también falla, se muestra con la línea marcada y se registra en `agent.log` con el ID del sensor.
 
-Regla sensor: para HRV, body battery, sueño, FC en reposo y VO2max, reportar siempre: valor hoy + media 7d + dirección de tendencia. Nunca un valor aislado.
+El reintento solo cuesta latencia cuando hay un fallo. Cada sensor registra cuántas veces salta, para el bucle de gobierno.
 
-#### Transparencia de datos
-**Definido en:** `prompts/system_prompt.md`
+## 7. Bucle de gobierno
 
-Regla: declarar N (tamaño de muestra) y calidad del dato en toda afirmación sobre tendencias.
+- **Fallo que se repite → control nuevo.** Si un fallo aparece en dos baterías, se añade o se corrige una guía (si el LLM no tenía el dato o la regla) o un sensor (si la tenía y no la cumplió).
+- **Proponer–Probar–Componer a mano.** Cada cambio de guía o de sensor se prueba con una batería antes y otra después, con los criterios fijados antes de mirar. Un sensor nuevo se pasa primero sobre transcripciones ya guardadas en `.tmp/bateria/` y debe dar 0 falsos positivos antes de conectarlo a Kairos.
+- **Biblioteca de experiencia.** Cada cambio adoptado deja una entrada en `docs/proximos_pasos.md` con **señal** (qué falló y dónde), **lección** (qué regla general se saca) y **evidencia** (baterías antes y después).
+- **Guía ≠ rúbrica.** Los prompts describen el trabajo de entrenador; nunca copian el texto del juez ni mencionan la batería.
+- **`HookManager`.** Emite cinco eventos (`before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`) en unos 12 puntos de `chat()`, pero ningún código se suscribe a ellos. Los sensores de §6 se llaman de forma explícita, sin hooks. Pendiente de decidir si se elimina.
 
-### Sensores del sistema (sobre el agente)
+## 8. Rúbrica de la batería (S19)
 
-#### Suite de tests (estado validado en CI y local)
-**Directorio:** `tests/`
+`run_bateria.py` lanza las 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra Kairos real y guarda la transcripción con tiempos (`.tmp/bateria/`). `juez_bateria.py <transcripción>.md` la contrasta con Supabase (`load_metrics_daily`, `activity_tss`, perfil, planes) y, para los récords, con Garmin en solo lectura; reutiliza funciones de producción (`form_zone`, umbral por fecha, `_resolve_hr_zones`, familia de deporte). Rúbrica fijada antes de ver resultados (22/10/2026):
 
-Verifica que el harness no se rompe (2026-10-22: 570 passed, 6 skipped):
-- `test_trainer_agent.py` — agente: rutas deterministas, coaching, planes (`TestStructuredPlanEngine`), pantalla de carga y umbrales por fecha.
-- `test_load_metrics.py` — TSS por deporte, PMC (CTL/ATL/TSB), zonas de Forma, duración de actividad y modelo de caminar/senderismo.
-- `test_running_tss.py` — pipeline físico de running (NGP, rTSS).
-- `test_storage.py` — capa de persistencia.
-- `test_main.py` — flujo principal y comandos de perfil.
-- `test_hooks_router.py`, `test_garmin_mcp_server.py`, `test_mcp_client.py` — hooks, router y MCP.
-
-Toda la capa de Supabase y Garmin está mockeada — no se realizan conexiones reales en ningún test.
-
-#### Batería y juez determinista
-**Herramientas:** `tools/run_bateria.py` y `tools/juez_bateria.py`
-
-`run_bateria.py` lanza las 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra Kairos real y guarda la transcripción con tiempos (`.tmp/bateria/`). `juez_bateria.py <transcripción>.md` la contrasta con Supabase (`load_metrics_daily`, `activity_tss`, perfil, planes) y, para los récords, con Garmin en solo lectura; reutiliza funciones de producción (`form_zone`, umbral por fecha, `_hr_zone_bounds_bpm`, familia de deporte). Rúbrica fijada antes de ver resultados (22/10/2026):
-
-- Globales (G1–G5): hay respuesta y coaching; Garmin accesible (si no, fallo de entorno); fechas DD/MM/AAAA; nada de "datos disponibles" sin cifras; sin turnos de usuario inventados.
+- Globales (G1–G5 del juez): hay respuesta y coaching; Garmin accesible (si no, fallo de entorno); fechas DD/MM/AAAA; nada de "datos disponibles" sin cifras; sin turnos de usuario inventados.
 - Por pregunta: CTL/ATL/TSB y zona de Forma = serie del día; TSS semanal, diario y por actividad = `load_metrics_daily` / `activity_tss`; actividades de un rango ⊇ `activity_tss`; análisis de la actividad correcta con su TSS y su Carga Garmin (`native_load`); recuento y desglose por deporte; umbrales y su historial = perfil; plan activo = `training_plan`; récords = Garmin; objetivo = `goals`; últimas 20 por deporte = `activity_tss` (orden, TSS, carga, media y máximo).
 - En el texto del LLM: no atribuye a la CTL el máximo habitual de la ATL; cada rango de FC en lpm cabe en una zona (zonas de carrera de Garmin guardadas en el perfil, las del reloj y TP; desde el 22/10, antes % del LTHR), salvo un rango dentro de Z1–Z2 (rodaje suave: las dos zonas están bajo VT1 y dan el mismo estímulo; desde el 23/10, decisión del usuario; que un día de recuperación vaya solo en Z1 lo pide el prompt, el juez no lo comprueba) y salvo un tramo progresivo (desde el 23/10, decisión del usuario): en la misma línea, marcado como calentamiento, vuelta a la calma, enfriamiento o progresivo y con "de Zx a Zy" / "Zx–Zy", con la FC de inicio en la zona más baja nombrada y la de fin en la más alta; un tramo continuo entre dos zonas de Z2/Z3 para arriba ("Z2 alto / Z3 bajo", "Z4–Z5") sigue siendo fallo; un ritmo citado como umbral es el vigente.
 - Tolerancias: ±0,1 en TSS/CTL/ATL/TSB, ±1 lpm, ±2 s/km. No juzga la calidad del consejo (revisión humana).
 
-Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera pasada (22/10): detectó que la "Carga Garmin" de las salidas en bici con potencia mostraba el TSS de Garmin.
+Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera pasada (22/10): detectó que la "Carga Garmin" de las salidas en bici con potencia mostraba el TSS de Garmin. 23/10: 25/25 tras el criterio de Z1–Z2 y tras la limpieza de restos.
 
-#### Guía de estilo del MCP
-**Herramienta:** `tools/lint_mcp.py` (`make lint-mcp`)
+## 9. Siguientes pasos
 
-Pasa la guía de estilo MCP de apiaddicts (`mcps-style-guide`, Spectral) sobre el `tools/list` real del servidor: título, descripción y parámetros descritos en cada tool, `inputSchema` de tipo object. Configuración en `tools/mcp_lint/.spectral.yaml` (ruleset anclado a un commit; camelCase y `outputSchema` desactivadas con su motivo). 22/10: 0 hallazgos. Un test sin red (`test_all_tools_follow_mcp_style_guide`) lo mantiene en la CI.
+En este orden, cada uno con su batería antes y después:
 
-#### Salud de las tools del MCP
-**Herramientas:** test de contrato (`test_every_tool_calls_garminconnect_with_its_real_signature`, en CI) y `tools/healthcheck_mcp.py` (`make health-mcp`, bajo demanda)
-
-- El test de contrato, sin red, comprueba que cada tool llama a `garminconnect` con argumentos válidos para la versión instalada (habría detectado las 8 tools rotas del 22/10 y detecta cambios de firma al actualizar la librería).
-- El healthcheck en vivo llama a las 42 tools contra Garmin (ayer, últimas dos semanas, actividad más reciente) y clasifica cada una: OK, VACÍA (aviso), ERROR o ENTORNO (429/autenticación: no es fallo de Kairos). Informe en `.tmp/healthcheck/`; sale con 1 si alguna tool falla. Lanzarlo al actualizar `garminconnect`, antes de una batería o si algo parece raro; no en el arranque de Kairos. 22/10: 37 OK, 4 VACÍA (potencia sin potenciómetro, Training Readiness no disponible en el Fénix 6X Pro, sin eventos), 0 ERROR.
-
-#### GitHub Actions CI
-**Archivo:** `.github/workflows/tests.yml`
-
-Sensor continuo en cada `push` a `main`/`dev` y en cada `pull_request` a `main`. Ejecuta la suite completa con variables de entorno mínimas de CI.
-
-#### Filtrado de herramientas de escritura (guardrail)
-**Función:** `TrainerAgent.initialize()` en `agent/trainer_agent.py`
-
-```python
-if self.mcp_read_only:
-    tools = [t for t in tools if not _is_write_mcp_tool(t.get("name", ""))]
-```
-
-Sensor de seguridad: filtra las tools de escritura MCP antes de que el LLM pueda verlas. Complementado con bloqueo en el loop de tool-calls.
-
-#### Verificación de autenticación Garmin
-**En:** `main()`, `agent/main.py`
-
-Llama a `get_user_profile` como test de conectividad antes de continuar. Detecta si la contraseña de Garmin Connect ha cambiado y activa el flujo de recuperación.
-
-#### Detección de cambios de perfil Garmin
-**Función:** `_sync_from_garmin()` en `agent/main.py`
-
-En cada arranque, sincroniza datos personales desde Garmin y reporta cambios de perfil (peso, edad, género...) de forma contextual.
-
----
-
-## Hooks
-
-Puntos de intervención en el ciclo de vida del agente. El proyecto ahora incluye un sistema de hooks **explícito** y mínimo en runtime:
-
-- `HookManager` en `agent/trainer_agent.py`.
-- Eventos soportados: `before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`.
-- Integrado en `TrainerAgent.chat()` para cubrir rutas deterministas y flujo LLM+tools.
-
-Además, se añadió un `ToolRouter` determinista opcional para intenciones críticas (activado por defecto con `KAIROS_DETERMINISTIC_ROUTER=true`).
-
-### Pipeline de arranque
-
-```
-main()
-  ├─ [hook: fail-fast infra]     _check_and_migrate_supabase()
-  ├─ [hook: autenticación]       _authenticate_or_register_user()
-  ├─ [hook: credenciales]        _ensure_garmin_credentials()
-  ├─ [hook: selección provider]  _auto_select_provider()
-  │
-  └─ async with garmin_mcp_session():
-       ├─ [hook: carga de tools]     agent.initialize()
-       │    └─ [hook: filtro r/o]    _is_write_mcp_tool() filter
-       │
-       ├─ [hook: verificación auth]  call_tool("get_user_profile") → detección 401
-       ├─ [hook: sincronización]     _sync_from_garmin() → profile_changes
-       ├─ [hook: primer uso]         _is_first_time() → _run_first_time_setup()
-       ├─ [hook: knowledge base]     build_onboarding_mcp_enrichment() (si nuevo)
-       ├─ [hook: carga/fatiga]       agent.compute_and_persist_load_metrics() → activity_tss + load_metrics_daily
-       ├─ [hook: snapshot proactivo] _build_proactive_status_markdown()
-       └─ [loop de chat]            while True: agent.chat(user_input)
-```
-
-### Hook de filtrado de tools (`initialize()`)
-Hook de seguridad de arranque: se ejecuta una vez al iniciar y determina qué herramientas MCP son visibles para el LLM durante toda la sesión (modo read-only).
-
-### Hooks de conversación (`TrainerAgent.chat()`)
-Hooks explícitos alrededor del ciclo de conversación:
-
-- `before_message`: antes de procesar el mensaje del usuario.
-- `after_message`: tras construir la respuesta final (incluye ruta usada).
-- `before_tool_call`: antes de cada tool-call (determinista o generado por LLM).
-- `after_tool_call`: después de cada tool-call, con estado de éxito/bloqueo.
-- `on_error`: cuando ocurre error en etapas críticas (`planning_route`, `llm_completion`, `tool_call`, etc.).
-
-### Router determinista opcional (`ToolRouter`)
-Router de intenciones críticas, habilitado por defecto:
-
-- `config_options`
-- `plan_status`
-- `goal_status`
-- `week_tss`
-- `week_activities`
-- `load_trend`
-- `hr_threshold`
-- `running_threshold`
-- `today_load_status`
-- `activity_details`
-- `recent_tss_by_sport` (últimos N entrenamientos con su TSS guardado, varios deportes)
-- `personal_records`
-- `mcp_factual`
-- `daily_readiness`
-- `planning`
-
-Las rutas que muestran TSS leen `activity_tss`: una actividad sin fila aparece como "pendiente de cálculo" y la carga de Garmin solo como "Carga Garmin (no TSS)".
-
-Se puede desactivar con `KAIROS_DETERMINISTIC_ROUTER=false` para volver al comportamiento basado solo en lógica existente/LLM.
-
-### Hook de CI (GitHub Actions)
-Se dispara en `push` y `pull_request`. Actúa como hook de calidad del código fuente.
-
----
-
-## Gaps identificados
-
-Elementos de harness engineering que actualmente faltan en el proyecto:
-
-| Gap | Descripción | TODO relacionado |
-|---|---|---|
-| Git hooks locales | No hay `.githooks/` — no hay validaciones pre-commit | #22 |
-
----
-
-## Estado del harness por capa
-
-```
-┌─────────────────────────────────────────────────────┐
-│                   GUIDES                            │
-│  system_prompt.md           ✓ operativo             │
-│  system_prompt_compact.md   ✓ operativo             │
-├─────────────────────────────────────────────────────┤
-│                   SENSORS                           │
-│  snapshot proactivo 48h     ✓ operativo             │
-│  anomalías biométricas      ✓ en prompting          │
-│  TSS por actividad + PMC    ✓ operativo             │
-│  validación frente a TP     ✓ rebuild en prueba     │
-│  guardrail read-only        ✓ operativo             │
-│  suite de tests             ✓ operativo             │
-│  batería + juez             ✓ manual (tools/)       │
-│  guía de estilo MCP         ✓ lint + test en CI     │
-│  salud de tools MCP         ✓ contrato CI + vivo    │
-│  CI GitHub Actions          ✓ operativo             │
-│  spike semanal >20%         ✓ operativo             │
-│  logging por niveles        ✓ operativo             │
-├─────────────────────────────────────────────────────┤
-│                   HOOKS                             │
-│  pipeline arranque          ✓ operativo             │
-│  filtro tools read-only     ✓ en initialize()       │
-│  hook pre/post mensaje      ✓ explícito             │
-│  hook pre/post tool call    ✓ explícito             │
-│  hook error centralizado    ✓ explícito             │
-│  router determinista        ✓ opcional (env flag)   │
-│  git hooks locales          ✗ no existe             │
-└─────────────────────────────────────────────────────┘
-```
+1. **G2 coherente con G1:** el prompt de coaching usa las mismas reglas que el system prompt y deja de pedir "% del umbral de FC".
+2. **`agent/sensors.py` con S10–S13** sacados del juez, que pasa a importarlos. Criterio: 0 falsos positivos en las transcripciones del 23/10 y el juez da el mismo veredicto que antes.
+3. **Autocorrección en vivo (§6)** con S10–S13. Criterio: batería 25/25 y la latencia media de las preguntas con LLM no sube más de un 10 % si no hay fallos.
+4. **S14, S15 y S16**, con los mismos criterios.
+5. **G12, marco de la sesión de hoy.**
+6. **S23 y S24:** hook de pre-commit y ruff en la CI con los avisos actuales como línea base.
