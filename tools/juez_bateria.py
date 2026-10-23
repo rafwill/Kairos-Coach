@@ -125,6 +125,7 @@ class Truth:
         self.lthr = float(lthr) if lthr else None
         # Zonas de carrera de Garmin guardadas en el perfil (las del reloj y TP); sin ellas, % del LTHR.
         self.zones, self.zones_source = ta._resolve_hr_zones(self.profile, "running")
+        self.zones_cycling, _ = ta._resolve_hr_zones(self.profile, "cycling")
         self.pace_today = ta._resolve_running_threshold_pace_for_date(self.profile, self.today.isoformat())
         self._prs: set[str] | None = None
 
@@ -190,6 +191,7 @@ def global_checks(v: Verdict, body: str) -> None:
 
 # ─── Comprobaciones por pregunta ────────────────────────────────────────────
 
+_CYCLING_LINE = re.compile(r"(?i)ciclis|\bbici|cycling|rodillo")
 _PROGRESSIVE = re.compile(r"(?i)calentamiento|vuelta a la calma|enfriamiento|progresiv")
 _ZONE_SPAN = re.compile(r"(?i)\bZ([1-5])\s*(?:[–\-→]|\ba\b|hasta)\s*Z([1-5])\b")
 
@@ -249,9 +251,14 @@ def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
         lo, hi = sorted((int(mr.group(1)), int(mr.group(2))))
         if not (100 <= lo <= 220):
             continue
-        fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in t.zones)
+        # Garmin tiene zonas por deporte: una línea de bici se juzga con las de ciclismo (23/10).
+        line_start = coaching.rfind("\n", 0, mr.start()) + 1
+        line_end = coaching.find("\n", mr.end())
+        line = coaching[line_start: line_end if line_end != -1 else len(coaching)]
+        zones = t.zones_cycling if _CYCLING_LINE.search(line) and t.zones_cycling else t.zones
+        fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in zones)
         if not fits:
-            fits = _easy_range_ok(lo, hi, t.zones) or _progressive_range_ok(coaching[: mr.start()], lo, hi, t.zones)
+            fits = _easy_range_ok(lo, hi, zones) or _progressive_range_ok(coaching[: mr.start()], lo, hi, zones)
         v.check(fits, f"LLM: rango {lo}–{hi} lpm no cabe en ninguna zona (ni en Z1–Z2 ni es un tramo progresivo de Zx a Zy)")
     # Ritmo citado como umbral
     if t.pace_today:

@@ -98,7 +98,7 @@ Compara siempre con las referencias propias del atleta (sus medias de HRV, sueñ
 
 ## Estructura obligatoria al prescribir una sesión
 1. **Calentamiento**
-2. **Parte principal** con intensidad en **RPE 1-10** y, si aplica, zona de Garmin (nombre y lpm del bloque "Umbrales"; no en % del umbral)
+2. **Parte principal** con la intensidad en **zona de Garmin** (nombre y lpm del bloque "Umbrales"; nunca en % del umbral) y el **RPE 1-10** como referencia de sensación. Donde la FC no sirve de guía (fuerza, series muy cortas) manda el RPE; en ciclismo con potencia, además % del FTP
 3. **Enfriamiento**
 4. **Nutrición/hidratación** de esa sesión cuando aplique
 

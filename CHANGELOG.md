@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Changed (zona de Garmin como intensidad principal)
+- Decisión del usuario: la FC en zonas de Garmin es la referencia principal al prescribir y el RPE el complemento (manda solo donde la FC no sirve: fuerza, series muy cortas); en ciclismo con potencia, además % del FTP. En `prompts/coaching_rules.md` (antes: "RPE 1-10 y, si aplica, zona de Garmin"). El motor de planes sigue en RPE y guarda por dentro % del LTHR (zonas de Friel, que no casan con las de Garmin): pasa a zonas de Garmin en el paso 5 de `docs/Harness.md`.
+- Juez: los rangos de FC de una línea de bici se comparan con las zonas de ciclismo de Garmin (Z1 105–124…), no con las de carrera. La batería marcaba como fallo un "Z1 (FC ciclista 105–124 lpm)" correcto. Las seis baterías del 23/10, 25/25 con el juez corregido.
+
 ### Changed (reglas de entrenador en una sola fuente)
 - Las reglas de entrenador estaban escritas cuatro veces (system prompt y tres mini-prompts: coaching y dos rescates), con redacciones distintas; el de coaching pedía la intensidad "en % del umbral de FC", en contra de la regla de zonas de Garmin. Pasan literalmente a `prompts/coaching_rules.md` (sin perder ni duplicar líneas, comprobado) y las cargan las cuatro llamadas; `system_prompt.md` las inserta en `{{REGLAS_DE_COACHING}}`. Las llamadas al LLM no cambian; las de coaching mandan unos 2 700 tokens más.
 - Ruta determinista de la FC umbral: decía que el LTHR es "la referencia de tus zonas de FC (% del umbral) y del hrTSS de trail y bici sin potencia". Ahora: ancla el hrTSS de fuerza, elíptica y remo; trail y bici sin potencia usan el umbral de TP; las zonas son las de Garmin.
