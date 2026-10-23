@@ -1203,3 +1203,36 @@ Siguen pendientes la ENCRYPTION_KEY, para la batería y el juez, y la memoria en
 - Señal: batería 20261023_203446, pregunta 9 en la ruta week_tss (24/25); en las siete anteriores del día, ruta de estado.
 - Lección: el router determinista no puede decidir con texto que escribe el LLM; cualquier regla que mire el historial debe leer solo la parte determinista de las respuestas.
 - Evidencia: el coaching de la pregunta 8 decía "TSS acumulado" y _is_week_tss_followup_intent lo tomó como contexto de TSS semanal. Corregido con test; batería posterior en el CHANGELOG.
+
+
+
+Fuera del plan, para cuando quieras: dejar que pasen unos días de uso y revisar las líneas [SENSOR] de agent.log, para ver cuánto salta cada sensor en preguntas reales. Es el bucle de gobierno de Harness.md.
+
+
+El paso 6 está hecho, y con él el plan de Harness.md completo. El commit 76713a5 ya pasó por su propio pre-commit: ruff sin avisos y 623 tests en verde. Está firmado y sin push; los dos commits del paso 5 sí están en GitHub y su CI pasó en verde.
+
+Qué hay ahora:
+
+Pre-commit versionado (.githooks/pre-commit): antes de cada commit pasa ruff y los tests. Tarda unos 8 segundos. He comprobado que bloquea: con un nombre sin definir sale con estado 1 y no deja hacer el commit. En este ordenador ya está activado.
+
+En el ordenador 2 hay que activarlo una vez con make hooks o git config core.hooksPath .githooks. Los scripts de setup ya lo hacen solos en un clon nuevo.
+Necesita las dependencias de desarrollo (requirements-dev.txt). Si se instaló con SkipDev, el hook falla por falta de ruff o pytest.
+Ruff con reglas fijadas en pyproject.toml. Hasta ahora aplicaba las reglas por defecto de la versión instalada, sin techo de versión, así que la CI podía cambiar de reglas sola. Ruff no tiene "línea base", y para no llenar el código de noqa, el lint obligatorio son las familias que detectan fallos reales y hoy están a cero:
+
+F (pyflakes: imports sin usar, nombres sin definir, variables muertas);
+E9 (errores de sintaxis).
+El resto (estilo, fechas sin zona horaria…) queda como informe que no bloquea: make lint-informe.
+
+CI: un paso de lint antes de los tests. No lo he visto correr todavía: se verá en el próximo push.
+
+Resumen del plan (pasos 1 a 6)
+Paso	Qué cambió
+1	Reglas de entrenador en una sola fuente (prompts/coaching_rules.md); todos los textos para el LLM en prompts/; zona de Garmin como intensidad principal
+2	agent/sensors.py compartido por el juez y Kairos; enrutado que ya no depende del texto del LLM
+3	Autocorrección en vivo con un reintento; fuera el HookManager
+4	Sensores de cifras de carga, decisión del motor y nota glucémica
+5	Planes en zonas de Garmin; marco de la sesión de hoy; corregido el ajuste que reescalaba la intensidad
+6	Pre-commit y lint obligatorio en la CI
+Lo que queda abierto es el bucle de gobierno: usar Kairos unos días y revisar las líneas [SENSOR] de agent.log. Así se ve qué sensores saltan con preguntas reales, si aparecen falsos positivos nuevos y qué guía conviene reforzar.
+
+¿Subo este último commit? Así veremos en GitHub el paso de lint de la CI funcionando.
