@@ -11336,24 +11336,32 @@ class TrainerAgent:
             f" extra={extra}" if extra else "",
         )
 
-    def _retry_findings(self, text: str) -> list[_sensors.Finding]:
+    def _retry_findings(self, text: str, reference: str = "", decision: str | None = None) -> list[_sensors.Finding]:
         """Sensores que piden reintento, con las zonas y el ritmo umbral vigentes del perfil."""
         zones, _ = _resolve_hr_zones(self.user_profile, "running")
         zones_cycling, _ = _resolve_hr_zones(self.user_profile, "cycling")
         pace = _resolve_running_threshold_pace_for_date(self.user_profile, date.today().isoformat())
-        return _sensors.findings_to_retry(text, zones, zones_cycling, pace)
+        return _sensors.findings_to_retry(text, zones, zones_cycling, pace, reference=reference, decision=decision)
 
-    async def _apply_output_sensors(self, text: str, context_messages: list, kind: str) -> str:
+    def _has_insulin_diabetes(self) -> bool:
+        health = (self.user_profile or {}).get("health") or {}
+        return _sensors.has_insulin_diabetes([*(health.get("injuries") or []), health.get("notes") or ""])
+
+    async def _apply_output_sensors(
+        self, text: str, context_messages: list, kind: str, decision: str | None = None
+    ) -> str:
         """Pasa los sensores al texto del LLM antes de enseñarlo (docs/Harness.md §6).
 
-        Corrige sin LLM las fechas ISO; si otro sensor falla, devuelve al LLM las pistas en una sola
-        llamada más (sin tools) y se queda con la versión con menos fallos. Lo que siga fallando se avisa
-        al pie y queda en el log.
+        Corrige sin LLM las fechas ISO y la nota glucémica; si otro sensor falla, devuelve al LLM las pistas
+        en una sola llamada más (sin tools) y se queda con la versión con menos fallos. Lo que siga fallando
+        se avisa al pie y queda en el log. `decision` es la del motor diario, solo si la respuesta es para hoy.
         """
+        # Referencia para S14: todo lo que recibió el LLM (contexto, datos deterministas y resultados de tools).
+        reference = "\n".join(str(m.get("content") or "") for m in context_messages if isinstance(m, dict))
         text = _sensors.fix_iso_dates(text)
-        findings = self._retry_findings(text)
+        findings = self._retry_findings(text, reference, decision)
         if not findings or not text.strip():
-            return text
+            return _sensors.add_glucose_note(text, self._has_insulin_diabetes())
         log.info("[SENSOR] %s: %s", kind, " | ".join(f"{f.sensor} {f.message}" for f in findings))
         # El reintento ve los mensajes de sistema y de usuario y su propia respuesta, no los resultados de tools.
         base = [
@@ -11392,9 +11400,10 @@ class TrainerAgent:
             fixed = ""
         if fixed:
             fixed = _sensors.fix_iso_dates(fixed)
-            remaining = self._retry_findings(fixed)
+            remaining = self._retry_findings(fixed, reference, decision)
             if len(remaining) < len(findings):
                 text, findings = fixed, remaining
+        text = _sensors.add_glucose_note(text, self._has_insulin_diabetes())
         if findings:
             log.warning("[SENSOR] %s sin corregir: %s", kind, " | ".join(f"{f.sensor} {f.message}" for f in findings))
             text += "\n\n> ⚠️ Comprobación de Kairos: revisa esto, no cuadra con tus datos:\n" + "\n".join(
@@ -11407,8 +11416,12 @@ class TrainerAgent:
         user_message: str,
         deterministic_reply: str,
         route: str,
+        daily_decision: str | None = None,
     ) -> str:
         """Añade una interpretación de coaching por LLM cuando el usuario la pide.
+
+        `daily_decision` (maintain, reduce, easy o rest) es la del motor diario; el sensor S15 solo la
+        aplica si la respuesta es para hoy.
 
         Mantiene el bloque determinista como fuente de verdad y limita el LLM
         a interpretar/recomendar usando SOLO esos datos.
@@ -11471,7 +11484,10 @@ class TrainerAgent:
             coaching_text = _strip_simulated_user_turn(
                 str((coaching_response.choices[0].message.content or "")).strip()
             )
-            coaching_text = await self._apply_output_sensors(coaching_text, coaching_messages, "coaching")
+            today_decision = daily_decision if _coaching_horizon(user_message).startswith("HOY") else None
+            coaching_text = await self._apply_output_sensors(
+                coaching_text, coaching_messages, "coaching", decision=today_decision
+            )
             if not coaching_text:
                 return (
                     deterministic_reply
@@ -11660,7 +11676,10 @@ class TrainerAgent:
             if active_plan:
                 snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
             assistant_reply = _build_proactive_status_markdown(snapshot)
-            assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="daily_readiness")
+            assistant_reply = await self._augment_with_llm_coaching_if_needed(
+                user_message, assistant_reply, route="daily_readiness",
+                daily_decision=(snapshot.get("daily_plan_decision") or {}).get("decision"),
+            )
             return await self._finalize_chat_reply(user_message, assistant_reply, route="daily_readiness")
 
         # Ruta funcional de planificación: generación/actualización estructurada,

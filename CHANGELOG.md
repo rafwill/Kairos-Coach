@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Added (sensores S14–S16, paso 4 de `docs/Harness.md`)
+- S14: cada CTL, ATL o TSB que cita el LLM aparece en lo que recibió (contexto, datos deterministas, resultados de tools), con la tolerancia del redondeo; reintenta. S15: con decisión del motor diario de descanso, suave o reducir, la sesión de hoy no lleva Z4–Z5 ni FC desde el inicio de Z4 (solo respuestas para hoy, desde la ruta de estado); reintenta. S16: con diabetes tratada con insulina en el perfil, si la respuesta prescribe una sesión sin hablar de glucemia, se añade una nota fija sacada del protocolo de las reglas; corrige sin LLM.
+- Falsos positivos medidos antes de conectarlos, sobre las 40 respuestas con coaching de las baterías del día: 6 avisos y los 6 eran del sensor (un umbral condicional, un "+46 %" cortado en "+4", ml de hidratación, cadencia y un reparto semanal con calidad otro día). Corregidos: 0.
+- Batería 25/25; las 4 preguntas de coaching suman 141 s. Ningún sensor saltó ni hizo falta la nota glucémica (el LLM ya la incluye). Tests: 616 (13 nuevos).
+
 ### Added (autocorrección en vivo, paso 3 de `docs/Harness.md`)
 - `TrainerAgent._apply_output_sensors` pasa los sensores de `agent/sensors.py` a las tres salidas del LLM (capa de coaching, respuesta final del bucle con tools y rescates) antes de enseñarlas. Las fechas ISO se corrigen sin LLM (`fix_iso_dates`). Si falla un rango de FC, el ritmo umbral, la CTL con el máximo de la ATL o el marcador vacío, una sola llamada más sin tools le devuelve al LLM las pistas (`prompts/system/sensor_correction.md`) y Kairos se queda con la versión con menos fallos; lo que siga fallando se avisa al pie ("⚠️ Comprobación de Kairos") y queda en `agent.log` como `[SENSOR]`. El reintento ve los mensajes de sistema y de usuario y su propia respuesta, nunca resultados de tools.
 - Batería 25/25 y suma de las 4 preguntas de coaching 180 s (rango del día: 151–240 s). En esta pasada ningún sensor saltó (sin líneas `[SENSOR]` en el log), así que el reintento no se ejercitó en vivo: lo cubren 5 tests (se corrige en un reintento, fallo persistente con aviso, texto limpio sin llamada extra, fechas sin LLM, el reintento no ve tools). Tests: 603.
