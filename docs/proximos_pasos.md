@@ -1174,56 +1174,32 @@ Sesión de cierre del cálculo de carga frente a TrainingPeaks. Referencia: expo
 
 
 
-22/10/2026 22:38
 
-En la carpeta docs, creo que podemos borrar ya proximos pasos. Creo que mcp-frozen-runbook no aporta y si aporta deberia de fusionarse con el documento del mcp. Dame tu opinión y lo trabajamos
 
-limite 20 tools, metatooling
-
-comprobación harness
+limite 20 tools, concepto de metatooling
 
 
 quitar copilot de la lista de contributors en github
 
-Siguen pendientes la ENCRYPTION_KEY del otro ordenador, para la batería y el juez, y quitar las respuestas viejas de la memoria entre sesiones.
 
 
 
 
 
 
-
-Hecho como propones: Garmin manda, Kairos lee sus zonas por MCP y las tiene guardadas en Supabase. Está en el commit 0f60e10, sin subir.
-
-Lectura: he añadido al servidor MCP una herramienta nueva, get_heart_rate_zones (ya son 42), que devuelve las zonas de Garmin de cada deporte.
-Guardado: en cada arranque Kairos las consulta (una llamada de 0,5 s) y solo escribe en Supabase si han cambiado. La versión anterior se conserva en un historial con fechas. Si Garmin no responde, usa las guardadas. Ya están en tu perfil y las he leído de vuelta:
-Carrera: Z1 115–134 · Z2 135–145 · Z3 146–157 · Z4 158–168 · Z5 169–179.
-Ciclismo: 105 · 125 · 136 · 146 · 159 (suelos de cada zona).
-Una sola fuente: las mismas zonas, con los nombres de TP en español (Recuperación, Aeróbica, Tempo, Subumbral, Supraumbral), en el contexto del LLM, en los análisis de actividad y en el juez. Antes los análisis llamaban "Suave" a la Z2 y el resto de Kairos usaba otros límites.
-Respaldo sin huecos: si algún día no hubiera zonas de Garmin, se calculan por % de la FC umbral, ya sin los huecos de 151 y 160 lpm.
-Sin efecto en la carga: el TSS, y con él CTL, ATL y TSB, no cambia, porque no depende de las zonas.
-Pasan los 590 tests y el healthcheck de las 42 herramientas, sin errores. La batería sale 23/25 con el juez. El LLM ya prescribe con las zonas de Garmin (por ejemplo, "Z2 Aeróbica 135–145 lpm"), y han desaparecido tanto el error de la pregunta 1 como las referencias a % LTHR.
-
-Necesito que decidas una cosa. Los dos fallos son rangos bien nombrados que recorren dos zonas: "Calentamiento Z1–Z2 (115–145)" y "Z2 alto / Z3 bajo (135–150)". El juez exige que cada rango quepa en una sola zona. ¿Lo aceptamos cuando el rango nombra las zonas que recorre (un calentamiento progresivo es así) o prefieres obligar al LLM a dar una zona por tramo? Es un cambio de criterio del juez, por eso no lo he tocado.
-
-Tres cosas más:
 
 Planes: los objetivos internos de los planes siguen guardados en % del umbral. No se muestran en ningún sitio, y el prompt ya obliga a hablarte en zonas de Garmin.
-Memoria entre sesiones: el bloque "Memoria de sesiones anteriores" incluye 200 caracteres de la última respuesta de cada sesión, otra vía por la que pueden volver cifras viejas al LLM. Si quieres, lo quito como hice con el historial.
-docs/proximos_pasos.md: tiene cambios que no son míos (lo tienes abierto), así que lo he dejado fuera del commit.
 
 
-
-23/10/2026 12:58
-
-Desde ahora, tus commits en Kairos y en tus otros repos personales salen firmados y verificados, y los del trabajo siguen con su clave. Cuando la contraseña deje de estar recordada (8 horas), si un commit mío falla te pediré que hagas tú uno; con eso vuelve a quedar recordada.
-
-En el otro ordenador hay que repetirlo: crear allí otra clave GPG personal, subirla a GitHub y activar la firma en su configuración de git. Si me abres la sesión allí, lo hacemos igual.
-
-Siguen pendientes la ENCRYPTION_KEY, para la batería y el juez, y la memoria entre sesiones.
 
 23/10/2026 (tarde)
 
-Hecho: memoria entre sesiones sin respuestas viejas (el resumen guarda solo las preguntas; los antiguos se limpian al leerlos). Firma GPG configurada también en este ordenador (clave CF73ABE1F3C31D6A, subida a GitHub).
+Siguen pendientes la ENCRYPTION_KEY, para la batería y el juez, y la memoria entre sesiones en el laptop de ECI
 
-Sigue pendiente la ENCRYPTION_KEY, para la batería y el juez.
+
+
+23/10/2026 (noche) — biblioteca de experiencia (docs/Harness.md §7)
+
+- Señal: batería 20261023_203446, pregunta 9 en la ruta week_tss (24/25); en las siete anteriores del día, ruta de estado.
+- Lección: el router determinista no puede decidir con texto que escribe el LLM; cualquier regla que mire el historial debe leer solo la parte determinista de las respuestas.
+- Evidencia: el coaching de la pregunta 8 decía "TSS acumulado" y _is_week_tss_followup_intent lo tomó como contexto de TSS semanal. Corregido con test; batería posterior en el CHANGELOG.

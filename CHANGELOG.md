@@ -4,6 +4,15 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Added (`agent/sensors.py`, paso 2 de `docs/Harness.md`)
+- Las comprobaciones del juez sobre el texto del LLM pasan a un módulo compartido con funciones puras que devuelven hallazgos con su mensaje y una pista para que el LLM se corrija: rangos de FC en zonas de Garmin por deporte (S10), ritmo umbral vigente (S11), CTL ≠ máximo habitual de la ATL (S12), fechas ISO (G3), marcador "datos disponibles" sin valor (G4) y turnos de usuario inventados (G5, con `strip_simulated_user_turn`, que se mueve de `trainer_agent`). El módulo no importa nada de `agent/` (test). El juez los importa; Kairos los usará en vivo en el paso 3.
+- Verificación: 0 diferencias frente al juez anterior en 350 casos (las 175 respuestas de las siete baterías del 23/10 y las mismas con errores inyectados) y mismo veredicto en 175/175 preguntas.
+- G4: "Sin datos disponibles para esta fecha" ya no cuenta como fallo. El G4 nació para un valor que no llegaba a mostrarse ("Body Battery: datos disponibles"); declarar que falta el dato es lo que piden las reglas y lo que indica el prompt de análisis de actividad, que chocaba con el juez.
+- Textos de horizonte de `_coaching_horizon` a `prompts/coaching/horizon_*.md` (idénticos). Tests: 600 (14 de sensores).
+
+### Fixed (enrutado que dependía del texto del LLM)
+- `_is_week_tss_followup_intent` decidía si una pregunta semanal era continuación del TSS semanal buscando "tss acumulado" en las respuestas recientes, incluido el texto del LLM. En la batería del 23/10 un consejo decía "si el TSS acumulado del lunes a miércoles supera ~130…" y la pregunta siguiente ("¿qué sesión me recomiendas para esta semana dado mi estado?") acabó en la ruta de TSS semanal en vez de en la de estado (24/25). Ahora solo mira la parte determinista de cada respuesta (antes de "Interpretación de coaching"). Test con el caso real.
+
 ### Changed (prompts fuera del código)
 - Todo el texto de instrucciones para el LLM que estaba escrito dentro de `agent/trainer_agent.py` pasa a `prompts/`, en 19 plantillas por familia: `system/` (fecha, memoria, base de conocimiento, preguntas de la sesión anterior), `coaching/` (capa de coaching, con las variantes de readiness y breve, y el mensaje de usuario), `rescue/` (valoración de un entreno y propuesta para mañana) y `activity_analysis/` (análisis profundo: mensaje principal, zonas reales, tres variantes de plan y las dos guías de la sección final). El código solo compone y aporta los datos.
 - `_render_prompt(nombre, **valores)` sustituye marcadores `{{clave}}` y exige que coincidan con los valores. Plantillas extraídas evaluando las expresiones antiguas con valores centinela (sin transcribir a mano): las 19 reproducen el texto anterior carácter a carácter. Tests: cada prompt se resuelve entero, un marcador que falta o sobra da error y ningún fichero queda sin usar (586).

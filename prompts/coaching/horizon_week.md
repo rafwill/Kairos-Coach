@@ -1,0 +1,1 @@
+ESTA SEMANA: hoy es {{hoy}}. Propón el reparto SOLO de los días que quedan ({{dias_restantes}}): qué día calidad, cuáles rodaje suave y cuál descanso, con las zonas en lpm del bloque Umbrales (no porcentajes)

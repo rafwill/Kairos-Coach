@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable
 from openai import AsyncOpenAI
 from mcp import ClientSession
 
+from agent.sensors import strip_simulated_user_turn as _strip_simulated_user_turn
 from agent.mcp.client import (
     list_available_tools,
     call_tool,
@@ -2714,9 +2715,11 @@ def _is_week_tss_followup_intent(user_message: str, history: list[dict] | None =
     if any(marker in text for marker in planning_markers):
         return False
 
-    # Solo aplicar como follow-up si el contexto reciente era claramente TSS semanal.
+    # Solo aplicar como follow-up si el contexto reciente era claramente TSS semanal. Se mira solo la
+    # parte determinista de cada respuesta: el texto del LLM varía entre pasadas y desviaba la ruta
+    # (23/10: "si el TSS acumulado…" en un consejo mandó "¿qué sesión me recomiendas esta semana?" a week_tss).
     recent_assistant = [
-        (msg.get("content") or "").lower()
+        (msg.get("content") or "").lower().split("interpretación de coaching", 1)[0]
         for msg in (history or [])[-6:]
         if msg.get("role") == "assistant"
     ]
@@ -3163,56 +3166,12 @@ def _coaching_horizon(user_message: str) -> str:
             f"{dias[(today + timedelta(days=i)).weekday()]} {(today + timedelta(days=i)).strftime('%d/%m')}"
             for i in range(7 - today.weekday())
         )
-        return (
-            f"ESTA SEMANA: hoy es {dias[today.weekday()]} {today.strftime('%d/%m')}. Propón el reparto SOLO de los días "
-            f"que quedan ({remaining}): qué día calidad, cuáles rodaje suave y cuál descanso, con las zonas en lpm del "
-            "bloque Umbrales (no porcentajes)"
+        return _render_prompt(
+            "coaching/horizon_week", hoy=f"{dias[today.weekday()]} {today.strftime('%d/%m')}", dias_restantes=remaining
         )
     if "mañana" in text or "manana" in text:
-        return "MAÑANA: la sesión de mañana"
-    return "HOY: la sesión de hoy"
-
-
-_SIMULATED_ROLE_LINE_RE = re.compile(
-    r"^\s*(?:\*\*|__)?(?:usuario|user|tú)\s*(?::\s*(?:\*\*|__)?|(?:\*\*|__)\s*:)",
-    re.IGNORECASE | re.MULTILINE,
-)
-_SIMULATED_ROLE_TOKEN_RE = re.compile(r"<\|im_start\|>\s*user|<\|user\|>", re.IGNORECASE)
-_FIRST_PERSON_REQUEST_RE = re.compile(
-    r"\b(?:elijo|prefiero|quiero que me|me gustar[ií]a que me|planif[ií]came|prep[aá]rame|cr[eé]ame|"
-    r"s[ií],? (?:quiero|hazlo|por favor|adelante))\b",
-    re.IGNORECASE,
-)
-
-
-def _strip_simulated_user_turn(text: str) -> str:
-    """Quita un turno del usuario que el LLM haya inventado al final de su respuesta.
-
-    Casos: una línea con rol explícito ("Usuario:", "<|im_start|>user"…) o una cola
-    en primera persona pegada tras la última pregunta de cierre ("…?**elijo entrenar…").
-    """
-    if not text:
-        return text
-    cut = len(text)
-    for rx in (_SIMULATED_ROLE_LINE_RE, _SIMULATED_ROLE_TOKEN_RE):
-        m = rx.search(text)
-        if m:
-            cut = min(cut, m.start())
-    text = text[:cut].rstrip()
-    q = text.rfind("?")
-    if q >= 0:
-        head_end = q + 1
-        while head_end < len(text) and text[head_end] in "*_":
-            head_end += 1
-        tail = text[head_end:].strip()
-        if (
-            tail
-            and "?" not in tail
-            and not re.search(r"^\s*(?:#|[-*•]\s|\d+[.)]\s)", tail, re.MULTILINE)
-            and _FIRST_PERSON_REQUEST_RE.search(tail)
-        ):
-            text = text[:head_end].rstrip()
-    return text
+        return _render_prompt("coaching/horizon_tomorrow")
+    return _render_prompt("coaching/horizon_today")
 
 
 def _build_today_load_status_markdown(profile: dict) -> str:

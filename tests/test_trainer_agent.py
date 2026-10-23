@@ -3427,6 +3427,20 @@ class TestWeekTssDeterministicRoute:
         ]
         assert _is_week_tss_followup_intent("Y para la semana del 13 de agosto de 2026?", history)
 
+    def test_is_week_tss_followup_intent_ignores_llm_coaching_text(self):
+        # Batería del 23/10: el consejo del LLM decía "TSS acumulado" y la pregunta siguiente
+        # ("¿qué sesión me recomiendas para esta semana…?") acababa en week_tss en vez de readiness.
+        history = [{
+            "role": "assistant",
+            "content": "## 🧭 Resumen\nEstado de hoy.\n\n## 🧠 Interpretación de coaching\n"
+                       "- Si el TSS acumulado del lunes a miércoles supera ~130, reduce.",
+        }]
+        from agent.trainer_agent import ToolRouter
+
+        message = "¿Qué tipo de sesión me recomiendas para esta semana dado mi estado?"
+        assert not _is_week_tss_followup_intent(message, history)
+        assert ToolRouter(enabled=True).route_key(message, history, {}) == "daily_readiness"
+
     def test_is_week_tss_followup_intent_false_without_context(self):
         history = [{"role": "assistant", "content": "¿Cómo te encuentras hoy?"}]
         assert not _is_week_tss_followup_intent("Y para la semana del 13 de agosto de 2026?", history)
