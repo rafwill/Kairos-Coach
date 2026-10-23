@@ -5,15 +5,11 @@
 # Regenerar con: Export-Certificate -Cert (Get-ChildItem Cert:\LocalMachine\Root | Where Subject -like "*Zscaler*") -FilePath zscaler-ca.pem
 zscaler-ca.pem
 
-# Tokens OAuth de Garmin (guardados localmente por el MCP)
-.garmin-mcp/
-
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
 .venv/
-.venv2/
 venv/
 env/
 *.egg-info/
@@ -21,16 +17,11 @@ dist/
 build/
 .pytest_cache/
 
-# Node
-node_modules/
-
 # VS Code (configuración local de cada desarrollador)
 .vscode/
 
 # Runtime local (no versionar)
 agent.log
-tmp/
-.tmp_*
 
 # Real payload captures for offline forensic replay (sensitive/user data)
 fixtures/real_payloads/*

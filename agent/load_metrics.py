@@ -4109,11 +4109,6 @@ def form_zone(tsb: float, ctl: float) -> dict:
     return {"key": key, "label": label, "emoji": emoji, "form_pct": round(form_pct, 1)}
 
 
-def form_zone_label(tsb: float, ctl: float) -> str:
-    zone = form_zone(tsb, ctl)
-    return f"{zone['emoji']} {zone['label']}"
-
-
 def resolve_load_status(series: list[dict], weekly_spike_alert: bool = False) -> dict:
     """Estado de carga de hoy a partir de la zona de Forma (regla única de Kairos).
 
