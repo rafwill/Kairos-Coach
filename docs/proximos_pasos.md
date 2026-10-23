@@ -1221,3 +1221,9 @@ Desde ahora, tus commits en Kairos y en tus otros repos personales salen firmado
 En el otro ordenador hay que repetirlo: crear allí otra clave GPG personal, subirla a GitHub y activar la firma en su configuración de git. Si me abres la sesión allí, lo hacemos igual.
 
 Siguen pendientes la ENCRYPTION_KEY, para la batería y el juez, y la memoria entre sesiones.
+
+23/10/2026 (tarde)
+
+Hecho: memoria entre sesiones sin respuestas viejas (el resumen guarda solo las preguntas; los antiguos se limpian al leerlos). Firma GPG configurada también en este ordenador (clave CF73ABE1F3C31D6A, subida a GitHub).
+
+Sigue pendiente la ENCRYPTION_KEY, para la batería y el juez.

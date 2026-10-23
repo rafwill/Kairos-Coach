@@ -5313,8 +5313,27 @@ class TestSessionSummaryCheckpoint:
 
         summary = TrainerAgent.generate_session_summary_checkpoint(agent)
         assert "Temas recientes:" in summary
-        assert "HRV" in summary
-        assert "Última respuesta:" in summary
+        assert "Cómo está mi HRV hoy?" in summary
+        # Las respuestas no se guardan: sus cifras caducan.
+        assert "Última respuesta:" not in summary
+        assert "260.4" not in summary
+        assert "73 ms" not in summary
+
+    def test_summary_checkpoint_empty_without_user_questions(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.conversation_history = [{"role": "assistant", "content": "HRV 73 ms, balanced."}]
+
+        assert TrainerAgent.generate_session_summary_checkpoint(agent) == ""
+
+    def test_strip_previous_reply_from_stored_summaries(self):
+        from agent.trainer_agent import _strip_previous_reply
+
+        old = "Temas recientes: Cómo está mi HRV hoy?. Última respuesta: HRV 73 ms, TSB -12."
+        assert _strip_previous_reply(old) == "Temas recientes: Cómo está mi HRV hoy?."
+        assert _strip_previous_reply("Temas recientes: Mi FTP?.") == "Temas recientes: Mi FTP?."
+        assert _strip_previous_reply("Última respuesta: TSS 260.4") == ""
 
     def test_save_session_summary_checkpoint_calls_daily_upsert(self):
         from agent.trainer_agent import TrainerAgent
