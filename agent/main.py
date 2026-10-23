@@ -1106,7 +1106,6 @@ def _model_label(name: str, model_env: str, default_model: str) -> str:
 
 
 _PROVIDER_INFO = {
-    "vpn":      ("GITHUB_TOKEN",     _model_label("GitHub Models", "GITHUB_MODEL", "gpt-4o-mini"),              "VPN activa"),
     "groq":     ("GROQ_API_KEY",     _model_label("Groq", "GROQ_MODEL", "llama-3.3-70b-versatile"),            "100k tokens/día"),
     "gemini":   ("GEMINI_API_KEY",   _model_label("Google Gemini", "GEMINI_MODEL", "gemini-2.0-flash"),         "~1M tokens/día gratis"),
     "mistral":  ("MISTRAL_API_KEY",  _model_label("Mistral", "MISTRAL_MODEL", "mistral-small-latest"),          "capa gratuita · console.mistral.ai"),
@@ -1128,7 +1127,6 @@ def _check_env(provider: str) -> None:
         hints = {
             "GROQ_API_KEY":     "https://console.groq.com",
             "GEMINI_API_KEY":   "https://aistudio.google.com  → Get API key",
-            "GITHUB_TOKEN":    "https://github.com/settings/tokens",
             "MISTRAL_API_KEY": "https://console.mistral.ai  → API Keys",
             "CEREBRAS_API_KEY": "https://cloud.cerebras.ai  → API Keys",
             "NVIDIA_API_KEY":   "https://build.nvidia.com/explore/discover",
@@ -1151,26 +1149,21 @@ def _check_garmin_env() -> None:
 
 
 # Valores placeholder que indican que la clave no está configurada
-_PLACEHOLDER_VALUES = {"", "tu_clave_mistral", "tu_clave_gemini", "gsk_...", "AIzaSy_tu_clave_de_gemini", "ghp_..."}
+_PLACEHOLDER_VALUES = {"", "tu_clave_mistral", "tu_clave_gemini", "gsk_...", "AIzaSy_tu_clave_de_gemini"}
 
 
-def _select_provider_menu(on_vpn: bool) -> str:
+def _select_provider_menu() -> str:
     """Muestra el menú de selección de proveedor LLM."""
     from agent.storage import is_gemini_quota_exhausted, get_gemini_daily_usage
 
-    # Construir lista de proveedores disponibles.
-    # Si estamos en VPN, incluir GitHub Models como opción seleccionable
-    # para evitar que /modelo termine la app cuando solo existe GITHUB_TOKEN.
-    candidates = []
-    if on_vpn:
-        candidates.append(("vpn", "GITHUB_TOKEN"))
-    candidates.extend([
+    # Proveedores con clave configurada.
+    candidates = [
         ("gemini",   "GEMINI_API_KEY"),
         ("mistral",  "MISTRAL_API_KEY"),
         ("groq",     "GROQ_API_KEY"),
         ("cerebras", "CEREBRAS_API_KEY"),
         ("nvidia",   "NVIDIA_API_KEY"),
-    ])
+    ]
     available = []
     for name, env_var in candidates:
         val = os.environ.get(env_var, "")
@@ -1180,8 +1173,8 @@ def _select_provider_menu(on_vpn: bool) -> str:
     if not available:
         console.print(
             "[bold red]Error:[/] No hay ninguna API key configurada en .env\n"
-            "Configura al menos una de: [bold]GITHUB_TOKEN[/], [bold]GEMINI_API_KEY[/], "
-            "[bold]MISTRAL_API_KEY[/], [bold]GROQ_API_KEY[/]"
+            "Configura al menos una de: [bold]NVIDIA_API_KEY[/], [bold]GEMINI_API_KEY[/], "
+            "[bold]MISTRAL_API_KEY[/], [bold]GROQ_API_KEY[/], [bold]CEREBRAS_API_KEY[/]"
         )
         sys.exit(1)
 
@@ -1217,15 +1210,13 @@ def _select_provider_menu(on_vpn: bool) -> str:
 
 def _auto_select_provider() -> str:
     """
-    Detecta el entorno de red (VPN corporativa con Zscaler vs. acceso libre)
-    y permite elegir proveedor LLM desde menú.
-    - Con Zscaler → menú incluyendo GitHub Models y proveedores externos configurados
-    - Sin Zscaler → menú con proveedores externos configurados
+    Detecta el entorno de red (VPN corporativa con Zscaler o no; solo informativo)
+    y permite elegir el proveedor LLM entre los que tienen clave configurada.
     """
     console.print("[dim]Detectando entorno de red...[/]")
     on_vpn = _detect_zscaler()
 
-    provider = _select_provider_menu(on_vpn=on_vpn)
+    provider = _select_provider_menu()
     _, label, note = _PROVIDER_INFO[provider]
     network_line = "🏢  Red corporativa [dim](Zscaler detectado)[/dim]" if on_vpn else "🌐  Sin VPN corporativa"
     console.print(Panel.fit(
@@ -1416,7 +1407,7 @@ async def main() -> None:
         _debug_console("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
         
         daily_info = agent.get_daily_usage_info()
-        provider_name = provider.capitalize() if provider != "vpn" else "GitHub Models"
+        provider_name = provider.capitalize()
         if daily_info.get("quota_exhausted", False):
             console.print(
                 f"[bold red][Aviso][/] La API Key de {provider_name} está marcada hoy como agotada por límite de cuota.\n"
@@ -1449,15 +1440,14 @@ async def main() -> None:
                 p_tokens = agent.total_prompt_tokens
                 c_tokens = agent.total_completion_tokens
                 t_tokens = p_tokens + c_tokens
-                old_provider_name = provider.capitalize() if provider != "vpn" else "GitHub Models"
+                old_provider_name = provider.capitalize()
                 _debug_console(f"\n[bold dimgray][debug] Cambiando de modelo. Tokens gastados con {old_provider_name} en esta sesión:[/]")
                 _debug_console(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
                 _debug_console(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
                 _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
                 
                 # Seleccionar nuevo proveedor
-                on_vpn = _detect_zscaler()
-                new_provider = _select_provider_menu(on_vpn=on_vpn)
+                new_provider = _select_provider_menu()
                 
                 if new_provider == provider:
                     console.print(f"[yellow]El modelo {old_provider_name} ya está activo.[/]")
@@ -1470,7 +1460,7 @@ async def main() -> None:
                 agent.total_prompt_tokens = 0
                 agent.total_completion_tokens = 0
                 
-                new_provider_name = provider.capitalize() if provider != "vpn" else "GitHub Models"
+                new_provider_name = provider.capitalize()
                 _, label, note = _PROVIDER_INFO[provider]
                 console.print(Panel.fit(
                     f"[bold green]Modelo cambiado con éxito[/]\n"
@@ -1616,7 +1606,7 @@ async def main() -> None:
         _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
         
         daily_info = agent.get_daily_usage_info()
-        provider_name = provider.capitalize() if provider != "vpn" else "GitHub Models"
+        provider_name = provider.capitalize()
         if daily_info.get("quota_exhausted", False):
             console.print(
                 f"[bold red][Aviso][/] La API Key de {provider_name} ha marcado hoy el límite de cuota agotada.\n"

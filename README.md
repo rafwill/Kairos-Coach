@@ -11,7 +11,7 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 - **Planes de entrenamiento:** motor determinista multisemana (base → build → peak → taper) que parte del volumen real de las últimas 4 semanas, nunca sube más de un 10 % por semana y guarda cada versión.
 - **Coaching con contexto:** perfil, condiciones de salud (protocolo de diabetes tipo 1 con insulina), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
-- **Seis proveedores de LLM:** Gemini, Groq, Mistral, Cerebras, NVIDIA NIM y GitHub Models; se cambia en caliente con `/modelo`.
+- **Cinco proveedores de LLM:** NVIDIA NIM, Gemini, Groq, Mistral y Cerebras; se cambia en caliente con `/modelo`.
 
 ## Estado de la carga (2026-10-21)
 
@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1   # Windows
 
 El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`agent` y `garmin_mcp` importables desde cualquier carpeta), copia `.env.example` a `.env` y genera `ENCRYPTION_KEY`. Después:
 
-1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` y al menos una API key de LLM (`NVIDIA_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `CEREBRAS_API_KEY` o `GITHUB_TOKEN`). Cada proveedor admite su `*_MODEL`; ver `.env.example`.
+1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` y al menos una API key de LLM (`NVIDIA_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY` o `CEREBRAS_API_KEY`). Cada proveedor admite su `*_MODEL`; ver `.env.example`.
 2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en el SQL Editor de Supabase (New query → pegar → Run). Es el único fichero de esquema: crea todas las tablas en un proyecto nuevo y, en uno ya existente, añade solo lo que falte sin tocar los datos.
 
 ## Uso
@@ -82,7 +82,7 @@ agent/
 garmin_mcp/              servidor MCP de Garmin Connect (42 tools, solo lectura), independiente de agent/
   README.md              arranque, configuración y catálogo de las 42 tools
   server.py              definición de las tools; arranque: python -m garmin_mcp
-prompts/                 system prompt del LLM (completo; compacto solo para GitHub Models)
+prompts/                 system prompt del LLM
 supabase/                schema.sql (esquema completo e idempotente)
 tests/                   suite de pytest (sin red: Garmin, Supabase y LLM mockeados)
 tools/

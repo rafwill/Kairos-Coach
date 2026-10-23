@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Removed (GitHub Models y prompt compacto)
+- Desde la VPN del trabajo se accede a NVIDIA, así que GitHub Models sobra (decisión del usuario): fuera el proveedor `vpn` (cliente, menú, `/modelo`, presupuesto de tokens, `GITHUB_TOKEN`/`GITHUB_MODEL`) y `prompts/system_prompt_compact.md`, que solo existía por su límite de tokens. La detección de Zscaler queda solo como información en el arranque. Proveedor por defecto de `TrainerAgent`: `nvidia`. Tests: 582 (fuera los 3 del prompt compacto). Batería con NVIDIA: 25/25.
+
 ### Docs (`docs/Harness.md` reescrito)
 - Especificación del harness a partir de Böckeler/Fowler (guías y sensores, computacional e inferencial, bucle de gobierno) y de Harness² de Google Research (ocho componentes, Proponer–Probar–Componer, biblioteca de experiencia, guía separada de la rúbrica). Catálogo con 12 guías (G1–G12) y 24 sensores (S1–S24): dónde vive cada uno, qué hace si detecta un fallo y su estado real.
 - Corrige lo que estaba mal clasificado o desfasado: reglas del prompt contadas como sensores, pasos del arranque llamados hooks, umbrales de alerta viejos (HRV 15 %, body battery 30), recuento de tests.

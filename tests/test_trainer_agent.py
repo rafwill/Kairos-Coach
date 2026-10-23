@@ -363,39 +363,26 @@ class TestResolveRunningThresholdFromProfile:
 
 class TestSystemPromptDateFormatRules:
     def test_full_prompt_requires_global_spanish_date_format(self):
-        prompt = _load_system_prompt(compact=False)
+        prompt = _load_system_prompt()
         assert "Formato de fecha obligatorio (España)" in prompt
         assert "Regla global de fechas (OBLIGATORIA)" in prompt
         assert "Regla de rangos explícitos (OBLIGATORIA)" in prompt
         assert "DD/MM/AAAA" in prompt
         assert "YYYY-MM-DD" in prompt
 
-    def test_compact_prompt_requires_global_spanish_date_format(self):
-        prompt = _load_system_prompt(compact=True)
-        assert "Regla global de fechas (España)" in prompt
-        assert "Interpretación de rangos (OBLIGATORIA)" in prompt
-        assert "DD/MM/AAAA" in prompt
-        assert "YYYY-MM-DD" in prompt
-
 
 class TestSystemPromptPlanStatusRules:
     def test_full_prompt_includes_plan_status_intent_variants(self):
-        prompt = _load_system_prompt(compact=False)
+        prompt = _load_system_prompt()
         assert "Consulta de estado del plan (OBLIGATORIO)" in prompt
         assert "que plan llevo esta semana?" in prompt
         assert "sigo con el plan?" in prompt
         assert "goals" in prompt and "training_plan" in prompt
 
-    def test_compact_prompt_includes_plan_status_rules(self):
-        prompt = _load_system_prompt(compact=True)
-        assert "Estado del plan (OBLIGATORIO)" in prompt
-        assert "Nunca inferir plan activo desde `goals`" in prompt
-        assert "training_plan" in prompt
-
 
 class TestSystemPromptPlanManagementRules:
     def test_full_prompt_includes_functional_plan_management(self):
-        prompt = _load_system_prompt(compact=False)
+        prompt = _load_system_prompt()
         assert "Generacion y manejo funcional de planes (OBLIGATORIO)" in prompt
         assert "/plan crear" in prompt
         assert "/plan listar" in prompt
@@ -403,14 +390,6 @@ class TestSystemPromptPlanManagementRules:
         assert "/plan activar <plan_id>" in prompt
         assert "No afirmes que un plan quedó guardado/activado" in prompt
 
-    def test_compact_prompt_includes_functional_plan_management(self):
-        prompt = _load_system_prompt(compact=True)
-        assert "Generación y manejo de planes (OBLIGATORIO)" in prompt
-        assert "/plan crear" in prompt
-        assert "/plan listar" in prompt
-        assert "/plan ver <plan_id>" in prompt
-        assert "/plan activar <plan_id>" in prompt
-        assert "nueva versión" in prompt or "nueva version" in prompt
 
 
 class TestConcatenatedJsonFromMcp:

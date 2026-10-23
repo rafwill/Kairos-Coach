@@ -8,7 +8,6 @@ import os
 import time
 import logging
 import math
-import ssl
 import json
 import asyncio
 import re
@@ -17,8 +16,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-import httpx
-import truststore
 from openai import AsyncOpenAI
 from mcp import ClientSession
 
@@ -37,16 +34,9 @@ log = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
-def _load_system_prompt(compact: bool = False) -> str:
-    """Carga el system prompt del entrenador desde el archivo Markdown.
-
-    Args:
-        compact: Si True, carga la versión compacta (para modelos con limite bajo
-                 de tokens, como GitHub Models en red corporativa con Zscaler).
-    """
-    filename = "system_prompt_compact.md" if compact else "system_prompt.md"
-    prompt_file = PROMPTS_DIR / filename
-    return prompt_file.read_text(encoding="utf-8")
+def _load_system_prompt() -> str:
+    """Carga el system prompt del entrenador desde el archivo Markdown."""
+    return (PROMPTS_DIR / "system_prompt.md").read_text(encoding="utf-8")
 
 
 # ─── Funciones de persistencia ───────────────────────────────────────────────
@@ -771,7 +761,7 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
 
 
 def _build_tools_schema(tools: list[dict]) -> list[dict]:
-    """Convierte las herramientas MCP al formato de function calling de OpenAI/GitHub Models."""
+    """Convierte las herramientas MCP al formato de function calling de OpenAI."""
     return [
         {
             "type": "function",
@@ -9658,12 +9648,10 @@ class TrainerAgent:
     # Preguntas del usuario en la sesión anterior (se rellena en initialize); tupla: no se comparte mutable.
     previous_session_questions: tuple[str, ...] = ()
 
-    def __init__(self, mcp_session: ClientSession, provider: str = "vpn"):
+    def __init__(self, mcp_session: ClientSession, provider: str = "nvidia"):
         self.mcp_session = mcp_session
         self.set_provider(provider)
-        # GitHub Models (vpn) tiene limite de ~8000 tokens en el request;
-        # usamos el prompt compacto para dejar espacio a tools + contexto.
-        self.system_prompt = _load_system_prompt(compact=(provider == "vpn"))
+        self.system_prompt = _load_system_prompt()
         self.user_profile = _load_user_profile()
         self.conversation_history: list[dict] = []
         self.tools_schema: list[dict] = []
@@ -9686,18 +9674,7 @@ class TrainerAgent:
     def set_provider(self, provider: str) -> None:
         """Configura o cambia el proveedor de LLM actual."""
         self.provider = provider
-        if provider == "vpn":
-            # GitHub Models — requiere VPN con Zscaler (usa truststore para el certificado corporativo)
-            ssl_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            http_client = httpx.AsyncClient(verify=ssl_ctx)
-            self.client = AsyncOpenAI(
-                base_url="https://models.inference.ai.azure.com",
-                api_key=os.environ["GITHUB_TOKEN"],
-                http_client=http_client,
-            )
-            self.model = os.environ.get("GITHUB_MODEL", "gpt-4o-mini")
-            self._api_key = os.environ["GITHUB_TOKEN"]
-        elif provider == "groq":
+        if provider == "groq":
             # Groq — gratuito, sin VPN, 100k tokens/día
             # Registro en https://console.groq.com
             self.client = AsyncOpenAI(
@@ -9740,7 +9717,7 @@ class TrainerAgent:
             self.model = os.environ.get("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
             self._api_key = os.environ["NVIDIA_API_KEY"]
         else:
-            raise ValueError(f"Proveedor desconocido: '{provider}'. Opciones válidas: 'vpn', 'groq', 'gemini', 'mistral', 'cerebras', 'nvidia'.")
+            raise ValueError(f"Proveedor desconocido: '{provider}'. Opciones válidas: 'groq', 'gemini', 'mistral', 'cerebras', 'nvidia'.")
         
         # Variables para tracking de tokens de la sesión
         self.total_prompt_tokens = 0
@@ -11206,7 +11183,6 @@ class TrainerAgent:
         limits = {
             "gemini": 1_000_000,
             "groq": 100_000,
-            "vpn": 100_000,         # GitHub Models
             "mistral": 10_000_000,  # Capa gratuita muy generosa
             "cerebras": 1_000_000,
             "nvidia": 1_000_000      # Límite por defecto, NVIDIA usa rate limits
