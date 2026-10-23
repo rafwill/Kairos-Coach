@@ -361,6 +361,19 @@ class TestResolveRunningThresholdFromProfile:
         assert 269.0 <= out <= 271.0
 
 
+class TestCoachingRulesSingleSource:
+    def test_system_prompt_embeds_coaching_rules_once(self):
+        from agent.trainer_agent import _load_coaching_rules
+
+        prompt = _load_system_prompt()
+        rules = _load_coaching_rules()
+        assert "{{REGLAS_DE_COACHING}}" not in prompt
+        assert prompt.count(rules) == 1
+        # Reglas de entrenador que viven solo en coaching_rules.md
+        for heading in ("Protocolo de diabetes con insulina", "## Intensidades", "## Estado de hoy", "# Límites éticos"):
+            assert heading in rules
+
+
 class TestSystemPromptDateFormatRules:
     def test_full_prompt_requires_global_spanish_date_format(self):
         prompt = _load_system_prompt()
@@ -4611,6 +4624,12 @@ class TestDailyReadinessDeterministicRoute:
 
         agent.client.chat.completions.create.assert_awaited_once()
         assert "## 🧠 Interpretación de coaching" in out
+        # La capa de coaching recibe las mismas reglas que el system prompt (fuente única)
+        # y ya no pide la intensidad en % del umbral de FC.
+        from agent.trainer_agent import _load_coaching_rules
+        system = agent.client.chat.completions.create.await_args.kwargs["messages"][0]["content"]
+        assert _load_coaching_rules() in system
+        assert "% del umbral de FC" not in system
 
     @pytest.mark.asyncio
     async def test_chat_daily_readiness_without_plan_returns_explicit_choice(self):

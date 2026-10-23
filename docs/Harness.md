@@ -51,8 +51,8 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 
 | ID | Guía | Tipo | Dónde | Estado |
 | --- | --- | --- | --- | --- |
-| G1 | System prompt: rol, dos capas (datos en Python, coaching en el LLM), qué no hacer nunca, cuándo usar tools, protocolos (diabetes tipo 1, preparación de carrera, revisión post-sesión), anomalías biométricas con los umbrales del motor diario (HRV < 90 % de su media semanal, body battery < 35, sueño < 6 h o < 60), zonas de Garmin, formato de salida | Texto | `prompts/system_prompt.md` (único desde el 23/10) | ✓ |
-| G2 | Prompt de la capa de coaching: interpretar solo el bloque factual, secciones de readiness, reglas de carga | Texto | `_augment_with_llm_coaching_if_needed` (`agent/trainer_agent.py`) | ◐ repite reglas de G1 con otra redacción y pide "% del umbral de FC", en contra de la regla de zonas de Garmin |
+| G1 | Reglas de entrenador, fuente única: salud y protocolo de diabetes, principios, Forma y reglas de actuación, señales de recuperación y anomalías (umbrales del motor diario: HRV < 90 % de su media semanal, body battery < 35, sueño < 6 h o < 60), estructura de la sesión y zonas de Garmin, calidad del dato, fechas, límites éticos. System prompt del bucle con tools: rol, dos capas, tools, análisis de actividad, planes, formato de salida | Texto | `prompts/coaching_rules.md` (lo cargan las cuatro llamadas al LLM) y `prompts/system_prompt.md` (lo inserta en `{{REGLAS_DE_COACHING}}`) | ✓ |
+| G2 | Instrucciones propias de las capas de coaching y de rescate (interpretar solo el bloque factual, secciones de readiness, horizonte); las reglas, de G1 | Texto | `_augment_with_llm_coaching_if_needed` y los dos rescates (`agent/trainer_agent.py`) | ✓ desde el 23/10 (antes repetía reglas y pedía "% del umbral de FC") |
 | G3 | Contexto del atleta: perfil, "Estado de carga actual", "Umbrales" con zonas en lpm, "Plan activo" (hoy y dos días) | Computacional (datos) | `_profile_context_block`, `_load_and_anchors_context_block`, `_plan_context_block`; zonas de `_resolve_hr_zones` | ✓ |
 | G4 | Horizonte de la respuesta (hoy, mañana o lo que queda de semana) | Computacional | `_coaching_horizon` | ✓ |
 | G5 | Router determinista: 15 intenciones (TSS, actividades, umbrales, plan, objetivo, récords, readiness…) se responden sin LLM | Computacional | `ToolRouter` (`KAIROS_DETERMINISTIC_ROUTER`, activo por defecto) | ✓ |
@@ -148,7 +148,7 @@ Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera p
 
 En este orden, cada uno con su batería antes y después:
 
-1. **G2 coherente con G1:** el prompt de coaching usa las mismas reglas que el system prompt y deja de pedir "% del umbral de FC".
+1. ~~**G2 coherente con G1**~~ (hecho el 23/10: `prompts/coaching_rules.md`; batería 25/25).
 2. **`agent/sensors.py` con S10–S13** sacados del juez, que pasa a importarlos. Criterio: 0 falsos positivos en las transcripciones del 23/10 y el juez da el mismo veredicto que antes.
 3. **Autocorrección en vivo (§6)** con S10–S13. Criterio: batería 25/25 y la latencia media de las preguntas con LLM no sube más de un 10 % si no hay fallos.
 4. **S14, S15 y S16**, con los mismos criterios.
