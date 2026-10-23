@@ -208,6 +208,15 @@ def _progressive_range_ok(before: str, lo: int, hi: int, zones: list[tuple[str, 
     _, b_lo, b_hi = zones[zb - 1]
     return a_lo - TOL_BPM <= lo <= a_hi + TOL_BPM and b_lo - TOL_BPM <= hi <= b_hi + TOL_BPM
 
+
+def _easy_range_ok(lo: int, hi: int, zones: list[tuple[str, int, int]]) -> bool:
+    """Rodaje suave en Z1–Z2 (criterio del 23/10): las dos zonas están bajo VT1 y dan el mismo estímulo;
+    lo que importa es no pasar del techo de Z2. De Z3 para arriba sigue mandando una sola zona."""
+    if len(zones) < 2:
+        return False
+    return zones[0][1] - TOL_BPM <= lo and hi <= zones[1][2] + TOL_BPM
+
+
 def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
     last = t.latest()
     m = re.search(r"Estado físico \(CTL\) ([\d.]+) · Fatiga \(ATL\) ([\d.]+)", body)
@@ -229,7 +238,7 @@ def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
         cut = re.search(r"ATL|Fatiga|\n", window)
         window = window[: cut.start()] if cut else window
         v.check(not re.search(r"m[áa]x(imo)?\.? habitual", window), "LLM atribuye a la CTL el máximo habitual de la ATL")
-    # Rangos de FC: un tramo continuo cabe en una zona; uno progresivo puede recorrer las que nombra
+    # Rangos de FC: un tramo continuo cabe en una zona (o en Z1–Z2 si es suave); uno progresivo puede recorrer las que nombra
     for mr in re.finditer(r"(\d{3})\s*[–\-→]\s*(\d{3})", coaching):
         before = coaching[max(0, mr.start() - 25): mr.start()]
         after = coaching[mr.end(): mr.end() + 8]
@@ -242,8 +251,8 @@ def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
             continue
         fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in t.zones)
         if not fits:
-            fits = _progressive_range_ok(coaching[: mr.start()], lo, hi, t.zones)
-        v.check(fits, f"LLM: rango {lo}–{hi} lpm no cabe en ninguna zona (ni es un tramo progresivo de Zx a Zy)")
+            fits = _easy_range_ok(lo, hi, t.zones) or _progressive_range_ok(coaching[: mr.start()], lo, hi, t.zones)
+        v.check(fits, f"LLM: rango {lo}–{hi} lpm no cabe en ninguna zona (ni en Z1–Z2 ni es un tramo progresivo de Zx a Zy)")
     # Ritmo citado como umbral
     if t.pace_today:
         for p in re.findall(r"(?i)umbral[^\n]{0,40}?(\d):(\d{2})\s*(?:–\s*\d:\d{2}\s*)?(?:min)?/km", coaching):

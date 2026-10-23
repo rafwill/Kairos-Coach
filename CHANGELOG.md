@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Changed (rodaje suave en Z1–Z2)
+- Decisión del usuario, revisando el criterio de la mañana: un rodaje suave o aeróbico puede prescribirse en Z1–Z2 con su rango (115–145 lpm); las dos zonas están bajo VT1 y dan el mismo estímulo, y lo que importa es el techo de Z2. Un día de recuperación va solo en Z1. De Z3 para arriba (tempo, umbral, intervalos) sigue mandando una sola zona, salvo los tramos progresivos.
+- En los dos system prompts, en el juez (`_easy_range_ok`) y en la rúbrica de `docs/Harness.md`. El juez no comprueba lo de la recuperación en Z1 (no sabe qué día lo es).
+- Batería repetida en el ordenador personal: 23/25 con el criterio anterior (los dos fallos, "Z1-Z2 115–145" en rodajes suaves) y 25/25 con el nuevo prompt y el nuevo juez.
+
 ### Fixed (memoria entre sesiones sin respuestas viejas)
 - El resumen de cada sesión (`generate_session_summary_checkpoint`) guardaba los 200 primeros caracteres de la última respuesta, y el bloque "Memoria de sesiones anteriores" del system prompt los enviaba al LLM con la orden de "dar continuidad": otra vía, además del historial, por la que volvían cifras caducadas. Ahora el resumen guarda solo las últimas preguntas del usuario.
 - Los resúmenes ya guardados en Supabase se limpian al leerlos (`_strip_previous_reply` corta la "Última respuesta: …"); no se tocan los datos. El bloque indica que los datos actuales se piden con las herramientas.
