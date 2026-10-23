@@ -1,4 +1,4 @@
-.PHONY: setup setup-win login serve test lint lint-mcp health-mcp docs-mcp
+.PHONY: setup setup-win serve test lint lint-mcp health-mcp docs-mcp
 
 VENV := .venv
 ifeq ($(OS),Windows_NT)
@@ -12,9 +12,6 @@ setup:
 
 setup-win:
 	powershell -ExecutionPolicy Bypass -File ./setup.ps1
-
-login:
-	$(VENV_PY) -m agent.main
 
 serve:
 	$(VENV_PY) -m agent.main
