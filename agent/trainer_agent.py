@@ -5723,16 +5723,18 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
                     step["intensityClass"] = new_ic
                     trace.append(f"intensidad {old_ic}->{new_ic} en {stype}")
 
+            # La intensidad baja una zona de Garmin. Antes se multiplicaba target.range por el factor de
+            # volumen (85-89 % del LTHR pasaba a 59,5-62,3 %); los planes antiguos (hr_pct) conservan su
+            # rango y bajan solo por intensityClass.
             target = step.get("target")
-            if isinstance(target, dict):
-                rng = target.get("range")
-                if isinstance(rng, list) and len(rng) == 2:
-                    a = _safe_float(rng[0], 0.0)
-                    b = _safe_float(rng[1], 0.0)
-                    if a <= b:
-                        new_range = [round(a * volume_factor, 1), round(b * volume_factor, 1)]
-                        step["target"]["range"] = new_range
-                        trace.append(f"target.range ajustado en {stype}")
+            if isinstance(target, dict) and str(target.get("metric") or "") == "hr_zone":
+                old_zone = int(_safe_float(target.get("zone"), 2.0))
+                new_zone = max(1, old_zone - intensity_levels)
+                if new_zone != old_zone:
+                    target["zone"] = new_zone
+                    if "zone_to" in target:
+                        target["zone_to"] = max(new_zone, int(_safe_float(target.get("zone_to"), old_zone)) - intensity_levels)
+                    trace.append(f"zona Z{old_zone}->Z{new_zone} en {stype}")
 
             if "duration_min" in step:
                 old_dur = max(0.0, _safe_float(step.get("duration_min"), 0.0))
@@ -5839,6 +5841,65 @@ def _compute_structured_block_feedback(planned_session: dict, actual_duration_mi
     }
 
 
+def _intensity_class_from_rpe(intensity_text: str) -> str:
+    """Clase de intensidad del motor de planes a partir del texto "RPE x-y" de una sesión."""
+    txt = str(intensity_text or "").lower()
+    m = re.search(r"rpe\s*(\d+)(?:\s*[-–]\s*(\d+))?", txt)
+    if not m:
+        return "endurance"
+    lo = int(m.group(1))
+    hi = int(m.group(2) or lo)
+    rpe_avg = (lo + hi) / 2.0
+    if rpe_avg <= 2.5:
+        return "recovery"
+    if rpe_avg <= 4.5:
+        return "endurance"
+    if rpe_avg <= 6.5:
+        return "tempo"
+    if rpe_avg <= 8.0:
+        return "threshold"
+    return "vo2"
+
+
+# Zona de Garmin de cada clase de intensidad del motor de planes (decisión del usuario, 23/10: la FC en
+# zonas de Garmin es la referencia principal y el RPE el complemento; antes, % del LTHR de Friel).
+_INTENSITY_CLASS_ZONE = {"recovery": 1, "endurance": 2, "tempo": 3, "threshold": 4, "vo2": 5}
+_GARMIN_ZONE_NAMES = {1: "Z1 Recuperación", 2: "Z2 Aeróbica", 3: "Z3 Tempo", 4: "Z4 Subumbral", 5: "Z5 Supraumbral"}
+
+
+def _zone_for_intensity_class(intensity_class: str) -> int:
+    return _INTENSITY_CLASS_ZONE.get(_normalize_intensity_class(intensity_class or "") or "endurance", 2)
+
+
+def _session_intensity_class(session: dict) -> str:
+    """Clase de intensidad de una sesión: la de su structured_workout o, si no la tiene, la de su RPE."""
+    sw = (session or {}).get("structured_workout") or {}
+    ic = ((sw.get("summary") or {}).get("intensityClass") or (sw.get("targets") or {}).get("intensityClass")) if isinstance(sw, dict) else ""
+    return _normalize_intensity_class(ic or "") or _intensity_class_from_rpe(str((session or {}).get("intensity") or ""))
+
+
+def _session_intensity_label(session: dict, profile: dict | None) -> str:
+    """Intensidad de una sesión para mostrar: zona de Garmin (nombre y lpm) y el RPE del plan como complemento.
+
+    Se calcula al mostrar, así vale para los planes ya guardados (con RPE y % del LTHR) y sigue a las zonas
+    actuales de Garmin. En fuerza manda el RPE; el descanso se queda como está.
+    """
+    stype = str((session or {}).get("session_type") or "").lower()
+    rpe = str((session or {}).get("intensity") or "").strip()
+    if stype == "rest" or int(_safe_float((session or {}).get("duration_min"), 0.0)) <= 0:
+        return "descanso"
+    if "strength" in stype:
+        return rpe or "RPE n/d"
+    zone = _zone_for_intensity_class(_session_intensity_class(session))
+    sport = "cycling" if ("cycling" in stype or "bike" in stype) else "running"
+    zones, _ = _resolve_hr_zones(profile or {}, sport)
+    label = _GARMIN_ZONE_NAMES[zone]
+    if zones and len(zones) >= zone:
+        name, lo, hi = zones[zone - 1]
+        label = f"{name} ({lo}–{hi} lpm)"
+    return f"{label} · {rpe}" if rpe else label
+
+
 def _structured_workout_summary(session: dict) -> str:
     """Devuelve un resumen corto del bloque principal para utilidad diaria."""
     if not isinstance(session, dict):
@@ -5860,7 +5921,8 @@ def _structured_workout_summary(session: dict) -> str:
         return ""
 
     stype = str(main_step.get("type") or "").strip().lower()
-    intensity = _normalize_intensity_class(main_step.get("intensityClass") or "")
+    # Al usuario, la zona de Garmin ("Z2 Aeróbica"), no la clase interna ("endurance").
+    intensity = _GARMIN_ZONE_NAMES[_zone_for_intensity_class(main_step.get("intensityClass") or "")]
 
     if stype == "interval_block":
         reps = max(1, int(_safe_float(main_step.get("reps"), 1.0)))
@@ -6755,37 +6817,13 @@ def _generate_structured_plan_payload(
             return max(0, int(duration))
         return max(0, min(int(duration), int(cap)))
 
-    def _intensity_class_from_rpe(intensity_text: str) -> str:
-        txt = str(intensity_text or "").lower()
-        m = re.search(r"rpe\s*(\d+)(?:\s*[-–]\s*(\d+))?", txt)
-        if not m:
-            return "endurance"
-        lo = int(m.group(1))
-        hi = int(m.group(2) or lo)
-        rpe_avg = (lo + hi) / 2.0
-        if rpe_avg <= 2.5:
-            return "recovery"
-        if rpe_avg <= 4.5:
-            return "endurance"
-        if rpe_avg <= 6.5:
-            return "tempo"
-        if rpe_avg <= 8.0:
-            return "threshold"
-        return "vo2"
-
     def _structured_target_for_session(session_type: str, intensity_text: str) -> dict:
         st = str(session_type or "").lower()
         intensity_class = _intensity_class_from_rpe(intensity_text)
 
-        # hr_pct = % del umbral de FC (LTHR), zonas de carrera de TrainingPeaks (Friel);
-        # es la misma referencia que usa el hrTSS de Kairos.
-        hr_ranges = {
-            "recovery": [70, 84],
-            "endurance": [85, 89],
-            "tempo": [90, 94],
-            "threshold": [95, 100],
-            "vo2": [101, 106],
-        }
+        # hr_zone = zona de Garmin (la del reloj y TP), decisión del usuario del 23/10; antes hr_pct
+        # (% del LTHR, zonas de Friel), que no casaba con las de Garmin.
+        hr_zone = {"metric": "hr_zone", "zone": _zone_for_intensity_class(intensity_class)}
         ftp_ranges = {
             "recovery": [45, 55],
             "endurance": [56, 75],
@@ -6798,7 +6836,7 @@ def _generate_structured_plan_payload(
             return {
                 "intensityClass": intensity_class,
                 "primary": {"metric": "ftp_pct", "range": ftp_ranges.get(intensity_class, [56, 75])},
-                "secondary": {"metric": "hr_pct", "range": hr_ranges.get(intensity_class, [70, 80])},
+                "secondary": hr_zone,
             }
         if "strength" in st:
             return {
@@ -6807,7 +6845,7 @@ def _generate_structured_plan_payload(
             }
         return {
             "intensityClass": intensity_class,
-            "primary": {"metric": "hr_pct", "range": hr_ranges.get(intensity_class, [70, 80])},
+            "primary": hr_zone,
             "secondary": {"metric": "rpe", "range": [3, 5] if intensity_class in {"recovery", "endurance"} else [6, 8]},
         }
 
@@ -6858,7 +6896,7 @@ def _generate_structured_plan_payload(
                         "type": "recovery",
                         "duration_min": rec_dur,
                         "intensityClass": "recovery",
-                        "target": {"metric": "hr_pct", "range": [70, 84]},
+                        "target": {"metric": "hr_zone", "zone": 1},
                     },
                 ],
             }
@@ -6887,7 +6925,7 @@ def _generate_structured_plan_payload(
                     "duration_min": warmup,
                     "reps": 1,
                     "intensityClass": "endurance",
-                    "target": {"metric": "hr_pct", "range": [75, 89]},
+                    "target": {"metric": "hr_zone", "zone": 1, "zone_to": 2},
                 },
                 main_step,
                 {
@@ -6896,7 +6934,7 @@ def _generate_structured_plan_payload(
                     "duration_min": cooldown,
                     "reps": 1,
                     "intensityClass": "recovery",
-                    "target": {"metric": "hr_pct", "range": [70, 84]},
+                    "target": {"metric": "hr_zone", "zone": 1},
                 },
             ],
             "notes": str(notes_text or ""),
@@ -7209,7 +7247,7 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
 
     by_week: dict[int, list[dict]] = {}
     allowed_intensity_classes = {"recovery", "endurance", "tempo", "threshold", "vo2"}
-    allowed_target_metrics = {"hr_pct", "ftp_pct", "rpe", "pace_pct"}
+    allowed_target_metrics = {"hr_zone", "hr_pct", "ftp_pct", "rpe", "pace_pct"}  # hr_pct: planes guardados antes del 23/10
 
     def _validate_structured_workout(session: dict) -> list[str]:
         local_errors: list[str] = []
@@ -7268,6 +7306,11 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
                 rng = target.get("range")
                 if metric and metric not in allowed_target_metrics:
                     local_errors.append(f"target.metric no soportado: {metric}.")
+                if metric == "hr_zone":
+                    z = int(_safe_float(target.get("zone"), 0.0))
+                    z_to = int(_safe_float(target.get("zone_to"), z))
+                    if not (1 <= z <= 5 and z <= z_to <= 5):
+                        local_errors.append("target.zone debe ser una zona de Garmin (1-5) y zone_to >= zone.")
                 if rng is not None:
                     if not (isinstance(rng, list) and len(rng) == 2):
                         local_errors.append("target.range debe tener formato [min,max].")
@@ -7465,6 +7508,7 @@ def _build_structured_plan_markdown(
     plan: dict,
     sessions: list[dict],
     change_summary: str,
+    profile: dict | None = None,
 ) -> str:
     """Construye respuesta funcional del plan con estructura accionable."""
     title = str(plan.get("title") or "Plan de entrenamiento").strip()
@@ -7524,7 +7568,7 @@ def _build_structured_plan_markdown(
             day = day_names.get(int(s.get("day_index") or 0), f"Día {s.get('day_index', '?')}")
             session_type = str(s.get("session_type") or "sesión")
             duration = int(s.get("duration_min") or 0)
-            intensity = str(s.get("intensity") or "RPE n/d")
+            intensity = _session_intensity_label(s, profile)
             lines.append(f"  - {day}: {session_type} · {duration} min · {intensity}")
 
     lines.extend([
@@ -11224,7 +11268,7 @@ class TrainerAgent:
             if session_type == "rest" or int(row.get("duration_min") or 0) <= 0:
                 desc = "descanso"
             else:
-                desc = f"{session_type}, {int(row.get('duration_min') or 0)} min, {row.get('intensity') or ''}".strip(", ")
+                desc = f"{session_type}, {int(row.get('duration_min') or 0)} min, {_session_intensity_label(row, self.user_profile)}".strip(", ")
                 notes = str(row.get("notes") or "").strip()
                 if notes:
                     desc += f" — {notes[:160]}"
@@ -11748,6 +11792,7 @@ class TrainerAgent:
                         persisted_plan,
                         new_sessions,
                         change_summary,
+                        profile=self.user_profile,
                     )
 
                     # Espejo backward-compatible en perfil.

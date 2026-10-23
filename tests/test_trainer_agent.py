@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import agent.trainer_agent as ta
+
 from agent.trainer_agent import (
     _build_mcp_error_warning_markdown,
     _build_mcp_transparency_markdown,
@@ -5989,13 +5991,53 @@ class TestStructuredPlanEngine:
         assert "ya pasó" in plan["description"]
         assert plan["plan_data"]["target_race_date"] == ""
 
-    def test_structured_hr_targets_are_percent_of_lthr(self):
+    def test_structured_hr_targets_are_garmin_zones(self):
+        # 23/10: la referencia es la zona de Garmin (la del reloj), no el % del LTHR de Friel.
         _, sessions = _generate_structured_plan_payload(self._hm_profile(), "créame un plan")
         quality = next(s for s in sessions if s["session_type"] == "running_quality")
-        targets = quality["structured_workout"]["targets"]
-        # Umbral = 95-100 % del LTHR (zonas de TP), no 88-92.
-        assert targets["primary"]["metric"] == "hr_pct"
-        assert targets["primary"]["range"][0] >= 85
+        sw = quality["structured_workout"]
+        primary = sw["targets"]["primary"]
+        assert primary["metric"] == "hr_zone"
+        assert primary["zone"] == ta._zone_for_intensity_class(sw["summary"]["intensityClass"])
+        warmup = sw["steps"][0]["target"]
+        assert warmup == {"metric": "hr_zone", "zone": 1, "zone_to": 2}
+        assert "hr_pct" not in json.dumps(sw)
+
+    def test_session_label_shows_garmin_zone_with_rpe_also_for_saved_plans(self, monkeypatch):
+        zones = [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
+                 ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
+        # Plan guardado antes del 23/10: RPE en el texto y hr_pct dentro.
+        old = {"session_type": "running_z2", "duration_min": 45, "intensity": "RPE 3-4",
+               "structured_workout": {"summary": {"intensityClass": "endurance"},
+                                      "targets": {"primary": {"metric": "hr_pct", "range": [85, 89]}}}}
+        assert ta._session_intensity_label(old, {}) == "Z2 Aeróbica (135–145 lpm) · RPE 3-4"
+        assert ta._session_intensity_label({"session_type": "strength", "duration_min": 40, "intensity": "RPE 5-6"}, {}) == "RPE 5-6"
+        assert ta._session_intensity_label({"session_type": "rest", "duration_min": 0, "intensity": ""}, {}) == "descanso"
+
+    def test_daily_adjustment_lowers_one_zone_without_rescaling_intensity(self):
+        session = {"structured_workout": {"steps": [
+            {"name": "Warm-up", "type": "warmup", "duration_min": 10, "target": {"metric": "hr_zone", "zone": 1, "zone_to": 2}},
+            {"name": "Main", "type": "steady", "duration_min": 30, "intensityClass": "tempo",
+             "target": {"metric": "hr_zone", "zone": 3}},
+            {"name": "Legacy", "type": "steady", "duration_min": 20, "intensityClass": "endurance",
+             "target": {"metric": "hr_pct", "range": [85, 89]}},
+        ]}}
+        sw, trace = ta._apply_structured_workout_adjustment(session, "easy")
+        main, legacy = sw["steps"][1], sw["steps"][2]
+        assert main["target"]["zone"] == 2 and main["intensityClass"] == "endurance"
+        assert main["duration_min"] == 21.0
+        # Antes se multiplicaba por el factor de volumen (85-89 % → 59,5-62,3 %).
+        assert legacy["target"]["range"] == [85, 89]
+        assert any("Z3->Z2" in t for t in trace)
+
+    def test_structured_summary_names_garmin_zone(self):
+        row = {"structured_workout": {"steps": [
+            {"type": "warmup", "duration_min": 10},
+            {"type": "steady", "duration_min": 30, "intensityClass": "endurance"},
+            {"type": "cooldown", "duration_min": 5},
+        ]}}
+        assert ta._structured_workout_summary(row) == "bloque principal: 30' (Z2 Aeróbica)"
 
     def test_generate_structured_plan_payload_structured_workout_contract(self):
         profile = {

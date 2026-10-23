@@ -98,7 +98,7 @@ except (ImportError, AttributeError, RuntimeError):
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agent.mcp.client import garmin_mcp_session
-from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile
+from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile, _session_intensity_label
 from agent.storage import (
     activate_training_plan,
     authenticate_app_user,
@@ -825,11 +825,12 @@ def _show_training_plan(plan_id: str) -> None:
     if sessions:
         lines.append("")
         lines.append("[bold]Sesiones:[/]")
+        profile = _load_user_profile()
         for s in sessions[:14]:
             lines.append(
                 f"- Semana {s.get('week_index', 1)} · Día {s.get('day_index', 1)} · "
                 f"{s.get('session_type', 'session')} · {s.get('duration_min') or 'n/d'} min · "
-                f"{s.get('intensity') or 'intensidad n/d'}"
+                f"{_session_intensity_label(s, profile)}"
             )
     else:
         lines.append("")
