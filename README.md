@@ -126,8 +126,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Capas, tablas de Supabase, flujos de arranque, cálculo y chat, MCP y seguridad |
 | [`docs/Harness.md`](docs/Harness.md) | Hooks, router determinista y sensores de calidad |
 | [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Bitácora de investigación |
-| [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración y catálogo de las 42 tools (generado) |
-| [`docs/mcp-frozen-runbook.md`](docs/mcp-frozen-runbook.md) | Operación del servidor MCP e incidentes 429/403 |
+| [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración, problemas frecuentes (429/403, certificados) y catálogo de las 42 tools (generado) |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`TODO.md`](TODO.md) | Cambios y hoja de ruta |
 
 ## Privacidad

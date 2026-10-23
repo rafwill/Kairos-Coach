@@ -12,6 +12,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - `garmin_mcp/README.md`: 42 tools en la introducción (decía 41) y nueva sección sobre las tools que consultan un endpoint de Garmin directamente porque `garminconnect` no tiene método (`get_heart_rate_zones`, `get_vo2max_trend`): endpoint, formato de respuesta y cómo se cierran las zonas.
 - `docs/arquitectura.md`: nueva sección "Zonas de FC" (lectura al arrancar, guardado e historial en el perfil, respaldo, fuente única `_resolve_hr_zones` y sin efecto en el TSS), el paso en el diagrama de arranque, y corregido que Kairos calculaba las zonas.
 
+### Docs (fuera `docs/mcp-frozen-runbook.md`)
+- Lo vigente pasa a su sitio. A `garmin_mcp/README.md`, nueva sección "Problemas frecuentes": 429/403, tokens rechazados y `CERTIFICATE_VERIFY_FAILED` detrás de un proxy corporativo. A `docs/arquitectura.md`, nueva sección "Cliente MCP": arranque del servidor, `MCP_BACKEND`, catálogo esencial, contratos y modo de contingencia, que es del host y no del servidor.
+- Corregido al pasarlo: la contingencia de `get_training_load_trend` ya no se resuelve contra `load_metrics_daily` (usa la caché como el resto) y la caché no caduca. Documentado por qué el modo está desactivado.
+- Descartado por desfasado o nunca medido: verificación con "44 herramientas" y 4 preguntas (ahora healthcheck y batería con juez), validaciones de release (las cubren `make test` y la CI) y el criterio de p95.
+
 ## 2026-10-22
 
 ### Changed (zonas de FC: las de Garmin mandan)
