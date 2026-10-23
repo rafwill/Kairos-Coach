@@ -30,12 +30,13 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(ROOT / ".env", encoding="utf-8")
 
 from agent import load_metrics as lm  # noqa: E402
+from agent import sensors  # noqa: E402
 from agent import storage  # noqa: E402
 from agent import trainer_agent as ta  # noqa: E402
 
 TOL = 0.1          # TSS, CTL, ATL, TSB (se muestran con un decimal)
-TOL_BPM = 1        # rangos de FC
-TOL_PACE_S = 2     # ritmos
+TOL_BPM = sensors.TOL_BPM        # rangos de FC (definidas en agent/sensors.py)
+TOL_PACE_S = sensors.TOL_PACE_S  # ritmos
 
 
 @dataclass
@@ -51,6 +52,11 @@ class Verdict:
         self.checks += 1
         if not ok:
             self.failures.append(msg)
+
+    def sense(self, findings: list[sensors.Finding]) -> None:
+        """Una comprobación por sensor; cada hallazgo es un fallo con el mensaje del sensor."""
+        self.checks += 1
+        self.failures.extend(f.message for f in findings)
 
     @property
     def status(self) -> str:
@@ -178,46 +184,13 @@ def global_checks(v: Verdict, body: str) -> None:
     v.check("Traceback" not in body and "No pude generar" not in body, "G1: error o coaching no generado")
     if "No se pudo consultar Garmin" in body:
         v.env_failures.append("G2: Garmin no accesible durante la pregunta")
-    iso = re.findall(r"(?<![\d/])20\d{2}-\d{2}-\d{2}(?![\d:T])", body)
-    v.check(not iso, f"G3: fechas ISO visibles {sorted(set(iso))[:3]}")
-    empties = [ln.strip() for ln in body.splitlines() if "datos disponibles" in ln and not re.search(r"\d", ln)]
-    v.check(not empties, f"G4: texto vacío ({empties[0][:60] if empties else ''})")
-    v.check(not re.search(r"(?mi)^\s*(\*\*)?(usuario|user|tú)\s*:", body), "G5: turno de usuario inventado (rol)")
+    v.sense(sensors.find_iso_dates(body))
+    v.sense(sensors.find_empty_data_lines(body))
     coaching = body.split("Interpretación de coaching", 1)[1] if "Interpretación de coaching" in body else ""
-    if coaching:
-        v.check(ta._strip_simulated_user_turn(coaching.strip()) == coaching.strip(),
-                "G5: turno de usuario inventado (cola en primera persona)")
+    v.sense(sensors.find_invented_user_turn(body, coaching))
 
 
 # ─── Comprobaciones por pregunta ────────────────────────────────────────────
-
-_CYCLING_LINE = re.compile(r"(?i)ciclis|\bbici|cycling|rodillo")
-_PROGRESSIVE = re.compile(r"(?i)calentamiento|vuelta a la calma|enfriamiento|progresiv")
-_ZONE_SPAN = re.compile(r"(?i)\bZ([1-5])\s*(?:[–\-→]|\ba\b|hasta)\s*Z([1-5])\b")
-
-
-def _progressive_range_ok(before: str, lo: int, hi: int, zones: list[tuple[str, int, int]]) -> bool:
-    """Tramo progresivo (criterio del 23/10): misma línea, marcado como progresivo y con "de Zx a Zy";
-    la FC de inicio cae en la zona más baja nombrada y la de fin en la más alta."""
-    line = before.rsplit("\n", 1)[-1][-160:]
-    spans = list(_ZONE_SPAN.finditer(line))
-    if not _PROGRESSIVE.search(line) or not spans:
-        return False
-    za, zb = sorted((int(spans[-1].group(1)), int(spans[-1].group(2))))
-    if za == zb or zb > len(zones):
-        return False
-    _, a_lo, a_hi = zones[za - 1]
-    _, b_lo, b_hi = zones[zb - 1]
-    return a_lo - TOL_BPM <= lo <= a_hi + TOL_BPM and b_lo - TOL_BPM <= hi <= b_hi + TOL_BPM
-
-
-def _easy_range_ok(lo: int, hi: int, zones: list[tuple[str, int, int]]) -> bool:
-    """Rodaje suave en Z1–Z2 (criterio del 23/10): las dos zonas están bajo VT1 y dan el mismo estímulo;
-    lo que importa es no pasar del techo de Z2. De Z3 para arriba sigue mandando una sola zona."""
-    if len(zones) < 2:
-        return False
-    return zones[0][1] - TOL_BPM <= lo and hi <= zones[1][2] + TOL_BPM
-
 
 def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
     last = t.latest()
@@ -234,38 +207,8 @@ def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
         v.check(m.group(3).strip() == zone["label"], f"zona '{m.group(3).strip()}' ≠ '{zone['label']}'")
     v.check("Interpretación de coaching" in body, "coaching: falta el bloque del LLM")
     coaching = body.split("Interpretación de coaching", 1)[1] if "Interpretación de coaching" in body else ""
-    # CTL con el máximo habitual de la ATL
-    for mm in re.finditer(r"CTL", coaching):
-        window = coaching[mm.end(): mm.end() + 90]
-        cut = re.search(r"ATL|Fatiga|\n", window)
-        window = window[: cut.start()] if cut else window
-        v.check(not re.search(r"m[áa]x(imo)?\.? habitual", window), "LLM atribuye a la CTL el máximo habitual de la ATL")
-    # Rangos de FC: un tramo continuo cabe en una zona (o en Z1–Z2 si es suave); uno progresivo puede recorrer las que nombra
-    for mr in re.finditer(r"(\d{3})\s*[–\-→]\s*(\d{3})", coaching):
-        before = coaching[max(0, mr.start() - 25): mr.start()]
-        after = coaching[mr.end(): mr.end() + 8]
-        # \bVO2: un "vo" suelto casaba con "objetivo" ("objetivo 120–180 mg/dL" de glucemia).
-        is_hr = "lpm" in after or re.search(r"(?i)(Z[1-5]|FC|lpm|recuper|resistencia|tempo|umbral|\bVO2)", before)
-        if not is_hr or "TSS" in before or re.match(r"\s*mg", after):
-            continue  # la rúbrica juzga rangos de FC, no TSS, glucemia ni otras cifras
-        lo, hi = sorted((int(mr.group(1)), int(mr.group(2))))
-        if not (100 <= lo <= 220):
-            continue
-        # Garmin tiene zonas por deporte: una línea de bici se juzga con las de ciclismo (23/10).
-        line_start = coaching.rfind("\n", 0, mr.start()) + 1
-        line_end = coaching.find("\n", mr.end())
-        line = coaching[line_start: line_end if line_end != -1 else len(coaching)]
-        zones = t.zones_cycling if _CYCLING_LINE.search(line) and t.zones_cycling else t.zones
-        fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in zones)
-        if not fits:
-            fits = _easy_range_ok(lo, hi, zones) or _progressive_range_ok(coaching[: mr.start()], lo, hi, zones)
-        v.check(fits, f"LLM: rango {lo}–{hi} lpm no cabe en ninguna zona (ni en Z1–Z2 ni es un tramo progresivo de Zx a Zy)")
-    # Ritmo citado como umbral
-    if t.pace_today:
-        for p in re.findall(r"(?i)umbral[^\n]{0,40}?(\d):(\d{2})\s*(?:–\s*\d:\d{2}\s*)?(?:min)?/km", coaching):
-            sec = int(p[0]) * 60 + int(p[1])
-            v.check(abs(sec - t.pace_today) <= TOL_PACE_S,
-                    f"LLM: ritmo umbral {p[0]}:{p[1]} ≠ vigente {int(t.pace_today // 60)}:{int(t.pace_today % 60):02d}")
+    # Sensores S10–S12 (agent/sensors.py): CTL ≠ máximo habitual de la ATL, rangos de FC en zonas, ritmo umbral
+    v.sense(sensors.check_coaching_text(coaching, t.zones, t.zones_cycling, t.pace_today))
 
 
 def check_trend(v: Verdict, body: str, t: Truth) -> None:

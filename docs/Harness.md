@@ -89,12 +89,12 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 
 | ID | Comprueba | Tipo | Acción | Dónde | Estado |
 | --- | --- | --- | --- | --- | --- |
-| S8 | Turnos de usuario inventados | Computacional | Corrige (los recorta) | `_strip_simulated_user_turn` | ✓ |
+| S8 | Turnos de usuario inventados | Computacional | Corrige (los recorta) | `strip_simulated_user_turn` (`agent/sensors.py`) | ✓ |
 | S9 | Plan generado válido (sesiones, duraciones, progresión) | Computacional | Bloquea el plan | `_validate_structured_plan` | ✓ |
-| S10 | Cada rango de FC cabe en una zona de Garmin (Z1–Z2 en rodaje suave; progresivos "de Zx a Zy") | Computacional | Reintenta | Hoy solo en el juez (`check_state_and_coaching`) | ◐ |
-| S11 | Un ritmo citado como umbral es el vigente en la fecha | Computacional | Reintenta | Solo en el juez | ◐ |
-| S12 | No atribuye a la CTL el máximo habitual de la ATL | Computacional | Reintenta | Solo en el juez | ◐ |
-| S13 | Fechas DD/MM/AAAA, nunca ISO | Computacional | Corrige | Solo en el juez (G3) | ◐ |
+| S10 | Cada rango de FC cabe en una zona de Garmin (Z1–Z2 en rodaje suave; progresivos "de Zx a Zy") | Computacional | Reintenta | `find_hr_ranges_outside_zones` (`agent/sensors.py`); hoy lo usa el juez, en vivo en el paso 3 | ◐ |
+| S11 | Un ritmo citado como umbral es el vigente en la fecha | Computacional | Reintenta | `find_wrong_threshold_pace` (`agent/sensors.py`); juez, en vivo en el paso 3 | ◐ |
+| S12 | No atribuye a la CTL el máximo habitual de la ATL | Computacional | Reintenta | `find_ctl_with_atl_max` (`agent/sensors.py`); juez, en vivo en el paso 3 | ◐ |
+| S13 | Fechas DD/MM/AAAA, nunca ISO; tampoco el marcador "datos disponibles" sin valor (G4) | Computacional | Corrige | `find_iso_dates`, `find_empty_data_lines` (`agent/sensors.py`); juez (G3, G4), en vivo en el paso 3 | ◐ |
 | S14 | Cifras citadas (CTL, ATL, TSB, TSS, HRV) = las del bloque determinista | Computacional | Reintenta | — | ✗ |
 | S15 | La sesión propuesta respeta la decisión del motor diario (descanso o suave → ni series ni Z4–Z5) | Computacional | Reintenta | — | ✗ |
 | S16 | Nota de seguridad glucémica si el perfil tiene diabetes con insulina | Computacional | Corrige (añade la nota fija) | — | ✗ |
@@ -137,7 +137,7 @@ El reintento solo cuesta latencia cuando hay un fallo. Cada sensor registra cuá
 
 `run_bateria.py` lanza las 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra Kairos real y guarda la transcripción con tiempos (`.tmp/bateria/`). `juez_bateria.py <transcripción>.md` la contrasta con Supabase (`load_metrics_daily`, `activity_tss`, perfil, planes) y, para los récords, con Garmin en solo lectura; reutiliza funciones de producción (`form_zone`, umbral por fecha, `_resolve_hr_zones`, familia de deporte). Rúbrica fijada antes de ver resultados (22/10/2026):
 
-- Globales (G1–G5 del juez): hay respuesta y coaching; Garmin accesible (si no, fallo de entorno); fechas DD/MM/AAAA; nada de "datos disponibles" sin cifras; sin turnos de usuario inventados.
+- Globales (G1–G5 del juez): hay respuesta y coaching; Garmin accesible (si no, fallo de entorno); fechas DD/MM/AAAA; nada de "datos disponibles" sin cifras (declarar que falta el dato, "sin datos disponibles", es correcto desde el 23/10); sin turnos de usuario inventados.
 - Por pregunta: CTL/ATL/TSB y zona de Forma = serie del día; TSS semanal, diario y por actividad = `load_metrics_daily` / `activity_tss`; actividades de un rango ⊇ `activity_tss`; análisis de la actividad correcta con su TSS y su Carga Garmin (`native_load`); recuento y desglose por deporte; umbrales y su historial = perfil; plan activo = `training_plan`; récords = Garmin; objetivo = `goals`; últimas 20 por deporte = `activity_tss` (orden, TSS, carga, media y máximo).
 - En el texto del LLM: no atribuye a la CTL el máximo habitual de la ATL; cada rango de FC en lpm cabe en una zona (zonas de Garmin guardadas en el perfil, las del reloj y TP; desde el 22/10, antes % del LTHR; las de ciclismo si la línea habla de bici o ciclismo y las de carrera en el resto, desde el 23/10), salvo un rango dentro de Z1–Z2 (rodaje suave: las dos zonas están bajo VT1 y dan el mismo estímulo; desde el 23/10, decisión del usuario; que un día de recuperación vaya solo en Z1 lo pide el prompt, el juez no lo comprueba) y salvo un tramo progresivo (desde el 23/10, decisión del usuario): en la misma línea, marcado como calentamiento, vuelta a la calma, enfriamiento o progresivo y con "de Zx a Zy" / "Zx–Zy", con la FC de inicio en la zona más baja nombrada y la de fin en la más alta; un tramo continuo entre dos zonas de Z2/Z3 para arriba ("Z2 alto / Z3 bajo", "Z4–Z5") sigue siendo fallo; un ritmo citado como umbral es el vigente.
 - Tolerancias: ±0,1 en TSS/CTL/ATL/TSB, ±1 lpm, ±2 s/km. No juzga la calidad del consejo (revisión humana).
@@ -149,7 +149,7 @@ Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera p
 En este orden, cada uno con su batería antes y después:
 
 1. ~~**G2 coherente con G1**~~ (hecho el 23/10: `prompts/coaching_rules.md`; batería 25/25).
-2. **`agent/sensors.py` con S10–S13** sacados del juez, que pasa a importarlos. Criterio: 0 falsos positivos en las transcripciones del 23/10 y el juez da el mismo veredicto que antes.
+2. ~~**`agent/sensors.py`**~~ (hecho el 23/10): S8, S10–S13 y G3–G5 en un módulo sin dependencias de `agent/`, que importan el juez y `trainer_agent`. Mismo veredicto en 175/175 preguntas de las siete baterías del 23/10 y 0 diferencias frente al juez anterior en 350 casos (reales y con errores inyectados); solo cambia G4, que ya no marca "sin datos disponibles".
 3. **Autocorrección en vivo (§6)** con S10–S13. Criterio: batería 25/25 y la latencia media de las preguntas con LLM no sube más de un 10 % si no hay fallos.
 4. **S14, S15 y S16**, con los mismos criterios.
 5. **G12, marco de la sesión de hoy**, y el motor de planes en zonas de Garmin: cada sesión pasa de "RPE 3-4" a "Z2 Aeróbica (135–145 lpm) · RPE 3-4" y `structured_workout` guarda la zona de Garmin en lugar del % del LTHR (zonas de Friel), que hoy no casa con las de Garmin (el "endurance" del plan, 85–89 % del LTHR = 144–150 lpm, cruza Z2 y Z3). Decisión del usuario (23/10): la FC en zonas de Garmin es la referencia principal y el RPE el complemento; ya está así en `coaching_rules.md`.

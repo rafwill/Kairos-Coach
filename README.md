@@ -76,6 +76,7 @@ agent/
   load_metrics.py        TSS por deporte y PMC (CTL/ATL/TSB)
   running_tss.py         pipeline físico de running (NGP con pendiente, rTSS)
   storage.py             persistencia multiusuario en Supabase
+  sensors.py             sensores sobre el texto del LLM (zonas, ritmo umbral, fechas…), compartidos con el juez
   mcp/
     client.py            cliente MCP: arranca el servidor, sesión stdio y llamadas a tools
     contracts.py         contratos de argumentos, normalización y caché de las tools
