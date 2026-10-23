@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Removed (`HookManager`)
+- Decisión del usuario: fuera el `HookManager` (cinco eventos emitidos en unos 12 puntos de `chat()` sin ningún suscriptor en producción). Los sensores sobre la respuesta del LLM se llaman de forma explícita. Las 7 llamadas de aviso de error pasan a `_log_chat_error`, un `log.warning` con la etapa y el error: antes no dejaban rastro (sin suscriptores, `on_error` no hacía nada). `tests/test_hooks_router.py` pasa a `tests/test_tool_router.py` con los tests del router. Tests: 598.
+
 ### Added (`agent/sensors.py`, paso 2 de `docs/Harness.md`)
 - Las comprobaciones del juez sobre el texto del LLM pasan a un módulo compartido con funciones puras que devuelven hallazgos con su mensaje y una pista para que el LLM se corrija: rangos de FC en zonas de Garmin por deporte (S10), ritmo umbral vigente (S11), CTL ≠ máximo habitual de la ATL (S12), fechas ISO (G3), marcador "datos disponibles" sin valor (G4) y turnos de usuario inventados (G5, con `strip_simulated_user_turn`, que se mueve de `trainer_agent`). El módulo no importa nada de `agent/` (test). El juez los importa; Kairos los usará en vivo en el paso 3.
 - Verificación: 0 diferencias frente al juez anterior en 350 casos (las 175 respuestas de las siete baterías del 23/10 y las mismas con errores inyectados) y mismo veredicto en 175/175 preguntas.

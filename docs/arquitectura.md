@@ -110,7 +110,7 @@ Una sola regla para todo Kairos (`load_metrics.form_zone` y `resolve_load_status
 
 ## Cada mensaje del chat
 
-`TrainerAgent.chat()` pasa por `HookManager` y `ToolRouter` (`docs/Harness.md`):
+`TrainerAgent.chat()` pasa por `ToolRouter` (`docs/Harness.md`):
 
 1. **Rutas deterministas** (sin LLM): estado del plan, TSS y actividades de una semana, TSS de las últimas N actividades por deporte, umbrales, récords personales, objetivo, detalle de una actividad por fecha, configuración.
 2. **Rutas mixtas** (estado de hoy, "¿qué me toca?", "¿puedo entrenar fuerte mañana?", sesión de la semana): bloque factual determinista y después la capa de coaching del LLM, limitada a esos datos, con el horizonte que pide el usuario (`_coaching_horizon`). Si el LLM falla, se dice explícitamente y queda solo el bloque factual.
