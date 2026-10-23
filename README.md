@@ -92,7 +92,7 @@ tools/
   lint_mcp.py, mcp_lint/    guía de estilo MCP de apiaddicts sobre las tools del servidor (Spectral)
   healthcheck_mcp.py        healthcheck en vivo: llama a todas las tools contra Garmin y dice cuáles fallan
   gen_mcp_docs.py           regenera el catálogo de tools de garmin_mcp/README.md
-docs/                    arquitectura, harness, bitácora, runbook del MCP y batería
+docs/                    arquitectura, harness, bitácora y preguntas de la batería
 ```
 
 Con la terminología MCP: Kairos (`agent/`) es el **host**, `agent/mcp/` su **cliente** y `garmin_mcp/` el **servidor**; el servidor no depende del host y Kairos lo usa solo por el protocolo MCP. Detalle en [`docs/arquitectura.md`](docs/arquitectura.md).
@@ -111,7 +111,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | Batería de preguntas | — | `.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy` | Tras cambios en rutas, prompts o modelo |
 | Juez de la batería | — | `.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md` | Justo después de la batería |
 
-- **Tests:** 574 passed, 6 skipped (22/10/2026). No necesitan red. Los 6 saltados son la prueba de humo con el Inspector oficial de MCP 2.12.0 (`RUN_MCP_INSPECTOR_SMOKE=1`, con `GARMIN_EMAIL` y `GARMIN_PASSWORD` en el entorno; 6/6 el 22/10).
+- **Tests:** 585 passed (23/10/2026). No necesitan red.
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
 - **`healthcheck_mcp`:** llama a las 42 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
 - **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
@@ -121,12 +121,12 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 
 | Documento | Contenido |
 | --- | --- |
-| [`CLAUDE.md`](CLAUDE.md) | Estado vigente del cálculo de carga, reglas de método, datos y pendientes |
+| [`CLAUDE.md`](CLAUDE.md) | Estado vigente del cálculo de carga, reglas de método, datos y pendientes (hoja de ruta) |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Capas, tablas de Supabase, flujos de arranque, cálculo y chat, MCP y seguridad |
 | [`docs/Harness.md`](docs/Harness.md) | Hooks, router determinista y sensores de calidad |
 | [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Bitácora de investigación |
 | [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración, problemas frecuentes (429/403, certificados) y catálogo de las 42 tools (generado) |
-| [`CHANGELOG.md`](CHANGELOG.md) · [`TODO.md`](TODO.md) | Cambios y hoja de ruta |
+| [`CHANGELOG.md`](CHANGELOG.md) | Cambios (los pendientes, en `CLAUDE.md`) |
 
 ## Privacidad
 
