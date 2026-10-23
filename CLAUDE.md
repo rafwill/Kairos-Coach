@@ -7,6 +7,7 @@
 - Reutilizar funciones de producción en scripts de diagnóstico; goldens generados ejecutando, no de memoria.
 - Protocolo de outliers: verificar primero la fuente del TP (misma actividad verificada → auditar código; mal transcrito → corregir referencia; sin verificar → no tocar código).
 - Cambios en datos de Supabase: siempre en prueba primero (recálculo completo sin escribir), comprobar que solo cambia lo esperado, aplicar solo esas filas y verificar leyendo de vuelta.
+- Pre-commit versionado (`.githooks/pre-commit`, activado con `make hooks` o por los setup): ruff (F y E9, reglas fijadas en `pyproject.toml`) y tests; la CI pasa el mismo lint. Si falla, se corrige; nunca `--no-verify`.
 - Sin push hasta orden expresa. Commits firmados con la clave GPG personal (rafwill2@gmail.com, la elige `~/.gitconfig-personal` por el remoto `github.com/rafwill/...`); `gpg-agent` recuerda la contraseña 8 h. Si la firma falla por falta de contraseña, pedir al usuario que haga él el commit (la escribe y queda recordada); nunca `--no-gpg-sign`.
 
 ## Objetivo
@@ -77,7 +78,6 @@ Anclajes por fecha (perfil `performance`):
 - Si cambia el umbral de FC de TP, añadir la entrada con fecha a `hr_threshold_tp_history` el mismo día (no hay comando; el ritmo umbral sí: `/perfil umbral` añade la entrada de hoy al historial).
 - Revalidación periódica con un export nuevo de TP (prueba sin escribir, criterio fijado antes, solo filas esperadas).
 - Capturar el RPE de fuerza después de la sesión (persistido por `activity_id`).
-- Git hooks locales (pre-commit con los tests).
 
 ## Limitaciones aceptadas (no bugs abiertos)
 

@@ -30,6 +30,11 @@ Write-Host "[setup] Instalando dependencias runtime..."
 Write-Host "[setup] Instalando Kairos en modo editable (agent y garmin_mcp importables desde cualquier carpeta)..."
 & $venvPython -m pip install -e . --no-deps
 
+if (Test-Path .git) {
+    Write-Host "[setup] Activando el pre-commit del repo (.githooks: ruff y tests antes de cada commit)..."
+    git config core.hooksPath .githooks
+}
+
 if (-not $SkipDev) {
     Write-Host "[setup] Instalando dependencias de desarrollo..."
     & $venvPython -m pip install -r requirements-dev.txt

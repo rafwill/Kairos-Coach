@@ -1,0 +1,24 @@
+#!/bin/sh
+# Pre-commit de Kairos (docs/Harness.md, S23): lint obligatorio (ruff, reglas en pyproject.toml) y tests
+# sin red antes de cada commit. Se activa con `make hooks` (git config core.hooksPath .githooks); los
+# scripts de setup lo hacen solos. Si falla, se corrige; nunca --no-verify.
+ROOT="$(git rev-parse --show-toplevel)"
+if [ -x "$ROOT/.venv/Scripts/python.exe" ]; then
+  PY="$ROOT/.venv/Scripts/python.exe"
+else
+  PY="$ROOT/.venv/bin/python"
+fi
+if [ ! -x "$PY" ]; then
+  echo "[pre-commit] No encuentro el .venv del proyecto: ejecuta setup.ps1 o setup.sh." >&2
+  exit 1
+fi
+cd "$ROOT" || exit 1
+
+echo "[pre-commit] ruff..."
+"$PY" -m ruff check agent garmin_mcp tests tools || exit 1
+
+echo "[pre-commit] tests..."
+out="$("$PY" -m pytest -q -x --no-header -p no:cacheprovider 2>&1)"
+status=$?
+echo "$out" | tail -5
+exit $status
