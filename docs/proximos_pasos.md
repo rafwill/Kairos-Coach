@@ -1206,3 +1206,13 @@ Tres cosas más:
 Planes: los objetivos internos de los planes siguen guardados en % del umbral. No se muestran en ningún sitio, y el prompt ya obliga a hablarte en zonas de Garmin.
 Memoria entre sesiones: el bloque "Memoria de sesiones anteriores" incluye 200 caracteres de la última respuesta de cada sesión, otra vía por la que pueden volver cifras viejas al LLM. Si quieres, lo quito como hice con el historial.
 docs/proximos_pasos.md: tiene cambios que no son míos (lo tienes abierto), así que lo he dejado fuera del commit.
+
+
+
+23/10/2026 12:58
+
+Desde ahora, tus commits en Kairos y en tus otros repos personales salen firmados y verificados, y los del trabajo siguen con su clave. Cuando la contraseña deje de estar recordada (8 horas), si un commit mío falla te pediré que hagas tú uno; con eso vuelve a quedar recordada.
+
+En el otro ordenador hay que repetirlo: crear allí otra clave GPG personal, subirla a GitHub y activar la firma en su configuración de git. Si me abres la sesión allí, lo hacemos igual.
+
+Siguen pendientes la ENCRYPTION_KEY, para la batería y el juez, y la memoria entre sesiones.
