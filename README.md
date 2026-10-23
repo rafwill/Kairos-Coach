@@ -82,7 +82,8 @@ agent/
 garmin_mcp/              servidor MCP de Garmin Connect (42 tools, solo lectura), independiente de agent/
   README.md              arranque, configuración y catálogo de las 42 tools
   server.py              definición de las tools; arranque: python -m garmin_mcp
-prompts/                 system prompt del LLM
+prompts/                 todo el texto que recibe el LLM: system prompt, reglas de entrenador y
+                         plantillas por familia (system/, coaching/, rescue/, activity_analysis/)
 supabase/                schema.sql (esquema completo e idempotente)
 tests/                   suite de pytest (sin red: Garmin, Supabase y LLM mockeados)
 tools/
