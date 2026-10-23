@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Changed (reglas de entrenador en una sola fuente)
+- Las reglas de entrenador estaban escritas cuatro veces (system prompt y tres mini-prompts: coaching y dos rescates), con redacciones distintas; el de coaching pedía la intensidad "en % del umbral de FC", en contra de la regla de zonas de Garmin. Pasan literalmente a `prompts/coaching_rules.md` (sin perder ni duplicar líneas, comprobado) y las cargan las cuatro llamadas; `system_prompt.md` las inserta en `{{REGLAS_DE_COACHING}}`. Las llamadas al LLM no cambian; las de coaching mandan unos 2 700 tokens más.
+- Ruta determinista de la FC umbral: decía que el LTHR es "la referencia de tus zonas de FC (% del umbral) y del hrTSS de trail y bici sin potencia". Ahora: ancla el hrTSS de fuerza, elíptica y remo; trail y bici sin potencia usan el umbral de TP; las zonas son las de Garmin.
+- Batería 25/25; suma de las 4 preguntas de coaching 208 s (hoy entre 151 y 240 s con NVIDIA). Tests: 583.
+
 ### Removed (GitHub Models y prompt compacto)
 - Desde la VPN del trabajo se accede a NVIDIA, así que GitHub Models sobra (decisión del usuario): fuera el proveedor `vpn` (cliente, menú, `/modelo`, presupuesto de tokens, `GITHUB_TOKEN`/`GITHUB_MODEL`) y `prompts/system_prompt_compact.md`, que solo existía por su límite de tokens. La detección de Zscaler queda solo como información en el arranque. Proveedor por defecto de `TrainerAgent`: `nvidia`. Tests: 582 (fuera los 3 del prompt compacto). Batería con NVIDIA: 25/25.
 

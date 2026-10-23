@@ -34,9 +34,18 @@ log = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
+_COACHING_RULES_MARKER = "{{REGLAS_DE_COACHING}}"
+
+
+def _load_coaching_rules() -> str:
+    """Reglas de entrenador comunes a todas las llamadas al LLM (fuente única: prompts/coaching_rules.md)."""
+    return (PROMPTS_DIR / "coaching_rules.md").read_text(encoding="utf-8").strip()
+
+
 def _load_system_prompt() -> str:
-    """Carga el system prompt del entrenador desde el archivo Markdown."""
-    return (PROMPTS_DIR / "system_prompt.md").read_text(encoding="utf-8")
+    """System prompt del bucle con herramientas, con las reglas de entrenador en su sitio."""
+    base = (PROMPTS_DIR / "system_prompt.md").read_text(encoding="utf-8")
+    return base.replace(_COACHING_RULES_MARKER, _load_coaching_rules())
 
 
 # ─── Funciones de persistencia ───────────────────────────────────────────────
@@ -3908,7 +3917,8 @@ async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> st
                 *rows,
                 "",
                 "## ✅ Recomendación",
-                "- Es la referencia de tus zonas de FC (% del umbral) y del hrTSS de trail, fuerza y bici sin potencia.",
+                "- Ancla el hrTSS de fuerza, elíptica y remo. El hrTSS de trail y de bici sin potencia usa el umbral de TrainingPeaks, "
+                "y tus zonas de FC son las de Garmin (las del reloj).",
                 "",
                 "## 🎯 Próximo paso",
                 "- Si cambia (nueva prueba de esfuerzo o cambio en TrainingPeaks), actualízala para que los cálculos nuevos la usen.",
@@ -11466,23 +11476,20 @@ class TrainerAgent:
                 {
                     "role": "system",
                     "content": (
-                        "Eres Kairos Coach. Debes interpretar SOLO los datos factuales recibidos y el perfil del atleta. "
-                        "No inventes métricas ni fechas. Si falta un dato, dilo explícitamente. "
-                        "Ten en cuenta siempre las condiciones de salud del perfil (si hay diabetes con insulina, añade la nota de seguridad glucémica) "
-                        "y el objetivo (si su fecha ya pasó, no planifiques hacia él). Si pregunta qué le toca y no hay plan activo, dilo y ofrece crearlo. "
-                        "Usa las zonas en lpm del bloque Umbrales; no conviertas porcentajes por tu cuenta. "
-                        "Responde al horizonte que pregunta el usuario (hoy, mañana o esta semana). Responde en español."
+                        "Eres Kairos Coach. Interpreta SOLO los datos factuales recibidos y el perfil del atleta; "
+                        "si falta un dato, dilo. Si pregunta qué le toca y no hay plan activo, dilo y ofrece crearlo. "
+                        "Responde al horizonte que pregunta el usuario (hoy, mañana o esta semana)."
                         + (
                             " Genera estas secciones (título ### con su emoji), 2-4 bullets cada una:\n"
                             "### 🧭 Lectura del estado (carga, HRV, sueño y body battery, con su porqué)\n"
-                            "### ✅ Qué hacer (sesión concreta: calentamiento, parte principal en RPE y % del umbral de FC, "
-                            "enfriamiento; si pregunta por la semana, reparto de calidad, rodajes y descanso)\n"
-                            "### ⚠️ Qué vigilar (señales que cambiarían la recomendación)\n"
-                            "Usa las reglas de carga de Kairos: disponible → mantener; fatiga alta → suave; sobrecarga → descanso; "
-                            "una señal de recuperación alterada → reducir; dos o más → suave."
+                            "### ✅ Qué hacer (sesión concreta con la estructura obligatoria de las reglas; "
+                            "si pregunta por la semana, reparto de calidad, rodajes y descanso)\n"
+                            "### ⚠️ Qué vigilar (señales que cambiarían la recomendación)"
                             if is_readiness else
                             " Máximo 5 bullets accionables."
                         )
+                        # Reglas de entrenador: las mismas que el system prompt (prompts/coaching_rules.md).
+                        + "\n\n" + _load_coaching_rules()
                         + self._profile_context_block()
                         + self._load_and_anchors_context_block()
                         + self._plan_context_block()
@@ -12656,8 +12663,8 @@ class TrainerAgent:
                                 "content": (
                                     "Eres Kairos Coach. Evalúa el entrenamiento indicado usando EXCLUSIVAMENTE los datos provistos y el perfil del atleta. "
                                     "Entrega una valoración concreta y accionable (no pidas más información). "
-                                    "Si falta algún dato puntual, dilo en una línea y sigue con la mejor recomendación posible. "
-                                    "Ten en cuenta las condiciones de salud y el objetivo del perfil."
+                                    "Si falta algún dato puntual, dilo en una línea y sigue con la mejor recomendación posible."
+                                    + "\n\n" + _load_coaching_rules()
                                     + self._profile_context_block()
                                     + self._plan_context_block()
                                 ),
@@ -12694,10 +12701,10 @@ class TrainerAgent:
                                 "content": (
                                     "Eres Kairos Coach. El usuario pide una propuesta de entrenamiento para mañana. "
                                     "Debes responder con una sesión concreta aunque falten algunos datos, usando el contexto disponible. "
-                                    "Si hay plan activo, parte de la sesión prevista y ajústala con las reglas de carga; "
-                                    "ten en cuenta las condiciones de salud y el objetivo del perfil. "
+                                    "Si hay plan activo, parte de la sesión prevista y ajústala con las reglas de carga. "
                                     "No pidas más detalles salvo bloqueo crítico de seguridad. "
                                     "Si faltan datos, usa una propuesta conservadora y explícita tus supuestos en 1 línea."
+                                    + "\n\n" + _load_coaching_rules()
                                     + self._profile_context_block()
                                     + self._load_and_anchors_context_block()
                                     + self._plan_context_block()
@@ -12708,7 +12715,7 @@ class TrainerAgent:
                                 "content": (
                                     f"Solicitud: {user_message}\n"
                                     f"Contexto disponible: {json.dumps(snapshot_ctx, ensure_ascii=False)}\n"
-                                    "Devuelve: tipo de sesión, duración, intensidad (RPE o zona), objetivo y una nota de seguridad."
+                                    "Devuelve: tipo de sesión, duración, intensidad (RPE y zona de Garmin), objetivo y una nota de seguridad."
                                 ),
                             },
                         ]
