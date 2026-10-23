@@ -6031,6 +6031,58 @@ class TestStructuredPlanEngine:
         assert legacy["target"]["range"] == [85, 89]
         assert any("Z3->Z2" in t for t in trace)
 
+    def test_today_session_frame_per_decision(self, monkeypatch):
+        zones = [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
+                 ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
+
+        easy = ta._build_today_session_frame(
+            {"decision": "easy", "resulting_session": "rodaje suave 30-50 min en Z1-Z2 + movilidad"}, {})
+        assert "sesión suave" in easy
+        assert "Z1–Z2 (115–145 lpm), techo 145 lpm" in easy
+        assert "Duración máxima: 50 min" in easy
+
+        reduce = ta._build_today_session_frame(
+            {"decision": "reduce", "resulting_session": "rodaje controlado 40-60 min (sin bloques intensos)"}, {})
+        assert "hasta Z3 (115–157 lpm)" in reduce and "sin bloques en Z4–Z5" in reduce
+        assert "Duración máxima: 60 min" in reduce
+
+        rest = ta._build_today_session_frame({"decision": "rest", "resulting_session": "descanso + movilidad ligera (20-30 min)"}, {})
+        assert "Decisión del motor diario: descanso" in rest and "Duración máxima: 30 min" in rest
+
+        planned = {"decision": "maintain", "resulting_session": "tempo 3x10'",
+                   "adjusted_structured_workout": {"summary": {"intensityClass": "threshold"},
+                                                   "steps": [{"type": "steady", "duration_min": 55}]}}
+        maintain = ta._build_today_session_frame(planned, {})
+        assert "Z4 Subumbral (158–168 lpm)" in maintain and "Duración máxima: 55 min" in maintain
+
+        assert ta._build_today_session_frame({}, {}) == ""
+
+    @pytest.mark.asyncio
+    async def test_coaching_gets_session_frame_only_for_today(self, monkeypatch):
+        monkeypatch.setattr(ta, "_build_today_session_frame", lambda decision, profile: "MARCO-DE-HOY")
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.model = "m"
+        agent.provider = "nvidia"
+        agent.total_prompt_tokens = agent.total_completion_tokens = 0
+        reply = MagicMock()
+        reply.choices = [MagicMock(message=MagicMock(content="- Rodaje suave Z2 (135–145 lpm)."))]
+        reply.usage = None
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(return_value=reply)
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+
+        await agent._augment_with_llm_coaching_if_needed(
+            "¿Qué me recomiendas hoy?", "datos", "daily_readiness", daily_plan_decision={"decision": "easy"})
+        today_user = agent.client.chat.completions.create.await_args.kwargs["messages"][1]["content"]
+        await agent._augment_with_llm_coaching_if_needed(
+            "¿Qué sesión me recomiendas para esta semana?", "datos", "daily_readiness", daily_plan_decision={"decision": "easy"})
+        week_user = agent.client.chat.completions.create.await_args.kwargs["messages"][1]["content"]
+
+        assert "MARCO-DE-HOY" in today_user
+        assert "MARCO-DE-HOY" not in week_user
+
     def test_structured_summary_names_garmin_zone(self):
         row = {"structured_workout": {"steps": [
             {"type": "warmup", "duration_min": 10},

@@ -57,12 +57,12 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | G4 | Horizonte de la respuesta (hoy, mañana o lo que queda de semana) | Computacional | `_coaching_horizon` | ✓ |
 | G5 | Router determinista: 15 intenciones (TSS, actividades, umbrales, plan, objetivo, récords, readiness…) se responden sin LLM | Computacional | `ToolRouter` (`KAIROS_DETERMINISTIC_ROUTER`, activo por defecto) | ✓ |
 | G6 | Descripción de cada tool y de sus parámetros, la que lee el LLM para elegirla | Texto | `garmin_mcp/server.py`; catálogo en `garmin_mcp/README.md` | ✓ |
-| G7 | Decisión diaria: mantener, suavizar o descansar según carga, HRV, sueño y body battery | Computacional | `_compute_daily_plan_adjustment` | ◐ el LLM recibe la decisión dentro del bloque factual, no como marco obligatorio de la sesión (ver G12) |
-| G8 | Motor de planes: parte del volumen real de 4 semanas, ninguna semana > 10 % sobre lo sostenido, plan genérico si el objetivo ya pasó | Computacional | `_generate_structured_plan_payload`, `_build_plan_load_context` | ✓ |
+| G7 | Decisión diaria: mantener, reducir, suavizar o descansar según carga, HRV, sueño y body battery; al bajar intensidad baja una zona de Garmin (antes reescalaba el % del LTHR con el factor de volumen) | Computacional | `_compute_daily_plan_adjustment`, `_apply_structured_workout_adjustment` | ✓ (el LLM la recibe como marco: G12) |
+| G8 | Motor de planes: parte del volumen real de 4 semanas, ninguna semana > 10 % sobre lo sostenido, plan genérico si el objetivo ya pasó; intensidad en zonas de Garmin (`hr_zone`) con el RPE como complemento, mostrada como "Z2 Aeróbica (135–145 lpm) · RPE 3-4" también en planes guardados antes del 23/10 | Computacional | `_generate_structured_plan_payload`, `_build_plan_load_context`, `_session_intensity_label` | ✓ |
 | G9 | Memoria entre sesiones: solo las preguntas del usuario, nunca respuestas con cifras viejas | Computacional | `_restore_previous_session`, `generate_session_summary_checkpoint`, `_strip_previous_reply` | ✓ |
 | G10 | Resultados de tools compactados (3 000 caracteres; series diarias completas en columnas) | Computacional | `_compact_tool_result`, `_DAILY_SERIES_TOOLS` | ✓ |
 | G11 | Base de conocimiento del atleta (fragmentos relevantes de sus notas) | Computacional | `_build_athlete_knowledge_context`, `ATHLETE_KB_PATHS` | ✓ |
-| G12 | Marco de la sesión de hoy: tipo, zonas permitidas y duración máxima ya calculados a partir de G7, para que el LLM redacte y no decida | Computacional | — | ✗ |
+| G12 | Marco de la sesión de hoy: decisión, sesión, zonas de Garmin permitidas (con lpm) y duración máxima, calculados con G7; el LLM los recibe junto a los datos deterministas y redacta dentro de ellos; S15 lo hace cumplir | Computacional | `_build_today_session_frame`, `prompts/coaching/session_frame.md` (ruta de estado del día, solo para hoy) | ✓ |
 
 ## 5. Sensores
 
@@ -154,5 +154,5 @@ En este orden, cada uno con su batería antes y después:
 2. ~~**`agent/sensors.py`**~~ (hecho el 23/10): S8, S10–S13 y G3–G5 en un módulo sin dependencias de `agent/`, que importan el juez y `trainer_agent`. Mismo veredicto en 175/175 preguntas de las siete baterías del 23/10 y 0 diferencias frente al juez anterior en 350 casos (reales y con errores inyectados); solo cambia G4, que ya no marca "sin datos disponibles".
 3. ~~**Autocorrección en vivo (§6)**~~ (hecho el 23/10, junto con la retirada del `HookManager`; resultado de la batería en el CHANGELOG).
 4. ~~**S14, S15 y S16**~~ (hecho el 23/10). Antes de conectarlos, sobre las 40 respuestas con coaching de las baterías del día: 6 avisos, los 6 falsos positivos del sensor (un umbral condicional, un "+46 %" cortado, ml de hidratación, cadencia y un reparto semanal con calidad otro día); corregidos, 0. Resultado de la batería en el CHANGELOG.
-5. **G12, marco de la sesión de hoy**, y el motor de planes en zonas de Garmin: cada sesión pasa de "RPE 3-4" a "Z2 Aeróbica (135–145 lpm) · RPE 3-4" y `structured_workout` guarda la zona de Garmin en lugar del % del LTHR (zonas de Friel), que hoy no casa con las de Garmin (el "endurance" del plan, 85–89 % del LTHR = 144–150 lpm, cruza Z2 y Z3). Decisión del usuario (23/10): la FC en zonas de Garmin es la referencia principal y el RPE el complemento; ya está así en `coaching_rules.md`.
+5. ~~**G12 y motor de planes en zonas de Garmin**~~ (hecho el 23/10; resultado en el CHANGELOG).
 6. **S23 y S24:** hook de pre-commit y ruff en la CI con los avisos actuales como línea base.

@@ -184,16 +184,19 @@ def find_hr_ranges_outside_zones(coaching: str, zones: Zones, zones_cycling: Zon
         after = coaching[mr.end(): mr.end() + 8]
         # \bVO2: un "vo" suelto casaba con "objetivo" ("objetivo 120–180 mg/dL" de glucemia).
         is_hr = "lpm" in after or re.search(r"(?i)(Z[1-5]|FC|lpm|recuper|resistencia|tempo|umbral|\bVO2)", before)
-        if not is_hr or "TSS" in before or re.match(r"\s*mg", after):
-            continue  # rangos de FC, no TSS, glucemia ni otras cifras
+        # Un rango con otra unidad no es de FC aunque haya una zona cerca ("Z1–Z2 → agua 150–250 ml", 23/10).
+        other_unit = re.match(r"(?i)\s*(?:ml|mg|g\b|min|km|m\b|kcal|w\b|rpm|pasos|%)", after)
+        if not is_hr or "TSS" in before or other_unit:
+            continue  # rangos de FC, no TSS, glucemia, hidratación ni otras cifras
         lo, hi = sorted((int(mr.group(1)), int(mr.group(2))))
         if not (100 <= lo <= 220):
             continue
-        # Garmin tiene zonas por deporte: una línea de bici se juzga con las de ciclismo (23/10).
-        line_start = coaching.rfind("\n", 0, mr.start()) + 1
-        line_end = coaching.find("\n", mr.end())
-        line = coaching[line_start: line_end if line_end != -1 else len(coaching)]
-        sport_zones = zones_cycling if zones_cycling and _CYCLING_LINE.search(line) else zones
+        # Garmin tiene zonas por deporte: un rango de bici se juzga con las de ciclismo (23/10). El deporte se
+        # decide por la frase o la celda del rango (desde el último ".", ";", "|" o salto de línea), no por la
+        # línea: una fila de tabla puede llevar el rodaje y una alternativa en bici.
+        clause_start = max(coaching.rfind(sep, 0, mr.start()) for sep in (". ", ";", "|", "\n")) + 1
+        clause = coaching[clause_start: mr.end()]
+        sport_zones = zones_cycling if zones_cycling and _CYCLING_LINE.search(clause) else zones
         fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in sport_zones)
         if not fits:
             fits = _easy_range_ok(lo, hi, sport_zones) or _progressive_range_ok(coaching[: mr.start()], lo, hi, sport_zones)
@@ -222,8 +225,18 @@ def find_wrong_threshold_pace(coaching: str, pace_today_s: float | None) -> list
     return out
 
 
+NOTICE_HEADER = "⚠️ Comprobación de Kairos"
+
+
+def without_notice(text: str) -> str:
+    """El texto sin el aviso al pie de Kairos, que cita los fallos y no debe juzgarse como texto del LLM."""
+    i = (text or "").find(NOTICE_HEADER)
+    return text if i < 0 else text[:i]
+
+
 def check_coaching_text(coaching: str, zones: Zones, zones_cycling: Zones | None, pace_today_s: float | None) -> list[Finding]:
     """S10–S12 sobre el texto del LLM, en el orden del juez."""
+    coaching = without_notice(coaching)
     return (
         find_ctl_with_atl_max(coaching)
         + find_hr_ranges_outside_zones(coaching, zones, zones_cycling)

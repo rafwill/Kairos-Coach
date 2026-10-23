@@ -5900,6 +5900,65 @@ def _session_intensity_label(session: dict, profile: dict | None) -> str:
     return f"{label} · {rpe}" if rpe else label
 
 
+_DECISION_LABELS = {
+    "maintain": "mantener la sesión prevista",
+    "reduce": "reducir (sin bloques intensos)",
+    "easy": "sesión suave",
+    "rest": "descanso",
+}
+
+
+def _build_today_session_frame(daily_decision: dict | None, profile: dict | None) -> str:
+    """Marco de la sesión de hoy (docs/Harness.md, G12): lo decide el motor diario y el LLM solo lo redacta.
+
+    Tipo de sesión, zonas de Garmin permitidas (con lpm) y duración máxima. Vacío si no hay decisión.
+    """
+    decision = str((daily_decision or {}).get("decision") or "").strip().lower()
+    if decision not in _DECISION_LABELS:
+        return ""
+    zones, _ = _resolve_hr_zones(profile or {}, "running")
+
+    def lpm(n: int, end: int | None = None) -> str:
+        if len(zones) < max(n, end or n):
+            return ""
+        return f" ({zones[n - 1][1]}–{zones[(end or n) - 1][2]} lpm)"
+
+    def top(n: int) -> str:
+        return f"{zones[n - 1][2]} lpm" if len(zones) >= n else f"el techo de Z{n}"
+
+    resulting = str((daily_decision or {}).get("resulting_session") or "").strip()
+    adjusted = (daily_decision or {}).get("adjusted_structured_workout")
+    if decision == "rest":
+        allowed = "ninguna: descanso; si te mueves, movilidad suave en Z1" + lpm(1)
+    elif decision == "easy":
+        allowed = f"Z1–Z2{lpm(1, 2)}, techo {top(2)}; nada de Z3 o superior"
+    elif decision == "reduce":
+        allowed = f"hasta Z3{lpm(1, 3)}, techo {top(3)}; sin bloques en Z4–Z5"
+    else:
+        main_ic = ""
+        if isinstance(adjusted, dict):
+            main_ic = str((adjusted.get("summary") or {}).get("intensityClass") or "")
+        if main_ic:
+            zone = _zone_for_intensity_class(main_ic)
+            allowed = f"las de la sesión prevista: parte principal en {_GARMIN_ZONE_NAMES[zone]}{lpm(zone)}, calentamiento en Z1–Z2 y enfriamiento en Z1"
+        else:
+            allowed = f"parte principal hasta Z4{lpm(4)}, calentamiento en Z1–Z2 y enfriamiento en Z1"
+
+    minutes = _structured_workout_duration_minutes(adjusted) if isinstance(adjusted, dict) and decision != "rest" else 0.0
+    if minutes > 0:
+        duration = f"{int(round(minutes))} min"
+    else:
+        spans = [int(hi) for _, hi in re.findall(r"(\d+)\s*-\s*(\d+)\s*min", resulting)]
+        duration = f"{max(spans)} min" if spans else "la de la sesión prevista"
+    return _render_prompt(
+        "coaching/session_frame",
+        decision=_DECISION_LABELS[decision],
+        sesion=resulting or "—",
+        zonas=allowed,
+        duracion=duration,
+    )
+
+
 def _structured_workout_summary(session: dict) -> str:
     """Devuelve un resumen corto del bloque principal para utilidad diaria."""
     if not isinstance(session, dict):
@@ -11450,7 +11509,7 @@ class TrainerAgent:
         text = _sensors.add_glucose_note(text, self._has_insulin_diabetes())
         if findings:
             log.warning("[SENSOR] %s sin corregir: %s", kind, " | ".join(f"{f.sensor} {f.message}" for f in findings))
-            text += "\n\n> ⚠️ Comprobación de Kairos: revisa esto, no cuadra con tus datos:\n" + "\n".join(
+            text += f"\n\n> {_sensors.NOTICE_HEADER}: revisa esto, no cuadra con tus datos:\n" + "\n".join(
                 f"> - {_sensors.user_notice(f)}" for f in findings
             )
         return text
@@ -11460,12 +11519,12 @@ class TrainerAgent:
         user_message: str,
         deterministic_reply: str,
         route: str,
-        daily_decision: str | None = None,
+        daily_plan_decision: dict | None = None,
     ) -> str:
         """Añade una interpretación de coaching por LLM cuando el usuario la pide.
 
-        `daily_decision` (maintain, reduce, easy o rest) es la del motor diario; el sensor S15 solo la
-        aplica si la respuesta es para hoy.
+        `daily_plan_decision` es la del motor diario (ruta de estado del día). Si la respuesta es para hoy,
+        el LLM recibe el marco de la sesión de hoy (G12) y el sensor S15 comprueba que lo respeta.
 
         Mantiene el bloque determinista como fuente de verdad y limita el LLM
         a interpretar/recomendar usando SOLO esos datos.
@@ -11477,6 +11536,9 @@ class TrainerAgent:
 
         try:
             is_readiness = route == "daily_readiness"
+            is_today = _coaching_horizon(user_message).startswith("HOY")
+            today_decision = (daily_plan_decision or {}).get("decision") if is_today else None
+            session_frame = _build_today_session_frame(daily_plan_decision, self.user_profile) if is_today else ""
             coaching_messages = [
                 {
                     "role": "system",
@@ -11497,7 +11559,7 @@ class TrainerAgent:
                         pregunta=user_message,
                         ruta=route,
                         horizonte=_coaching_horizon(user_message),
-                        datos=deterministic_reply,
+                        datos=deterministic_reply + ("\n\n" + session_frame if session_frame else ""),
                     ),
                 },
             ]
@@ -11528,7 +11590,6 @@ class TrainerAgent:
             coaching_text = _strip_simulated_user_turn(
                 str((coaching_response.choices[0].message.content or "")).strip()
             )
-            today_decision = daily_decision if _coaching_horizon(user_message).startswith("HOY") else None
             coaching_text = await self._apply_output_sensors(
                 coaching_text, coaching_messages, "coaching", decision=today_decision
             )
@@ -11722,7 +11783,7 @@ class TrainerAgent:
             assistant_reply = _build_proactive_status_markdown(snapshot)
             assistant_reply = await self._augment_with_llm_coaching_if_needed(
                 user_message, assistant_reply, route="daily_readiness",
-                daily_decision=(snapshot.get("daily_plan_decision") or {}).get("decision"),
+                daily_plan_decision=snapshot.get("daily_plan_decision") or {},
             )
             return await self._finalize_chat_reply(user_message, assistant_reply, route="daily_readiness")
 
