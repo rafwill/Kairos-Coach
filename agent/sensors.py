@@ -231,12 +231,122 @@ def check_coaching_text(coaching: str, zones: Zones, zones_cycling: Zones | None
     )
 
 
-def findings_to_retry(text: str, zones: Zones, zones_cycling: Zones | None, pace_today_s: float | None) -> list[Finding]:
-    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12 y el marcador vacío (G4).
+# ─── S14: cifras de carga citadas = las de los datos ────────────────────────
 
-    S8 (turnos inventados) y S13 (fechas ISO) no están aquí porque se corrigen sin LLM.
+# Sigla, hasta 30 caracteres sin dígitos ni fin de frase (admite "CTL (Estado físico) 60.4") y la cifra entera;
+# no cuentan porcentajes, días ni lpm.
+_LOAD_FIGURE = re.compile(
+    r"\b(CTL|ATL|TSB)\b([^\d\n%+\-−.]{0,30}?)([+\-−]?\d{1,3}(?:[.,]\d+)?)(?![\d.,]*\d)(?!\s*(?:%|d[ií]as\b|d\b|lpm))"
+)
+# Un umbral condicional ("si la ATL supera 55") no es una cifra citada.
+_COMPARISON = re.compile(r"(?i)\b(?:supera|superar|baja de|bajar de|por encima de|por debajo de|m[aá]s de|menos de|hasta)\b|[<>≤≥]")
+_NUMBER = re.compile(r"[+\-−]?\d+(?:[.,]\d+)?")
+
+
+def _to_float(raw: str) -> float:
+    return float(raw.replace("−", "-").replace(",", "."))
+
+
+def find_unsupported_load_figures(text: str, reference: str) -> list[Finding]:
+    """Cada CTL/ATL/TSB que cita el LLM aparece en los datos que recibió (con la tolerancia del redondeo).
+
+    Solo las siglas: "fatiga" y "forma" se usan también como palabras corrientes.
     """
-    return check_coaching_text(text, zones, zones_cycling, pace_today_s) + find_empty_data_lines(text)
+    if not reference:
+        return []
+    refs = [_to_float(n) for n in _NUMBER.findall(reference)]
+    out: list[Finding] = []
+    for m in _LOAD_FIGURE.finditer(text):
+        if _COMPARISON.search(m.group(2)):
+            continue
+        raw = m.group(3)
+        value = _to_float(raw)
+        tol = 0.05 if re.search(r"[.,]", raw) else 0.5
+        signed = raw[0] in "+-−"
+        ok = any(abs(value - r) <= tol + 1e-9 or (not signed and abs(abs(value) - abs(r)) <= tol + 1e-9) for r in refs)
+        if not ok:
+            out.append(Finding("S14", f"LLM: {m.group(1)} {raw} no aparece en los datos",
+                               f"La cifra {m.group(1)} {raw} no está en los datos que tienes: usa las del bloque de datos."))
+    return out
+
+
+# ─── S15: la sesión respeta la decisión del motor diario ────────────────────
+
+_SOFT_DECISIONS = {"rest": "descanso", "easy": "sesión suave", "reduce": "rodaje suave sin bloques intensos"}
+_HIGH_ZONE = re.compile(r"\bZ[45]\b")
+_NOT_A_PRESCRIPTION = re.compile(
+    r"(?i)\b(?:si|evita|evitar|no|nada de|ni|sin|mañana|manana|pr[oó]xim|semana|cuando|vigila|alerta|señal)\b"
+)
+
+
+def find_intensity_against_decision(text: str, decision: str | None, zones: Zones) -> list[Finding]:
+    """Con decisión de descanso, suave o reducir, el LLM no prescribe hoy Z4–Z5 ni FC desde el inicio de Z4.
+
+    Solo para respuestas sobre hoy (la decisión es del día; un reparto semanal puede tener calidad otro día).
+    No cuentan las líneas condicionales, de otros días o de alertas ("si…", "evita…", "mañana…"), ni rangos
+    que no son de FC (ml de hidratación, cadencia): un rango cuenta si la línea dice lpm o FC.
+    """
+    label = _SOFT_DECISIONS.get(str(decision or "").strip().lower())
+    if not label:
+        return []
+    z4_low = zones[3][1] if len(zones) >= 4 else None
+    for line in text.splitlines():
+        if _NOT_A_PRESCRIPTION.search(line):
+            continue
+        is_hr_line = re.search(r"(?i)\blpm\b|\bFC\b", line)
+        high_range = z4_low is not None and is_hr_line and any(
+            z4_low - TOL_BPM <= int(lo) <= 220 for lo, _ in re.findall(r"(\d{3})\s*[–\-→]\s*(\d{3})", line)
+        )
+        if _HIGH_ZONE.search(line) or high_range:
+            return [Finding("S15", f"LLM: propone intensidad alta con decisión del motor = {decision}",
+                            f"El motor de Kairos ha decidido hoy {label}: no propongas Z4–Z5 ni series; "
+                            "ajusta la sesión de hoy a esa decisión.")]
+    return []
+
+
+# ─── S16: nota de seguridad glucémica ───────────────────────────────────────
+
+_INSULIN_DIABETES = re.compile(r"(?i)\bdt\s?1\b|diabetes\s+tipo\s*1|\btipo\s*1\b|\blada\b|insulin")
+_PRESCRIBES_SESSION = re.compile(r"(?i)calentamiento|parte principal|rodaje|series|tirada|sesi[oó]n de")
+_MENTIONS_GLUCOSE = re.compile(r"(?i)gluc|insulin|hipoglu|carbohidrat|hidratos")
+
+GLUCOSE_NOTE = (
+    "> 🩸 **Seguridad glucémica:** mide la glucemia antes de empezar (zona habitual 120–180 mg/dL; por debajo "
+    "de 100, toma carbohidratos rápidos antes), lleva carbohidratos si la sesión pasa de 60 min y vigila la "
+    "hipoglucemia retardada después, sobre todo si entrenas por la tarde o la noche."
+)
+
+
+def has_insulin_diabetes(health_texts: list[str]) -> bool:
+    """Diabetes tratada con insulina en el perfil (mismos marcadores que prompts/coaching_rules.md)."""
+    return any(_INSULIN_DIABETES.search(str(t or "")) for t in health_texts)
+
+
+def add_glucose_note(text: str, insulin_diabetes: bool) -> str:
+    """S16, corrige: si prescribe una sesión sin hablar de glucemia, añade la nota fija."""
+    if insulin_diabetes and _PRESCRIBES_SESSION.search(text or "") and not _MENTIONS_GLUCOSE.search(text or ""):
+        return text.rstrip() + "\n\n" + GLUCOSE_NOTE
+    return text
+
+
+def findings_to_retry(
+    text: str,
+    zones: Zones,
+    zones_cycling: Zones | None,
+    pace_today_s: float | None,
+    reference: str = "",
+    decision: str | None = None,
+) -> list[Finding]:
+    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12, S14, S15 y el marcador vacío (G4).
+
+    S8 (turnos inventados), S13 (fechas ISO) y S16 (nota glucémica) no están aquí porque se corrigen sin LLM.
+    """
+    return (
+        check_coaching_text(text, zones, zones_cycling, pace_today_s)
+        + find_unsupported_load_figures(text, reference)
+        + find_intensity_against_decision(text, decision, zones)
+        + find_empty_data_lines(text)
+    )
 
 
 def user_notice(finding: Finding) -> str:

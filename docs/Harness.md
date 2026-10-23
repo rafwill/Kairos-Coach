@@ -95,9 +95,9 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | S11 | Un ritmo citado como umbral es el vigente en la fecha | Computacional | Reintenta | `find_wrong_threshold_pace` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
 | S12 | No atribuye a la CTL el máximo habitual de la ATL | Computacional | Reintenta | `find_ctl_with_atl_max` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
 | S13 | Fechas DD/MM/AAAA, nunca ISO; tampoco el marcador "datos disponibles" sin valor (G4) | Computacional | Corrige | `find_iso_dates`, `find_empty_data_lines` (`agent/sensors.py`); juez (G3, G4) y Kairos en vivo (fechas: corrige; marcador vacío: reintenta) | ✓ |
-| S14 | Cifras citadas (CTL, ATL, TSB, TSS, HRV) = las del bloque determinista | Computacional | Reintenta | — | ✗ |
-| S15 | La sesión propuesta respeta la decisión del motor diario (descanso o suave → ni series ni Z4–Z5) | Computacional | Reintenta | — | ✗ |
-| S16 | Nota de seguridad glucémica si el perfil tiene diabetes con insulina | Computacional | Corrige (añade la nota fija) | — | ✗ |
+| S14 | Cifras de carga citadas (CTL, ATL, TSB) = alguna de las que recibió el LLM (contexto, datos deterministas, resultados de tools), con la tolerancia del redondeo; no cuentan umbrales condicionales ("si la ATL supera 55") | Computacional | Reintenta | `find_unsupported_load_figures` (`agent/sensors.py`) | ✓ |
+| S15 | Con decisión del motor diario de descanso, suave o reducir, la sesión de hoy no lleva Z4–Z5 ni FC desde el inicio de Z4 (solo respuestas para hoy; no cuentan líneas condicionales ni rangos que no son de FC) | Computacional | Reintenta | `find_intensity_against_decision` (`agent/sensors.py`), decisión desde la ruta de estado del día | ✓ |
+| S16 | Nota de seguridad glucémica si el perfil tiene diabetes con insulina y la respuesta prescribe una sesión sin hablar de glucemia | Computacional | Corrige (añade la nota fija `GLUCOSE_NOTE`, del protocolo de `coaching_rules.md`) | `add_glucose_note` (`agent/sensors.py`) | ✓ |
 | S17 | Responde al horizonte preguntado | Inferencial (no hay forma fiable de comprobarlo con código) | Registra | — | ✗ (solo si S10–S16 no bastan) |
 
 ### Fuera de línea
@@ -114,7 +114,7 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 
 No hay sensores inferenciales (LLM como juez) a propósito: son caros, no deterministas y, para un consejo de entrenamiento, el criterio final es del usuario. La calidad del consejo queda en revisión humana.
 
-## 6. Autocorrección (en vivo desde el 23/10 con S8, S10–S13; S14–S16 pendientes)
+## 6. Autocorrección (en vivo desde el 23/10: S8, S10–S16)
 
 Los sensores de la respuesta del LLM viven en un único módulo (`agent/sensors.py`) que usan a la vez Kairos en vivo y el juez de la batería, para que haya una sola definición de cada regla.
 
@@ -153,6 +153,6 @@ En este orden, cada uno con su batería antes y después:
 1. ~~**G2 coherente con G1**~~ (hecho el 23/10: `prompts/coaching_rules.md`; batería 25/25).
 2. ~~**`agent/sensors.py`**~~ (hecho el 23/10): S8, S10–S13 y G3–G5 en un módulo sin dependencias de `agent/`, que importan el juez y `trainer_agent`. Mismo veredicto en 175/175 preguntas de las siete baterías del 23/10 y 0 diferencias frente al juez anterior en 350 casos (reales y con errores inyectados); solo cambia G4, que ya no marca "sin datos disponibles".
 3. ~~**Autocorrección en vivo (§6)**~~ (hecho el 23/10, junto con la retirada del `HookManager`; resultado de la batería en el CHANGELOG).
-4. **S14, S15 y S16**, con los mismos criterios.
+4. ~~**S14, S15 y S16**~~ (hecho el 23/10). Antes de conectarlos, sobre las 40 respuestas con coaching de las baterías del día: 6 avisos, los 6 falsos positivos del sensor (un umbral condicional, un "+46 %" cortado, ml de hidratación, cadencia y un reparto semanal con calidad otro día); corregidos, 0. Resultado de la batería en el CHANGELOG.
 5. **G12, marco de la sesión de hoy**, y el motor de planes en zonas de Garmin: cada sesión pasa de "RPE 3-4" a "Z2 Aeróbica (135–145 lpm) · RPE 3-4" y `structured_workout` guarda la zona de Garmin en lugar del % del LTHR (zonas de Friel), que hoy no casa con las de Garmin (el "endurance" del plan, 85–89 % del LTHR = 144–150 lpm, cruza Z2 y Z3). Decisión del usuario (23/10): la FC en zonas de Garmin es la referencia principal y el RPE el complemento; ya está así en `coaching_rules.md`.
 6. **S23 y S24:** hook de pre-commit y ruff en la CI con los avisos actuales como línea base.

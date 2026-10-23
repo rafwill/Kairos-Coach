@@ -429,6 +429,33 @@ class TestOutputSensors:
         agent.client.chat.completions.create.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_glucose_note_added_without_llm_for_insulin_diabetes(self, monkeypatch):
+        from agent import sensors
+
+        agent = self._agent(monkeypatch, [])
+        agent.user_profile = {"health": {"injuries": ["DT1"], "notes": ""}}
+        out = await agent._apply_output_sensors("- Rodaje suave 40 min en Z2 (135–145 lpm).", [], "coaching")
+
+        assert out.endswith(sensors.GLUCOSE_NOTE)
+        agent.client.chat.completions.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_decision_sensor_retries_when_today_is_soft(self, monkeypatch):
+        agent = self._agent(monkeypatch, ["- Rodaje suave Z2 (135–145 lpm)."])
+        out = await agent._apply_output_sensors("- Principal: 4x4 min en Z4 (158–168 lpm).", [], "coaching", decision="easy")
+
+        assert out == "- Rodaje suave Z2 (135–145 lpm)."
+        assert "sesión suave" in agent.client.chat.completions.create.await_args.kwargs["messages"][-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_invented_load_figure_retries_against_received_data(self, monkeypatch):
+        agent = self._agent(monkeypatch, ["- Tu CTL 60.4 indica buena base."])
+        context = [{"role": "user", "content": "Datos: Estado físico (CTL) 60.4 · Fatiga (ATL) 38.9"}]
+        out = await agent._apply_output_sensors("- Tu CTL 55 indica buena base.", context, "coaching")
+
+        assert out == "- Tu CTL 60.4 indica buena base."
+
+    @pytest.mark.asyncio
     async def test_retry_never_sees_tool_results(self, monkeypatch):
         agent = self._agent(monkeypatch, ["- Rodaje Z2 (135–145 lpm)."])
         tool_call_msg = MagicMock()  # mensaje del SDK con tool_calls: no es un dict

@@ -77,6 +77,58 @@ class TestOtherSensors:
         assert _ids(sensors.check_coaching_text(text, ZONES, ZONES_BIKE, 240)) == ["S12", "S10", "S11"]
 
 
+class TestLoadFiguresS14:
+    REF = "Estado físico (CTL) 60.4 · Fatiga (ATL) 38.9 · Forma (TSB) +21.7"
+
+    def test_invented_figures_fail(self):
+        out = sensors.find_unsupported_load_figures("Tu CTL es 55 y tu TSB -12.", self.REF)
+        assert [f.message for f in out] == ["LLM: CTL 55 no aparece en los datos", "LLM: TSB -12 no aparece en los datos"]
+
+    def test_rounded_and_labelled_figures_pass(self):
+        text = "CTL 60 · ATL 39 · TSB +22 (+36 % del CTL). CTL (Estado físico) 60.4"
+        assert sensors.find_unsupported_load_figures(text, self.REF) == []
+
+    def test_conditional_threshold_is_not_a_citation(self):
+        # Batería del 23/10: "si ... ATL supera 55 → dos días suaves" es un umbral, no una cifra del atleta.
+        text = "- Spike semanal: si TSB baja de +10 o ATL supera 55 → dos días suaves."
+        assert sensors.find_unsupported_load_figures(text, self.REF) == []
+
+    def test_percentages_do_not_cut_numbers(self):
+        # "+46 %" no se lee como "+4" (falso positivo de la batería del 23/10).
+        assert sensors.find_unsupported_load_figures("Forma del CTL). El spike de TSS (+46 % vs)", self.REF) == []
+
+
+class TestDecisionS15:
+    def test_high_intensity_against_soft_decision_fails(self):
+        out = sensors.find_intensity_against_decision("- Principal: 4x4 min en Z4 (158–168 lpm).", "easy", ZONES)
+        assert [f.sensor for f in out] == ["S15"]
+        assert "sesión suave" in out[0].hint
+
+    def test_maintain_allows_quality(self):
+        assert sensors.find_intensity_against_decision("- Principal: 4x4 min en Z4 (158–168 lpm).", "maintain", ZONES) == []
+
+    def test_conditionals_hydration_and_cadence_are_ignored(self):
+        text = ("- Si la FC pasa de Z4, para.\n- Hidratación: 400–600 ml agua.\n"
+                "- Cadencia ~175–180 pasos.\n- Rodaje Z2 (135–145 lpm).")
+        assert sensors.find_intensity_against_decision(text, "rest", ZONES) == []
+
+
+class TestGlucoseNoteS16:
+    def test_note_added_when_session_without_glucose(self):
+        out = sensors.add_glucose_note("- Rodaje suave 40 min en Z2.", True)
+        assert out.endswith(sensors.GLUCOSE_NOTE)
+
+    def test_no_note_if_glucose_mentioned_or_no_diabetes_or_no_session(self):
+        assert sensors.add_glucose_note("- Rodaje 40 min; mide la glucemia antes.", True) == "- Rodaje 40 min; mide la glucemia antes."
+        assert sensors.add_glucose_note("- Rodaje suave 40 min.", False) == "- Rodaje suave 40 min."
+        assert sensors.add_glucose_note("- Tu HRV está estable.", True) == "- Tu HRV está estable."
+
+    def test_insulin_diabetes_markers(self):
+        assert sensors.has_insulin_diabetes(["DT1 desde 2010"])
+        assert sensors.has_insulin_diabetes(["", "diabetes tipo 1 con bomba de insulina"])
+        assert not sensors.has_insulin_diabetes(["tendinitis aquílea"])
+
+
 def test_sensors_module_does_not_import_the_agent():
     # agent/sensors.py lo usan el agente y las herramientas: no puede depender de trainer_agent.
     import ast
