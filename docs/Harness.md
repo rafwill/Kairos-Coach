@@ -111,7 +111,7 @@ Verifica que el harness no se rompe (2026-10-22: 570 passed, 6 skipped):
 - `test_running_tss.py` — pipeline físico de running (NGP, rTSS).
 - `test_storage.py` — capa de persistencia.
 - `test_main.py` — flujo principal y comandos de perfil.
-- `test_hooks_router.py`, `test_garmin_mcp_server.py`, `test_mcp_client.py`, `test_mcp_inspector_smoke.py` — hooks, router y MCP.
+- `test_hooks_router.py`, `test_garmin_mcp_server.py`, `test_mcp_client.py` — hooks, router y MCP.
 
 Toda la capa de Supabase y Garmin está mockeada — no se realizan conexiones reales en ningún test.
 

@@ -6,6 +6,8 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ### Removed (limpieza de restos)
 - Lanzadores `tools/garmin-mcp-frozen.cmd/.sh` y el concepto de "backend frozen" (restos del MCP de terceros): `MCP_BACKEND`, `KAIROS_MCP_FROZEN_COMMAND`, `KAIROS_MCP_BACKEND_EFFECTIVE`, `get_configured_mcp_backend`, el parámetro `backend_effective` de la caché de contingencia y las líneas "MCP backend" del arranque. El cliente lanza `python -m garmin_mcp` con el mismo intérprete que Kairos y la raíz del repo como `cwd`, como ya hacían las herramientas de `tools/`. Comprobado en vivo (sesión, 42 tools, llamada a Garmin).
+- `fitparse` de `requirements.txt` (lo usaba `tools/fit_tss_probe.py`, que ya no existe); `form_zone_label` (`load_metrics`) y `_parse_iso_date` (`contracts`), sin uso; `make login`, idéntico a `make serve`; del `.gitignore`, `.garmin-mcp/`, `node_modules/`, `.venv2/`, `tmp/` y `.tmp_*`.
+- `tests/test_mcp_inspector_smoke.py`: los 6 tests que siempre salían omitidos (necesitaban Node, npx, credenciales y `RUN_MCP_INSPECTOR_SMOKE=1`). Los cubren el healthcheck en vivo y el test de firmas de `garminconnect`. La suite queda en 585 passed, 0 skipped.
 
 ### Changed (rodaje suave en Z1–Z2)
 - Decisión del usuario, revisando el criterio de la mañana: un rodaje suave o aeróbico puede prescribirse en Z1–Z2 con su rango (115–145 lpm); las dos zonas están bajo VT1 y dan el mismo estímulo, y lo que importa es el techo de Z2. Un día de recuperación va solo en Z1. De Z3 para arriba (tempo, umbral, intervalos) sigue mandando una sola zona, salvo los tramos progresivos.
