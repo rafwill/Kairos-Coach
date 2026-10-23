@@ -40,8 +40,19 @@ class TestHrRanges:
         assert sensors.find_hr_ranges_outside_zones(text, ZONES, ZONES_BIKE) == []
         assert _ids(sensors.find_hr_ranges_outside_zones(text, ZONES)) == ["S10"]
 
+    def test_sport_is_decided_per_clause_not_per_table_row(self):
+        # Batería del 23/10: una fila con el rodaje y una alternativa en bici; el rodaje llevaba zonas de bici.
+        row = ("| Parte principal | Rodaje 35–45 min en Z1–Z2 (105–135 lpm). Si notas tirantez, "
+               "cambia a 30 min bici en Z1–Z2 (FC ciclismo 105–135 lpm). |")
+        out = sensors.find_hr_ranges_outside_zones(row, ZONES, ZONES_BIKE)
+        assert len(out) == 1 and "105–135" in out[0].message
+        ok = ("| Parte principal | Rodaje 35–45 min en Z1–Z2 (115–145 lpm). Si notas tirantez, "
+              "30 min bici en Z1–Z2 (105–135 lpm). |")
+        assert sensors.find_hr_ranges_outside_zones(ok, ZONES, ZONES_BIKE) == []
+
     def test_glucose_and_tss_ranges_are_ignored(self):
-        text = "- Glucemia objetivo 120–180 mg/dL.\n- TSS 150–200 en la semana."
+        text = ("- Glucemia objetivo 120–180 mg/dL.\n- TSS 150–200 en la semana.\n"
+                "- Durante: sesión < 60 min en Z1–Z2 → agua 150–250 ml/30 min.")
         assert sensors.find_hr_ranges_outside_zones(text, ZONES) == []
 
 
@@ -71,6 +82,11 @@ class TestOtherSensors:
         coaching = "¿Quieres que te lo prepare?elijo entrenar mañana"
         assert _ids(sensors.find_invented_user_turn("Respuesta.", coaching)) == ["G5"]
         assert sensors.find_invented_user_turn("Respuesta.", "¿Quieres que te lo prepare?") == []
+
+    def test_kairos_notice_is_not_judged(self):
+        text = ("- Rodaje Z2 (135–145 lpm).\n\n> ⚠️ Comprobación de Kairos: revisa esto, no cuadra con tus datos:\n"
+                "> - rango 150–250 lpm no cabe en ninguna zona")
+        assert sensors.check_coaching_text(text, ZONES, ZONES_BIKE, 240) == []
 
     def test_check_coaching_text_combines_s10_to_s12(self):
         text = "Tu CTL 50 (máximo habitual 70).\n- Series Z4–Z5 (160–175 lpm).\n- Ritmo umbral 4:12/km."
