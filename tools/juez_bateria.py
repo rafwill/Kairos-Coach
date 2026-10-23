@@ -190,6 +190,24 @@ def global_checks(v: Verdict, body: str) -> None:
 
 # ─── Comprobaciones por pregunta ────────────────────────────────────────────
 
+_PROGRESSIVE = re.compile(r"(?i)calentamiento|vuelta a la calma|enfriamiento|progresiv")
+_ZONE_SPAN = re.compile(r"(?i)\bZ([1-5])\s*(?:[–\-→]|\ba\b|hasta)\s*Z([1-5])\b")
+
+
+def _progressive_range_ok(before: str, lo: int, hi: int, zones: list[tuple[str, int, int]]) -> bool:
+    """Tramo progresivo (criterio del 23/10): misma línea, marcado como progresivo y con "de Zx a Zy";
+    la FC de inicio cae en la zona más baja nombrada y la de fin en la más alta."""
+    line = before.rsplit("\n", 1)[-1][-160:]
+    spans = list(_ZONE_SPAN.finditer(line))
+    if not _PROGRESSIVE.search(line) or not spans:
+        return False
+    za, zb = sorted((int(spans[-1].group(1)), int(spans[-1].group(2))))
+    if za == zb or zb > len(zones):
+        return False
+    _, a_lo, a_hi = zones[za - 1]
+    _, b_lo, b_hi = zones[zb - 1]
+    return a_lo - TOL_BPM <= lo <= a_hi + TOL_BPM and b_lo - TOL_BPM <= hi <= b_hi + TOL_BPM
+
 def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
     last = t.latest()
     m = re.search(r"Estado físico \(CTL\) ([\d.]+) · Fatiga \(ATL\) ([\d.]+)", body)
@@ -211,8 +229,8 @@ def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
         cut = re.search(r"ATL|Fatiga|\n", window)
         window = window[: cut.start()] if cut else window
         v.check(not re.search(r"m[áa]x(imo)?\.? habitual", window), "LLM atribuye a la CTL el máximo habitual de la ATL")
-    # Rangos de FC dentro de una zona
-    for mr in re.finditer(r"(\d{3})\s*[–-]\s*(\d{3})", coaching):
+    # Rangos de FC: un tramo continuo cabe en una zona; uno progresivo puede recorrer las que nombra
+    for mr in re.finditer(r"(\d{3})\s*[–\-→]\s*(\d{3})", coaching):
         before = coaching[max(0, mr.start() - 25): mr.start()]
         after = coaching[mr.end(): mr.end() + 8]
         # \bVO2: un "vo" suelto casaba con "objetivo" ("objetivo 120–180 mg/dL" de glucemia).
@@ -223,7 +241,9 @@ def check_state_and_coaching(v: Verdict, body: str, t: Truth) -> None:
         if not (100 <= lo <= 220):
             continue
         fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in t.zones)
-        v.check(fits, f"LLM: rango {lo}–{hi} lpm no cabe en ninguna zona")
+        if not fits:
+            fits = _progressive_range_ok(coaching[: mr.start()], lo, hi, t.zones)
+        v.check(fits, f"LLM: rango {lo}–{hi} lpm no cabe en ninguna zona (ni es un tramo progresivo de Zx a Zy)")
     # Ritmo citado como umbral
     if t.pace_today:
         for p in re.findall(r"(?i)umbral[^\n]{0,40}?(\d):(\d{2})\s*(?:–\s*\d:\d{2}\s*)?(?:min)?/km", coaching):

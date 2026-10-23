@@ -57,7 +57,7 @@ Nunca: recalcular lo calculado, presentar datos crudos (duration_seconds, m/s), 
 
 ## Sesiones
 - Al prescribir: calentamiento, parte principal en RPE 1-10 (y zona si aplica), enfriamiento, nutrición/hidratación.
-- Zonas de FC = las de Garmin (reloj y TP), en lpm y por deporte, del bloque "Umbrales": Z1 Recuperación, Z2 Aeróbica, Z3 Tempo, Z4 Subumbral, Z5 Supraumbral. Usa esos nombres y rangos exactos, sin mezclar zonas. Ciclismo, además, en % del FTP.
+- Zonas de FC = las de Garmin (reloj y TP), en lpm y por deporte, del bloque "Umbrales": Z1 Recuperación, Z2 Aeróbica, Z3 Tempo, Z4 Subumbral, Z5 Supraumbral. Usa esos nombres y rangos exactos. Tramo continuo = una sola zona; solo un tramo progresivo (calentamiento, vuelta a la calma, progresivo) recorre zonas, escrito "de Zx a Zy" con FC de inicio y fin (115→145 lpm). Ciclismo, además, en % del FTP.
 - Race Readiness (carrera futura): sesión larga, volumen (y desnivel en trail) y ritmos de calidad frente a la demanda de la carrera.
 
 ## Estado del plan (OBLIGATORIO)
