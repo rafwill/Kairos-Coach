@@ -38,6 +38,12 @@ Kairos lo arranca solo como subproceso. Para usarlo desde otro cliente MCP (por 
 - **Fechas:** formato `AAAA-MM-DD`. Si se omite la fecha, se usa hoy; en los rangos, el fin por defecto es el inicio.
 - **Dependencias:** `mcp` (FastMCP), `garminconnect` 0.3.2 y `pydantic`.
 
+## Problemas frecuentes
+
+- **Garmin devuelve 429 o 403.** Bloqueo temporal de Garmin, normalmente por demasiados logins seguidos. Con los tokens guardados ya no debería pasar, porque el servidor solo hace login con contraseña si faltan o no valen. Si aparece: no reintentar en bucle, porque Garmin alarga el bloqueo (de la cuenta o de la IP); esperar al menos 15 minutos antes de volver a arrancar Kairos o lanzar la batería o el healthcheck; y no lanzar trazas largas hasta que un arranque normal funcione.
+- **Tokens rechazados tras cambiar la contraseña de Garmin.** No hace falta hacer nada: el servidor borra los tokens guardados y entra con la contraseña.
+- **`CERTIFICATE_VERIFY_FAILED` detrás de un proxy corporativo** (por ejemplo, Zscaler). El proxy sustituye el certificado de Garmin por el suyo y Python no lo reconoce, así que fallan todas las tools sin llegar a Garmin. Solución: un fichero con los certificados de Python (`certifi`) más la raíz del proxy, exportada del almacén de Windows, y en el `.env` `REQUESTS_CA_BUNDLE` y `SSL_CERT_FILE` apuntando a él. Kairos pasa su entorno al servidor. Si existe `zscaler-ca.pem` en la raíz del repo, Kairos también se lo pasa al servidor.
+
 ## Mantenimiento
 
 | Qué | Comando | Cuándo |
@@ -54,7 +60,7 @@ La mayoría de las tools llaman a un método de la librería y devuelven su resp
 - **`get_heart_rate_zones`**: la librería no tiene método para las zonas configuradas. Consulta `/biometric-service/heartRateZones` y devuelve `{"sports": [...]}` con un elemento por deporte configurado (`default`, `running`, `cycling`…): `sport`, `method` (`HR_RESERVE`, `LACTATE_THRESHOLD` o `PERCENT_MAX_HR`), `resting_hr`, `max_hr`, `lactate_threshold_hr` y `zones`, con las cinco zonas como `{zone, min_bpm, max_bpm}`. Garmin solo da el suelo de cada zona; el techo es el suelo de la siguiente menos 1, y el de la Z5, la FC máxima, así que las zonas quedan cerradas y sin huecos. Se omiten los deportes sin los cinco suelos. Kairos la llama al arrancar y guarda el resultado en el perfil (ver [`docs/arquitectura.md`](../docs/arquitectura.md#zonas-de-fc)).
 - **`get_vo2max_trend`**: pide el rango en una sola llamada a `maxmet/daily/{inicio}/{fin}` y devuelve una serie plana (`date`, `running`, `cycling`) con los días que tienen estimación.
 
-Al añadir una tool: definirla en `server.py` con `_tool(nombre, título, descripción)` y parámetros descritos con `Annotated[..., Field(description=...)]`, añadirla a una categoría en `tools/gen_mcp_docs.py`, regenerar este catálogo y añadirla al catálogo esencial del cliente (`GARMIN_ESSENTIAL_TOOLS` en `agent/mcp/client.py`) si Kairos debe usarla.
+Al añadir una tool: definirla en `server.py` con `_tool(nombre, título, descripción)` y parámetros descritos con `Annotated[..., Field(description=...)]`, añadirla a una categoría en `tools/gen_mcp_docs.py`, regenerar este catálogo y, si Kairos debe usarla, añadirla en el host al catálogo esencial (`GARMIN_ESSENTIAL_TOOLS` en `agent/mcp/client.py`) y a los contratos de argumentos (`TOOL_CONTRACTS_V1` en `agent/mcp/contracts.py`). Los tests del catálogo fallan si falta una de las dos o si cambia el número de tools (`test_essentials_catalog_counts_and_uniqueness`, `test_contract_registry_covers_all_essential_tools`). Si cambia el lanzador, revisar `tools/garmin-mcp-frozen.cmd` y `.sh`.
 
 <!-- BEGIN: catálogo generado por tools/gen_mcp_docs.py (no editar a mano) -->
 
