@@ -48,6 +48,22 @@ def _load_system_prompt() -> str:
     return base.replace(_COACHING_RULES_MARKER, _load_coaching_rules())
 
 
+_PROMPT_MARKER = re.compile(r"\{\{([A-Za-z_]+)\}\}")
+
+
+def _render_prompt(name: str, **values: Any) -> str:
+    """Carga prompts/<name>.md y sustituye sus marcadores {{clave}}.
+
+    Exige exactamente las claves del fichero: un marcador sin valor o un valor sin marcador es un error.
+    El texto sale sin saltos de línea al principio ni al final; los pone quien compone el mensaje.
+    """
+    text = (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").strip("\n")
+    keys = set(_PROMPT_MARKER.findall(text))
+    if keys != set(values):
+        raise ValueError(f"prompts/{name}.md: marcadores {sorted(keys)} ≠ valores {sorted(values)}")
+    return _PROMPT_MARKER.sub(lambda m: str(values[m.group(1)]), text)
+
+
 # ─── Funciones de persistencia ───────────────────────────────────────────────
 # Thin wrappers sobre agent.storage para mantener compatibilidad con imports
 # existentes en main.py y los tests. Toda la lógica de persistencia
@@ -4163,29 +4179,14 @@ def _build_post_activity_section_spec(activity_date_iso: str, today_d: date | No
         return {
             "header": "## 🔄 Recuperación y próximas sesiones",
             "section_name": "## 🔄 Recuperación y próximas sesiones",
-            "guidance": (
-                "Escribe 3-5 bullets originales de coach con consejos CONCRETOS usando los valores "
-                "numéricos reales del bloque de datos (TSS, ATL [Fatiga], CTL [Estado físico], TSB [Forma], sueño, body battery, HRV). "
-                "NO copies estas instrucciones como bullets. Genera texto original.\n"
-                "Contenido esperado: qué hacer mañana (tipo sesión y duración específica o descanso), "
-                "qué hacer en 2-3 días, señales de alerta a vigilar, y consejo técnico para la próxima "
-                "sesión similar (pace objetivo, zonas de FC, nutrición pre/post). "
-                "Si los datos indican que el cuerpo pide descanso, dilo con claridad aunque haya sesión en el plan. "
-                "Si los indicadores son buenos, menciona que puede afrontar la siguiente sesión."
-            ),
+            "guidance": _render_prompt("activity_analysis/final_recent"),
             "plan_context": "recent",
         }
 
     return {
         "header": "## 🧾 Aprendizajes para futuras sesiones similares",
         "section_name": "## 🧾 Aprendizajes para futuras sesiones similares",
-        "guidance": (
-            "Escribe 3-5 bullets concisos con aprendizajes transferibles de esta actividad para futuras sesiones similares. "
-            "Usa SIEMPRE datos reales del bloque (TSS, FC, zonas, desnivel, sueño, HRV, body battery). "
-            "PROHIBIDO dar plan temporal corto (no 'mañana', no 'en 2-3 días'). "
-            "Enfoca en: pacing, control de intensidad, nutrición/hidratación y señales de alerta a vigilar "
-            "en próximos entrenamientos similares."
-        ),
+        "guidance": _render_prompt("activity_analysis/final_historical"),
         "plan_context": "historical",
     }
 
@@ -11327,13 +11328,7 @@ class TrainerAgent:
         """Construye el system prompt incluyendo la fecha actual y el perfil del usuario."""
         today_str = date.today().isoformat()
         yesterday_str = (date.today() - timedelta(days=1)).isoformat()
-        date_context = (
-            f"\n\n## Fecha actual\n"
-            f"- Hoy es: **{today_str}** (formato ISO YYYY-MM-DD)\n"
-            f"- Ayer fue: **{yesterday_str}**\n"
-            f"- OBLIGATORIO: cuando pases fechas como parámetros a herramientas, SIEMPRE usa formato ISO YYYY-MM-DD exacto (ej: `{today_str}`). "
-            f"NUNCA uses palabras como 'hoy', 'ayer', 'today', 'yesterday' ni caracteres de otros idiomas en parámetros de herramientas.\n"
-        )
+        date_context = "\n\n" + _render_prompt("system/date", hoy=today_str, ayer=yesterday_str) + "\n"
         profile_context = self._profile_context_block() + self._load_and_anchors_context_block() + self._plan_context_block()
 
         # Incluir resúmenes de sesiones anteriores para memoria a largo plazo
@@ -11349,22 +11344,12 @@ class TrainerAgent:
                 if t
             )
             if lines:
-                memory_context = (
-                    f"\n\n## Memoria de sesiones anteriores\n"
-                    f"Temas que el usuario trató en sesiones previas (solo sus preguntas; "
-                    f"los datos actuales se piden con las herramientas):\n"
-                    f"{lines}\n"
-                )
+                memory_context = "\n\n" + _render_prompt("system/memory", sesiones=lines) + "\n"
 
         kb_context = ""
         if self.knowledge_sources:
             kb_files = ", ".join(self.knowledge_sources)
-            kb_context = (
-                f"\n\n## Base de conocimiento del atleta\n"
-                f"- Fuentes disponibles: {kb_files}\n"
-                f"- Usa esta base como prioridad junto al Perfil del usuario.\n"
-                f"- Para responder, combina esta base con datos reales de Garmin obtenidos por herramientas.\n"
-            )
+            kb_context = "\n\n" + _render_prompt("system/knowledge", fuentes=kb_files) + "\n"
 
         return self.system_prompt + date_context + profile_context + memory_context + kb_context
 
@@ -11404,10 +11389,8 @@ class TrainerAgent:
             messages.append({"role": "system", "content": rag_context})
         previous = self.previous_session_questions
         if previous:
-            messages.append({"role": "system", "content": (
-                "Preguntas del usuario en la sesión anterior (solo para saber de qué se habló; no incluyen "
-                "datos: cualquier cifra se vuelve a consultar con las herramientas):\n"
-                + "\n".join(f"- {q[:200]}" for q in previous)
+            messages.append({"role": "system", "content": _render_prompt(
+                "system/previous_session", preguntas="\n".join(f"- {q[:200]}" for q in previous)
             )})
         # Solo los últimos 6 mensajes del historial de esta sesión (3 intercambios)
         messages.extend(self.conversation_history[-6:])
@@ -11476,18 +11459,8 @@ class TrainerAgent:
                 {
                     "role": "system",
                     "content": (
-                        "Eres Kairos Coach. Interpreta SOLO los datos factuales recibidos y el perfil del atleta; "
-                        "si falta un dato, dilo. Si pregunta qué le toca y no hay plan activo, dilo y ofrece crearlo. "
-                        "Responde al horizonte que pregunta el usuario (hoy, mañana o esta semana)."
-                        + (
-                            " Genera estas secciones (título ### con su emoji), 2-4 bullets cada una:\n"
-                            "### 🧭 Lectura del estado (carga, HRV, sueño y body battery, con su porqué)\n"
-                            "### ✅ Qué hacer (sesión concreta con la estructura obligatoria de las reglas; "
-                            "si pregunta por la semana, reparto de calidad, rodajes y descanso)\n"
-                            "### ⚠️ Qué vigilar (señales que cambiarían la recomendación)"
-                            if is_readiness else
-                            " Máximo 5 bullets accionables."
-                        )
+                        _render_prompt("coaching/system")
+                        + " " + _render_prompt("coaching/readiness" if is_readiness else "coaching/brief")
                         # Reglas de entrenador: las mismas que el system prompt (prompts/coaching_rules.md).
                         + "\n\n" + _load_coaching_rules()
                         + self._profile_context_block()
@@ -11497,13 +11470,12 @@ class TrainerAgent:
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"Pregunta del usuario: {user_message}\n"
-                        f"Ruta factual: {route}\n"
-                        f"Horizonte de la respuesta: {_coaching_horizon(user_message)}\n\n"
-                        "Datos deterministas (fuente de verdad):\n"
-                        f"{deterministic_reply}\n\n"
-                        "Tarea: da recomendación de coaching práctica basada en esos datos, para ese horizonte."
+                    "content": _render_prompt(
+                        "coaching/user",
+                        pregunta=user_message,
+                        ruta=route,
+                        horizonte=_coaching_horizon(user_message),
+                        datos=deterministic_reply,
                     ),
                 },
             ]
@@ -12201,9 +12173,7 @@ class TrainerAgent:
                         _zones_direct_text = "\n".join(_zdlines)
 
                 _zones_override = (
-                    f"\nZONAS FC REALES GARMIN — USA ESTOS VALORES EXACTOS:\n{_zones_direct_text}\n"
-                    "OBLIGA: copia estas lineas en '## 💓 Distribucion por zonas de FC'. "
-                    "PROHIBIDO calcular, estimar o usar zonas_fc_estimadas.\n"
+                    "\n" + _render_prompt("activity_analysis/zones", zonas=_zones_direct_text) + "\n"
                     if _zones_direct_text else ""
                 )
 
@@ -12216,73 +12186,24 @@ class TrainerAgent:
                 # Contexto del plan de entrenamiento para la sección de recuperación
                 _plan_obj = _get_active_training_plan(self.user_profile)
                 if _post_plan_mode == "historical":
-                    _plan_ctx = (
-                        "\nACTIVIDAD HISTÓRICA (>2 días).\n"
-                        "No des recomendaciones de calendario inmediato (mañana / 2-3 días). "
-                        "Limita la última sección a aprendizajes aplicables para futuras sesiones similares.\n"
-                    )
+                    _plan_ctx = "\n" + _render_prompt("activity_analysis/plan_historical") + "\n"
                 elif _plan_obj:
                     _plan_title = _plan_obj.get("title") or _plan_obj.get("name") or "Plan activo"
-                    _plan_ctx = (
-                        f"\nPLAN DE ENTRENAMIENTO ACTIVO: {_plan_title}\n"
-                        "Usa este plan como contexto para ver la progresión del atleta y las sesiones previstas, "
-                        "pero la recomendación de recuperación debe basarse SIEMPRE en los indicadores fisiológicos "
-                        "(TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma), sueño, body battery, HRV). "
-                        "Si los datos indican que el cuerpo necesita descanso, recomiéndalo aunque haya sesión planificada. "
-                        "Si los indicadores están bien, puedes mencionar que el plan prevé X y el atleta está en condiciones de afrontarlo.\n"
-                    )
+                    _plan_ctx = "\n" + _render_prompt("activity_analysis/plan_active", plan=_plan_title) + "\n"
                 else:
-                    _plan_ctx = (
-                        "\nSIN PLAN DE ENTRENAMIENTO ACTIVO.\n"
-                        "El atleta no tiene plan asignado. En la sección de recuperación, "
-                        "además de los consejos post-sesión, sugiere brevemente que crear un plan "
-                        "estructurado le ayudaría a dosificar mejor la carga y la recuperación.\n"
-                    )
+                    _plan_ctx = "\n" + _render_prompt("activity_analysis/plan_none") + "\n"
 
                 messages.insert(len(messages) - 1, {
                     "role": "system",
-                    "content": (
-                        f"DATOS DEL ENTRENAMIENTO DEL {user_date}:\n\n"
-                        f"{analysis_block}\n\n"
-                        f"{_zones_override}"
-                        f"{_plan_ctx}\n"
-                        "Eres Kairos, coach deportivo experto. Escribe un analisis detallado y conversacional "
-                        "hablando directamente al atleta.\n\n"
-                        "ESTRUCTURA — usa EXACTAMENTE estos headers ## (cada uno en su propia linea):\n\n"
-                        "## \U0001f4ca Resumen ejecutivo\n"
-                        "## \U0001f493 Distribucion por zonas de FC\n"
-                        "## \u26a1 Efecto de entrenamiento y carga\n"
-                        "## \U0001f4a7 Hidratacion recomendada\n"
-                        "## \U0001f6cc Estado pre-carrera (body battery, sueno y HRV)\n"
-                        f"{_post_header}\n\n"
-                        "ESTILO: cada seccion debe tener 2-4 puntos (- ) con interpretacion real de coach.\n"
-                        "Ejemplo: en lugar de '- TSS: 162.9' escribe '- TSS de 162.9: sesion muy exigente.'\n"
-                        "Interpreta FC, zonas, desnivel, carga en terminos de esfuerzo y adaptacion.\n\n"
-                        "SECCION '## \U0001f4ca Resumen ejecutivo': el PRIMER bullet debe ser el tipo de deporte "
-                        "(campo 'Deporte' del bloque de datos). Luego duracion, distancia, ritmo, FC media/maxima, "
-                        "desnivel, calorias, TSS.\n\n"
-                        "SECCION '## \U0001f6cc Estado pre-carrera (body battery, sueno y HRV)':\n"
-                        "Escribe un bullet por cada metrica con el valor numerico real seguido de tu analisis. "
-                        "NO copies estas instrucciones. Genera texto original de coach.\n"
-                        "Body battery: escribe el balance neto y cargado/drenado, luego explica en tus propias "
-                        "palabras que significa ese nivel para el rendimiento de ese dia. "
-                        "Formato: '- Body Battery: -16 puntos (cargado 69 / drenado 85): [tu analisis original aqui]'\n"
-                        "Sueno: escribe duracion y puntuacion, interpreta la calidad del descanso. "
-                        "Menciona fases (profundo/ligero/REM) si estan en los datos. "
-                        "Formato: '- Sueno: 7h 10min (86/100): [tu analisis original aqui]'\n"
-                        "HRV: escribe el valor en ms e interpreta el estado del sistema nervioso autonomo. "
-                        "Si no hay datos de HRV: un bullet indicandolo brevemente.\n\n"
-                        f"SECCION '{_post_section_name}':\n"
-                        f"{_post_guidance}\n\n"
-                        "REGLAS TECNICAS:\n"
-                        "- ZONAS FC: copia las lineas exactas del bloque 'ZONAS FC REALES GARMIN'.\n"
-                        "- SUENO: horas y minutos (nunca segundos). Fases y puntuacion si disponibles.\n"
-                        "- BODY BATTERY: interpreta el balance como energia disponible/gastada.\n"
-                        "- HRV: en ms, redondea a entero. Interpreta como indicador del sistema nervioso autonomo.\n"
-                        "- PROHIBIDO: floats crudos, velocidad en m/s, duracion en segundos.\n"
-                        "- Velocidad: km/h o min/km. Duracion: HH:MM o 'Xh Ymin'.\n"
-                        "- Si una seccion no tiene datos: '- Sin datos disponibles para esta fecha.'\n"
-                        "- CADA punto de lista en su PROPIA LINEA con '- '."
+                    "content": _render_prompt(
+                        "activity_analysis/system",
+                        fecha=user_date,
+                        datos=analysis_block,
+                        zonas=_zones_override,
+                        plan=_plan_ctx,
+                        cabecera_final=_post_header,
+                        seccion_final=_post_section_name,
+                        guia_final=_post_guidance,
                     ),
                 })
             else:
@@ -12661,9 +12582,7 @@ class TrainerAgent:
                             {
                                 "role": "system",
                                 "content": (
-                                    "Eres Kairos Coach. Evalúa el entrenamiento indicado usando EXCLUSIVAMENTE los datos provistos y el perfil del atleta. "
-                                    "Entrega una valoración concreta y accionable (no pidas más información). "
-                                    "Si falta algún dato puntual, dilo en una línea y sigue con la mejor recomendación posible."
+                                    _render_prompt("rescue/activity_feedback")
                                     + "\n\n" + _load_coaching_rules()
                                     + self._profile_context_block()
                                     + self._plan_context_block()
@@ -12671,11 +12590,11 @@ class TrainerAgent:
                             },
                             {
                                 "role": "user",
-                                "content": (
-                                    f"Pregunta original: {user_message}\n"
-                                    f"Fecha objetivo: {target_date}\n\n"
-                                    f"Datos precomputados del entrenamiento:\n{analysis_block_for_rescue}\n\n"
-                                    "Responde en español con: 1) resumen ejecutivo breve, 2) qué hiciste bien, 3) qué ajustar, 4) recomendación para próxima sesión."
+                                "content": _render_prompt(
+                                    "rescue/activity_feedback_user",
+                                    pregunta=user_message,
+                                    fecha=target_date,
+                                    datos=analysis_block_for_rescue,
                                 ),
                             },
                         ]
@@ -12699,11 +12618,7 @@ class TrainerAgent:
                             {
                                 "role": "system",
                                 "content": (
-                                    "Eres Kairos Coach. El usuario pide una propuesta de entrenamiento para mañana. "
-                                    "Debes responder con una sesión concreta aunque falten algunos datos, usando el contexto disponible. "
-                                    "Si hay plan activo, parte de la sesión prevista y ajústala con las reglas de carga. "
-                                    "No pidas más detalles salvo bloqueo crítico de seguridad. "
-                                    "Si faltan datos, usa una propuesta conservadora y explícita tus supuestos en 1 línea."
+                                    _render_prompt("rescue/next_session")
                                     + "\n\n" + _load_coaching_rules()
                                     + self._profile_context_block()
                                     + self._load_and_anchors_context_block()
@@ -12712,10 +12627,10 @@ class TrainerAgent:
                             },
                             {
                                 "role": "user",
-                                "content": (
-                                    f"Solicitud: {user_message}\n"
-                                    f"Contexto disponible: {json.dumps(snapshot_ctx, ensure_ascii=False)}\n"
-                                    "Devuelve: tipo de sesión, duración, intensidad (RPE y zona de Garmin), objetivo y una nota de seguridad."
+                                "content": _render_prompt(
+                                    "rescue/next_session_user",
+                                    solicitud=user_message,
+                                    contexto=json.dumps(snapshot_ctx, ensure_ascii=False),
                                 ),
                             },
                         ]

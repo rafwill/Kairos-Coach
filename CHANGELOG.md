@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Changed (prompts fuera del código)
+- Todo el texto de instrucciones para el LLM que estaba escrito dentro de `agent/trainer_agent.py` pasa a `prompts/`, en 19 plantillas por familia: `system/` (fecha, memoria, base de conocimiento, preguntas de la sesión anterior), `coaching/` (capa de coaching, con las variantes de readiness y breve, y el mensaje de usuario), `rescue/` (valoración de un entreno y propuesta para mañana) y `activity_analysis/` (análisis profundo: mensaje principal, zonas reales, tres variantes de plan y las dos guías de la sección final). El código solo compone y aporta los datos.
+- `_render_prompt(nombre, **valores)` sustituye marcadores `{{clave}}` y exige que coincidan con los valores. Plantillas extraídas evaluando las expresiones antiguas con valores centinela (sin transcribir a mano): las 19 reproducen el texto anterior carácter a carácter. Tests: cada prompt se resuelve entero, un marcador que falta o sobra da error y ningún fichero queda sin usar (586).
+
 ### Changed (zona de Garmin como intensidad principal)
 - Decisión del usuario: la FC en zonas de Garmin es la referencia principal al prescribir y el RPE el complemento (manda solo donde la FC no sirve: fuerza, series muy cortas); en ciclismo con potencia, además % del FTP. En `prompts/coaching_rules.md` (antes: "RPE 1-10 y, si aplica, zona de Garmin"). El motor de planes sigue en RPE y guarda por dentro % del LTHR (zonas de Friel, que no casan con las de Garmin): pasa a zonas de Garmin en el paso 5 de `docs/Harness.md`.
 - Juez: los rangos de FC de una línea de bici se comparan con las zonas de ciclismo de Garmin (Z1 105–124…), no con las de carrera. La batería marcaba como fallo un "Z1 (FC ciclista 105–124 lpm)" correcto. Las seis baterías del 23/10, 25/25 con el juez corregido.

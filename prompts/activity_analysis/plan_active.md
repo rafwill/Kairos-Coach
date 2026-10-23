@@ -1,0 +1,2 @@
+PLAN DE ENTRENAMIENTO ACTIVO: {{plan}}
+Usa este plan como contexto para ver la progresión del atleta y las sesiones previstas, pero la recomendación de recuperación debe basarse SIEMPRE en los indicadores fisiológicos (TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma), sueño, body battery, HRV). Si los datos indican que el cuerpo necesita descanso, recomiéndalo aunque haya sesión planificada. Si los indicadores están bien, puedes mencionar que el plan prevé X y el atleta está en condiciones de afrontarlo.

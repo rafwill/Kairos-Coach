@@ -361,6 +361,47 @@ class TestResolveRunningThresholdFromProfile:
         assert 269.0 <= out <= 271.0
 
 
+class TestPromptFiles:
+    """Los textos para el LLM viven en prompts/ (23/10); el código solo los compone."""
+
+    def _prompt_names(self):
+        from agent.trainer_agent import PROMPTS_DIR
+
+        return sorted(
+            p.relative_to(PROMPTS_DIR).with_suffix("").as_posix()
+            for p in PROMPTS_DIR.rglob("*.md")
+            if p.name not in {"system_prompt.md", "coaching_rules.md"}
+        )
+
+    def test_every_prompt_renders_with_all_markers_resolved(self):
+        from agent.trainer_agent import PROMPTS_DIR, _PROMPT_MARKER, _render_prompt
+
+        names = self._prompt_names()
+        assert len(names) >= 19
+        for name in names:
+            keys = set(_PROMPT_MARKER.findall((PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")))
+            out = _render_prompt(name, **{k: f"<{k}>" for k in keys})
+            assert "{{" not in out and "}}" not in out, name
+            assert out == out.strip("\n"), name
+
+    def test_render_rejects_missing_or_extra_values(self):
+        from agent.trainer_agent import _render_prompt
+
+        with pytest.raises(ValueError, match="marcadores"):
+            _render_prompt("coaching/user", pregunta="x", ruta="y", horizonte="z")
+        with pytest.raises(ValueError, match="marcadores"):
+            _render_prompt("coaching/brief", sobra="x")
+
+    def test_every_prompt_file_is_used_by_the_code(self):
+        from pathlib import Path
+
+        import agent.trainer_agent as ta
+
+        src = Path(ta.__file__).read_text(encoding="utf-8")
+        unused = [n for n in self._prompt_names() if f'"{n}"' not in src]
+        assert unused == [], f"Prompts sin usar: {unused}"
+
+
 class TestCoachingRulesSingleSource:
     def test_system_prompt_embeds_coaching_rules_once(self):
         from agent.trainer_agent import _load_coaching_rules
