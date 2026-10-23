@@ -35,6 +35,10 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
+      - name: Lint (pyflakes y sintaxis, reglas en pyproject.toml)
+        run: |
+          ruff check agent garmin_mcp tests tools
+
       - name: Run tests
         env:
           # Variables de entorno mínimas para que los módulos importen correctamente.

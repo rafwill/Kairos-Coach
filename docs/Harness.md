@@ -109,8 +109,8 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | S20 | Guía de estilo MCP sobre `tools/list` | Computacional | CI (test) y al cambiar tools | `tools/lint_mcp.py`, `test_all_tools_follow_mcp_style_guide` | ✓ |
 | S21 | Cada tool llama a `garminconnect` con su firma real; healthcheck en vivo de las 42 | Computacional | CI (test) y bajo demanda | `test_every_tool_calls_garminconnect_with_its_real_signature`, `tools/healthcheck_mcp.py` | ✓ |
 | S22 | TSS frente a TrainingPeaks (mediana, MAPE, ±10 %) | Computacional | Al cambiar una fórmula | `tools/rebuild_tss_baseline.py` y el export de TP | ✓ |
-| S23 | Tests antes de cada commit | Computacional | Pre-commit local | — | ✗ (pendiente en `CLAUDE.md`) |
-| S24 | Deriva: código muerto y estilo (ruff) | Computacional | CI | — | ✗ (ruff tiene 409 avisos sin revisar) |
+| S23 | Lint obligatorio y tests antes de cada commit | Computacional | Pre-commit local | `.githooks/pre-commit` (`make hooks`; los setup lo activan) | ✓ |
+| S24 | Lint en la CI: pyflakes y sintaxis (F, E9), hoy a cero; el resto de familias de ruff como informe que no bloquea (`make lint-informe`) | Computacional | CI | `[tool.ruff]` en `pyproject.toml`, paso de lint en `.github/workflows/tests.yml` | ✓ |
 
 No hay sensores inferenciales (LLM como juez) a propósito: son caros, no deterministas y, para un consejo de entrenamiento, el criterio final es del usuario. La calidad del consejo queda en revisión humana.
 
@@ -155,4 +155,4 @@ En este orden, cada uno con su batería antes y después:
 3. ~~**Autocorrección en vivo (§6)**~~ (hecho el 23/10, junto con la retirada del `HookManager`; resultado de la batería en el CHANGELOG).
 4. ~~**S14, S15 y S16**~~ (hecho el 23/10). Antes de conectarlos, sobre las 40 respuestas con coaching de las baterías del día: 6 avisos, los 6 falsos positivos del sensor (un umbral condicional, un "+46 %" cortado, ml de hidratación, cadencia y un reparto semanal con calidad otro día); corregidos, 0. Resultado de la batería en el CHANGELOG.
 5. ~~**G12 y motor de planes en zonas de Garmin**~~ (hecho el 23/10; resultado en el CHANGELOG).
-6. **S23 y S24:** hook de pre-commit y ruff en la CI con los avisos actuales como línea base.
+6. ~~**S23 y S24**~~ (hecho el 23/10). Ruff no tiene línea base propia: en lugar de marcar con `noqa` los avisos actuales, el lint obligatorio son las familias que detectan fallos reales y hoy están a cero (F, E9); E, W, B, I, UP, SIM, DTZ y RUF quedan como informe.

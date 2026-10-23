@@ -106,14 +106,15 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | Qué | Con `make` | Sin `make` (Windows) | Cuándo |
 | --- | --- | --- | --- |
 | Tests (sin red) | `make test` | `.venv\Scripts\python.exe -m pytest` | Siempre; la CI los pasa en cada push |
-| Lint de código | `make lint` | `.venv\Scripts\python.exe -m ruff check agent garmin_mcp tests tools` | Antes de commitear |
+| Lint de código | `make lint` | `.venv\Scripts\python.exe -m ruff check agent garmin_mcp tests tools` | Lo pasan el pre-commit y la CI (F y E9; `make lint-informe` para el resto) |
+| Pre-commit (ruff y tests) | `make hooks` | `git config core.hooksPath .githooks` | Una vez por clon (los setup lo activan) |
 | Guía de estilo del MCP | `make lint-mcp` | `.venv\Scripts\python.exe tools\lint_mcp.py` | Al añadir o cambiar tools del MCP |
 | Catálogo de tools del MCP | `make docs-mcp` | `.venv\Scripts\python.exe tools\gen_mcp_docs.py` | Al añadir o cambiar tools (un test falla si está desfasado) |
 | Salud de las tools del MCP | `make health-mcp` | `.venv\Scripts\python.exe tools\healthcheck_mcp.py` | Al actualizar `garminconnect`, antes de una batería o si algo falla |
 | Batería de preguntas | — | `.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy` | Tras cambios en rutas, prompts o modelo |
 | Juez de la batería | — | `.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md` | Justo después de la batería |
 
-- **Tests:** 585 passed (23/10/2026). No necesitan red.
+- **Tests:** 623 passed (23/10/2026). No necesitan red. Los pasan el pre-commit y la CI.
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
 - **`healthcheck_mcp`:** llama a las 42 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
 - **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.

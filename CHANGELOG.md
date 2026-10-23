@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Added (pre-commit y lint en la CI, paso 6 de `docs/Harness.md`)
+- `.githooks/pre-commit`: ruff y los tests sin red antes de cada commit; se activa con `make hooks` (`git config core.hooksPath .githooks`) y lo activan `setup.ps1` y `setup.sh`. Comprobado que bloquea (estado 1 con un nombre sin definir).
+- Lint obligatorio fijado en `pyproject.toml` (`[tool.ruff]`, `target-version = py311`, `select = ["F", "E9"]`): pyflakes y errores de sintaxis, hoy a cero. Antes ruff aplicaba las reglas por defecto de la versión instalada (`ruff>=0.6.9` sin techo), así que la CI podía cambiar de reglas sola; ahora `ruff>=0.16.10,<0.17`. Ruff no tiene línea base: en vez de llenar el código de `noqa`, el resto de familias (E, W, B, I, UP, SIM, DTZ, RUF) queda como informe que no bloquea (`make lint-informe`).
+- CI: paso de lint antes de los tests.
+
 ### Changed (paso 5 de `docs/Harness.md`: planes en zonas de Garmin y marco de la sesión de hoy)
 - Motor de planes en zonas de Garmin (decisión del usuario: zona principal, RPE complemento). Cada sesión se muestra como "Z2 Aeróbica (135–145 lpm) · RPE 3-4" (`_session_intensity_label`, calculado al mostrar con las zonas actuales, así vale para planes guardados); fuerza sigue en RPE y el descanso dice "descanso". En el bloque "Plan activo" del LLM, al crear el plan, en `/plan ver` y en el resumen de la sesión resultante ("Z2 Aeróbica" en vez de "endurance"). Los planes nuevos guardan `hr_zone` (1-5; calentamiento de Z1 a Z2) en vez de `hr_pct` (% del LTHR de Friel, que no casaba con Garmin); el validador acepta los dos. Sin cambios en Supabase.
 - Fix: el ajuste diario multiplicaba el rango de intensidad por el factor de volumen (85–89 % del LTHR pasaba a 59,5–62,3 %); ahora baja una zona de Garmin y los planes antiguos conservan su rango.

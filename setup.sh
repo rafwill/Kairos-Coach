@@ -32,6 +32,11 @@ echo "[setup] Instalando dependencias runtime..."
 echo "[setup] Instalando Kairos en modo editable (agent y garmin_mcp importables desde cualquier carpeta)..."
 "$VENV_PY" -m pip install -e . --no-deps
 
+if [[ -d .git ]]; then
+  echo "[setup] Activando el pre-commit del repo (.githooks: ruff y tests antes de cada commit)..."
+  git config core.hooksPath .githooks
+fi
+
 if [[ "$SKIP_DEV" != "1" ]]; then
   echo "[setup] Instalando dependencias de desarrollo..."
   "$VENV_PY" -m pip install -r requirements-dev.txt

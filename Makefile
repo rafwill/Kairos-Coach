@@ -1,4 +1,4 @@
-.PHONY: setup setup-win serve test lint lint-mcp health-mcp docs-mcp
+.PHONY: setup setup-win serve test lint lint-informe hooks lint-mcp health-mcp docs-mcp
 
 VENV := .venv
 ifeq ($(OS),Windows_NT)
@@ -21,6 +21,14 @@ test:
 
 lint:
 	$(VENV_PY) -m ruff check agent garmin_mcp tests tools
+
+# Informe de estilo (no bloquea): familias fuera del lint obligatorio de pyproject.toml.
+lint-informe:
+	$(VENV_PY) -m ruff check agent garmin_mcp tests tools --select E,W,B,I,UP,SIM,DTZ,RUF --statistics --exit-zero
+
+# Pre-commit versionado (.githooks/pre-commit): ruff y tests antes de cada commit.
+hooks:
+	git config core.hooksPath .githooks
 
 lint-mcp:
 	$(VENV_PY) tools/lint_mcp.py
