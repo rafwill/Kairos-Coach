@@ -1,6 +1,6 @@
 """
 tests/test_mcp_client.py
-Cobertura de cliente MCP local-only (backend frozen).
+Cobertura del cliente MCP (arranque del servidor, contratos, caché de contingencia).
 """
 
 from __future__ import annotations
@@ -19,70 +19,33 @@ def garmin_creds(monkeypatch):
     monkeypatch.setenv("GARMIN_PASSWORD", "secret")
 
 
-def test_get_configured_mcp_backend_default_frozen(monkeypatch):
-    monkeypatch.delenv("MCP_BACKEND", raising=False)
-    assert mcp_client.get_configured_mcp_backend() == "frozen"
+def test_get_server_params_launches_garmin_mcp_with_same_python(garmin_creds):
+    params = mcp_client._get_server_params()
 
-
-def test_get_configured_mcp_backend_accepts_frozen(monkeypatch):
-    monkeypatch.setenv("MCP_BACKEND", "frozen")
-    assert mcp_client.get_configured_mcp_backend() == "frozen"
-
-
-def test_get_configured_mcp_backend_non_frozen_forces_frozen(monkeypatch):
-    monkeypatch.setenv("MCP_BACKEND", "upstream")
-    assert mcp_client.get_configured_mcp_backend() == "frozen"
-
-
-def test_get_configured_mcp_backend_invalid_forces_frozen(monkeypatch):
-    monkeypatch.setenv("MCP_BACKEND", "bad-value")
-    assert mcp_client.get_configured_mcp_backend() == "frozen"
-
-
-def test_get_server_params_frozen_requires_local_command(monkeypatch, garmin_creds):
-    monkeypatch.setattr(mcp_client, "_resolve_frozen_command", lambda: None)
-
-    with pytest.raises(RuntimeError, match="launcher local del MCP propio"):
-        mcp_client._get_server_params(backend="frozen")
-
-
-def test_get_server_params_frozen_uses_local_command(monkeypatch, garmin_creds):
-    monkeypatch.setattr(mcp_client, "_resolve_frozen_command", lambda: "C:/bin/garmin-mcp-frozen.exe")
-
-    params = mcp_client._get_server_params(backend="frozen")
-
-    assert params.command.endswith("garmin-mcp-frozen.exe")
-    assert params.env["KAIROS_MCP_BACKEND_EFFECTIVE"] == "frozen"
-    # Filtro del MCP de terceros que garmin_mcp no lee: ya no se envía (22/10/2026).
+    assert params.command == mcp_client.sys.executable
+    assert params.args == ["-m", "garmin_mcp"]
+    assert params.cwd == str(mcp_client.PROJECT_ROOT)
+    assert params.env["GARMIN_EMAIL"] == "user@example.com"
+    # Restos del MCP de terceros que garmin_mcp no lee: ya no se envían.
     assert "GARMIN_ENABLED_TOOLS" not in params.env
+    assert "KAIROS_MCP_BACKEND_EFFECTIVE" not in params.env
 
 
-def test_get_server_params_ignores_upstream_and_uses_frozen(monkeypatch, garmin_creds):
-    monkeypatch.setattr(mcp_client, "_resolve_frozen_command", lambda: "C:/bin/garmin-mcp-frozen.exe")
+def test_get_server_params_requires_garmin_credentials(monkeypatch):
+    monkeypatch.delenv("GARMIN_EMAIL", raising=False)
+    monkeypatch.delenv("GARMIN_PASSWORD", raising=False)
 
-    params = mcp_client._get_server_params(backend="upstream")
-
-    assert params.command.endswith("garmin-mcp-frozen.exe")
-    assert params.args == []
-    assert params.env["KAIROS_MCP_BACKEND_EFFECTIVE"] == "frozen"
-
-
-def test_resolve_frozen_command_prefers_local_wrapper(monkeypatch):
-    monkeypatch.delenv("KAIROS_MCP_FROZEN_COMMAND", raising=False)
-    resolved = mcp_client._resolve_frozen_command()
-    assert resolved is not None
-    assert resolved.endswith("garmin-mcp-frozen.cmd") or resolved.endswith("garmin-mcp-frozen.sh")
+    with pytest.raises(ValueError, match="GARMIN_EMAIL y GARMIN_PASSWORD"):
+        mcp_client._get_server_params()
 
 
 @pytest.mark.asyncio
-async def test_garmin_mcp_session_opens_frozen_backend(monkeypatch):
-    monkeypatch.setenv("MCP_BACKEND", "frozen")
-
+async def test_garmin_mcp_session_opens_and_initializes(monkeypatch):
     calls: list[str] = []
 
-    def fake_get_server_params(*, backend: str | None = None):
-        calls.append(backend or "")
-        return SimpleNamespace(command="garmin-mcp", args=[], env={})
+    def fake_get_server_params():
+        calls.append("params")
+        return SimpleNamespace(command="python", args=["-m", "garmin_mcp"], env={})
 
     class DummyStdioCM:
         async def __aenter__(self):
@@ -111,21 +74,17 @@ async def test_garmin_mcp_session_opens_frozen_backend(monkeypatch):
     async with mcp_client.garmin_mcp_session() as session:
         assert session.initialized is True
 
-    assert calls == ["frozen"]
-    assert mcp_client.os.environ.get("KAIROS_MCP_BACKEND_EFFECTIVE") == "frozen"
+    assert calls == ["params"]
 
 
 @pytest.mark.asyncio
-async def test_garmin_mcp_session_raises_when_frozen_unavailable(monkeypatch):
-    monkeypatch.setenv("MCP_BACKEND", "frozen")
-
-    def fake_get_server_params(*, backend: str | None = None):
-        assert backend == "frozen"
-        raise RuntimeError("frozen not found")
+async def test_garmin_mcp_session_raises_when_params_fail(monkeypatch):
+    def fake_get_server_params():
+        raise ValueError("sin credenciales")
 
     monkeypatch.setattr(mcp_client, "_get_server_params", fake_get_server_params)
 
-    with pytest.raises(RuntimeError, match="frozen not found"):
+    with pytest.raises(ValueError, match="sin credenciales"):
         async with mcp_client.garmin_mcp_session():
             raise AssertionError("unreachable")
 
@@ -223,7 +182,6 @@ async def test_call_tool_returns_contract_error_without_calling_session():
 @pytest.mark.asyncio
 async def test_call_tool_records_transparency_event_for_fastpath(monkeypatch):
     monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(mcp_client, "resolve_local_fastpath_response", lambda *_args, **_kwargs: '{"ok":1}')
     monkeypatch.setattr(mcp_client, "cache_tool_response", lambda *_args, **_kwargs: None)
 
@@ -244,7 +202,6 @@ async def test_call_tool_records_transparency_event_for_fastpath(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_records_transparency_event_for_cached_error_fallback(monkeypatch):
     monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(mcp_client, "resolve_local_fastpath_response", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(mcp_client, "resolve_cached_tool_response", lambda *_args, **_kwargs: '{"cached":true}')
 
@@ -261,16 +218,6 @@ async def test_call_tool_records_transparency_event_for_cached_error_fallback(mo
     assert events[0]["tool"] == "get_user_profile"
     assert events[0]["mode"] == "fallback_cache_on_error"
     assert "RuntimeError" in events[0]["reason"]
-
-
-def test_resolve_local_fastpath_response_only_for_frozen(monkeypatch):
-    monkeypatch.setattr(mcp_adapter._storage, "get_load_metrics_series", lambda days: [{"date": "2026-09-02", "tss": 42.0}])
-    out = mcp_adapter.resolve_local_fastpath_response(
-        "get_training_load_trend",
-        {"start_date": "2026-09-01", "end_date": "2026-09-03"},
-        backend_effective="upstream",
-    )
-    assert out is None
 
 
 def test_cache_tool_response_ignores_error_payload(monkeypatch):
@@ -297,7 +244,7 @@ def test_resolve_cached_tool_response_ignores_cached_errors(monkeypatch):
     }
     monkeypatch.setattr(mcp_adapter, "_load_adapter_cache_from_profile", lambda: fake_cache)
 
-    out = mcp_adapter.resolve_cached_tool_response("get_user_profile", {}, backend_effective="frozen")
+    out = mcp_adapter.resolve_cached_tool_response("get_user_profile", {})
     assert out is None
 
 
@@ -313,7 +260,6 @@ def test_fastpath_never_returns_kairos_tss_as_garmin_training_load(monkeypatch):
     out = mcp_adapter.resolve_local_fastpath_response(
         "get_training_load_trend",
         {"start_date": "2026-09-01", "end_date": "2026-09-03"},
-        backend_effective="frozen",
     )
     assert out is None
 
@@ -321,11 +267,10 @@ def test_fastpath_never_returns_kairos_tss_as_garmin_training_load(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_uses_local_fastpath_when_available(monkeypatch):
     monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(
         mcp_client,
         "resolve_local_fastpath_response",
-        lambda tool_name, arguments, backend_effective: "[{\"date\":\"2026-09-03\",\"trainingLoad\":12.3}]",
+        lambda tool_name, arguments: "[{\"date\":\"2026-09-03\",\"trainingLoad\":12.3}]",
     )
 
     class FakeSession:
@@ -341,18 +286,17 @@ async def test_call_tool_uses_local_fastpath_when_available(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_returns_cached_response_on_runtime_error_in_frozen(monkeypatch):
+async def test_call_tool_returns_cached_response_on_runtime_error(monkeypatch):
     monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(
         mcp_client,
         "resolve_local_fastpath_response",
-        lambda tool_name, arguments, backend_effective: None,
+        lambda tool_name, arguments: None,
     )
     monkeypatch.setattr(
         mcp_client,
         "resolve_cached_tool_response",
-        lambda tool_name, arguments, backend_effective: '{"cached":true}',
+        lambda tool_name, arguments: '{"cached":true}',
     )
 
     class FakeSession:
@@ -366,11 +310,10 @@ async def test_call_tool_returns_cached_response_on_runtime_error_in_frozen(monk
 @pytest.mark.asyncio
 async def test_call_tool_default_single_path_ignores_fastpath(monkeypatch):
     monkeypatch.delenv("KAIROS_MCP_ENABLE_FALLBACK", raising=False)
-    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(
         mcp_client,
         "resolve_local_fastpath_response",
-        lambda tool_name, arguments, backend_effective: '{"should":"not-use"}',
+        lambda tool_name, arguments: '{"should":"not-use"}',
     )
 
     class FakeSession:
@@ -384,7 +327,6 @@ async def test_call_tool_default_single_path_ignores_fastpath(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_default_single_path_returns_error_without_cache(monkeypatch):
     monkeypatch.delenv("KAIROS_MCP_ENABLE_FALLBACK", raising=False)
-    monkeypatch.setenv("KAIROS_MCP_BACKEND_EFFECTIVE", "frozen")
     monkeypatch.setattr(mcp_client, "resolve_cached_tool_response", lambda *_args, **_kwargs: '{"cached":true}')
 
     class FakeSession:

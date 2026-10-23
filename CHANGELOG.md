@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Removed (limpieza de restos)
+- Lanzadores `tools/garmin-mcp-frozen.cmd/.sh` y el concepto de "backend frozen" (restos del MCP de terceros): `MCP_BACKEND`, `KAIROS_MCP_FROZEN_COMMAND`, `KAIROS_MCP_BACKEND_EFFECTIVE`, `get_configured_mcp_backend`, el parámetro `backend_effective` de la caché de contingencia y las líneas "MCP backend" del arranque. El cliente lanza `python -m garmin_mcp` con el mismo intérprete que Kairos y la raíz del repo como `cwd`, como ya hacían las herramientas de `tools/`. Comprobado en vivo (sesión, 42 tools, llamada a Garmin).
+
 ### Changed (rodaje suave en Z1–Z2)
 - Decisión del usuario, revisando el criterio de la mañana: un rodaje suave o aeróbico puede prescribirse en Z1–Z2 con su rango (115–145 lpm); las dos zonas están bajo VT1 y dan el mismo estímulo, y lo que importa es el techo de Z2. Un día de recuperación va solo en Z1. De Z3 para arriba (tempo, umbral, intervalos) sigue mandando una sola zona, salvo los tramos progresivos.
 - En los dos system prompts, en el juez (`_easy_range_ok`) y en la rúbrica de `docs/Harness.md`. El juez no comprueba lo de la recuperación en Z1 (no sabe qué día lo es).

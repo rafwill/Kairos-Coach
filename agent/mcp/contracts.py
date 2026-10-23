@@ -11,11 +11,9 @@ from __future__ import annotations
 import json
 from datetime import UTC
 from datetime import datetime
-from datetime import date
 from hashlib import sha256
 
 from agent import storage as _storage
-from agent import load_metrics as _load_metrics
 
 ADAPTER_CONTRACT_VERSION = "mcp-adapter-v1"
 
@@ -126,7 +124,7 @@ def _save_adapter_cache_to_profile(cache_payload: dict) -> None:
 
 
 def cache_tool_response(tool_name: str, arguments: dict, response_text: str) -> None:
-    """Persiste respuesta MCP en caché local por usuario para fallback frozen."""
+    """Persiste respuesta MCP en caché local por usuario para el modo de contingencia."""
     name = str(tool_name or "").strip()
     if name not in CRITICAL_CACHEABLE_TOOLS:
         return
@@ -158,11 +156,8 @@ def cache_tool_response(tool_name: str, arguments: dict, response_text: str) -> 
     _save_adapter_cache_to_profile(cache)
 
 
-def resolve_cached_tool_response(tool_name: str, arguments: dict, backend_effective: str | None) -> str | None:
-    """Devuelve payload cacheado para tools críticas cuando el backend efectivo es frozen."""
-    if str(backend_effective or "").strip().lower() != "frozen":
-        return None
-
+def resolve_cached_tool_response(tool_name: str, arguments: dict) -> str | None:
+    """Devuelve el payload cacheado de una tool crítica (modo de contingencia)."""
     name = str(tool_name or "").strip()
     if name not in CRITICAL_CACHEABLE_TOOLS:
         return None
@@ -178,16 +173,6 @@ def resolve_cached_tool_response(tool_name: str, arguments: dict, backend_effect
     if text.startswith("Error ") or "Error executing tool" in text:
         return None
     return text
-
-
-def _parse_iso_date(raw: object) -> date | None:
-    iso = _load_metrics.to_iso_date(raw)
-    if not iso:
-        return None
-    try:
-        return date.fromisoformat(iso)
-    except ValueError:
-        return None
 
 
 def normalize_tool_invocation(tool_name: str, arguments: dict) -> tuple[str, dict]:
@@ -234,14 +219,12 @@ def validate_min_input_contract(tool_name: str, arguments: dict) -> str | None:
     return None
 
 
-def resolve_local_fastpath_response(tool_name: str, arguments: dict, backend_effective: str | None) -> str | None:
-    """Devuelve respuesta local (caché) para tools críticas en backend frozen, o None para usar MCP.
+def resolve_local_fastpath_response(tool_name: str, arguments: dict) -> str | None:
+    """Devuelve respuesta local (caché) para tools críticas, o None para usar MCP.
 
     get_training_load_trend no se sustituye por el TSS de Kairos: es la carga nativa de Garmin y
     darla con el nombre trainingLoad mezclaría escalas. Usa la caché genérica como el resto.
     """
-    if str(backend_effective or "").strip().lower() != "frozen":
-        return None
     if tool_name in NO_FASTPATH_CACHE_TOOLS:
         return None
-    return resolve_cached_tool_response(tool_name, arguments, backend_effective)
+    return resolve_cached_tool_response(tool_name, arguments)

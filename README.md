@@ -92,7 +92,6 @@ tools/
   lint_mcp.py, mcp_lint/    guía de estilo MCP de apiaddicts sobre las tools del servidor (Spectral)
   healthcheck_mcp.py        healthcheck en vivo: llama a todas las tools contra Garmin y dice cuáles fallan
   gen_mcp_docs.py           regenera el catálogo de tools de garmin_mcp/README.md
-  garmin-mcp-frozen.*       lanzadores del servidor MCP
 docs/                    arquitectura, harness, bitácora, runbook del MCP y batería
 ```
 
