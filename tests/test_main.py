@@ -447,20 +447,21 @@ class TestEnsureGarminCredentials:
 # ─── _auto_select_provider ──────────────────────────────────────────────────
 
 class TestAutoSelectProvider:
-    def test_vpn_detected_uses_menu_with_on_vpn_true(self):
+    def test_vpn_only_informs_and_menu_offers_configured_providers(self):
+        # La VPN corporativa solo se informa: desde el 23/10 no hay proveedor exclusivo de VPN.
         with patch("agent.main._detect_zscaler", return_value=True), \
-             patch("agent.main._select_provider_menu", return_value="vpn") as menu_mock, \
+             patch("agent.main._select_provider_menu", return_value="nvidia") as menu_mock, \
              patch("agent.main.console.print"):
             provider = _auto_select_provider()
 
-        assert provider == "vpn"
-        menu_mock.assert_called_once_with(on_vpn=True)
+        assert provider == "nvidia"
+        menu_mock.assert_called_once_with()
 
-    def test_no_vpn_uses_menu_with_on_vpn_false(self):
+    def test_no_vpn_uses_same_menu(self):
         with patch("agent.main._detect_zscaler", return_value=False), \
              patch("agent.main._select_provider_menu", return_value="nvidia") as menu_mock, \
              patch("agent.main.console.print"):
             provider = _auto_select_provider()
 
         assert provider == "nvidia"
-        menu_mock.assert_called_once_with(on_vpn=False)
+        menu_mock.assert_called_once_with()
