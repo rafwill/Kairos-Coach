@@ -1,6 +1,6 @@
 # garmin_mcp — servidor MCP de Garmin Connect
 
-Servidor [MCP](https://modelcontextprotocol.io) que expone **41 tools de solo lectura** sobre los datos de Garmin Connect: actividades, salud diaria, sueño, HRV, rendimiento y récords. Es el **servidor** de la arquitectura MCP de Kairos: Kairos (`agent/`) es el host y `agent/mcp/` su cliente (ver [`docs/arquitectura.md`](../docs/arquitectura.md)).
+Servidor [MCP](https://modelcontextprotocol.io) que expone **42 tools de solo lectura** sobre los datos de Garmin Connect: actividades, salud diaria, sueño, HRV, rendimiento, zonas de FC y récords. Es el **servidor** de la arquitectura MCP de Kairos: Kairos (`agent/`) es el host y `agent/mcp/` su cliente (ver [`docs/arquitectura.md`](../docs/arquitectura.md)).
 
 Es un paquete independiente: no importa nada de `agent/` (lo comprueba un test), así que cualquier cliente MCP puede usarlo.
 
@@ -46,6 +46,13 @@ Kairos lo arranca solo como subproceso. Para usarlo desde otro cliente MCP (por 
 | Guía de estilo MCP (apiaddicts) | `make lint-mcp` | Al añadir o cambiar tools |
 | Salud de las tools contra Garmin | `make health-mcp` | Al actualizar `garminconnect` o si algo falla |
 | Este catálogo | `python tools/gen_mcp_docs.py` | Al añadir o cambiar tools (un test falla si está desfasado) |
+
+## Tools que no son un método de `garminconnect`
+
+La mayoría de las tools llaman a un método de la librería y devuelven su respuesta, a veces compactada. Estas dos consultan directamente un endpoint de Garmin Connect (`connectapi`) y devuelven un formato propio:
+
+- **`get_heart_rate_zones`**: la librería no tiene método para las zonas configuradas. Consulta `/biometric-service/heartRateZones` y devuelve `{"sports": [...]}` con un elemento por deporte configurado (`default`, `running`, `cycling`…): `sport`, `method` (`HR_RESERVE`, `LACTATE_THRESHOLD` o `PERCENT_MAX_HR`), `resting_hr`, `max_hr`, `lactate_threshold_hr` y `zones`, con las cinco zonas como `{zone, min_bpm, max_bpm}`. Garmin solo da el suelo de cada zona; el techo es el suelo de la siguiente menos 1, y el de la Z5, la FC máxima, así que las zonas quedan cerradas y sin huecos. Se omiten los deportes sin los cinco suelos. Kairos la llama al arrancar y guarda el resultado en el perfil (ver [`docs/arquitectura.md`](../docs/arquitectura.md#zonas-de-fc)).
+- **`get_vo2max_trend`**: pide el rango en una sola llamada a `maxmet/daily/{inicio}/{fin}` y devuelve una serie plana (`date`, `running`, `cycling`) con los días que tienen estimación.
 
 Al añadir una tool: definirla en `server.py` con `_tool(nombre, título, descripción)` y parámetros descritos con `Annotated[..., Field(description=...)]`, añadirla a una categoría en `tools/gen_mcp_docs.py`, regenerar este catálogo y añadirla al catálogo esencial del cliente (`GARMIN_ESSENTIAL_TOOLS` en `agent/mcp/client.py`) si Kairos debe usarla.
 
