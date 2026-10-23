@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-23
 
+### Added (autocorrección en vivo, paso 3 de `docs/Harness.md`)
+- `TrainerAgent._apply_output_sensors` pasa los sensores de `agent/sensors.py` a las tres salidas del LLM (capa de coaching, respuesta final del bucle con tools y rescates) antes de enseñarlas. Las fechas ISO se corrigen sin LLM (`fix_iso_dates`). Si falla un rango de FC, el ritmo umbral, la CTL con el máximo de la ATL o el marcador vacío, una sola llamada más sin tools le devuelve al LLM las pistas (`prompts/system/sensor_correction.md`) y Kairos se queda con la versión con menos fallos; lo que siga fallando se avisa al pie ("⚠️ Comprobación de Kairos") y queda en `agent.log` como `[SENSOR]`. El reintento ve los mensajes de sistema y de usuario y su propia respuesta, nunca resultados de tools.
+- Batería 25/25 y suma de las 4 preguntas de coaching 180 s (rango del día: 151–240 s). En esta pasada ningún sensor saltó (sin líneas `[SENSOR]` en el log), así que el reintento no se ejercitó en vivo: lo cubren 5 tests (se corrige en un reintento, fallo persistente con aviso, texto limpio sin llamada extra, fechas sin LLM, el reintento no ve tools). Tests: 603.
+
 ### Removed (`HookManager`)
 - Decisión del usuario: fuera el `HookManager` (cinco eventos emitidos en unos 12 puntos de `chat()` sin ningún suscriptor en producción). Los sensores sobre la respuesta del LLM se llaman de forma explícita. Las 7 llamadas de aviso de error pasan a `_log_chat_error`, un `log.warning` con la etapa y el error: antes no dejaban rastro (sin suscriptores, `on_error` no hacía nada). `tests/test_hooks_router.py` pasa a `tests/test_tool_router.py` con los tests del router. Tests: 598.
 

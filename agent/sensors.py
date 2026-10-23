@@ -85,6 +85,14 @@ def find_invented_user_turn(body: str, coaching: str = "") -> list[Finding]:
 
 # ─── S13 / G3: fechas ISO ───────────────────────────────────────────────────
 
+_ISO_DATE = re.compile(r"(?<![\d/])(20\d{2})-(\d{2})-(\d{2})(?![\d:T])")
+
+
+def fix_iso_dates(text: str) -> str:
+    """S13, corrige: AAAA-MM-DD → DD/MM/AAAA en el texto que ve el usuario."""
+    return _ISO_DATE.sub(lambda m: f"{m.group(3)}/{m.group(2)}/{m.group(1)}", text or "")
+
+
 def find_iso_dates(text: str) -> list[Finding]:
     """Fechas AAAA-MM-DD visibles para el usuario (deben ir en DD/MM/AAAA)."""
     iso = re.findall(r"(?<![\d/])20\d{2}-\d{2}-\d{2}(?![\d:T])", text)
@@ -221,3 +229,16 @@ def check_coaching_text(coaching: str, zones: Zones, zones_cycling: Zones | None
         + find_hr_ranges_outside_zones(coaching, zones, zones_cycling)
         + find_wrong_threshold_pace(coaching, pace_today_s)
     )
+
+
+def findings_to_retry(text: str, zones: Zones, zones_cycling: Zones | None, pace_today_s: float | None) -> list[Finding]:
+    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12 y el marcador vacío (G4).
+
+    S8 (turnos inventados) y S13 (fechas ISO) no están aquí porque se corrigen sin LLM.
+    """
+    return check_coaching_text(text, zones, zones_cycling, pace_today_s) + find_empty_data_lines(text)
+
+
+def user_notice(finding: Finding) -> str:
+    """Texto del hallazgo para el usuario, sin el prefijo interno ("LLM: ", "G4: ")."""
+    return re.sub(r"^(?:LLM|G\d): ", "", finding.message)

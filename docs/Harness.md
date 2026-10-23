@@ -91,10 +91,10 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | --- | --- | --- | --- | --- | --- |
 | S8 | Turnos de usuario inventados | Computacional | Corrige (los recorta) | `strip_simulated_user_turn` (`agent/sensors.py`) | ✓ |
 | S9 | Plan generado válido (sesiones, duraciones, progresión) | Computacional | Bloquea el plan | `_validate_structured_plan` | ✓ |
-| S10 | Cada rango de FC cabe en una zona de Garmin (Z1–Z2 en rodaje suave; progresivos "de Zx a Zy") | Computacional | Reintenta | `find_hr_ranges_outside_zones` (`agent/sensors.py`); hoy lo usa el juez, en vivo en el paso 3 | ◐ |
-| S11 | Un ritmo citado como umbral es el vigente en la fecha | Computacional | Reintenta | `find_wrong_threshold_pace` (`agent/sensors.py`); juez, en vivo en el paso 3 | ◐ |
-| S12 | No atribuye a la CTL el máximo habitual de la ATL | Computacional | Reintenta | `find_ctl_with_atl_max` (`agent/sensors.py`); juez, en vivo en el paso 3 | ◐ |
-| S13 | Fechas DD/MM/AAAA, nunca ISO; tampoco el marcador "datos disponibles" sin valor (G4) | Computacional | Corrige | `find_iso_dates`, `find_empty_data_lines` (`agent/sensors.py`); juez (G3, G4), en vivo en el paso 3 | ◐ |
+| S10 | Cada rango de FC cabe en una zona de Garmin (Z1–Z2 en rodaje suave; progresivos "de Zx a Zy") | Computacional | Reintenta | `find_hr_ranges_outside_zones` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
+| S11 | Un ritmo citado como umbral es el vigente en la fecha | Computacional | Reintenta | `find_wrong_threshold_pace` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
+| S12 | No atribuye a la CTL el máximo habitual de la ATL | Computacional | Reintenta | `find_ctl_with_atl_max` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
+| S13 | Fechas DD/MM/AAAA, nunca ISO; tampoco el marcador "datos disponibles" sin valor (G4) | Computacional | Corrige | `find_iso_dates`, `find_empty_data_lines` (`agent/sensors.py`); juez (G3, G4) y Kairos en vivo (fechas: corrige; marcador vacío: reintenta) | ✓ |
 | S14 | Cifras citadas (CTL, ATL, TSB, TSS, HRV) = las del bloque determinista | Computacional | Reintenta | — | ✗ |
 | S15 | La sesión propuesta respeta la decisión del motor diario (descanso o suave → ni series ni Z4–Z5) | Computacional | Reintenta | — | ✗ |
 | S16 | Nota de seguridad glucémica si el perfil tiene diabetes con insulina | Computacional | Corrige (añade la nota fija) | — | ✗ |
@@ -114,14 +114,16 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 
 No hay sensores inferenciales (LLM como juez) a propósito: son caros, no deterministas y, para un consejo de entrenamiento, el criterio final es del usuario. La calidad del consejo queda en revisión humana.
 
-## 6. Autocorrección (diseño de S10–S16)
+## 6. Autocorrección (en vivo desde el 23/10 con S8, S10–S13; S14–S16 pendientes)
 
 Los sensores de la respuesta del LLM viven en un único módulo (`agent/sensors.py`) que usan a la vez Kairos en vivo y el juez de la batería, para que haya una sola definición de cada regla.
 
 1. El LLM responde.
 2. Se pasan S8, S13 y S16, que corrigen sin LLM.
 3. Se pasan S10, S11, S12, S14 y S15. Si alguno falla, se hace **una** llamada más con el fallo redactado para que el LLM actúe, por ejemplo: "El rango 115–150 lpm no cabe en ninguna zona. Zonas: Z1 115–134, Z2 135–145, Z3 146–157. Reescribe esa línea con una sola zona, o Z1–Z2 si es un rodaje suave."
-4. Si el segundo intento también falla, se muestra con la línea marcada y se registra en `agent.log` con el ID del sensor.
+4. Si el segundo intento también falla, Kairos se queda con la versión con menos fallos, añade al pie "⚠️ Comprobación de Kairos" con lo que no cuadra y lo registra en `agent.log` con el ID del sensor.
+
+En el código: `TrainerAgent._apply_output_sensors(texto, mensajes, tipo)` sobre las tres salidas del LLM (capa de coaching, respuesta final del bucle con tools y rescates). El reintento recibe los mensajes de sistema y de usuario y su propia respuesta, sin tools ni resultados de tools, con `prompts/system/sensor_correction.md`. Cada salto queda en `agent.log` como `[SENSOR] <tipo>: <ID> <mensaje>`.
 
 El reintento solo cuesta latencia cuando hay un fallo. Cada sensor registra cuántas veces salta, para el bucle de gobierno.
 
@@ -150,7 +152,7 @@ En este orden, cada uno con su batería antes y después:
 
 1. ~~**G2 coherente con G1**~~ (hecho el 23/10: `prompts/coaching_rules.md`; batería 25/25).
 2. ~~**`agent/sensors.py`**~~ (hecho el 23/10): S8, S10–S13 y G3–G5 en un módulo sin dependencias de `agent/`, que importan el juez y `trainer_agent`. Mismo veredicto en 175/175 preguntas de las siete baterías del 23/10 y 0 diferencias frente al juez anterior en 350 casos (reales y con errores inyectados); solo cambia G4, que ya no marca "sin datos disponibles".
-3. **Autocorrección en vivo (§6)** con S10–S13. Criterio: batería 25/25 y la latencia media de las preguntas con LLM no sube más de un 10 % si no hay fallos.
+3. ~~**Autocorrección en vivo (§6)**~~ (hecho el 23/10, junto con la retirada del `HookManager`; resultado de la batería en el CHANGELOG).
 4. **S14, S15 y S16**, con los mismos criterios.
 5. **G12, marco de la sesión de hoy**, y el motor de planes en zonas de Garmin: cada sesión pasa de "RPE 3-4" a "Z2 Aeróbica (135–145 lpm) · RPE 3-4" y `structured_workout` guarda la zona de Garmin en lugar del % del LTHR (zonas de Friel), que hoy no casa con las de Garmin (el "endurance" del plan, 85–89 % del LTHR = 144–150 lpm, cruza Z2 y Z3). Decisión del usuario (23/10): la FC en zonas de Garmin es la referencia principal y el RPE el complemento; ya está así en `coaching_rules.md`.
 6. **S23 y S24:** hook de pre-commit y ruff en la CI con los avisos actuales como línea base.
