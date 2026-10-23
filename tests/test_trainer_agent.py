@@ -5442,7 +5442,6 @@ class TestMcpTransparencyAndLatencyRegression:
         events = [{"tool": "get_activities_by_date", "mode": "mcp_error", "reason": "kind=unknown"}]
         monkeypatch.setattr(ta, "consume_tool_transparency_events", lambda: list(events))
         agent = TrainerAgent.__new__(TrainerAgent)
-        agent.hook_manager = ta.HookManager()
         agent.conversation_history = []
         monkeypatch.setattr(ta, "_save_history_entry", lambda *a, **k: None)
 

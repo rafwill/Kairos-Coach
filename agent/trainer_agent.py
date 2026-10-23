@@ -14,7 +14,7 @@ import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable
 
 from openai import AsyncOpenAI
 from mcp import ClientSession
@@ -799,58 +799,6 @@ def _build_tools_schema(tools: list[dict]) -> list[dict]:
         }
         for tool in tools
     ]
-
-
-_HookHandler = Callable[[dict[str, Any]], Any | Awaitable[Any]]
-
-
-class HookManager:
-    """Gestor mínimo de hooks para observabilidad y extensibilidad local."""
-
-    _EVENTS = {
-        "before_message",
-        "after_message",
-        "before_tool_call",
-        "after_tool_call",
-        "on_error",
-    }
-
-    def __init__(self) -> None:
-        self._handlers: dict[str, list[_HookHandler]] = {event: [] for event in self._EVENTS}
-
-    def register(self, event: str, handler: _HookHandler) -> None:
-        event_name = str(event or "").strip()
-        if event_name not in self._EVENTS:
-            raise ValueError(f"Hook event no soportado: {event_name}")
-        self._handlers[event_name].append(handler)
-
-    async def emit(self, event: str, payload: dict[str, Any]) -> None:
-        event_name = str(event or "").strip()
-        handlers = list(self._handlers.get(event_name) or [])
-        if not handlers:
-            return
-        for handler in handlers:
-            try:
-                result = handler(payload)
-                if asyncio.iscoroutine(result):
-                    await result
-            except (RuntimeError, ValueError, TypeError, OSError) as exc:
-                log.debug("Hook '%s' falló: %s", event_name, exc)
-
-    async def before_message(self, payload: dict[str, Any]) -> None:
-        await self.emit("before_message", payload)
-
-    async def after_message(self, payload: dict[str, Any]) -> None:
-        await self.emit("after_message", payload)
-
-    async def before_tool_call(self, payload: dict[str, Any]) -> None:
-        await self.emit("before_tool_call", payload)
-
-    async def after_tool_call(self, payload: dict[str, Any]) -> None:
-        await self.emit("after_tool_call", payload)
-
-    async def on_error(self, payload: dict[str, Any]) -> None:
-        await self.emit("on_error", payload)
 
 
 class ToolRouter:
@@ -9638,7 +9586,6 @@ class TrainerAgent:
         # Variables para tracking de tokens de la sesión
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
-        self.hook_manager = HookManager()
         self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
 
     def set_provider(self, provider: str) -> None:
@@ -11371,30 +11318,22 @@ class TrainerAgent:
                 + _build_mcp_transparency_markdown(transparency_events)
             )
 
-        await self.hook_manager.after_message(
-            {
-                "route": route,
-                "provider": getattr(self, "provider", "unknown"),
-                "user_message": user_message,
-                "assistant_reply": assistant_reply,
-            }
-        )
         self.conversation_history.append({"role": "user", "content": user_message})
         self.conversation_history.append({"role": "assistant", "content": assistant_reply})
         _save_history_entry("user", user_message)
         _save_history_entry("assistant", assistant_reply)
         return assistant_reply
 
-    async def _emit_chat_error_hook(self, stage: str, error: Exception, extra: dict | None = None) -> None:
-        payload: dict[str, Any] = {
-            "stage": stage,
-            "provider": getattr(self, "provider", "unknown"),
-            "error_type": type(error).__name__,
-            "error": str(error),
-        }
-        if isinstance(extra, dict) and extra:
-            payload.update(extra)
-        await self.hook_manager.on_error(payload)
+    def _log_chat_error(self, stage: str, error: Exception, extra: dict | None = None) -> None:
+        """Registra un error de una etapa del chat (planificación, LLM, tool…) sin interrumpir la respuesta."""
+        log.warning(
+            "chat error stage=%s provider=%s %s: %s%s",
+            stage,
+            getattr(self, "provider", "unknown"),
+            type(error).__name__,
+            error,
+            f" extra={extra}" if extra else "",
+        )
 
     async def _augment_with_llm_coaching_if_needed(
         self,
@@ -11493,17 +11432,9 @@ class TrainerAgent:
         Procesa un mensaje del usuario y devuelve la respuesta del agente.
         Gestiona automáticamente las llamadas a herramientas de Garmin.
         """
-        if not hasattr(self, "hook_manager") or not isinstance(getattr(self, "hook_manager", None), HookManager):
-            self.hook_manager = HookManager()
         if not hasattr(self, "tool_router") or not isinstance(getattr(self, "tool_router", None), ToolRouter):
             self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
 
-        await self.hook_manager.before_message(
-            {
-                "provider": getattr(self, "provider", "unknown"),
-                "user_message": user_message,
-            }
-        )
         reset_tool_transparency_events()
         messages = self._build_messages(user_message)
         _prefetch_cache: dict = {}  # poblado por el pre-fetch si user_date == hoy
@@ -11742,7 +11673,7 @@ class TrainerAgent:
                 return await self._finalize_chat_reply(user_message, assistant_reply, route="planning")
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                 log.warning("structured planning route failed, using goal fallback: %s", exc)
-                await self._emit_chat_error_hook(
+                self._log_chat_error(
                     stage="planning_route",
                     error=exc,
                     extra={"user_message": user_message},
@@ -11767,22 +11698,7 @@ class TrainerAgent:
                     records_tool = "get_personal_records"
 
                 if records_tool:
-                    await self.hook_manager.before_tool_call(
-                        {
-                            "tool_name": records_tool,
-                            "arguments": {},
-                            "source": "deterministic_personal_records",
-                        }
-                    )
                     records_raw = await call_tool(self.mcp_session, records_tool, {})
-                    await self.hook_manager.after_tool_call(
-                        {
-                            "tool_name": records_tool,
-                            "arguments": {},
-                            "source": "deterministic_personal_records",
-                            "success": True,
-                        }
-                    )
                     records_compact = _compact_tool_result(records_raw, records_tool)
                     if records_compact and records_compact != "(sin datos)" and not _is_no_data_result(records_raw):
                         records_sport = _detect_personal_records_sport_intent(user_message, self.conversation_history)
@@ -11790,7 +11706,7 @@ class TrainerAgent:
                         return await self._finalize_chat_reply(user_message, assistant_reply, route="personal_records")
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                 log.debug("personal records route falló: %s", exc)
-                await self._emit_chat_error_hook(
+                self._log_chat_error(
                     stage="personal_records_route",
                     error=exc,
                     extra={"user_message": user_message},
@@ -12196,7 +12112,7 @@ class TrainerAgent:
             except asyncio.TimeoutError as api_exc:
                 log.warning("[LLM] ⏱ iter=%d TIMEOUT elapsed=%.1fs (límite=%.0fs)",
                             iteration, time.perf_counter() - _t0, _llm_timeout_seconds())
-                await self._emit_chat_error_hook(
+                self._log_chat_error(
                     stage="llm_completion_timeout",
                     error=api_exc,
                     extra={"user_message": user_message},
@@ -12211,7 +12127,7 @@ class TrainerAgent:
                 return await self._finalize_chat_reply(user_message, timeout_msg, route="llm_timeout")
             except Exception as api_exc:
                 err_str = str(api_exc)
-                await self._emit_chat_error_hook(
+                self._log_chat_error(
                     stage="llm_completion",
                     error=api_exc,
                     extra={"user_message": user_message},
@@ -12325,26 +12241,10 @@ class TrainerAgent:
                                     arguments = {"activity_id": resolved_id}
                     arguments = _normalize_trend_date_range(tool_name, arguments)
 
-                    await self.hook_manager.before_tool_call(
-                        {
-                            "tool_name": tool_name,
-                            "arguments": arguments,
-                            "source": "llm_tool_call",
-                        }
-                    )
 
                     if self.mcp_read_only and _is_write_mcp_tool(tool_name):
                         log.debug(f"Bloqueada tool de escritura por MCP_READ_ONLY: {tool_name}")
                         raw_result = _build_mcp_read_only_block_message(tool_name)
-                        await self.hook_manager.after_tool_call(
-                            {
-                                "tool_name": tool_name,
-                                "arguments": arguments,
-                                "source": "llm_tool_call",
-                                "success": False,
-                                "blocked": True,
-                            }
-                        )
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -12364,7 +12264,7 @@ class TrainerAgent:
                                 timeout=_tool_timeout_seconds(),
                             )
                     except asyncio.TimeoutError as tool_exc:
-                        await self._emit_chat_error_hook(
+                        self._log_chat_error(
                             stage="tool_call_timeout",
                             error=tool_exc,
                             extra={"tool_name": tool_name, "arguments": arguments},
@@ -12378,7 +12278,7 @@ class TrainerAgent:
                             ensure_ascii=False,
                         )
                     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as tool_exc:
-                        await self._emit_chat_error_hook(
+                        self._log_chat_error(
                             stage="tool_call",
                             error=tool_exc,
                             extra={"tool_name": tool_name, "arguments": arguments},
@@ -12408,15 +12308,6 @@ class TrainerAgent:
 
                     tool_result = _compact_tool_result(raw_result, tool_name)
                     log.debug(f"Resultado ({len(raw_result or '')} -> {len(tool_result)} chars): {tool_result[:150]}")
-                    await self.hook_manager.after_tool_call(
-                        {
-                            "tool_name": tool_name,
-                            "arguments": arguments,
-                            "source": "llm_tool_call",
-                            "success": not _is_no_data_result(raw_result),
-                            "result_preview": tool_result[:200],
-                        }
-                    )
 
                     messages.append({
                         "role": "tool",
@@ -12449,29 +12340,14 @@ class TrainerAgent:
                         records_tool = "get_personal_records"
 
                     if records_tool:
-                        await self.hook_manager.before_tool_call(
-                            {
-                                "tool_name": records_tool,
-                                "arguments": {},
-                                "source": "fallback_personal_records",
-                            }
-                        )
                         records_raw = await call_tool(self.mcp_session, records_tool, {})
-                        await self.hook_manager.after_tool_call(
-                            {
-                                "tool_name": records_tool,
-                                "arguments": {},
-                                "source": "fallback_personal_records",
-                                "success": True,
-                            }
-                        )
                         records_compact = _compact_tool_result(records_raw, records_tool)
                         if records_compact and records_compact != "(sin datos)" and not _is_no_data_result(records_raw):
                             records_sport = _detect_personal_records_sport_intent(user_message, self.conversation_history)
                             assistant_reply = _build_personal_records_markdown(records_compact, preferred_sport=records_sport)
                 except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
                     log.debug("records tool route no disponible: %s", exc)
-                    await self._emit_chat_error_hook(
+                    self._log_chat_error(
                         stage="records_no_access_fallback",
                         error=exc,
                         extra={"user_message": user_message},

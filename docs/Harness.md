@@ -45,7 +45,7 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | Tool guidance | G6, G10 |
 | Scripts | `tools/` (batería, juez, healthcheck, reconstrucción del TSS) |
 | Subagentes | No hay (un solo agente; la capa de coaching es una llamada aparte con contexto propio) |
-| Plugins / middleware | G5 (router), `HookManager` (sin suscriptores; ver §7) |
+| Plugins / middleware | G5 (router) y la cadena explícita de sensores sobre la respuesta del LLM (§6) |
 
 ## 4. Guías
 
@@ -131,7 +131,7 @@ El reintento solo cuesta latencia cuando hay un fallo. Cada sensor registra cuá
 - **Proponer–Probar–Componer a mano.** Cada cambio de guía o de sensor se prueba con una batería antes y otra después, con los criterios fijados antes de mirar. Un sensor nuevo se pasa primero sobre transcripciones ya guardadas en `.tmp/bateria/` y debe dar 0 falsos positivos antes de conectarlo a Kairos.
 - **Biblioteca de experiencia.** Cada cambio adoptado deja una entrada en `docs/proximos_pasos.md` con **señal** (qué falló y dónde), **lección** (qué regla general se saca) y **evidencia** (baterías antes y después).
 - **Guía ≠ rúbrica.** Los prompts describen el trabajo de entrenador; nunca copian el texto del juez ni mencionan la batería.
-- **`HookManager`.** Emite cinco eventos (`before_message`, `after_message`, `before_tool_call`, `after_tool_call`, `on_error`) en unos 12 puntos de `chat()`, pero ningún código se suscribe a ellos. Los sensores de §6 se llaman de forma explícita, sin hooks. Pendiente de decidir si se elimina.
+- **Sin hooks genéricos.** El `HookManager` (cinco eventos en unos 12 puntos de `chat()`, sin ningún suscriptor) se quitó el 23/10: los sensores de §6 se llaman de forma explícita, que se lee y se prueba mejor. Sus avisos de error pasaron a `_log_chat_error` (`log.warning` con la etapa), que antes no dejaban rastro.
 
 ## 8. Rúbrica de la batería (S19)
 
