@@ -116,10 +116,9 @@ def _call_mcp_tool(name: str, args: dict | None = None):
 
 class Truth:
     def __init__(self, username: str, today: date | None = None):
-        user = storage.find_user_by_username(username)
-        if not user:
-            raise SystemExit(f"Usuario no encontrado: {username}")
-        storage.set_active_user(user["id"], username)
+        # Sesión de Supabase Auth guardada por Kairos (supabase/README.md): con RLS, sin ella no se ve nada.
+        if not storage.restore_session(username):
+            raise SystemExit(f"Sin sesión de {username} en este ordenador: entra una vez en Kairos (python -m agent.main) y vuelve a lanzar esto.")
         # "Hoy" es el día de la transcripción, para poder volver a juzgar una batería antigua (24/10).
         self.today = today or date.today()
         self.series = storage.get_load_metrics_series(days=400)

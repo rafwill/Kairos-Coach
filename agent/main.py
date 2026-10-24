@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
 from rich.table import Table
 
@@ -107,22 +107,22 @@ from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile, _session_intensity_label
 from agent.storage import (
     activate_training_plan,
-    authenticate_app_user,
     check_supabase_connection,
+    create_app_user,
     create_training_plan,
     decrypt_password,
     encrypt_password,
-    find_user_by_username,
     get_active_user,
     get_training_plan,
     is_zscaler_network as _detect_zscaler,
     list_training_plans,
     list_training_plan_sessions,
     load_athlete_knowledge,
-    register_app_user,
+    restore_session,
     save_athlete_knowledge,
-    set_active_user,
-    update_app_user_password,
+    sign_in,
+    sign_up,
+    update_login_password,
     update_user_credentials,
 )
 
@@ -434,96 +434,99 @@ def _build_enriched_athlete_knowledge(profile: dict, enrichment: dict) -> str:
 
 
 def _authenticate_or_register_user() -> tuple[str, dict, bool, str]:
-    """Flujo inicial de acceso: auto-login si usuario existe, registro si no.
+    """Acceso con Supabase Auth (supabase/README.md): sesión guardada, inicio de sesión o cuenta nueva.
+
+    Nada se lee de la base de datos antes de iniciar sesión. La contraseña de Kairos es la misma que la
+    de Garmin Connect; se guarda cifrada (ENCRYPTION_KEY) para que el MCP entre en Garmin.
 
     Returns:
         (username, credentials, is_new_user, app_password)
     """
     console.print(Panel.fit(
         "[bold]Acceso a Kairos Coach[/]\n"
-        "Trabajarás con un perfil independiente por usuario.",
+        "Entra con tu email y la misma contraseña que usas en Garmin Connect.",
         title="[bold blue]Identificación[/]",
         border_style="blue",
     ))
 
     while True:
-        username = Prompt.ask("Usuario").strip().lower()
+        username = Prompt.ask("Usuario (email)").strip().lower()
         if not username:
             continue
+        if "@" not in username:
+            console.print("[yellow]⚠[/]  El usuario es tu email (el de tu cuenta de Kairos).")
+            continue
 
-        # ── Comprobar si el usuario ya existe ─────────────────────────────
-        existing = find_user_by_username(username)
-
-        if existing:
-            # Usuario encontrado — intentar auto-login con contraseña cifrada
-            creds = dict(existing.get("credentials") or {})
+        # ── Sesión guardada en este ordenador: sin contraseña ─────────────
+        row = restore_session(username)
+        if row:
+            creds = dict(row.get("credentials") or {})
             encrypted_pw = creds.get("garmin_password_encrypted", "")
             password = decrypt_password(encrypted_pw) if encrypted_pw else None
-
-            if password and _verify_password_for_login(password, existing.get("password_hash", "")):
-                set_active_user(existing["id"], username)
-                console.print(
-                    f"[green]✓[/] Usuario encontrado · Accediendo automáticamente como [bold]{username}[/]"
-                )
+            if password:
+                console.print(f"[green]✓[/] Sesión recuperada · Accediendo como [bold]{username}[/]")
                 return username, creds, False, password
+            # La contraseña de Garmin no se puede descifrar aquí (otra ENCRYPTION_KEY): se vuelve a pedir.
+            console.print("[yellow]⚠[/]  Sesión recuperada, pero necesito tu contraseña de Garmin Connect en este ordenador.")
+            password = Prompt.ask("Contraseña (la misma que en Garmin Connect)", password=True).strip()
+            creds["garmin_password_encrypted"] = encrypt_password(password)
+            update_user_credentials(creds)
+            return username, creds, False, password
 
-            # Sin cifrado o clave cambiada: pedir contraseña manualmente
-            if encrypted_pw:
-                console.print("[yellow]⚠[/]  Necesitamos verificar tu contraseña (clave de cifrado cambiada).")
-            password = Prompt.ask("Password", password=True).strip()
-            result = authenticate_app_user(username, password)
-            if not result.get("ok"):
-                console.print(f"[red]✗[/] {result.get('error', 'Contraseña incorrecta')}")
+        # ── Inicio de sesión ──────────────────────────────────────────────
+        password = Prompt.ask("Contraseña (la misma que en Garmin Connect)", password=True).strip()
+        result = sign_in(username, password)
+
+        if not result.get("ok") and result.get("reason") == "invalid":
+            # Mismo error para "contraseña incorrecta" y "cuenta inexistente": se ofrece crearla.
+            console.print(f"[red]✗[/] {result.get('error')}")
+            if not Confirm.ask("¿Es tu primer acceso con este email? Crear tu cuenta de Kairos", default=False):
                 continue
+            confirm = Prompt.ask("Repite la contraseña", password=True).strip()
+            if confirm != password:
+                console.print("[red]✗[/] Las contraseñas no coinciden.")
+                continue
+            created = sign_up(username, password)
+            if not created.get("ok"):
+                console.print(f"[red]✗[/] {created.get('error')}")
+                continue
+            if created.get("needs_confirmation"):
+                console.print(Panel.fit(
+                    f"Te he enviado un correo a [bold]{username}[/] para confirmar la cuenta.\n"
+                    "Abre el enlace y vuelve a entrar aquí con el mismo email y contraseña.\n"
+                    "[dim]Si ya tenías datos en Kairos, se asocian solos al entrar.[/]",
+                    title="[bold]Confirma tu email[/]",
+                    border_style="yellow",
+                ))
+                continue
+            result = sign_in(username, password)
 
-            # Establecer usuario activo antes de cualquier escritura en storage
-            set_active_user(result["user_id"], username)
+        if not result.get("ok"):
+            console.print(f"[red]✗[/] {result.get('error')}")
+            continue
 
-            # Actualizar cifrado para el próximo arranque
-            creds = result.get("credentials") or {}
+        row = result.get("app_user")
+        if row:
+            # Cuenta con datos (vinculada ahora o antes): se guarda la contraseña cifrada para este ordenador.
+            creds = dict(row.get("credentials") or {})
             creds["garmin_password_encrypted"] = encrypt_password(password)
             update_user_credentials(creds)
             console.print(f"[green]✓[/] Sesión iniciada como [bold]{username}[/].")
             return username, creds, False, password
 
-        # ── Usuario nuevo: registro ────────────────────────────────────────
-        console.print(Panel.fit(
-            "[bold yellow]⚠ Importante — contraseña única[/]\n\n"
-            "Tu contraseña de [bold]Kairos Coach[/] debe ser la misma que usas\n"
-            "en [bold]Garmin Connect[/]. Así podrás acceder sin volver a pedirla.\n\n"
-            "Si en el futuro cambias tu contraseña en Garmin Connect,\n"
-            "el sistema te pedirá actualizarla aquí también.",
-            title="[bold]Registro nuevo usuario[/]",
-            border_style="yellow",
-        ))
-
-        password = Prompt.ask("Contraseña (la misma que en Garmin Connect)", password=True).strip()
-        confirm = Prompt.ask("Repite la contraseña", password=True).strip()
-        if confirm != password:
-            console.print("[red]✗[/] Las contraseñas no coinciden.")
-            continue
-
-        default_email = username if "@" in username else ""
-        garmin_email = Prompt.ask("Email de Garmin Connect", default=default_email).strip()
-
-        credentials = {
+        # ── Cuenta nueva sin datos: se crea su usuario de Kairos ──────────
+        garmin_email = Prompt.ask("Email de Garmin Connect", default=username).strip()
+        creds = {
             "garmin_email": garmin_email,
             "garmin_password_encrypted": encrypt_password(password),
         }
-        create = register_app_user(username, password, credentials=credentials)
-        if not create.get("ok"):
-            console.print(f"[red]✗[/] {create.get('error', 'No se pudo crear el usuario')}")
+        try:
+            create_app_user(username, credentials=creds)
+        except Exception as exc:  # noqa: BLE001 — error de red o de permisos: se informa y se reintenta
+            console.print(f"[red]✗[/] No se pudo crear el usuario: {exc}")
             continue
-
-        set_active_user(create.get("user_id"), username)
         console.print(f"[green]✓[/] Usuario [bold]{username}[/] creado.")
-        return username, credentials, True, password
-
-
-def _verify_password_for_login(password: str, stored_hash: str) -> bool:
-    """Wrapper para verificar password sin exponer _verify_password de storage."""
-    from agent.storage import _verify_password
-    return _verify_password(password, stored_hash)
+        return username, creds, True, password
 
 
 def _ensure_garmin_credentials(credentials: dict, app_password: str = "") -> dict:
@@ -564,7 +567,7 @@ def _handle_garmin_password_change(username: str) -> str | None:
         if len(new_password) < 6:
             console.print("[red]✗[/] Mínimo 6 caracteres.")
             continue
-        result = update_app_user_password(username, new_password)
+        result = update_login_password(new_password)
         if not result.get("ok"):
             console.print(f"[red]✗[/] {result.get('error')}")
             continue

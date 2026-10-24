@@ -46,10 +46,10 @@ async def _compute(username: str, start: str) -> dict:
     from agent import trainer_agent as ta
     from agent.mcp.client import garmin_mcp_session
 
-    row = st.find_user_by_username(username)
+    # Sesión de Supabase Auth guardada por Kairos (supabase/README.md): con RLS, sin ella no se ve nada.
+    row = st.restore_session(username)
     if not row:
-        raise SystemExit(f"Usuario no encontrado: {username}")
-    st.set_active_user(row.get("id"), username)
+        raise SystemExit(f"Sin sesión de {username} en este ordenador: entra una vez en Kairos (python -m agent.main) y vuelve a lanzar esto.")
 
     series: list[dict] = []
     rows: list[dict] = []

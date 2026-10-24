@@ -465,3 +465,62 @@ class TestAutoSelectProvider:
 
         assert provider == "nvidia"
         menu_mock.assert_called_once_with()
+
+
+# ─── Acceso con Supabase Auth (supabase/README.md) ─────────────────────────
+
+class TestAuthenticateWithSupabaseAuth:
+    def test_saved_session_logs_in_without_password(self):
+        from agent import main as m
+
+        row = {"id": "u1", "credentials": {"garmin_password_encrypted": "enc"}}
+        with patch.object(m, "restore_session", return_value=row), \
+             patch.object(m, "decrypt_password", return_value="garmin-pw"), \
+             patch.object(m, "sign_in") as sign_in, \
+             patch.object(m.Prompt, "ask", side_effect=["runner@example.com"]) as ask, \
+             patch.object(m.console, "print"):
+            user, creds, is_new, password = m._authenticate_or_register_user()
+
+        assert (user, is_new, password) == ("runner@example.com", False, "garmin-pw")
+        assert ask.call_count == 1
+        sign_in.assert_not_called()
+
+    def test_first_access_creates_account_and_asks_to_confirm_email(self):
+        from agent import main as m
+
+        linked = {"id": "legacy", "credentials": {"garmin_email": "runner@example.com"}}
+        sign_in_results = [
+            {"ok": False, "reason": "invalid", "error": "Email o contraseña incorrectos"},
+            {"ok": True, "app_user": linked, "error": None},
+        ]
+        with patch.object(m, "restore_session", return_value=None), \
+             patch.object(m, "sign_in", side_effect=sign_in_results), \
+             patch.object(m, "sign_up", return_value={"ok": True, "needs_confirmation": True}) as sign_up, \
+             patch.object(m, "encrypt_password", return_value="enc"), \
+             patch.object(m, "update_user_credentials") as update_creds, \
+             patch.object(m.Confirm, "ask", return_value=True), \
+             patch.object(m.Prompt, "ask", side_effect=[
+                 "runner@example.com", "pw123456", "pw123456",   # primer intento: crear cuenta
+                 "runner@example.com", "pw123456",               # tras confirmar el email
+             ]), \
+             patch.object(m.console, "print"):
+            user, creds, is_new, password = m._authenticate_or_register_user()
+
+        sign_up.assert_called_once_with("runner@example.com", "pw123456")
+        assert (user, is_new, password) == ("runner@example.com", False, "pw123456")
+        assert update_creds.call_args.args[0]["garmin_password_encrypted"] == "enc"
+
+    def test_new_account_without_data_creates_kairos_user(self):
+        from agent import main as m
+
+        with patch.object(m, "restore_session", return_value=None), \
+             patch.object(m, "sign_in", return_value={"ok": True, "app_user": None, "error": None}), \
+             patch.object(m, "encrypt_password", return_value="enc"), \
+             patch.object(m, "create_app_user") as create, \
+             patch.object(m.Prompt, "ask", side_effect=["new@example.com", "pw123456", "new@example.com"]), \
+             patch.object(m.console, "print"):
+            user, creds, is_new, password = m._authenticate_or_register_user()
+
+        assert is_new is True and user == "new@example.com"
+        create.assert_called_once()
+        assert create.call_args.kwargs["credentials"] == {"garmin_email": "new@example.com", "garmin_password_encrypted": "enc"}

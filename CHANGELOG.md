@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-24
 
+### Security (Supabase Auth y seguridad por fila)
+- Las 11 tablas tenían RLS desactivado y Kairos usaba la clave `anon`: con la URL y esa clave (públicas, en cada `.env`) se podían leer y modificar los datos de todos los usuarios, incluido el hash de la contraseña y la contraseña de Garmin cifrada (`tools/check_rls.py`: 8 tablas visibles sin sesión). Kairos además leía `app_user` antes de iniciar sesión.
+- Acceso con Supabase Auth (email + la misma contraseña que en Garmin): `storage.restore_session` (sesión guardada en `~/.kairos/supabase_session.json`, sin contraseña), `sign_in`, `sign_up` (con confirmación de email), `create_app_user`, `update_login_password`. Fuera la autenticación propia (`find_user_by_username`, `authenticate_app_user`, `register_app_user`, PBKDF2): nada se lee de la base de datos antes de entrar. El juez y `rebuild_tss_baseline` usan la sesión guardada.
+- `schema.sql`: `app_user.auth_user_id`, `password_hash` opcional, funciones `kairos_app_user_id()` y `kairos_claim_app_user()` (vincula la cuenta con su `app_user` anterior por email, solo si está confirmado), y deja de desactivar RLS en cada ejecución. `rls.sql`: activa RLS y crea las políticas (tu fila de `app_user`; tus filas en las 8 tablas con `app_user_id`; las de tus planes en sesiones y versiones). `tools/check_rls.py` / `make check-rls`.
+- Puesta en marcha en dos fases y explicación de los conceptos en `supabase/README.md`. Comprobado que el proyecto exige confirmar el email (`mailer_autoconfirm = false`), requisito del vínculo por email. Tests: 647.
+
 Auditoría antes de producción: análisis estático, cobertura y tres sesiones exploratorias con Kairos real por terminal (35 preguntas fuera de la batería, sin escrituras de usuario). Batería base 25/25 al final (coaching 114 s). Tests: 638.
 
 ### Fixed (datos del usuario)

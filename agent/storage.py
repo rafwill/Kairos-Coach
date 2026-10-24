@@ -3,7 +3,7 @@ agent/storage.py
 Capa de persistencia multiusuario (DB-first) para Kairos Coach.
 
 Este módulo usa Supabase como fuente de verdad para:
-- app_user (autenticación local de la app)
+- app_user (usuario de la app, vinculado a su cuenta de Supabase Auth)
 - user_profile
 - session_context
 - athlete_knowledge
@@ -11,15 +11,17 @@ Este módulo usa Supabase como fuente de verdad para:
 """
 
 import hashlib
-import hmac
+import json
 import logging
 import os
 import time
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import httpx
+from supabase_auth import SyncSupportedStorage
 
 log = logging.getLogger(__name__)
 
@@ -95,9 +97,15 @@ def _supabase():
             import truststore
 
             truststore.inject_into_ssl()
-        from supabase import create_client
+        from supabase import ClientOptions, create_client
 
-        _sb = create_client(url, key)
+        # La sesión de Supabase Auth se guarda en local: con ella las consultas llevan el token del
+        # usuario y las políticas RLS le dejan ver solo sus filas (supabase/README.md).
+        _sb = create_client(
+            url,
+            key,
+            options=ClientOptions(storage=_FileSessionStorage(_session_file()), persist_session=True, auto_refresh_token=True),
+        )
         return _sb
     except (ImportError, RuntimeError, ValueError, TypeError, OSError) as exc:
         log.warning("[storage] Supabase no disponible: %s", exc)
@@ -197,115 +205,173 @@ def decrypt_password(encrypted: str) -> str | None:
         return None
 
 
-def find_user_by_username(username: str) -> dict | None:
-    """Busca un usuario por nombre. Devuelve la fila completa o None."""
-    uname = _normalize_username(username)
+# ─── Sesión de Supabase Auth ───────────────────────────────────────────────────
+# Cada usuario de Kairos tiene una cuenta de Supabase Auth (email + la misma contraseña que en
+# Garmin Connect). Con sesión, las consultas llevan su token y las políticas RLS de
+# supabase/rls.sql le dejan ver solo sus filas. Nada se lee de la base de datos antes de iniciar
+# sesión. Detalle y puesta en marcha: supabase/README.md.
+
+
+class _FileSessionStorage(SyncSupportedStorage):
+    """Sesión de Supabase Auth en un fichero local, fuera del repo, para no pedir la contraseña en
+    cada arranque (como los tokens de Garmin del MCP). Lo comparten Kairos y las herramientas."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def _load(self) -> dict:
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _save(self, data: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(data), encoding="utf-8")
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+
+    def get_item(self, key: str) -> str | None:
+        return self._load().get(key)
+
+    def set_item(self, key: str, value: str) -> None:
+        data = self._load()
+        data[key] = value
+        self._save(data)
+
+    def remove_item(self, key: str) -> None:
+        data = self._load()
+        if data.pop(key, None) is not None:
+            self._save(data)
+
+
+def _session_file() -> Path:
+    custom = (os.environ.get("KAIROS_SESSION_FILE") or "").strip()
+    return Path(custom) if custom else Path.home() / ".kairos" / "supabase_session.json"
+
+
+def _auth_failure(exc: Exception) -> dict:
+    """Traduce un error de Supabase Auth a un motivo que la CLI sabe tratar."""
+    msg = str(getattr(exc, "message", "") or exc)
+    low = msg.lower()
+    if "invalid login credentials" in low:
+        return {"ok": False, "reason": "invalid", "error": "Email o contraseña incorrectos (o la cuenta aún no existe)."}
+    if "email not confirmed" in low:
+        return {"ok": False, "reason": "unconfirmed", "error": "Email sin confirmar: abre el enlace del correo de Supabase."}
+    if "kairos_claim_app_user" in low and ("does not exist" in low or "could not find" in low):
+        return {"ok": False, "reason": "schema", "error": "Falta ejecutar supabase/schema.sql en Supabase (ver supabase/README.md)."}
+    return {"ok": False, "reason": "error", "error": msg}
+
+
+def _activate_linked_app_user(email: str) -> dict | None:
+    """Vincula la cuenta de Auth con su app_user (por email, solo si está confirmado) y lo activa.
+
+    Devuelve la fila de app_user, o None si la cuenta es nueva y aún no tiene app_user.
+    """
+    sb = _require_supabase()
+    res = sb.rpc("kairos_claim_app_user").execute()
+    app_user_id = res.data if isinstance(res.data, str) else None
+    if not app_user_id:
+        return None
+    rows = sb.table("app_user").select("id,username,credentials").eq("id", app_user_id).limit(1).execute()
+    row = rows.data[0] if rows.data else None
+    if row:
+        set_active_user(row["id"], _normalize_username(email))
+    return row
+
+
+def restore_session(email: str) -> dict | None:
+    """Recupera la sesión guardada en este ordenador si es de ese email (la refresca si ha caducado)
+    y activa su app_user. None si no hay sesión válida: entonces hay que iniciar sesión."""
+    uname = _normalize_username(email)
     if not uname:
         return None
     try:
         sb = _require_supabase()
-        res = sb.table("app_user").select("id,username,password_hash,credentials").eq("username", uname).limit(1).execute()
-        return res.data[0] if res.data else None
-    except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+        session = sb.auth.get_session()
+        if not session or _normalize_username(getattr(session.user, "email", "")) != uname:
+            return None
+        return _activate_linked_app_user(uname)
+    except Exception as exc:  # noqa: BLE001 — sesión caducada, sin red o esquema sin migrar: se pide login
+        log.info("[storage] No se pudo recuperar la sesión guardada: %s", exc)
         return None
 
 
-def update_app_user_password(username: str, new_password: str) -> dict:
-    """Actualiza hash y contraseña cifrada cuando el usuario cambia su password de Garmin Connect."""
-    uname = _normalize_username(username)
-    if not uname or not new_password or len(new_password) < 6:
-        return {"ok": False, "error": "Datos inválidos (mínimo 6 caracteres)"}
-    new_hash = _pbkdf2_hash(new_password)
-    try:
-        sb = _require_supabase()
-        row = find_user_by_username(uname)
-        creds = dict((row or {}).get("credentials") or {})
-        creds.pop("garmin_password", None)
-        creds.pop("garmin_password_strategy", None)
-        creds["garmin_password_encrypted"] = encrypt_password(new_password)
-        result = sb.table("app_user").update(
-            {"password_hash": new_hash, "credentials": creds}
-        ).eq("username", uname).execute()
-        if not result.data:
-            return {"ok": False, "error": "Usuario no encontrado"}
-        return {"ok": True, "error": None}
-    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
-        return {"ok": False, "error": str(exc)}
+def sign_in(email: str, password: str) -> dict:
+    """Inicia sesión en Supabase Auth y activa el app_user vinculado.
 
-
-def _pbkdf2_hash(password: str, salt_hex: str | None = None) -> str:
-    salt = bytes.fromhex(salt_hex) if salt_hex else os.urandom(16)
-    iterations = 120_000
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
-
-
-def _verify_password(password: str, stored: str) -> bool:
-    try:
-        algo, _iters, salt_hex, _digest_hex = stored.split("$", 3)
-        if algo != "pbkdf2_sha256":
-            return False
-        candidate = _pbkdf2_hash(password, salt_hex=salt_hex)
-        return hmac.compare_digest(candidate, stored)
-    except (ValueError, TypeError):
-        return False
-
-
-def register_app_user(username: str, password: str, credentials: dict | None = None) -> dict:
-    """Crea un usuario de app y guarda password hasheada en Supabase."""
-    uname = _normalize_username(username)
-    if not uname or len(uname) < 3:
-        return {"ok": False, "user_id": None, "error": "Usuario inválido"}
-    if not password or len(password) < 6:
-        return {"ok": False, "user_id": None, "error": "Password demasiado corta (mínimo 6)"}
-
-    user_id = uuid4().hex
-    password_hash = _pbkdf2_hash(password)
-    creds = _sanitize_credentials_for_storage(credentials)
-
-    try:
-        sb = _require_supabase()
-        existing = sb.table("app_user").select("id").eq("username", uname).limit(1).execute()
-        if existing.data:
-            return {"ok": False, "user_id": None, "error": "El usuario ya existe"}
-
-        sb.table("app_user").insert(
-            {
-                "id": user_id,
-                "username": uname,
-                "password_hash": password_hash,
-                "credentials": creds,
-            }
-        ).execute()
-        return {"ok": True, "user_id": user_id, "error": None}
-    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
-        return {"ok": False, "user_id": None, "error": str(exc)}
-
-
-def authenticate_app_user(username: str, password: str) -> dict:
-    """Valida usuario/password contra Supabase."""
-    uname = _normalize_username(username)
+    {"ok": True, "app_user": fila | None (cuenta nueva sin app_user)} o {"ok": False, "reason", "error"}.
+    """
+    uname = _normalize_username(email)
     if not uname or not password:
-        return {"ok": False, "user_id": None, "credentials": {}, "error": "Credenciales incompletas"}
-
+        return {"ok": False, "reason": "invalid", "error": "Credenciales incompletas"}
     try:
         sb = _require_supabase()
-        res = sb.table("app_user").select("id,password_hash,credentials").eq("username", uname).limit(1).execute()
-        if not res.data:
-            return {"ok": False, "user_id": None, "credentials": {}, "error": "Usuario no encontrado"}
+        sb.auth.sign_in_with_password({"email": uname, "password": password})
+        return {"ok": True, "app_user": _activate_linked_app_user(uname), "error": None}
+    except Exception as exc:  # noqa: BLE001 — los errores de Auth llegan con varias clases
+        return _auth_failure(exc)
 
-        row = res.data[0]
-        if not _verify_password(password, row.get("password_hash", "")):
-            return {"ok": False, "user_id": None, "credentials": {}, "error": "Password incorrecta"}
 
-        return {
-            "ok": True,
-            "user_id": row.get("id"),
-            "credentials": row.get("credentials") or {},
-            "error": None,
-        }
-    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
-        return {"ok": False, "user_id": None, "credentials": {}, "error": str(exc)}
+def sign_up(email: str, password: str) -> dict:
+    """Crea la cuenta de Supabase Auth. Con confirmación de email (la configuración segura), no hay
+    sesión hasta abrir el enlace del correo: {"ok": True, "needs_confirmation": True}."""
+    uname = _normalize_username(email)
+    if "@" not in uname:
+        return {"ok": False, "reason": "invalid", "error": "El usuario debe ser un email"}
+    if not password or len(password) < 6:
+        return {"ok": False, "reason": "invalid", "error": "Contraseña demasiado corta (mínimo 6)"}
+    try:
+        sb = _require_supabase()
+        res = sb.auth.sign_up({"email": uname, "password": password})
+        return {"ok": True, "needs_confirmation": getattr(res, "session", None) is None, "error": None}
+    except Exception as exc:  # noqa: BLE001
+        return _auth_failure(exc)
+
+
+def create_app_user(email: str, credentials: dict | None = None) -> dict:
+    """Crea el app_user de una cuenta nueva (con sesión) vinculado a ella y lo activa."""
+    uname = _normalize_username(email)
+    sb = _require_supabase()
+    session = sb.auth.get_session()
+    if not session:
+        raise RuntimeError("Hace falta iniciar sesión para crear el usuario")
+    row = {
+        "id": uuid4().hex,
+        "username": uname,
+        "auth_user_id": session.user.id,
+        "credentials": _sanitize_credentials_for_storage(credentials),
+    }
+    sb.table("app_user").insert(row).execute()
+    set_active_user(row["id"], uname)
+    return row
+
+
+def update_login_password(new_password: str) -> dict:
+    """Cambia la contraseña de Supabase Auth (la misma que la de Garmin) y la cifrada en local."""
+    if not new_password or len(new_password) < 6:
+        return {"ok": False, "error": "Datos inválidos (mínimo 6 caracteres)"}
+    try:
+        sb = _require_supabase()
+        sb.auth.update_user({"password": new_password})
+        rows = sb.table("app_user").select("credentials").eq("id", _require_active_user_id()).limit(1).execute()
+        creds = dict((rows.data[0] if rows.data else {}).get("credentials") or {})
+        creds["garmin_password_encrypted"] = encrypt_password(new_password)
+        update_user_credentials(creds)
+        return {"ok": True, "error": None}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(getattr(exc, "message", "") or exc)}
+
+
+def sign_out() -> None:
+    """Cierra la sesión y borra la guardada en este ordenador."""
+    try:
+        _require_supabase().auth.sign_out()
+    except Exception as exc:  # noqa: BLE001
+        log.info("[storage] sign_out: %s", exc)
+    set_active_user(None)
 
 
 def update_user_credentials(credentials: dict) -> None:
