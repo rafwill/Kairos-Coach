@@ -41,7 +41,8 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1   # Windows
 El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`agent` y `garmin_mcp` importables desde cualquier carpeta), copia `.env.example` a `.env` y genera `ENCRYPTION_KEY`. Después:
 
 1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` y al menos una API key de LLM (`NVIDIA_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY` o `CEREBRAS_API_KEY`). Cada proveedor admite su `*_MODEL`; ver `.env.example`.
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en el SQL Editor de Supabase (New query → pegar → Run). Es el único fichero de esquema: crea todas las tablas en un proyecto nuevo y, en uno ya existente, añade solo lo que falte sin tocar los datos.
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en el SQL Editor de Supabase (New query → pegar → Run). Crea todas las tablas en un proyecto nuevo y, en uno ya existente, añade solo lo que falte sin tocar los datos.
+3. Seguridad: cuentas de Supabase Auth y políticas por usuario (`supabase/rls.sql`). Qué son, cómo activarlas y cómo comprobarlas (`make check-rls`): [`supabase/README.md`](supabase/README.md).
 
 ## Uso
 
@@ -133,4 +134,4 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 
 ## Privacidad
 
-Las contraseñas no se guardan en claro: la de la app con hash PBKDF2-SHA256 y la de Garmin cifrada con Fernet (`ENCRYPTION_KEY`). Los tokens de Garmin viven fuera del repo y los datos reales del atleta solo en rutas ignoradas por git.
+Cada usuario entra con su cuenta de Supabase Auth y la base de datos solo le deja ver sus filas (seguridad por fila, [`supabase/README.md`](supabase/README.md)). La contraseña la guarda Supabase Auth como hash y la de Garmin va cifrada con Fernet (`ENCRYPTION_KEY`). Los tokens de Garmin viven fuera del repo y los datos reales del atleta solo en rutas ignoradas por git.

@@ -125,24 +125,127 @@ def test_update_user_credentials_never_persists_garmin_password(monkeypatch):
     assert persisted_credentials["timezone"] == "Europe/Madrid"
 
 
-def test_register_app_user_never_persists_garmin_password(monkeypatch):
-    fake_sb = _DummySupabase()
-    monkeypatch.setattr(storage, "_require_supabase", lambda: fake_sb)
+# ─── Supabase Auth (supabase/README.md) ─────────────────────────────────────
 
-    result = storage.register_app_user(
-        "runner",
-        "123456",
-        credentials={
-            "garmin_email": "runner@example.com",
-            "garmin_password": "super-secret",
-        },
-    )
 
-    assert result["ok"] is True
-    assert fake_sb.last_insert is not None
-    persisted_credentials = fake_sb.last_insert["credentials"]
-    assert "garmin_password" not in persisted_credentials
-    assert persisted_credentials["garmin_email"] == "runner@example.com"
+class _FakeUser:
+    def __init__(self, email, uid="auth-uid-1"):
+        self.email = email
+        self.id = uid
+
+
+class _FakeSession:
+    def __init__(self, email):
+        self.user = _FakeUser(email)
+
+
+class _FakeAuth:
+    def __init__(self, session_email=None, sign_in_error=None):
+        self.session = _FakeSession(session_email) if session_email else None
+        self.sign_in_error = sign_in_error
+        self.signed_in_with = None
+
+    def get_session(self):
+        return self.session
+
+    def sign_in_with_password(self, creds):
+        if self.sign_in_error:
+            raise Exception(self.sign_in_error)
+        self.signed_in_with = creds
+        self.session = _FakeSession(creds["email"])
+
+
+class _FakeRpc:
+    def __init__(self, value):
+        self.value = value
+
+    def execute(self):
+        return _DummyResult(self.value)
+
+
+class _AuthSupabase(_DummySupabase):
+    def __init__(self, auth, claimed_id=None, rows=None):
+        super().__init__()
+        self.auth = auth
+        self.claimed_id = claimed_id
+        self.rows = rows or []
+
+    def rpc(self, name):
+        assert name == "kairos_claim_app_user"
+        return _FakeRpc(self.claimed_id)
+
+    def table(self, name):
+        table = _DummyTable(self, name)
+        parent = self
+
+        def _execute():
+            if table._mode == "insert":
+                parent.last_insert = table._payload
+            return _DummyResult(parent.rows if table._mode == "select" else [])
+
+        table.execute = _execute
+        return table
+
+
+def test_file_session_storage_roundtrip(tmp_path):
+    store = storage._FileSessionStorage(tmp_path / "kairos" / "session.json")
+    assert store.get_item("k") is None
+    store.set_item("k", "v")
+    assert storage._FileSessionStorage(tmp_path / "kairos" / "session.json").get_item("k") == "v"
+    store.remove_item("k")
+    assert store.get_item("k") is None
+
+
+def test_auth_failure_reasons():
+    assert storage._auth_failure(Exception("Invalid login credentials"))["reason"] == "invalid"
+    assert storage._auth_failure(Exception("Email not confirmed"))["reason"] == "unconfirmed"
+    missing = Exception("Could not find the function public.kairos_claim_app_user without parameters")
+    assert storage._auth_failure(missing)["reason"] == "schema"
+
+
+def test_sign_in_links_and_activates_existing_app_user(monkeypatch):
+    fake = _AuthSupabase(_FakeAuth(), claimed_id="legacy-id",
+                         rows=[{"id": "legacy-id", "username": "runner@example.com", "credentials": {}}])
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake)
+
+    out = storage.sign_in("Runner@Example.com", "secret1")
+
+    assert out["ok"] and out["app_user"]["id"] == "legacy-id"
+    assert fake.auth.signed_in_with == {"email": "runner@example.com", "password": "secret1"}
+    assert storage.get_active_user() == {"user_id": "legacy-id", "username": "runner@example.com"}
+    storage.set_active_user(None)
+
+
+def test_sign_in_new_account_has_no_app_user(monkeypatch):
+    fake = _AuthSupabase(_FakeAuth(), claimed_id=None)
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake)
+    out = storage.sign_in("new@example.com", "secret1")
+    assert out == {"ok": True, "app_user": None, "error": None}
+
+
+def test_sign_in_wrong_password(monkeypatch):
+    fake = _AuthSupabase(_FakeAuth(sign_in_error="Invalid login credentials"))
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake)
+    assert storage.sign_in("runner@example.com", "bad")["reason"] == "invalid"
+
+
+def test_restore_session_ignores_session_of_another_email(monkeypatch):
+    fake = _AuthSupabase(_FakeAuth(session_email="other@example.com"), claimed_id="x")
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake)
+    assert storage.restore_session("runner@example.com") is None
+
+
+def test_create_app_user_links_auth_and_never_persists_garmin_password(monkeypatch):
+    fake = _AuthSupabase(_FakeAuth(session_email="new@example.com"))
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake)
+
+    storage.create_app_user("new@example.com", {"garmin_email": "new@example.com", "garmin_password": "super-secret"})
+
+    row = fake.last_insert
+    assert row["username"] == "new@example.com" and row["auth_user_id"] == "auth-uid-1"
+    assert "garmin_password" not in row["credentials"]
+    assert "password_hash" not in row
+    storage.set_active_user(None)
 
 
 def test_is_statement_timeout_error_detects_postgrest_payload():

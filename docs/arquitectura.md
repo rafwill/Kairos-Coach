@@ -33,7 +33,7 @@ El servidor no importa nada de `agent/` (lo comprueba `test_server_package_does_
 
 | Tabla | Contenido |
 | --- | --- |
-| `app_user` | Usuario de la aplicación, `password_hash` (PBKDF2) y credenciales auxiliares (contraseña de Garmin cifrada con Fernet). |
+| `app_user` | Usuario de la aplicación, vinculado a su cuenta de Supabase Auth (`auth_user_id`), y credenciales auxiliares (contraseña de Garmin cifrada con Fernet). `password_hash` (PBKDF2) solo en cuentas anteriores al 24/10 sin migrar. |
 | `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y caché de `load_metrics`. |
 | `session_context` | Historial reciente de conversación y resúmenes de sesión. |
 | `athlete_knowledge` | Base de conocimiento textual del atleta (RAG ligero). |
@@ -49,7 +49,7 @@ Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve p
 
 ```
 main.py → run_agent()
-  ├─ login (usuario de la app) y selección de proveedor LLM
+  ├─ login con Supabase Auth (sesión guardada o email + contraseña) y selección de proveedor LLM
   ├─ MCP propio: python -m garmin_mcp (mismo Python que Kairos)
   │     tokens de Garmin reutilizados en ~/.garminconnect/kairos/<hash del email>
   ├─ TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
@@ -152,7 +152,8 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 
 ## Seguridad
 
-- Contraseña de la app: hash PBKDF2-SHA256 (120 000 iteraciones). Contraseña de Garmin: cifrada con Fernet (`ENCRYPTION_KEY` del `.env`); `_sanitize_credentials_for_storage` impide guardarla en claro.
+- Cuentas y acceso a datos: Supabase Auth (email + la misma contraseña que en Garmin) y seguridad por fila (RLS) en las 11 tablas, de modo que cada usuario solo ve y modifica sus filas y la clave `anon` sin sesión no ve nada. Sesión guardada en `~/.kairos/supabase_session.json`. Nada se lee de la base de datos antes de iniciar sesión. Conceptos, políticas, puesta en marcha en dos fases y marcha atrás: [`supabase/README.md`](../supabase/README.md); comprobación: `make check-rls`.
+- Contraseña de Garmin: cifrada con Fernet (`ENCRYPTION_KEY` del `.env`); `_sanitize_credentials_for_storage` impide guardarla en claro.
 - Solo lectura en Garmin: el MCP propio no expone escrituras y, además, `MCP_READ_ONLY` (activado por defecto) filtra las tools de escritura en `TrainerAgent.initialize()` y las bloquea en el bucle de tool-calls.
 - Tokens de Garmin en `~/.garminconnect/kairos/` (fuera del repo).
 - El identificador de cuota de Gemini usa SHA-256 de la clave.

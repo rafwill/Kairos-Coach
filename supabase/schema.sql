@@ -3,6 +3,9 @@
 -- =============================================================================
 -- Ejecutar en: Supabase Dashboard -> SQL Editor -> New query -> Run.
 --
+-- Seguridad: las políticas RLS por usuario están en supabase/rls.sql (fase 2, ver
+-- supabase/README.md). Este fichero ya no desactiva RLS: si estaba activo, sigue activo.
+--
 -- Crea el esquema multiusuario completo en un proyecto nuevo y pone al día uno
 -- ya existente: es idempotente (create ... if not exists, add column if not
 -- exists, drop/create trigger), así que se puede ejecutar las veces que haga
@@ -34,7 +37,65 @@ create table if not exists app_user (
     updated_at    timestamptz not null default now()
 );
 
-alter table app_user disable row level security;
+-- ─── Supabase Auth: vínculo y funciones de las políticas ────────────────────
+-- Cada app_user se vincula a su cuenta de Supabase Auth (auth.users). Las políticas de
+-- seguridad por fila (RLS) están en supabase/rls.sql y se explican en supabase/README.md.
+-- Aquí solo lo que no cambia permisos: la columna del vínculo y las dos funciones.
+alter table app_user add column if not exists auth_user_id uuid unique references auth.users(id) on delete set null;
+-- La contraseña la guarda Supabase Auth; el hash propio de antes queda opcional (cuentas sin migrar).
+alter table app_user alter column password_hash drop not null;
+
+-- app_user.id del usuario con sesión (o null). La usan las políticas de rls.sql.
+-- security definer: se ejecuta con los permisos del dueño y puede leer app_user aunque RLS esté activo.
+create or replace function kairos_app_user_id()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+    select id from public.app_user where auth_user_id = auth.uid()
+$$;
+
+-- Vincula la cuenta de Supabase Auth con su app_user anterior (mismo email, aún sin vincular) y
+-- devuelve el app_user.id; null si no hay cuenta anterior (usuario nuevo). Solo con el email
+-- confirmado: así nadie puede quedarse con los datos de otro registrándose con su email.
+create or replace function kairos_claim_app_user()
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    uid       uuid := auth.uid();
+    mail      text;
+    confirmed timestamptz;
+    linked    text;
+begin
+    if uid is null then
+        raise exception 'kairos_claim_app_user: sin sesión';
+    end if;
+    select id into linked from public.app_user where auth_user_id = uid;
+    if linked is not null then
+        return linked;
+    end if;
+    select lower(email), email_confirmed_at into mail, confirmed from auth.users where id = uid;
+    if confirmed is null then
+        raise exception 'kairos_claim_app_user: email sin confirmar';
+    end if;
+    update public.app_user
+       set auth_user_id = uid
+     where lower(username) = mail
+       and auth_user_id is null
+    returning id into linked;
+    return linked;
+end;
+$$;
+
+revoke all on function kairos_app_user_id() from public, anon;
+revoke all on function kairos_claim_app_user() from public, anon;
+grant execute on function kairos_app_user_id() to authenticated;
+grant execute on function kairos_claim_app_user() to authenticated;
 
 -- ─── user_profile ───────────────────────────────────────────────────────────
 create table if not exists user_profile (
@@ -42,8 +103,6 @@ create table if not exists user_profile (
     data        jsonb       not null default '{}',
     updated_at  timestamptz not null default now()
 );
-
-alter table user_profile disable row level security;
 
 -- ─── session_context ────────────────────────────────────────────────────────
 create table if not exists session_context (
@@ -53,16 +112,12 @@ create table if not exists session_context (
     updated_at        timestamptz not null default now()
 );
 
-alter table session_context disable row level security;
-
 -- ─── athlete_knowledge ──────────────────────────────────────────────────────
 create table if not exists athlete_knowledge (
     app_user_id text        primary key references app_user(id) on delete cascade,
     content     text        not null default '',
     updated_at  timestamptz not null default now()
 );
-
-alter table athlete_knowledge disable row level security;
 
 -- ─── gemini_usage ───────────────────────────────────────────────────────────
 create table if not exists gemini_usage (
@@ -74,8 +129,6 @@ create table if not exists gemini_usage (
     updated_at      timestamptz not null default now(),
     primary key (app_user_id, key_hash, usage_date)
 );
-
-alter table gemini_usage disable row level security;
 
 -- ─── training_plan (fuente de verdad de planes) ────────────────────────────
 create table if not exists training_plan (
@@ -92,8 +145,6 @@ create table if not exists training_plan (
     created_at     timestamptz not null default now(),
     updated_at     timestamptz not null default now()
 );
-
-alter table training_plan disable row level security;
 
 create index if not exists idx_training_plan_user_created
     on training_plan (app_user_id, created_at desc);
@@ -118,8 +169,6 @@ create table if not exists training_plan_session (
     updated_at   timestamptz not null default now()
 );
 
-alter table training_plan_session disable row level security;
-
 -- Proyectos creados antes de que existiera la columna (antigua migración 002).
 alter table training_plan_session
     add column if not exists structured_workout jsonb not null default '{}';
@@ -138,8 +187,6 @@ create table if not exists training_plan_version (
     unique (plan_id, version_number)
 );
 
-alter table training_plan_version disable row level security;
-
 create index if not exists idx_training_plan_version_plan
     on training_plan_version (plan_id, version_number desc);
 
@@ -157,8 +204,6 @@ create table if not exists load_metrics_daily (
     updated_at       timestamptz   not null default now(),
     primary key (app_user_id, metric_date)
 );
-
-alter table load_metrics_daily disable row level security;
 
 create index if not exists idx_load_metrics_daily_user_date
     on load_metrics_daily (app_user_id, metric_date desc);
@@ -186,8 +231,6 @@ create table if not exists activity_tss (
     primary key (app_user_id, activity_id)
 );
 
-alter table activity_tss disable row level security;
-
 create index if not exists idx_activity_tss_user_date
     on activity_tss (app_user_id, start_date desc);
 
@@ -209,8 +252,6 @@ create table if not exists wellness_daily (
     updated_at             timestamptz   not null default now(),
     primary key (app_user_id, metric_date)
 );
-
-alter table wellness_daily disable row level security;
 
 create index if not exists idx_wellness_daily_user_date
     on wellness_daily (app_user_id, metric_date desc);

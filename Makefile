@@ -1,4 +1,4 @@
-.PHONY: setup setup-win serve test lint lint-informe hooks lint-mcp health-mcp docs-mcp
+.PHONY: setup setup-win serve test lint lint-informe hooks lint-mcp health-mcp docs-mcp check-rls
 
 VENV := .venv
 ifeq ($(OS),Windows_NT)
@@ -38,3 +38,7 @@ health-mcp:
 
 docs-mcp:
 	$(VENV_PY) tools/gen_mcp_docs.py
+
+# Seguridad por fila de Supabase: qué ve la clave anon sin sesión y qué ve tu sesión (supabase/README.md).
+check-rls:
+	$(VENV_PY) tools/check_rls.py
