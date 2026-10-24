@@ -12,6 +12,8 @@ Ficheros de esta carpeta:
 
 Los dos `.sql` se ejecutan en **Supabase Dashboard → SQL Editor → New query → pegar → Run**.
 
+**Estado del proyecto real:** fases 1 y 2 aplicadas el 24/10/2026 y comprobadas con `make check-rls` (0 filas visibles sin sesión en las 11 tablas) y con la batería (25/25). Un segundo usuario de `app_user` sigue sin vincular: verá sus datos cuando entre una vez con su cuenta.
+
 ## 1. El problema que resuelve
 
 Kairos habla con Supabase usando dos datos del `.env`: la URL del proyecto y la **clave `anon`**. Esa clave no es secreta: va en el `.env` de cada instalación y cualquiera que la tenga puede hacer consultas.
