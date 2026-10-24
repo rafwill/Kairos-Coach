@@ -1236,3 +1236,12 @@ Paso	Qué cambió
 Lo que queda abierto es el bucle de gobierno: usar Kairos unos días y revisar las líneas [SENSOR] de agent.log. Así se ve qué sensores saltan con preguntas reales, si aparecen falsos positivos nuevos y qué guía conviene reforzar.
 
 ¿Subo este último commit? Así veremos en GitHub el paso de lint de la CI funcionando.
+
+
+
+24/10/2026 — Seguridad de Supabase (biblioteca de experiencia)
+
+- Señal: las 11 tablas con RLS desactivado y la clave anon (pública) en cada .env; check_rls: 8 tablas legibles sin sesión, incluida app_user con hashes y contraseñas de Garmin cifradas. Kairos leía app_user antes de iniciar sesión.
+- Lección: el filtro por usuario tiene que estar en la base de datos (RLS), no en el cliente; y ningún fichero de esquema debe desactivar RLS al reejecutarse (schema.sql lo hacía en cada ejecución).
+- Evidencia: Supabase Auth + rls.sql aplicados; check_rls 0 filas sin sesión; escrituras ajenas rechazadas; batería 25/25 antes y después de activar las políticas. Detalle en supabase/README.md y CHANGELOG.
+- Pendiente: el segundo app_user (entrará con su cuenta o se borra si es de pruebas); el otro ordenador necesita git pull y entrar una vez.
