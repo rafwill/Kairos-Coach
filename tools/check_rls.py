@@ -74,8 +74,15 @@ def main() -> int:
         sb = storage._require_supabase()
         for table in TABLES:
             print(f"   {table:24s} {str(_count(sb, table)):>8}")
-        own_ok = _count(sb, "app_user") == 1
-        print(f"   tu fila de app_user: {'1, correcto' if own_ok else 'NO es exactamente 1'}")
+        linked = sb.rpc("kairos_app_user_id").execute().data
+        print(f"   tu cuenta vinculada a un app_user: {'sí' if linked else 'NO'}")
+        if open_tables:
+            # Fase 1 (RLS sin activar): la sesión aún ve lo mismo que cualquiera; no se juzga.
+            own_ok = bool(linked)
+            print("   (fase 1: sin políticas activas, tu sesión todavía ve todas las filas)")
+        else:
+            own_ok = bool(linked) and _count(sb, "app_user") == 1
+            print(f"   tu fila de app_user: {'1, correcto' if own_ok else 'NO es exactamente 1'}")
     else:
         print("   Sin sesión guardada en este ordenador: entra una vez en Kairos (python -m agent.main).")
 
