@@ -40,8 +40,11 @@ def test_get_server_params_requires_garmin_credentials(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_garmin_mcp_session_opens_and_initializes(monkeypatch):
+async def test_garmin_mcp_session_opens_and_initializes(monkeypatch, tmp_path):
     calls: list[str] = []
+    errlogs: list = []
+    # El stderr del servidor va a un fichero, no a la terminal del usuario (24/10).
+    monkeypatch.setenv("KAIROS_MCP_LOG_FILE", str(tmp_path / "garmin_mcp.log"))
 
     def fake_get_server_params():
         calls.append("params")
@@ -68,13 +71,15 @@ async def test_garmin_mcp_session_opens_and_initializes(monkeypatch):
             self.initialized = True
 
     monkeypatch.setattr(mcp_client, "_get_server_params", fake_get_server_params)
-    monkeypatch.setattr(mcp_client, "stdio_client", lambda _params: DummyStdioCM())
+    monkeypatch.setattr(mcp_client, "stdio_client", lambda _params, errlog=None: errlogs.append(errlog) or DummyStdioCM())
     monkeypatch.setattr(mcp_client, "ClientSession", DummyClientSession)
 
     async with mcp_client.garmin_mcp_session() as session:
         assert session.initialized is True
 
     assert calls == ["params"]
+    assert errlogs and errlogs[0] is not mcp_client.sys.stderr
+    assert errlogs[0].name.endswith("garmin_mcp.log")
 
 
 @pytest.mark.asyncio

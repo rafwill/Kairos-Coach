@@ -50,6 +50,21 @@ class TestHrRanges:
               "30 min bici en Z1–Z2 (105–135 lpm). |")
         assert sensors.find_hr_ranges_outside_zones(ok, ZONES, ZONES_BIKE) == []
 
+    def test_measured_ranges_and_sport_headings(self):
+        # Exploración del 24/10: un rango descriptivo y una tabla bajo el encabezado "Cycling".
+        assert sensors.find_hr_ranges_outside_zones("- Tu FC se estabilizó en Z4–Z5 (159–178 bpm).", ZONES, ZONES_BIKE) == []
+        table = "Cycling (LTHR 153 bpm)\n\n| Zona | Rango |\n| 1 | 105–124 |\n| 5 | 159–179 |"
+        assert sensors.find_hr_ranges_outside_zones(table, ZONES, ZONES_BIKE) == []
+        # Una viñeta de bici no convierte en bici la siguiente.
+        bullets = "- Bici suave Z1 (FC ciclista 105–124 lpm).\n- Calent. progresivo de Z1 a Z2, 115→145 lpm."
+        assert sensors.find_hr_ranges_outside_zones(bullets, ZONES, ZONES_BIKE) == []
+
+    def test_zones_table_row_keeps_its_sport(self):
+        # Exploración del 24/10: tabla de zonas con la fila de ciclismo; cada celda perdía el deporte.
+        row = "| Cycling | 153 lpm | 105–124 | 125–135 | 136–145 | 146–158 | 159–179 |"
+        assert sensors.find_hr_ranges_outside_zones(row, ZONES, ZONES_BIKE) == []
+        assert sensors.find_hr_ranges_outside_zones("| Running | 169 lpm | 115–134 | 135–145 |", ZONES, ZONES_BIKE) == []
+
     def test_glucose_and_tss_ranges_are_ignored(self):
         text = ("- Glucemia objetivo 120–180 mg/dL.\n- TSS 150–200 en la semana.\n"
                 "- Durante: sesión < 60 min en Z1–Z2 → agua 150–250 ml/30 min.")
@@ -57,6 +72,11 @@ class TestHrRanges:
 
 
 class TestOtherSensors:
+    def test_goal_pace_near_threshold_is_not_the_threshold(self):
+        # Exploración del 24/10: el 3:55 era el ritmo meta de la media, no el umbral.
+        assert sensors.find_wrong_threshold_pace("mejorar la economía y el umbral (ritmo meta ≈ 3:55 min/km)", 240) == []
+        assert sensors.find_wrong_threshold_pace("necesitas bajar el umbral al menos a 3:55/km", 240) == []
+
     def test_threshold_pace(self):
         assert sensors.find_wrong_threshold_pace("Bloques a ritmo umbral 4:00/km.", 240) == []
         out = sensors.find_wrong_threshold_pace("Tempo cerca del ritmo umbral 4:12/km.", 240)
@@ -131,8 +151,16 @@ class TestDecisionS15:
 
 class TestGlucoseNoteS16:
     def test_note_added_when_session_without_glucose(self):
-        out = sensors.add_glucose_note("- Rodaje suave 40 min en Z2.", True)
+        out = sensors.add_glucose_note("- Calentamiento 10 min.\n- Parte principal: rodaje suave 40 min en Z2.", True)
         assert out.endswith(sensors.GLUCOSE_NOTE)
+        assert sensors.add_glucose_note("Te propongo 40 min en Z2 mañana.", True).endswith(sensors.GLUCOSE_NOTE)
+
+    def test_no_note_on_activity_lists_or_zone_tables(self):
+        # Exploración del 24/10: la nota salía en "¿cuántos km he corrido?" y en la tabla de zonas.
+        listing = "- 22/10 – 11,72 km (series)\n- 21/10 – 14,46 km (rodaje)"
+        assert sensors.add_glucose_note(listing, True) == listing
+        zones = "- Rodajes suaves / aeróbicos: Z1–Z2 (techo 145 lpm)."
+        assert sensors.add_glucose_note(zones, True) == zones
 
     def test_no_note_if_glucose_mentioned_or_no_diabetes_or_no_session(self):
         assert sensors.add_glucose_note("- Rodaje 40 min; mide la glucemia antes.", True) == "- Rodaje 40 min; mide la glucemia antes."

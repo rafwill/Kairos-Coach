@@ -1,0 +1,1 @@
+PRÓXIMA SEMANA: del {{inicio}} al {{fin}}. Propón el reparto de esos siete días ({{dias}}): qué días calidad, cuáles rodaje suave y cuáles descanso, con las zonas en lpm del bloque Umbrales (no porcentajes)

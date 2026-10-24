@@ -22,6 +22,8 @@ build/
 
 # Runtime local (no versionar)
 agent.log
+garmin_mcp.log
+.coverage
 
 # Real payload captures for offline forensic replay (sensitive/user data)
 fixtures/real_payloads/*
