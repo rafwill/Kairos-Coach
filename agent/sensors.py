@@ -140,7 +140,8 @@ def find_ctl_with_atl_max(coaching: str) -> list[Finding]:
 # ─── S10: rangos de FC dentro de las zonas de Garmin ────────────────────────
 
 _CYCLING_LINE = re.compile(r"(?i)ciclis|\bbici|cycling|rodillo")
-_PROGRESSIVE = re.compile(r"(?i)calentamiento|vuelta a la calma|enfriamiento|progresiv")
+# "Calent." y "enfr." abreviados en tablas (24/10).
+_PROGRESSIVE = re.compile(r"(?i)calent|vuelta a la calma|enfr|progresiv")
 _ZONE_SPAN = re.compile(r"(?i)\bZ([1-5])\s*(?:[–\-→]|\ba\b|hasta)\s*Z([1-5])\b")
 
 
@@ -167,6 +168,31 @@ def _easy_range_ok(lo: int, hi: int, zones: Zones) -> bool:
     return zones[0][1] - TOL_BPM <= lo and hi <= zones[1][2] + TOL_BPM
 
 
+_HR_RANGE = re.compile(r"\d{3}\s*[–\-→]\s*\d{3}")
+_RUNNING_LINE = re.compile(r"(?i)\brunning\b|\bcarrera\b|\bcorrer\b|\brodaje\b|\btrail\b")
+_MEASURED_RANGE = re.compile(
+    r"(?i)\b(?:se estabiliz\w*|estabiliz\w*|estuvo|estuviste|osci\w*|registr\w*|media de|promedio|pico|"
+    r"alcanz\w*|llegaste|se mantuvo|mantuviste)\b"
+)
+
+
+def _range_sport(text: str, clause_start: int, clause: str) -> str:
+    """Deporte de un rango (23–24/10): Garmin tiene zonas por deporte y una bici se juzga con las de ciclismo.
+
+    Primero la frase del rango (una fila puede llevar el rodaje y una alternativa en bici en otra frase); si no
+    nombra deporte, la línea de contexto anterior más cercana que lo nombre, hasta 12 (un encabezado "Cycling
+    (LTHR 153)" sobre una tabla de zonas). Las líneas con su propio rango de FC son otras viñetas o filas, no
+    contexto: una viñeta de bici no convierte en bici la siguiente. Por defecto, carrera.
+    """
+    previous = [ln for ln in text[:clause_start].splitlines()[-12:] if not _HR_RANGE.search(ln)]
+    for chunk in [clause, *reversed(previous)]:
+        if _CYCLING_LINE.search(chunk):
+            return "cycling"
+        if _RUNNING_LINE.search(chunk):
+            return "running"
+    return "running"
+
+
 def _zones_hint(zones: Zones) -> str:
     return ", ".join(f"{name.split()[0]} {lo}–{hi}" for name, lo, hi in zones)
 
@@ -191,12 +217,14 @@ def find_hr_ranges_outside_zones(coaching: str, zones: Zones, zones_cycling: Zon
         lo, hi = sorted((int(mr.group(1)), int(mr.group(2))))
         if not (100 <= lo <= 220):
             continue
-        # Garmin tiene zonas por deporte: un rango de bici se juzga con las de ciclismo (23/10). El deporte se
-        # decide por la frase o la celda del rango (desde el último ".", ";", "|" o salto de línea), no por la
-        # línea: una fila de tabla puede llevar el rodaje y una alternativa en bici.
-        clause_start = max(coaching.rfind(sep, 0, mr.start()) for sep in (". ", ";", "|", "\n")) + 1
+        # Frase del rango: desde el último ". ", ";" o salto de línea. No se corta en "|": en una tabla de zonas
+        # el deporte está en la primera celda de la fila ("| Cycling | 153 lpm | 105–124 |", 24/10).
+        clause_start = max(coaching.rfind(sep, 0, mr.start()) for sep in (". ", ";", "\n")) + 1
         clause = coaching[clause_start: mr.end()]
-        sport_zones = zones_cycling if zones_cycling and _CYCLING_LINE.search(clause) else zones
+        # Un rango que describe lo que pasó ("tu FC se estabilizó en Z4–Z5 (159–178)") no es una prescripción.
+        if _MEASURED_RANGE.search(clause):
+            continue
+        sport_zones = zones_cycling if zones_cycling and _range_sport(coaching, clause_start, clause) == "cycling" else zones
         fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in sport_zones)
         if not fits:
             fits = _easy_range_ok(lo, hi, sport_zones) or _progressive_range_ok(coaching[: mr.start()], lo, hi, sport_zones)
@@ -212,12 +240,20 @@ def find_hr_ranges_outside_zones(coaching: str, zones: Zones, zones_cycling: Zon
 
 # ─── S11: ritmo umbral vigente ──────────────────────────────────────────────
 
+# Entre "umbral" y la cifra: si aparece una meta, la cifra no es el umbral ("el umbral (ritmo meta ≈ 3:55",
+# "bajar el umbral a 3:55"; falsos positivos del 24/10).
+_PACE_GOAL_WORDS = re.compile(r"(?i)\b(?:meta|objetivo|carrera|marat[oó]n|media|bajar|mejorar|llevar|al menos|necesit|predic)")
+
+
 def find_wrong_threshold_pace(coaching: str, pace_today_s: float | None) -> list[Finding]:
     out: list[Finding] = []
     if not pace_today_s:
         return out
     vigente = f"{int(pace_today_s // 60)}:{int(pace_today_s % 60):02d}"
-    for p in re.findall(r"(?i)umbral[^\n]{0,40}?(\d):(\d{2})\s*(?:–\s*\d:\d{2}\s*)?(?:min)?/km", coaching):
+    for m in re.finditer(r"(?i)umbral([^\n]{0,40}?)(\d):(\d{2})\s*(?:–\s*\d:\d{2}\s*)?(?:min)?/km", coaching):
+        if _PACE_GOAL_WORDS.search(m.group(1)):
+            continue
+        p = (m.group(2), m.group(3))
         sec = int(p[0]) * 60 + int(p[1])
         if abs(sec - pace_today_s) > TOL_PACE_S:
             out.append(Finding("S11", f"LLM: ritmo umbral {p[0]}:{p[1]} ≠ vigente {vigente}",
@@ -320,7 +356,12 @@ def find_intensity_against_decision(text: str, decision: str | None, zones: Zone
 # ─── S16: nota de seguridad glucémica ───────────────────────────────────────
 
 _INSULIN_DIABETES = re.compile(r"(?i)\bdt\s?1\b|diabetes\s+tipo\s*1|\btipo\s*1\b|\blada\b|insulin")
-_PRESCRIBES_SESSION = re.compile(r"(?i)calentamiento|parte principal|rodaje|series|tirada|sesi[oó]n de")
+# Prescribe una sesión: su estructura o una propuesta explícita. "Rodaje" o "series" sueltos no bastan: salen en
+# listas de actividades y tablas de zonas (24/10: la nota se añadía a "¿cuántos km he corrido este mes?").
+_PRESCRIBES_SESSION = re.compile(
+    r"(?i)calentamiento|parte principal|enfriamiento|vuelta a la calma|te propongo|te recomiendo|\bhaz\b|"
+    r"sesi[oó]n (?:de hoy|de mañana|propuesta|recomendada|clave)|qu[eé] hacer"
+)
 _MENTIONS_GLUCOSE = re.compile(r"(?i)gluc|insulin|hipoglu|carbohidrat|hidratos")
 
 GLUCOSE_NOTE = (

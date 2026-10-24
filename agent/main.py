@@ -13,6 +13,7 @@ import time
 from datetime import date
 from pathlib import Path
 import logging
+from logging.handlers import RotatingFileHandler
 
 
 # Forzar UTF-8 en Windows para mostrar correctamente acentos y ñ en terminal.
@@ -56,11 +57,13 @@ def _configure_logging() -> tuple[logging.Logger, bool]:
     level = getattr(logging, level_name, logging.INFO)
 
     log_file = (os.environ.get("KAIROS_LOG_FILE") or "agent.log").strip()
-    log_stdout = _env_bool("KAIROS_LOG_STDOUT", True)
+    # Por defecto, solo al fichero: en la terminal los logs se mezclaban con la conversación (24/10).
+    log_stdout = _env_bool("KAIROS_LOG_STDOUT", False)
 
     handlers: list[logging.Handler] = []
     if log_file:
-        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        # Rotativo: agent.log crecía sin límite (6,3 MB el 23/10).
+        handlers.append(RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=3, encoding="utf-8"))
     if log_stdout:
         handlers.append(logging.StreamHandler(sys.stdout))
     if not handlers:
@@ -79,7 +82,10 @@ def _configure_logging() -> tuple[logging.Logger, bool]:
     return logging.getLogger(__name__), _env_bool("KAIROS_DEBUG_CONSOLE", False)
 
 
-log, _DEBUG_CONSOLE = _configure_logging()
+# El logging se configura al arrancar Kairos (main), no al importar el módulo: importarlo (tests,
+# herramientas) abría agent.log y escribía en él (24/10).
+log = logging.getLogger(__name__)
+_DEBUG_CONSOLE = False
 
 
 def _debug_console(message: str) -> None:
@@ -337,6 +343,17 @@ def _ensure_running_threshold_pace(profile: dict) -> dict:
         return profile
 
 
+def _iso_to_dmy(value: object, empty: str = "") -> str:
+    """Fecha ISO (AAAA-MM-DD) del perfil en DD/MM/AAAA, como todo lo que ve el usuario; otro texto, tal cual."""
+    raw = str(value or "").strip()
+    if not raw:
+        return empty
+    try:
+        return date.fromisoformat(raw[:10]).strftime("%d/%m/%Y")
+    except ValueError:
+        return raw
+
+
 def _build_initial_athlete_knowledge(profile: dict) -> str:
     """Genera una base de conocimiento inicial mínima a partir del perfil."""
     p = profile.get("personal", {})
@@ -357,7 +374,7 @@ def _build_initial_athlete_knowledge(profile: dict) -> str:
         "",
         "## Objetivo principal de carrera",
         f"- Evento objetivo: {g.get('target_race', '')}",
-        f"- Fecha: {g.get('target_race_date', '')}",
+        f"- Fecha: {_iso_to_dmy(g.get('target_race_date'))}",
         f"- Tiempo objetivo: {g.get('target_time', '')}",
         "",
         "## Salud y limitaciones",
@@ -698,7 +715,7 @@ def _show_profile() -> None:
         f"[bold]Deporte:[/]         {g.get('primary', '—')}",
         f"[bold]Horas/semana:[/]    {g.get('weekly_training_hours', '—')}",
         f"[bold]Evento objetivo:[/] {g.get('target_race', '—')}",
-        f"[bold]Fecha evento:[/]    {g.get('target_race_date', '—')}",
+        f"[bold]Fecha evento:[/]    {_iso_to_dmy(g.get('target_race_date'), '—')}",
         f"[bold]Tiempo objetivo:[/] {g.get('target_time', '—')}",
     ]
     perf = profile.get("performance", {}) if isinstance(profile.get("performance"), dict) else {}
@@ -1249,6 +1266,9 @@ def _check_and_migrate_supabase() -> None:
 
 
 async def main() -> None:
+    global log, _DEBUG_CONSOLE
+    log, _DEBUG_CONSOLE = _configure_logging()
+
     # Fail-fast de infraestructura: evita pedir credenciales si la DB no está lista.
     _check_and_migrate_supabase()
 

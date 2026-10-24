@@ -266,10 +266,11 @@ async def garmin_mcp_session():
     """
     async def _open_and_yield(params: StdioServerParameters):
         try:
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    yield session
+            with _server_errlog() as errlog:
+                async with stdio_client(params, errlog=errlog) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        yield session
         except BaseException as exc:
             if _is_benign_mcp_shutdown_error(exc):
                 log.debug("Ignorando error benigno al cerrar sesión MCP: %s", exc)
@@ -279,6 +280,12 @@ async def garmin_mcp_session():
     params = _get_server_params()
     async for _session in _open_and_yield(params):
         yield _session
+
+
+def _server_errlog():
+    """Fichero para el stderr del servidor MCP: si no, sus logs salían en la terminal del usuario (24/10)."""
+    path = (os.environ.get("KAIROS_MCP_LOG_FILE") or "garmin_mcp.log").strip()
+    return open(path, "a", encoding="utf-8")  # noqa: SIM115 — se cierra al terminar la sesión
 
 
 async def list_available_tools(session: ClientSession) -> list[dict]:

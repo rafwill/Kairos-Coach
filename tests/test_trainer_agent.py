@@ -363,6 +363,148 @@ class TestResolveRunningThresholdFromProfile:
         assert 269.0 <= out <= 271.0
 
 
+class TestImpossibleDateAndUnknownTool:
+    def test_impossible_dates_are_detected_and_valid_ones_pass(self):
+        assert ta._find_impossible_date("¿Qué actividades hice el 31/02/2026?") == "31/02/2026"
+        assert ta._find_impossible_date("¿y el 29/02/2027?") == "29/02/2027"
+        for ok in ("29/02/2028", "RPE 7/10", "semana del 05/10 al 11/10", "ritmo 3:55/km", "45/60 min"):
+            assert ta._find_impossible_date(ok) is None, ok
+
+    @pytest.mark.asyncio
+    async def test_chat_answers_impossible_date_without_tools_or_llm(self):
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock()
+        with patch("agent.trainer_agent._save_history_entry"):
+            out = await ta.TrainerAgent.chat(agent, "¿Qué actividades hice el 31/02/2026?")
+        assert "31/02/2026 no existe" in out
+        agent.client.chat.completions.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_is_not_sent_to_garmin(self, monkeypatch):
+        # Exploración del 24/10: el LLM llamó a "goals" y se avisaba de que Garmin había fallado.
+        def _resp(content=None, tool_calls=None):
+            m = MagicMock()
+            m.content = content
+            m.tool_calls = tool_calls
+            r = MagicMock()
+            r.choices = [MagicMock(message=m, finish_reason="stop")]
+            r.usage = None
+            return r
+
+        call = MagicMock()
+        call.id = "c1"
+        call.function.name = "goals"
+        call.function.arguments = "{}"
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = [{"type": "function", "function": {"name": "get_activities"}}]
+        agent.mcp_session = MagicMock()
+        agent.mcp_read_only = True
+        agent._build_messages = lambda _msg: [{"role": "user", "content": "x"}]
+        agent.model = "m"
+        agent.total_prompt_tokens = agent.total_completion_tokens = 0
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=[
+            _resp(tool_calls=[call]), _resp(content="Tu objetivo es la media de Santa Pola."),
+        ])
+        sent = AsyncMock()
+        monkeypatch.setattr(ta, "call_tool", sent)
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        with patch("agent.trainer_agent._save_history_entry"):
+            out = await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
+
+        sent.assert_not_awaited()
+        assert "No se pudo consultar Garmin" not in out
+        tool_msg = agent.client.chat.completions.create.await_args_list[1].kwargs["messages"][-1]
+        assert tool_msg["role"] == "tool" and "unknown_tool" in tool_msg["content"]
+
+
+class TestToolTimeoutBreaker:
+    @pytest.mark.asyncio
+    async def test_after_two_timeouts_garmin_is_not_called_again(self, monkeypatch):
+        # Exploración del 24/10: 5 get_activity seguidos agotaron su tiempo (144 s en una pregunta).
+        import asyncio
+
+        def _call(i):
+            c = MagicMock()
+            c.id = f"c{i}"
+            c.function.name = "get_activity"
+            c.function.arguments = json.dumps({"activity_id": 1000 + i})
+            return c
+
+        def _resp(content=None, tool_calls=None):
+            m = MagicMock()
+            m.content = content
+            m.tool_calls = tool_calls
+            r = MagicMock()
+            r.choices = [MagicMock(message=m, finish_reason="stop")]
+            r.usage = None
+            return r
+
+        calls_to_garmin = []
+
+        async def slow_tool(session, name, args):
+            calls_to_garmin.append(args)
+            await asyncio.sleep(1)
+            return "{}"
+
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = [{"type": "function", "function": {"name": "get_activity"}}]
+        agent.mcp_session = MagicMock()
+        agent.mcp_read_only = True
+        agent._build_messages = lambda _msg: [{"role": "user", "content": "x"}]
+        agent.model = "m"
+        agent.total_prompt_tokens = agent.total_completion_tokens = 0
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=[
+            _resp(tool_calls=[_call(1), _call(2), _call(3), _call(4)]),
+            _resp(content="No he podido consultar todas las actividades."),
+        ])
+        monkeypatch.setattr(ta, "call_tool", slow_tool)
+        monkeypatch.setattr(ta, "_tool_timeout_seconds", lambda: 0.01)
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        with patch("agent.trainer_agent._save_history_entry"):
+            await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
+
+        assert len(calls_to_garmin) == 2
+        tool_msgs = [m for m in agent.client.chat.completions.create.await_args_list[1].kwargs["messages"]
+                     if isinstance(m, dict) and m.get("role") == "tool"]
+        assert sum("garmin_slow" in m["content"] for m in tool_msgs) == 2
+
+
+class TestCoachingHorizon:
+    """Horizonte de la capa de coaching; fecha fija: sábado 24/10/2026."""
+
+    @pytest.fixture(autouse=True)
+    def _fixed_today(self, monkeypatch):
+        class FixedDate(date):
+            @classmethod
+            def today(cls):
+                return date(2026, 10, 24)
+
+        monkeypatch.setattr(ta, "date", FixedDate)
+
+    def test_next_week_is_not_this_week(self):
+        out = ta._coaching_horizon("¿Y la semana que viene qué me recomiendas?")
+        assert out.startswith("PRÓXIMA SEMANA: del lunes 26/10 al domingo 01/11")
+        assert ta._coaching_horizon("¿Qué hago la próxima semana?").startswith("PRÓXIMA SEMANA")
+
+    def test_this_week_lists_remaining_days(self):
+        out = ta._coaching_horizon("¿Qué hago esta semana?")
+        assert "sábado 24/10, domingo 25/10" in out and "lunes" not in out
+
+    def test_day_after_tomorrow_is_not_tomorrow(self):
+        assert ta._coaching_horizon("¿Qué hago pasado mañana?") == "PASADO MAÑANA (lunes 26/10): la sesión de ese día"
+        assert ta._coaching_horizon("¿Y mañana?") == "MAÑANA: la sesión de mañana"
+        assert ta._coaching_horizon("¿Qué me toca?").startswith("HOY")
+
+
 class TestOutputSensors:
     """Autocorrección en vivo (docs/Harness.md §6): sensores sobre el texto del LLM con un reintento."""
 
@@ -436,7 +578,7 @@ class TestOutputSensors:
 
         agent = self._agent(monkeypatch, [])
         agent.user_profile = {"health": {"injuries": ["DT1"], "notes": ""}}
-        out = await agent._apply_output_sensors("- Rodaje suave 40 min en Z2 (135–145 lpm).", [], "coaching")
+        out = await agent._apply_output_sensors("- Parte principal: rodaje suave 40 min en Z2 (135–145 lpm).", [], "coaching")
 
         assert out.endswith(sensors.GLUCOSE_NOTE)
         agent.client.chat.completions.create.assert_not_awaited()
@@ -3907,7 +4049,8 @@ class TestGoalStatusDeterministicRoute:
         out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile)
 
         assert "| TSS acumulado | 342.9 |" in out
-        assert "sabado 15/08: 82.5" in out
+        assert "sábado 15/08: 82.5" in out
+        assert "Día con más carga:" in out
         assert "fallback" in out
 
     def test_resolve_week_window_uses_explicit_historical_date(self, monkeypatch):
@@ -4582,6 +4725,51 @@ class TestTomorrowWorkoutViaLlm:
             out = await TrainerAgent.chat(agent, "Que entrenamiento me propones para mañana?")
 
         assert "45 min aeróbicos" in out
+
+    @pytest.mark.asyncio
+    async def test_chat_generic_reply_with_goal_never_writes_a_plan(self):
+        # Hasta el 24/10, con objetivo en el perfil, una respuesta genérica del LLM creaba un plan "activo"
+        # vacío en Supabase y desactivaba el plan real del atleta. Ahora pasa por el rescate, sin escribir.
+        from agent.trainer_agent import TrainerAgent
+
+        def _resp(text):
+            m = MagicMock()
+            m.tool_calls = None
+            m.content = text
+            r = MagicMock()
+            r.choices = [MagicMock(message=m, finish_reason="stop")]
+            r.usage = None
+            return r
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"goals": {"target_race": "Media maratón", "target_race_date": "2026-12-20"}}
+        agent.conversation_history = []
+        agent.tools_schema = []
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: []
+        agent.client = MagicMock()
+        agent.model = "test-model"
+        agent.client.chat.completions.create = AsyncMock(side_effect=[
+            _resp("Lo siento, pero no tengo suficiente información para proponerte un entrenamiento para mañana."),
+            _resp("Para mañana: 45 min en Z2 (135–145 lpm), RPE 3-4."),
+        ])
+        agent.total_prompt_tokens = agent.total_completion_tokens = 0
+        agent._api_key = ""
+
+        with patch("agent.trainer_agent._save_history_entry"), \
+             patch("agent.trainer_agent._storage.create_training_plan") as create_plan, \
+             patch("agent.trainer_agent._save_user_profile") as save_profile, \
+             patch.object(TrainerAgent, "collect_startup_snapshot_48h", new=AsyncMock(return_value={
+                 "dates": {"today": "2026-10-24"}, "body_battery": {}, "hrv": {}, "sleep": {},
+                 "load_fatigue": {}, "trainings": [],
+             })):
+            out = await TrainerAgent.chat(agent, "Que entrenamiento me propones para mañana?")
+
+        create_plan.assert_not_called()
+        save_profile.assert_not_called()
+        assert "45 min en Z2" in out
+        rescue_system = agent.client.chat.completions.create.await_args_list[1].kwargs["messages"][0]["content"]
+        assert "Horizonte: MAÑANA" in rescue_system
 
 
 class TestPostActivityGenericRescue:

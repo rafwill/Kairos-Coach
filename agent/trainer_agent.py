@@ -2615,6 +2615,18 @@ def _is_week_tss_intent(user_message: str) -> bool:
     text_norm = re.sub(r"[^a-z0-9 ]+", " ", text_ascii)
     text_norm = re.sub(r"\s+", " ", text_norm).strip()
 
+    # Resumen de una semana o su día de más carga, aunque no diga "TSS" (24/10: "¿cómo fue mi semana del 05/10
+    # al 11/10?" agotaba las 15 llamadas a tools; "¿qué día de esta semana tuve más carga?" lo resolvía el LLM
+    # leyendo mal la serie).
+    week_summary_markers = (
+        "como fue mi semana", "como ha ido mi semana", "que tal mi semana", "que tal fue mi semana",
+        "que tal ha ido mi semana", "resumen de mi semana", "resumen de la semana", "resumen semanal",
+    )
+    if any(m in text_norm for m in week_summary_markers):
+        return True
+    if "semana" in text_norm and re.search(r"\bdia\b.*\bmas\b.*\b(carga|tss)\b", text_norm):
+        return True
+
     if "tss" not in text_norm:
         return False
 
@@ -2990,6 +3002,10 @@ def _is_mcp_factual_query_intent(user_message: str) -> bool:
         "historico",
         "histórico",
         "progres",
+        # 24/10: "compara mi HRV de esta semana con la pasada" devolvía la tabla de un solo día.
+        "compar",
+        "frente a",
+        "semana",
     )
     if any(marker in text for marker in trend_markers):
         return False
@@ -3062,6 +3078,27 @@ def _is_today_load_status_intent(user_message: str) -> bool:
     return has_today and has_load and has_rule
 
 
+_EXPLICIT_DATE_RE = re.compile(r"(?<![\d/:.])(\d{1,2})/(\d{1,2})(?:/(\d{2}|\d{4}))?(?![\d/:])")
+
+
+def _find_impossible_date(user_message: str) -> str | None:
+    """Fecha DD/MM(/AAAA) con día y mes plausibles pero inexistente (31/02, 31/04…), o None.
+
+    24/10: "¿qué actividades hice el 31/02/2026?" se respondía con los datos de hoy sin avisar.
+    """
+    for m in _EXPLICIT_DATE_RE.finditer(user_message or ""):
+        day, month = int(m.group(1)), int(m.group(2))
+        if not (1 <= day <= 31 and 1 <= month <= 12):
+            continue
+        year_raw = m.group(3)
+        year = date.today().year if not year_raw else (2000 + int(year_raw) if len(year_raw) == 2 else int(year_raw))
+        try:
+            date(year, month, day)
+        except ValueError:
+            return m.group(0)
+    return None
+
+
 def _is_coaching_recommendation_intent(user_message: str) -> bool:
     """Detecta si el usuario pide interpretación/recomendación sobre datos.
 
@@ -3108,16 +3145,27 @@ def _is_coaching_recommendation_intent(user_message: str) -> bool:
 def _coaching_horizon(user_message: str) -> str:
     """Horizonte que pide el usuario, explícito para la capa de coaching del LLM."""
     text = (user_message or "").lower()
-    if "semana" in text:
-        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-        today = date.today()
-        remaining = ", ".join(
-            f"{dias[(today + timedelta(days=i)).weekday()]} {(today + timedelta(days=i)).strftime('%d/%m')}"
-            for i in range(7 - today.weekday())
-        )
+    dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    today = date.today()
+
+    def _day(d: date) -> str:
+        return f"{dias[d.weekday()]} {d.strftime('%d/%m')}"
+
+    # "la semana que viene" no es esta semana ni "pasado mañana" es mañana (24/10: ambos caían en el caso corto).
+    if re.search(r"semana que viene|pr[oó]xima semana|siguiente semana|semana pr[oó]xima", text):
+        start = today + timedelta(days=7 - today.weekday())
+        week = [start + timedelta(days=i) for i in range(7)]
         return _render_prompt(
-            "coaching/horizon_week", hoy=f"{dias[today.weekday()]} {today.strftime('%d/%m')}", dias_restantes=remaining
+            "coaching/horizon_next_week", inicio=_day(week[0]), fin=_day(week[-1]),
+            dias=", ".join(_day(d) for d in week),
         )
+    if "semana" in text:
+        remaining = ", ".join(_day(today + timedelta(days=i)) for i in range(7 - today.weekday()))
+        return _render_prompt(
+            "coaching/horizon_week", hoy=_day(today), dias_restantes=remaining
+        )
+    if "pasado mañana" in text or "pasado manana" in text:
+        return _render_prompt("coaching/horizon_day_after", dia=_day(today + timedelta(days=2)))
     if "mañana" in text or "manana" in text:
         return _render_prompt("coaching/horizon_tomorrow")
     return _render_prompt("coaching/horizon_today")
@@ -3199,6 +3247,13 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         return False
 
     activity_markers = ("entrenamiento", "actividad", "sesion", "sesión")
+    # "Última salida / carrera / rodaje / tirada" (24/10: "¿qué tal fue mi última salida en bici?" la resolvía el LLM
+    # y se equivocaba de fecha; esta ruta ya sabe filtrar la última por deporte). Sueltas no cuentan: "¿calidad,
+    # rodaje suave o descanso hoy?" es una pregunta de estado, no de una actividad.
+    last_named_markers = (
+        "ultima salida", "última salida", "ultima carrera", "última carrera",
+        "ultimo rodaje", "último rodaje", "ultima tirada", "última tirada",
+    )
     detail_markers = (
         "datos",
         "detalle",
@@ -3218,6 +3273,8 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         "cuáles fueron",
         "como fue",
         "cómo fue",
+        "que tal",
+        "qué tal",
     )
     has_month_name_date = re.search(
         r"\b\d{1,2}\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:\s+de\s+\d{2,4})?\b",
@@ -3242,10 +3299,11 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
             "última sesión",
             "ultimo entrenamiento",
             "último entrenamiento",
+            *last_named_markers,
         )
     )
     has_temporal_reference = has_day or has_last_marker
-    has_activity_word = any(m in text for m in activity_markers)
+    has_activity_word = any(m in text for m in activity_markers) or any(m in text for m in last_named_markers)
     has_detail_word = any(m in text for m in detail_markers)
 
     has_slash_date = re.search(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", text) is not None
@@ -3997,6 +4055,15 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         "puedo entrenar hoy",
         "puedo entrenar mañana",
         "puedo entrenar fuerte",
+        # 24/10: "¿puedo hacer series hoy?" lo resolvía el LLM sin la decisión del motor ni datos de hoy.
+        "puedo hacer series",
+        "puedo hacer calidad",
+        "puedo hacer intensidad",
+        "puedo meter series",
+        "puedo meter calidad",
+        "puedo apretar",
+        "puedo correr hoy",
+        "puedo correr mañana",
         "estoy para entrenar hoy",
         "estoy para entrenar mañana",
         "necesito recuperar",
@@ -4382,7 +4449,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     w_ctl, w_atl, w_tsb = _week_end_load(week_end)
     c_ctl, c_atl, c_tsb = _week_end_load(comp_end)
 
-    weekday_es = {0: "lunes", 1: "martes", 2: "miercoles", 3: "jueves", 4: "viernes", 5: "sabado", 6: "domingo"}
+    weekday_es = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
 
     comp_tss_str = f"{previous_week_tss:.1f}"
     if delta_pct is not None:
@@ -4424,6 +4491,13 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
         lines.append(
             f"  - {weekday_es.get(d.weekday(), d.strftime('%A'))} {d.strftime('%d/%m')}: {tss_by_day.get(d_iso, 0.0):.1f} "
             f"(rTSS {comp['rTSS']:.1f} · hrTSS {comp['hrTSS']:.1f} · TSS {comp['TSS']:.1f})"
+        )
+    # Día de más carga de la semana, calculado aquí (24/10: el LLM lo sacaba de la serie y se equivocaba).
+    peak_day = max(week_dates, key=lambda d: tss_by_day.get(d.isoformat(), 0.0), default=None)
+    if peak_day is not None and tss_by_day.get(peak_day.isoformat(), 0.0) > 0:
+        lines.append(
+            f"  - Día con más carga: {weekday_es.get(peak_day.weekday())} {peak_day.strftime('%d/%m')} "
+            f"({tss_by_day[peak_day.isoformat()]:.1f} TSS)"
         )
 
     lines.append("")
@@ -4575,6 +4649,24 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
     return "\n".join(lines)
 
 
+def _activity_matches_sport(act: dict, sport_filter: str) -> bool:
+    """Actividad de Garmin del deporte pedido (trail, running sin trail, cycling)."""
+    if not isinstance(act, dict):
+        return False
+    type_key = str(
+        (act.get("activityTypeDTO") or {}).get("typeKey", "")
+        or (act.get("activityType") or {}).get("typeKey", "")
+        or act.get("type", "")
+    ).lower()
+    if sport_filter == "trail":
+        return "trail" in type_key
+    if sport_filter == "running":
+        return "running" in type_key and "trail" not in type_key
+    if sport_filter == "cycling":
+        return "cycl" in type_key or "bike" in type_key or "biking" in type_key
+    return True
+
+
 async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_message: str) -> str:
     """Resuelve consultas factuales diarias con MCP como fuente principal."""
     target_d = _resolve_target_date_from_message(user_message)
@@ -4617,23 +4709,16 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError):
                 continue
             recent_acts = _extract_activities_list(_try_parse_json(raw_recent) or raw_recent)
-            if recent_acts:
+            # Con filtro de deporte, solo vale si hay alguna de ese deporte; si no, se prueba el siguiente
+            # intento (24/10: la última bici, de hace 73 días, quedaba fuera de los 30 días del primero).
+            if recent_acts and (not sport_filter or any(_activity_matches_sport(a, sport_filter) for a in recent_acts)):
                 break
 
         latest_candidate_iso: str | None = None
         for act in recent_acts:
             if not isinstance(act, dict):
                 continue
-            type_key = str(
-                (act.get("activityTypeDTO") or {}).get("typeKey", "")
-                or (act.get("activityType") or {}).get("typeKey", "")
-                or act.get("type", "")
-            ).lower()
-            if sport_filter == "trail" and "trail" not in type_key:
-                continue
-            if sport_filter == "running" and ("running" not in type_key or "trail" in type_key):
-                continue
-            if sport_filter == "cycling" and "cycl" not in type_key and "bike" not in type_key:
+            if sport_filter and not _activity_matches_sport(act, sport_filter):
                 continue
             iso = _extract_activity_date_iso(act)
             if not iso:
@@ -11624,6 +11709,14 @@ class TrainerAgent:
         if not hasattr(self, "tool_router") or not isinstance(getattr(self, "tool_router", None), ToolRouter):
             self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
 
+        impossible = _find_impossible_date(user_message)
+        if impossible:
+            return await self._finalize_chat_reply(
+                user_message,
+                f"La fecha {impossible} no existe en el calendario. ¿Qué día querías consultar? (formato DD/MM/AAAA)",
+                route="invalid_date",
+            )
+
         reset_tool_transparency_events()
         messages = self._build_messages(user_message)
         _prefetch_cache: dict = {}  # poblado por el pre-fetch si user_date == hoy
@@ -12042,9 +12135,9 @@ class TrainerAgent:
 
                 # body_battery
                 if raw_bb is not None:
-                    log.info(f"body_battery raw({user_date}): {(raw_bb or '')[:200]}")
+                    log.debug(f"body_battery raw({user_date}): {(raw_bb or '')[:200]}")
                     bb_data = _compact_tool_result(raw_bb, "get_body_battery")
-                    log.info(f"body_battery compact({user_date}): {bb_data[:120] if bb_data else 'None'}")
+                    log.debug(f"body_battery compact({user_date}): {bb_data[:120] if bb_data else 'None'}")
                     if bb_data and bb_data != "(sin datos)":
                         context_parts.append(f"BODY BATTERY del {user_date}:\n{bb_data}")
 
@@ -12103,7 +12196,7 @@ class TrainerAgent:
                     for _param in ({"activity_id": pre_id}, {"activityId": pre_id}):
                         try:
                             _raw = await call_tool(self.mcp_session, "get_activity_hr_in_timezones", _param)
-                            log.info("get_activity_hr_in_timezones(%s): %s", _param, (_raw or "")[:200])
+                            log.debug("get_activity_hr_in_timezones(%s): %s", _param, (_raw or "")[:200])
                             if not _raw or "Unknown tool" in _raw or "unknown tool" in _raw.lower():
                                 log.info("hr_zones: get_activity_hr_in_timezones no disponible en este servidor MCP")
                                 break  # no reintentar con otros params si la herramienta no existe
@@ -12278,6 +12371,11 @@ class TrainerAgent:
                 log.debug(f"Pre-fetch {user_date}: no se encontro actividad")
 
         _MAX_TOOL_ITER = 15
+        # Cortacircuitos (24/10): garminconnect espera hasta 30 s por petición y aquí se corta a los 8 s; con
+        # Garmin lento, cada llamada nueva se encolaba tras la abandonada y agotaba también su tiempo (5 seguidas,
+        # 144 s en una pregunta). Tras 2 timeouts en la misma respuesta no se llama más a Garmin.
+        _MAX_TOOL_TIMEOUTS = 2
+        tool_timeouts = 0
         iteration = 0
         while True:
             iteration += 1
@@ -12396,6 +12494,9 @@ class TrainerAgent:
 
                 for tool_call in message.tool_calls:
                     tool_name = tool_call.function.name
+                    # Los nombres de tools van en minúsculas; el modelo a veces escribe "Kairos_weekly_..." (24/10).
+                    if tool_name and tool_name != tool_name.lower():
+                        tool_name = tool_name.lower()
                     # Compatibilidad: algunas guías/prompts antiguos usan plural.
                     if tool_name == "get_personal_records":
                         tool_name = "get_personal_record"
@@ -12445,6 +12546,40 @@ class TrainerAgent:
                         })
                         continue
 
+                    # Herramienta que no existe (24/10: el LLM llamó a "goals", que es una tabla citada en el
+                    # prompt): no se manda al servidor, que lo devolvía como fallo de Garmin y se avisaba al
+                    # usuario de que Garmin no respondía. Se le dice al LLM qué herramientas hay.
+                    known_tools = {
+                        (item.get("function") or {}).get("name")
+                        for item in (self.tools_schema or []) if isinstance(item, dict)
+                    }
+                    if known_tools and tool_name not in known_tools and not tool_name.startswith("kairos_"):
+                        log.warning("[LLM] herramienta inexistente pedida por el modelo: %s", tool_name)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps({
+                                "error": "unknown_tool",
+                                "tool": tool_name,
+                                "message": "Esa herramienta no existe. Usa solo las herramientas disponibles; "
+                                           "el perfil, el objetivo y el plan ya están en el contexto.",
+                            }, ensure_ascii=False),
+                        })
+                        continue
+
+                    if tool_timeouts >= _MAX_TOOL_TIMEOUTS and not tool_name.startswith("kairos_"):
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps({
+                                "error": "garmin_slow",
+                                "tool": tool_name,
+                                "message": "Garmin no está respondiendo ahora. No pidas más datos a Garmin en esta "
+                                           "respuesta: contesta con lo que ya tienes y di qué no has podido consultar.",
+                            }, ensure_ascii=False),
+                        })
+                        continue
+
                     log.debug(f"Ejecutando: {tool_name}({arguments})")
                     try:
                         if tool_name == "get_activity" and not (isinstance(arguments, dict) and arguments.get("activity_id")):
@@ -12457,6 +12592,7 @@ class TrainerAgent:
                                 timeout=_tool_timeout_seconds(),
                             )
                     except asyncio.TimeoutError as tool_exc:
+                        tool_timeouts += 1
                         self._log_chat_error(
                             stage="tool_call_timeout",
                             error=tool_exc,
@@ -12546,10 +12682,9 @@ class TrainerAgent:
                         extra={"user_message": user_message},
                     )
 
-            # Fallback anti-respuesta genérica de planificación:
-            # 1) con objetivo -> mantener fallback estructurado legacy;
-            # 2) sin objetivo -> reintento por LLM con snapshot proactivo para
-            #    proponer sesión útil sin pedir más contexto.
+            # Fallback anti-respuesta genérica ("necesito más información"): reintento por LLM con el
+            # snapshot para proponer una sesión útil. Nunca escribe en la base de datos: hasta el 24/10, con
+            # objetivo en el perfil, creaba un plan "activo" vacío y desactivaba el plan real del atleta.
             if (
                 _is_generic_needs_more_info_reply(assistant_reply)
                 and (
@@ -12558,129 +12693,84 @@ class TrainerAgent:
                     or _is_post_activity_feedback_intent(user_message)
                 )
             ):
-                if _has_goal_in_profile(self.user_profile):
-                    assistant_reply = _build_goal_plan_fallback(self.user_profile)
-                    # Persistir un plan activo mínimo como fuente de verdad en DB
-                    # y mantener compatibilidad hacia atrás en perfil.
-                    try:
-                        goals = (self.user_profile or {}).get("goals", {})
-                        target_race = goals.get("target_race") or "objetivo"
-                        target_date = goals.get("target_race_date") or "fecha por definir"
-                        created = _storage.create_training_plan(
-                            {
-                                "title": f"Plan hacia {target_race}",
-                                "description": "Plan inicial autogenerado por fallback desde objetivo del atleta.",
-                                "objective": str(target_race),
-                                "difficulty": "moderate",
-                                "duration_weeks": 0,
-                                "status": "active",
-                                "source": "agent_goal_fallback",
-                                "plan_data": {
-                                    "target_race": target_race,
-                                    "target_race_date": target_date,
-                                    "created_at": date.today().isoformat(),
-                                },
-                            },
-                            sessions=None,
-                            change_reason="auto_fallback_from_goal",
-                        )
-                        db_plan = _normalize_storage_plan_row(created)
-                        if db_plan:
-                            db_plan.setdefault("target_race", target_race)
-                            db_plan.setdefault("target_race_date", target_date)
-                            self.user_profile["training_plan"] = db_plan
-                        else:
-                            self.user_profile["training_plan"] = {
-                                "active": True,
-                                "status": "active",
-                                "source": "agent_goal_fallback",
-                                "title": f"Plan hacia {target_race}",
-                                "target_race": target_race,
-                                "target_race_date": target_date,
-                                "created_at": date.today().isoformat(),
-                            }
-                        _save_user_profile(self.user_profile)
-                    except (RuntimeError, ValueError, TypeError, OSError) as exc:
-                        log.debug("No se pudo persistir plan fallback en perfil: %s", exc)
+                rescue_messages: list[dict[str, str]]
+                if _is_post_activity_feedback_intent(user_message) and analysis_block_for_rescue:
+                    target_date = prefetch_date_for_rescue or user_date or "fecha consultada"
+                    rescue_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                _render_prompt("rescue/activity_feedback")
+                                + "\n\n" + _load_coaching_rules()
+                                + self._profile_context_block()
+                                + self._plan_context_block()
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": _render_prompt(
+                                "rescue/activity_feedback_user",
+                                pregunta=user_message,
+                                fecha=target_date,
+                                datos=analysis_block_for_rescue,
+                            ),
+                        },
+                    ]
                 else:
-                    rescue_messages: list[dict[str, str]]
-                    if _is_post_activity_feedback_intent(user_message) and analysis_block_for_rescue:
-                        target_date = prefetch_date_for_rescue or user_date or "fecha consultada"
-                        rescue_messages = [
-                            {
-                                "role": "system",
-                                "content": (
-                                    _render_prompt("rescue/activity_feedback")
-                                    + "\n\n" + _load_coaching_rules()
-                                    + self._profile_context_block()
-                                    + self._plan_context_block()
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": _render_prompt(
-                                    "rescue/activity_feedback_user",
-                                    pregunta=user_message,
-                                    fecha=target_date,
-                                    datos=analysis_block_for_rescue,
-                                ),
-                            },
-                        ]
-                    else:
-                        snapshot_ctx: dict[str, Any] = {}
-                        try:
-                            startup = await self.collect_startup_snapshot_48h()
-                            load_summary = _format_load_fatigue_summary(startup.get("load_fatigue") or {})
-                            snapshot_ctx = {
-                                "today": (startup.get("dates") or {}).get("today"),
-                                "body_battery": (startup.get("body_battery") or {}).get("summary"),
-                                "hrv": (startup.get("hrv") or {}).get("summary"),
-                                "sleep": (startup.get("sleep") or {}).get("summary"),
-                                "load": load_summary,
-                                "recent_trainings": (startup.get("trainings") or [])[:3],
-                            }
-                        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
-                            log.debug("No se pudo obtener snapshot para fallback LLM de planificación: %s", exc)
-
-                        rescue_messages = [
-                            {
-                                "role": "system",
-                                "content": (
-                                    _render_prompt("rescue/next_session")
-                                    + "\n\n" + _load_coaching_rules()
-                                    + self._profile_context_block()
-                                    + self._load_and_anchors_context_block()
-                                    + self._plan_context_block()
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": _render_prompt(
-                                    "rescue/next_session_user",
-                                    solicitud=user_message,
-                                    contexto=json.dumps(snapshot_ctx, ensure_ascii=False),
-                                ),
-                            },
-                        ]
+                    snapshot_ctx: dict[str, Any] = {}
                     try:
-                        rescue_response = await self.client.chat.completions.create(
-                            model=self.model,
-                            messages=rescue_messages,
-                        )
-                        if getattr(rescue_response, "usage", None):
-                            u = rescue_response.usage
-                            p_toks = getattr(u, "prompt_tokens", 0) or 0
-                            c_toks = getattr(u, "completion_tokens", 0) or 0
-                            self.total_prompt_tokens += p_toks
-                            self.total_completion_tokens += c_toks
-                            if getattr(self, "_api_key", None):
-                                update_gemini_daily_usage(self._api_key, p_toks + c_toks)
-                        rescue_text = str((rescue_response.choices[0].message.content or "")).strip()
-                        rescue_text = await self._apply_output_sensors(rescue_text, rescue_messages, "rescue")
-                        if rescue_text:
-                            assistant_reply = rescue_text
-                    except Exception as exc:
-                        log.debug("Fallback LLM de planificación no disponible: %s", exc)
+                        startup = await self.collect_startup_snapshot_48h()
+                        load_summary = _format_load_fatigue_summary(startup.get("load_fatigue") or {})
+                        snapshot_ctx = {
+                            "today": (startup.get("dates") or {}).get("today"),
+                            "body_battery": (startup.get("body_battery") or {}).get("summary"),
+                            "hrv": (startup.get("hrv") or {}).get("summary"),
+                            "sleep": (startup.get("sleep") or {}).get("summary"),
+                            "load": load_summary,
+                            "recent_trainings": (startup.get("trainings") or [])[:3],
+                        }
+                    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+                        log.debug("No se pudo obtener snapshot para fallback LLM de planificación: %s", exc)
+
+                    rescue_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                _render_prompt("rescue/next_session", horizonte=_coaching_horizon(user_message))
+                                + "\n\n" + _load_coaching_rules()
+                                + self._profile_context_block()
+                                + self._load_and_anchors_context_block()
+                                + self._plan_context_block()
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": _render_prompt(
+                                "rescue/next_session_user",
+                                solicitud=user_message,
+                                contexto=json.dumps(snapshot_ctx, ensure_ascii=False),
+                            ),
+                        },
+                    ]
+                try:
+                    rescue_response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=rescue_messages,
+                    )
+                    if getattr(rescue_response, "usage", None):
+                        u = rescue_response.usage
+                        p_toks = getattr(u, "prompt_tokens", 0) or 0
+                        c_toks = getattr(u, "completion_tokens", 0) or 0
+                        self.total_prompt_tokens += p_toks
+                        self.total_completion_tokens += c_toks
+                        if getattr(self, "_api_key", None):
+                            update_gemini_daily_usage(self._api_key, p_toks + c_toks)
+                    rescue_text = str((rescue_response.choices[0].message.content or "")).strip()
+                    rescue_text = await self._apply_output_sensors(rescue_text, rescue_messages, "rescue")
+                    if rescue_text:
+                        assistant_reply = rescue_text
+                except Exception as exc:
+                    log.debug("Fallback LLM de planificación no disponible: %s", exc)
 
             return await self._finalize_chat_reply(user_message, assistant_reply, route="llm")
 

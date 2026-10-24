@@ -2,6 +2,30 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-24
+
+Auditoría antes de producción: análisis estático, cobertura y tres sesiones exploratorias con Kairos real por terminal (35 preguntas fuera de la batería, sin escrituras de usuario). Batería base 25/25 al final (coaching 114 s). Tests: 638.
+
+### Fixed (datos del usuario)
+- Una respuesta genérica del LLM ("necesito más información") a una pregunta de planificación, de mañana o de valoración, con objetivo en el perfil, creaba en Supabase un plan "activo" de 0 semanas y sin sesiones, y `create_training_plan` desactivaba el plan activo real. Ahora pasa por el rescate con LLM y nunca escribe; los planes solo los crea el motor de planes cuando se piden. El rescate de sesión usa el horizonte de la pregunta (antes decía siempre "para mañana").
+
+### Fixed (respuestas incorrectas o vacías)
+- Router: "¿puedo hacer series hoy?" → estado del día (el LLM libre decía "descanso" con 0 señales alteradas y datos del 22/10); "compara mi HRV de esta semana con la pasada" → LLM (devolvía la tabla de un día); "¿cómo fue mi semana del 05/10 al 11/10?" y "¿qué día de esta semana tuve más carga?" → TSS semanal (agotaba las 15 llamadas a tools; el LLM leía mal la serie y daba un día de otra semana). La respuesta semanal añade "Día con más carga" y lleva tildes en los días.
+- "¿Qué tal fue mi última salida en bici?" / "última carrera" → detalle de actividad (el LLM dijo "anterior a agosto"; fue el 12/08). La búsqueda de la última por deporte solo da por bueno un intento si hay alguna de ese deporte (antes, cualquier actividad en 30 días cortaba la búsqueda) y reconoce `road_biking`.
+- Horizonte: "la semana que viene / próxima semana" ya no se trata como esta semana ni "pasado mañana" como mañana (`prompts/coaching/horizon_next_week.md`, `horizon_day_after.md`).
+- Fechas imposibles (31/02, 30/02, 31/04, 29/02 de año no bisiesto): Kairos lo dice en vez de responder con los datos de hoy.
+- Herramienta inexistente pedida por el LLM ("goals"): no se manda al servidor (se avisaba de que Garmin no respondía); se le dice qué hay. Nombres de tool con mayúsculas ("Kairos_weekly_...") se normalizan.
+- Cortacircuitos: tras 2 timeouts de tools en una respuesta no se llama más a Garmin (garminconnect espera 30 s y aquí se corta a 8 s; las llamadas se encolaban: 5 timeouts y 144 s en una pregunta).
+- `/perfil` y la base de conocimiento inicial muestran la fecha del evento en DD/MM/AAAA.
+
+### Fixed (sensores)
+- S10: el deporte se decide por la frase y, si no lo nombra, por la línea de contexto anterior (encabezado "Cycling" sobre una tabla de zonas), sin cortar en "|" ni heredar el deporte de otra viñeta; los rangos descriptivos ("tu FC se estabilizó en 159–178") no se juzgan; "Calent." abreviado cuenta como progresivo. S11: una meta cerca de "umbral" ("ritmo meta ≈ 3:55", "bajar el umbral a 3:55") no es el umbral. S16: solo con una prescripción real (estructura de sesión o propuesta), no por "rodaje" en una lista de actividades o una tabla de zonas. 0 diferencias frente al juez original en 350 casos.
+- Juez: juzga cada transcripción con los datos de su día (nombre `AAAAMMDD_`); antes comparaba siempre con la última fila de la serie y una batería de ayer salía 21/25.
+
+### Changed (logs)
+- El logging se configura al arrancar Kairos, no al importar `agent.main` (los tests escribían en `agent.log` y mezclaban líneas `[SENSOR]` falsas con las reales). `KAIROS_LOG_STDOUT` es `false` por defecto (los logs y los volcados de JSON salían en la terminal); los tres volcados de JSON pasan a DEBUG. `agent.log` es rotativo (5 MB × 3). El stderr del servidor MCP va a `garmin_mcp.log` (`KAIROS_MCP_LOG_FILE`) en vez de a la terminal.
+- Repo: commit-graph de git regenerado (faltaba un fichero de la cadena; los objetos estaban sanos).
+
 ## 2026-10-23
 
 ### Added (pre-commit y lint en la CI, paso 6 de `docs/Harness.md`)

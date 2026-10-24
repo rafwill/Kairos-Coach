@@ -115,12 +115,13 @@ def _call_mcp_tool(name: str, args: dict | None = None):
     return parsed if parsed is not None else []
 
 class Truth:
-    def __init__(self, username: str):
+    def __init__(self, username: str, today: date | None = None):
         user = storage.find_user_by_username(username)
         if not user:
             raise SystemExit(f"Usuario no encontrado: {username}")
         storage.set_active_user(user["id"], username)
-        self.today = date.today()
+        # "Hoy" es el día de la transcripción, para poder volver a juzgar una batería antigua (24/10).
+        self.today = today or date.today()
         self.series = storage.get_load_metrics_series(days=400)
         self.by_date = {r["date"]: r for r in self.series}
         self.acts = list((storage.get_activity_tss_map("2000-01-01") or {}).values())
@@ -136,7 +137,8 @@ class Truth:
         self._prs: set[str] | None = None
 
     def latest(self) -> dict:
-        return self.series[-1]
+        """Fila del día de la transcripción (o la anterior más cercana), no la última de la serie."""
+        return self.row_on_or_before(self.today.isoformat()) or self.series[-1]
 
     def row_on_or_before(self, d_iso: str) -> dict | None:
         rows = [r for r in self.series if r["date"] <= d_iso]
@@ -411,9 +413,12 @@ def main() -> int:
     if not username:
         ap.error("falta el usuario: --username o KAIROS_USERNAME en .env")
     path = Path(args.transcripcion)
-    if datetime.fromtimestamp(path.stat().st_mtime).date() != date.today():
-        print("⚠️  La transcripción no es de hoy: los datos de referencia pueden haber cambiado desde entonces.")
-    truth = Truth(username)
+    m = re.match(r"(\d{4})(\d{2})(\d{2})_", path.name)
+    day = date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else datetime.fromtimestamp(path.stat().st_mtime).date()
+    if day != date.today():
+        print(f"⚠️  Transcripción del {day.strftime('%d/%m/%Y')}: se juzga con los datos de ese día (las actividades "
+              "o el perfil pueden haber cambiado desde entonces).")
+    truth = Truth(username, today=day)
 
     verdicts: list[Verdict] = []
     for n, q, secs, body in load_transcript(path):
