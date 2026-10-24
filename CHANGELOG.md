@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-24
 
+### Changed (fiabilidad frente a Garmin: llamadas en paralelo)
+- Servidor MCP: FastMCP ejecutaba las tools síncronas dentro de su bucle de eventos, así que una petición lenta a Garmin (hasta 30 s en `garminconnect`) paraba el servidor entero y las demás se encolaban. Ahora cada tool se ejecuta en un hilo (`anyio.to_thread`) con un máximo de 4 llamadas simultáneas a Garmin (evita ráfagas que lleven a un 429), conservando la firma de cada tool (esquema y catálogo sin cambios). El cliente y los logins de Garmin van con un cerrojo: si varias llamadas encuentran los tokens caducados, solo una rehace el login.
+- Kairos: las tools que el LLM pide en un mismo mensaje se lanzan a la vez (`asyncio.gather`, resultados en orden). El cortacircuitos se aplica a los mensajes siguientes de la respuesta.
+- No se baja el límite de 30 s de `garminconnect`: va fijo en cada petición y cambiarlo exigiría parchear la librería; con el paralelismo una petición lenta ya no bloquea las demás.
+- En vivo: 6 tools reales, 3,14 s en serie y 1,36 s en paralelo, sin errores. Tests: 651 (4 nuevos del servidor y el cortacircuitos rehecho).
+
 ### Security (Supabase Auth y seguridad por fila)
 - Las 11 tablas tenían RLS desactivado y Kairos usaba la clave `anon`: con la URL y esa clave (públicas, en cada `.env`) se podían leer y modificar los datos de todos los usuarios, incluido el hash de la contraseña y la contraseña de Garmin cifrada (`tools/check_rls.py`: 8 tablas visibles sin sesión). Kairos además leía `app_user` antes de iniciar sesión.
 - Acceso con Supabase Auth (email + la misma contraseña que en Garmin): `storage.restore_session` (sesión guardada en `~/.kairos/supabase_session.json`, sin contraseña), `sign_in`, `sign_up` (con confirmación de email), `create_app_user`, `update_login_password`. Fuera la autenticación propia (`find_user_by_username`, `authenticate_app_user`, `register_app_user`, PBKDF2): nada se lee de la base de datos antes de entrar. El juez y `rebuild_tss_baseline` usan la sesión guardada.

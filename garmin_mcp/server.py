@@ -6,14 +6,17 @@ Independiente del host: no importa nada de `agent/`. Arranque: `python -m garmin
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import re
 import shutil
+import threading
 from datetime import date
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
+import anyio
 from garminconnect import Garmin
 from garminconnect.exceptions import GarminConnectAuthenticationError
 from garminconnect.exceptions import GarminConnectConnectionError
@@ -25,6 +28,12 @@ mcp = FastMCP("kairos-garmin-mcp", instructions="Kairos local Garmin MCP server"
 
 _client: Garmin | None = None
 _client_identity: tuple[str, str] | None = None
+# Las tools se ejecutan en hilos (ver _tool): el cliente y los logins de Garmin se protegen con este
+# cerrojo para que dos llamadas con los tokens caducados no hagan dos logins (Garmin responde 429).
+_client_lock = threading.RLock()
+# Llamadas simultáneas a Garmin como máximo: en paralelo, pero sin ráfagas que lleven a un 429.
+GARMIN_MAX_CONCURRENT_CALLS = 4
+_garmin_limiter: anyio.CapacityLimiter | None = None
 _AUTH_LIKE_HTTP_CODES = {"401", "403"}
 
 PASSTHROUGH_TOOLS: dict[str, str] = {
@@ -131,6 +140,11 @@ def _activity_iso_day(activity: dict) -> str | None:
 
 
 def _garmin_client() -> Garmin:
+    with _client_lock:
+        return _garmin_client_locked()
+
+
+def _garmin_client_locked() -> Garmin:
     global _client
     global _client_identity
 
@@ -202,23 +216,26 @@ def _is_auth_like_connection_error(exc: Exception) -> bool:
 def _invoke_with_auth_retry(method_name: str, *args: Any, **kwargs: Any) -> Any:
     """Invoke a Garmin method and retry once only for auth-like failures."""
     client = _garmin_client()
-    method = getattr(client, method_name)
 
     try:
-        return method(*args, **kwargs)
+        return getattr(client, method_name)(*args, **kwargs)
     except GarminConnectAuthenticationError:
         # Tokens guardados que ya no valen: se borran para que el reintento haga login de verdad.
-        _invalidate_client_cache(clear_tokens=True)
-        client = _garmin_client()
-        method = getattr(client, method_name)
-        return method(*args, **kwargs)
+        client = _relogin_after_auth_failure(client)
+        return getattr(client, method_name)(*args, **kwargs)
     except GarminConnectConnectionError as exc:
         if not _is_auth_like_connection_error(exc):
             raise
-        _invalidate_client_cache(clear_tokens=True)
-        client = _garmin_client()
-        method = getattr(client, method_name)
-        return method(*args, **kwargs)
+        client = _relogin_after_auth_failure(client)
+        return getattr(client, method_name)(*args, **kwargs)
+
+
+def _relogin_after_auth_failure(failed: Garmin) -> Garmin:
+    """Un solo login aunque fallen varias llamadas a la vez: si otro hilo ya rehízo el cliente, se usa ese."""
+    with _client_lock:  # reentrante: _garmin_client vuelve a tomarlo
+        if _client is failed:
+            _invalidate_client_cache(clear_tokens=True)
+        return _garmin_client()
 
 
 def _invoke_passthrough(tool_name: str, args: dict[str, Any]) -> Any:
@@ -519,7 +536,32 @@ ActivityId = Annotated[int, Field(description="ID de la actividad en Garmin (act
 
 
 def _tool(name: str, title: str, description: str):
-    return mcp.tool(name=name, title=title, description=description, annotations=_READ_ONLY)
+    """Registra una tool de solo lectura que se ejecuta en un hilo, con GARMIN_MAX_CONCURRENT_CALLS a la vez.
+
+    FastMCP llama a las funciones síncronas dentro del bucle de eventos: mientras una esperaba a Garmin
+    (hasta 30 s por petición en garminconnect) el servidor entero se paraba y las demás llamadas se
+    encolaban detrás (24/10: 5 timeouts seguidos y 144 s en una pregunta). En un hilo, una petición lenta
+    ya no bloquea las demás. La función registrada conserva la firma (functools.wraps), de la que salen el
+    esquema de parámetros y el catálogo; el módulo sigue exponiendo la función síncrona.
+    """
+    register = mcp.tool(name=name, title=title, description=description, annotations=_READ_ONLY)
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def run_in_thread(*args: Any, **kwargs: Any) -> Any:
+            return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs), limiter=_limiter())
+
+        register(run_in_thread)
+        return fn
+
+    return decorator
+
+
+def _limiter() -> anyio.CapacityLimiter:
+    global _garmin_limiter
+    if _garmin_limiter is None:
+        _garmin_limiter = anyio.CapacityLimiter(GARMIN_MAX_CONCURRENT_CALLS)
+    return _garmin_limiter
 
 
 @_tool("get_user_profile", "Perfil del usuario en Garmin",

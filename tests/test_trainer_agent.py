@@ -425,9 +425,11 @@ class TestImpossibleDateAndUnknownTool:
 
 class TestToolTimeoutBreaker:
     @pytest.mark.asyncio
-    async def test_after_two_timeouts_garmin_is_not_called_again(self, monkeypatch):
+    async def test_parallel_calls_then_breaker_stops_further_garmin_calls(self, monkeypatch):
         # Exploración del 24/10: 5 get_activity seguidos agotaron su tiempo (144 s en una pregunta).
+        # Ahora las llamadas de un mismo mensaje van en paralelo y, tras 2 timeouts, no se llama más a Garmin.
         import asyncio
+        import time as _time
 
         def _call(i):
             c = MagicMock()
@@ -463,19 +465,28 @@ class TestToolTimeoutBreaker:
         agent.total_prompt_tokens = agent.total_completion_tokens = 0
         agent.client = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=[
-            _resp(tool_calls=[_call(1), _call(2), _call(3), _call(4)]),
+            _resp(tool_calls=[_call(1), _call(2), _call(3)]),
+            _resp(tool_calls=[_call(4), _call(5)]),
             _resp(content="No he podido consultar todas las actividades."),
         ])
         monkeypatch.setattr(ta, "call_tool", slow_tool)
-        monkeypatch.setattr(ta, "_tool_timeout_seconds", lambda: 0.01)
+        monkeypatch.setattr(ta, "_tool_timeout_seconds", lambda: 0.2)
         monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        t0 = _time.perf_counter()
         with patch("agent.trainer_agent._save_history_entry"):
             await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
+        elapsed = _time.perf_counter() - t0
 
-        assert len(calls_to_garmin) == 2
-        tool_msgs = [m for m in agent.client.chat.completions.create.await_args_list[1].kwargs["messages"]
-                     if isinstance(m, dict) and m.get("role") == "tool"]
-        assert sum("garmin_slow" in m["content"] for m in tool_msgs) == 2
+        # Las 3 del primer mensaje salieron a la vez (0,2 s, no 0,6 s); las 2 del segundo ya no.
+        assert len(calls_to_garmin) == 3
+        assert elapsed < 0.5, elapsed
+        # El LLM simulado recibe siempre la misma lista de mensajes: se mira la final.
+        final = agent.client.chat.completions.create.await_args_list[-1].kwargs["messages"]
+        tool_msgs = [m for m in final if isinstance(m, dict) and m.get("role") == "tool"]
+        # Los resultados conservan el orden de las llamadas.
+        assert [m["tool_call_id"] for m in tool_msgs] == ["c1", "c2", "c3", "c4", "c5"]
+        assert all("tool_call_timeout" in m["content"] for m in tool_msgs[:3])
+        assert all("garmin_slow" in m["content"] for m in tool_msgs[3:])
 
 
 class TestCoachingHorizon:

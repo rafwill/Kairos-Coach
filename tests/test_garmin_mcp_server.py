@@ -518,3 +518,83 @@ def test_tool_catalog_readme_is_up_to_date():
     assert gen.current_block(gen.README.read_text(encoding="utf-8")) == expected, (
         "garmin_mcp/README.md desfasado: ejecuta python tools/gen_mcp_docs.py"
     )
+
+
+# ─── Llamadas en paralelo (24/10) ──────────────────────────────────────────
+
+def test_tools_run_in_parallel_threads(monkeypatch):
+    import asyncio
+    import time as _time
+
+    def slow_dispatch(name, args):
+        _time.sleep(0.3)
+        return {"tool": name}
+
+    monkeypatch.setattr(server, "_dispatch", slow_dispatch)
+
+    async def run():
+        t0 = _time.perf_counter()
+        await asyncio.gather(*(server.mcp.call_tool("get_activity", {"activity_id": i}) for i in range(3)))
+        return _time.perf_counter() - t0
+
+    elapsed = asyncio.run(run())
+    # En serie serían ~0,9 s; en hilos, ~0,3 s.
+    assert elapsed < 0.7, elapsed
+
+
+def test_parallel_calls_never_exceed_the_garmin_limit(monkeypatch):
+    import asyncio
+    import threading
+    import time as _time
+
+    state = {"now": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def counting_dispatch(name, args):
+        with lock:
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        _time.sleep(0.1)
+        with lock:
+            state["now"] -= 1
+        return {}
+
+    monkeypatch.setattr(server, "_dispatch", counting_dispatch)
+    monkeypatch.setattr(server, "_garmin_limiter", None)
+
+    async def run():
+        await asyncio.gather(*(server.mcp.call_tool("get_activity", {"activity_id": i}) for i in range(8)))
+
+    asyncio.run(run())
+    assert state["peak"] == server.GARMIN_MAX_CONCURRENT_CALLS
+
+
+def test_two_auth_failures_on_the_same_client_log_in_once(monkeypatch):
+    failed = object()
+    logins = []
+
+    def fake_locked():
+        new = object()
+        logins.append(new)
+        server._client = new
+        return new
+
+    monkeypatch.setattr(server, "_garmin_client_locked", fake_locked)
+    monkeypatch.setattr(server, "_invalidate_client_cache", lambda clear_tokens=False: setattr(server, "_client", None))
+    monkeypatch.setattr(server, "_client", failed)
+
+    first = server._relogin_after_auth_failure(failed)
+    # El segundo hilo falló con el mismo cliente viejo: ya hay uno nuevo y no se vuelve a iniciar sesión.
+    monkeypatch.setattr(server, "_garmin_client_locked", lambda: server._client)
+    second = server._relogin_after_auth_failure(failed)
+
+    assert len(logins) == 1 and first is second
+
+
+def test_threaded_tools_keep_their_parameter_schema():
+    import asyncio
+
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    props = tools["get_activity"].inputSchema["properties"]
+    assert "activity_id" in props and props["activity_id"]["type"] == "integer"
+    assert props["activity_id"]["description"].startswith("ID de la actividad")

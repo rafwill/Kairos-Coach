@@ -12492,7 +12492,11 @@ class TrainerAgent:
             if message.tool_calls:
                 messages.append(message)
 
-                for tool_call in message.tool_calls:
+                # Las llamadas de un mismo mensaje del LLM van en paralelo (24/10): el servidor MCP las atiende
+                # en hilos con un tope de llamadas simultáneas a Garmin. Cada una devuelve su mensaje "tool" y
+                # gather conserva el orden. El cortacircuitos de timeouts se aplica a los mensajes siguientes.
+                async def _run_tool_call(tool_call) -> dict:
+                    nonlocal tool_timeouts
                     tool_name = tool_call.function.name
                     # Los nombres de tools van en minúsculas; el modelo a veces escribe "Kairos_weekly_..." (24/10).
                     if tool_name and tool_name != tool_name.lower():
@@ -12539,12 +12543,11 @@ class TrainerAgent:
                     if self.mcp_read_only and _is_write_mcp_tool(tool_name):
                         log.debug(f"Bloqueada tool de escritura por MCP_READ_ONLY: {tool_name}")
                         raw_result = _build_mcp_read_only_block_message(tool_name)
-                        messages.append({
+                        return {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "content": raw_result,
-                        })
-                        continue
+                        }
 
                     # Herramienta que no existe (24/10: el LLM llamó a "goals", que es una tabla citada en el
                     # prompt): no se manda al servidor, que lo devolvía como fallo de Garmin y se avisaba al
@@ -12555,7 +12558,7 @@ class TrainerAgent:
                     }
                     if known_tools and tool_name not in known_tools and not tool_name.startswith("kairos_"):
                         log.warning("[LLM] herramienta inexistente pedida por el modelo: %s", tool_name)
-                        messages.append({
+                        return {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "content": json.dumps({
@@ -12564,11 +12567,10 @@ class TrainerAgent:
                                 "message": "Esa herramienta no existe. Usa solo las herramientas disponibles; "
                                            "el perfil, el objetivo y el plan ya están en el contexto.",
                             }, ensure_ascii=False),
-                        })
-                        continue
+                        }
 
                     if tool_timeouts >= _MAX_TOOL_TIMEOUTS and not tool_name.startswith("kairos_"):
-                        messages.append({
+                        return {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "content": json.dumps({
@@ -12577,8 +12579,7 @@ class TrainerAgent:
                                 "message": "Garmin no está respondiendo ahora. No pidas más datos a Garmin en esta "
                                            "respuesta: contesta con lo que ya tienes y di qué no has podido consultar.",
                             }, ensure_ascii=False),
-                        })
-                        continue
+                        }
 
                     log.debug(f"Ejecutando: {tool_name}({arguments})")
                     try:
@@ -12638,11 +12639,13 @@ class TrainerAgent:
                     tool_result = _compact_tool_result(raw_result, tool_name)
                     log.debug(f"Resultado ({len(raw_result or '')} -> {len(tool_result)} chars): {tool_result[:150]}")
 
-                    messages.append({
+                    return {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "content": tool_result,
-                    })
+                    }
+
+                messages.extend(await asyncio.gather(*(_run_tool_call(tc) for tc in message.tool_calls)))
 
                 # Continúa el loop para que el modelo procese los resultados
                 continue

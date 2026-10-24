@@ -33,6 +33,7 @@ Kairos lo arranca solo como subproceso. Para usarlo desde otro cliente MCP (por 
 | `GARMINTOKENS` | Opcional: carpeta de tokens. Por defecto `~/.garminconnect/kairos/<hash del email>`. |
 
 - **Login:** reutiliza los tokens guardados y solo entra con contraseña si faltan o Garmin los rechaza (por ejemplo, tras cambiar la contraseña), y entonces los vuelve a guardar. Así se evitan los bloqueos 429 de Garmin por logins repetidos.
+- **Llamadas en paralelo:** cada tool se ejecuta en un hilo, con un máximo de `GARMIN_MAX_CONCURRENT_CALLS` (4) llamadas simultáneas a Garmin. FastMCP ejecuta las funciones síncronas dentro de su bucle de eventos: antes, mientras una tool esperaba a Garmin (hasta 30 s por petición en `garminconnect`), el servidor entero se paraba y las demás llamadas se encolaban detrás. El tope evita ráfagas que lleven a un 429. El cliente de Garmin y los logins van protegidos con un cerrojo: si varias llamadas encuentran los tokens caducados a la vez, solo una vuelve a iniciar sesión.
 - **Solo lectura:** ninguna tool escribe en Garmin. Todas llevan las anotaciones MCP `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true` y `openWorldHint=true`.
 - **Fechas:** formato `AAAA-MM-DD`. Si se omite la fecha, se usa hoy; en los rangos, el fin por defecto es el inicio.
 - **Dependencias:** `mcp` (FastMCP), `garminconnect` 0.3.2 y `pydantic`.
