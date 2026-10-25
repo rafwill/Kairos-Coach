@@ -1284,3 +1284,11 @@ Si quieres, convierto este diagnóstico en una página para compartir.
 - Señal: exploración del 24/10, "¿cuál fue mi actividad más larga de septiembre?": 5 timeouts de get_activity seguidos y 144 s.
 - Lección: FastMCP ejecuta las tools síncronas dentro de su bucle de eventos; una petición lenta a Garmin (hasta 30 s en garminconnect) paraba el servidor y encolaba las demás, y Kairos, que corta a los 8 s, seguía mandando llamadas que también caducaban. Las tools van en hilos con un tope (4) para no provocar 429, el login con un cerrojo, y Kairos lanza a la vez las tools de un mismo mensaje del LLM. No se baja el límite de 30 s de garminconnect (fijo en cada petición; habría que parchear la librería).
 - Evidencia: 6 tools reales 3,14 s en serie frente a 1,36 s en paralelo; la misma pregunta, 30 s y 0 timeouts; batería 25/25; ningún 429. Detalle en garmin_mcp/README.md (Configuración), docs/arquitectura.md (Cliente MCP), docs/Harness.md (S7) y CHANGELOG.
+
+
+25/10/2026 — Rutas deterministas de periodo y sueño (biblioteca de experiencia)
+
+- Señal: exploración del 24/10; "¿cuál fue mi actividad más larga de septiembre?" y "¿cuántos km este mes?" las resolvía el LLM sumando series (actividad equivocada, 144 s); "¿cómo dormí anoche?" devolvía la tabla de todo el día.
+- Lección: una suma o un máximo sobre una lista no se deja al LLM. Además, `get_activities_by_date` pagina de 100 en 100: la primera versión daba "100 actividades" en el año (285 reales); hay que pedir páginas hasta `has_more = false`. Y el sueño de hoy puede no estar sincronizado: se dice y se muestra la última noche con su fecha.
+- Evidencia: rutas `period_activities` y `sleep_last_night`; cifras iguales a la suma directa del servidor (151,42 km en octubre, 309,24 km en septiembre, 149 carreras en el año); 2–3 s por mes, 22 s el año entero; batería 25/25. Detalle en CHANGELOG.
+- Pendiente: "¿cómo dormí el martes?" y las tendencias de sueño siguen en el LLM.

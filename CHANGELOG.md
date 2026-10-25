@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-25
+
+### Added (rutas deterministas: periodo y sueño de anoche)
+- "¿Cuántos km he corrido este mes?", "¿cuál fue mi actividad más larga de septiembre?", "¿mi tirada más larga este año?": ruta `period_activities`. Periodos: este mes, el mes pasado, un mes por su nombre (con año opcional; un mes posterior al actual sin año es el del año pasado), este año, esta semana y la semana pasada. Deporte por la pregunta (corrido/tirada/rodaje → carrera y trail; bici; nadar; caminar; trail) o todas. Kilómetros: tabla por deporte (actividades, distancia, tiempo, desnivel) y la lista; la más larga: por distancia y, si es otra, por tiempo, con las 5 primeras. Pide todas las páginas de `get_activities_by_date` (el servidor da 100 por página y un año tiene más).
+- "¿Cómo dormí anoche?", "¿cuánto he dormido hoy?": ruta `sleep_last_night` (`get_sleep_summary` de los 8 últimos días en paralelo): duración, puntuación, fases y media de las noches anteriores. Si el reloj no ha sincronizado la de hoy, lo dice y muestra la última registrada con su fecha. Antes devolvía la tabla factual de todo el día. Las tendencias, otra noche (ayer, un día o una fecha) y las decisiones de entrenamiento ("dormí mal, ¿puedo entrenar?") siguen por su ruta.
+- En vivo frente a Garmin (suma directa del servidor, sin Kairos): octubre 151,42 km en 11 carreras, septiembre 309,24 km en 29 actividades, 149 carreras en el año, la más larga la misma; 2–3 s por pregunta de un mes, 22 s la del año (la descarga de Garmin de 285 actividades). Antes: 144 s y la actividad equivocada (exploración del 24/10). Batería base 25/25. Tests: 656.
+
 ## 2026-10-24
 
 ### Changed (fiabilidad frente a Garmin: llamadas en paralelo)

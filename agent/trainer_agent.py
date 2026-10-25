@@ -817,6 +817,11 @@ class ToolRouter:
             return "plan_status"
         if _is_goal_status_intent(user_message):
             return "goal_status"
+        # Periodo (km, la más larga) y sueño de anoche: Python, no el LLM (punto 3 de producción, 25/10).
+        if _is_period_distance_intent(user_message) or _is_period_longest_intent(user_message):
+            return "period_activities"
+        if _is_sleep_last_night_intent(user_message):
+            return "sleep_last_night"
         if _is_week_tss_intent(user_message):
             return "week_tss"
         if _is_week_tss_followup_intent(user_message, history):
@@ -4647,6 +4652,277 @@ async def _build_week_activities_markdown(mcp_session, user_message: str | None 
     lines.append("- Si quieres, te digo el TSS de esta misma semana y cómo se reparte por actividad.")
     lines.append("- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad; IDs Garmin incluidos para trazabilidad).")
     return "\n".join(lines)
+
+
+# ─── Rutas factuales por periodo y del sueño (punto 3 de producción, 25/10) ─────
+# Preguntas que el LLM resolvía leyendo series y en las que se equivocaba (exploración del 24/10):
+# kilómetros de un periodo, la actividad más larga de un mes y el sueño de anoche. Las responde Python.
+
+_PERIOD_MONTH_RE = re.compile(
+    r"\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\b"
+    r"(?:\s+(?:de|del)\s+(\d{4}))?"
+)
+_MONTH_NAMES_ES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
+                   "octubre", "noviembre", "diciembre")
+
+
+def _resolve_activity_period(user_message: str, today: date | None = None) -> tuple[date, date, str] | None:
+    """Periodo de una pregunta (inicio, fin, etiqueta), o None. El fin nunca pasa de hoy.
+
+    "este mes", "el mes pasado", "este año", "esta semana", "la semana pasada" y un mes por su nombre
+    ("septiembre", "septiembre de 2025"); un mes posterior al actual sin año es el del año pasado.
+    """
+    today = today or date.today()
+    text = (user_message or "").lower()
+    if "semana pasada" in text or "semana anterior" in text:
+        monday = today - timedelta(days=today.weekday() + 7)
+        return monday, monday + timedelta(days=6), f"la semana del {monday.strftime('%d/%m')} al {(monday + timedelta(days=6)).strftime('%d/%m')}"
+    if "esta semana" in text:
+        monday = today - timedelta(days=today.weekday())
+        return monday, today, f"esta semana ({monday.strftime('%d/%m')} → {today.strftime('%d/%m')})"
+    if "mes pasado" in text or "mes anterior" in text:
+        end = today.replace(day=1) - timedelta(days=1)
+        return end.replace(day=1), end, f"{_MONTH_NAMES_ES[end.month - 1]} de {end.year}"
+    if "este mes" in text or "en lo que va de mes" in text:
+        return today.replace(day=1), today, f"{_MONTH_NAMES_ES[today.month - 1]} de {today.year} (hasta hoy)"
+    if "este año" in text or "en lo que va de año" in text:
+        return date(today.year, 1, 1), today, f"{today.year} (hasta hoy)"
+    m = _PERIOD_MONTH_RE.search(text)
+    if m:
+        month = _MONTHS_ES[m.group(1)]
+        year = int(m.group(2)) if m.group(2) else (today.year if month <= today.month else today.year - 1)
+        start = date(year, month, 1)
+        end = (date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1))
+        if start > today:
+            return None
+        return start, min(end, today), f"{_MONTH_NAMES_ES[month - 1]} de {year}" + (" (hasta hoy)" if end > today else "")
+    return None
+
+
+# Familias de deporte para agrupar (por typeKey de Garmin) y lo que pide la pregunta.
+def _activity_family(act: dict) -> str:
+    key = str((act.get("activityType") or {}).get("typeKey") if isinstance(act.get("activityType"), dict)
+              else act.get("activityType") or "").lower()
+    if "trail" in key:
+        return "Trail"
+    if "run" in key:
+        return "Carrera"
+    if "cycl" in key or "bik" in key:
+        return "Ciclismo"
+    if "swim" in key:
+        return "Natación"
+    if "walk" in key or "hik" in key:
+        return "Caminar / senderismo"
+    if "strength" in key:
+        return "Fuerza"
+    if "elliptical" in key:
+        return "Elíptica"
+    return key.replace("_", " ").capitalize() or "Otra"
+
+
+_SPORT_REQUESTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (r"\btrail\b", ("Trail",)),
+    (r"\bcorr(?:id[oa]|er|o)\b|\bcarreras?\b|\brunning\b|\btiradas?\b|\brodajes?\b", ("Carrera", "Trail")),
+    (r"\bbici\b|\bciclismo\b|\bpedale", ("Ciclismo",)),
+    (r"\bnad(?:ado|ar)\b|\bnataci[oó]n\b", ("Natación",)),
+    (r"\bcamin(?:ado|ar)\b|\bandado\b|\bsenderismo\b", ("Caminar / senderismo",)),
+)
+
+
+def _requested_families(user_message: str) -> tuple[str, ...] | None:
+    text = (user_message or "").lower()
+    for pattern, families in _SPORT_REQUESTS:
+        if re.search(pattern, text):
+            return families
+    return None
+
+
+_DISTANCE_Q_RE = re.compile(
+    r"cu[aá]nt[oa]s?\s+(?:km|kil[oó]metros|distancia)|qu[eé]\s+distancia|kil[oó]metros\s+(?:he|llevo|hice)|"
+    r"km\s+(?:he|llevo|hice)|distancia\s+total|total\s+de\s+(?:km|kil[oó]metros)"
+)
+_LONGEST_Q_RE = re.compile(r"m[aá]s\s+larg[oa]s?|mayor\s+distancia|m[aá]s\s+kil[oó]metros")
+_ACTIVITY_NOUN_RE = re.compile(r"actividad|salida|carrera|tirada|entreno|entrenamiento|sesi[oó]n|rodaje|ruta")
+
+
+def _is_period_distance_intent(user_message: str) -> bool:
+    text = (user_message or "").lower()
+    return bool(_DISTANCE_Q_RE.search(text)) and _resolve_activity_period(text) is not None
+
+
+def _is_period_longest_intent(user_message: str) -> bool:
+    text = (user_message or "").lower()
+    return (bool(_LONGEST_Q_RE.search(text)) and bool(_ACTIVITY_NOUN_RE.search(text))
+            and _resolve_activity_period(text) is not None)
+
+
+def _fmt_km(meters: float) -> str:
+    return f"{meters / 1000:.2f} km"
+
+
+async def _period_activities(mcp_session, start: date, end: date) -> list[dict]:
+    """Todas las actividades del periodo: el servidor pagina (100 por defecto) y un año tiene más."""
+    acts: list[dict] = []
+    for page in range(20):
+        raw = await call_tool(mcp_session, "get_activities_by_date", {
+            "start_date": start.isoformat(), "end_date": end.isoformat(), "page": page, "page_size": 200})
+        parsed = _try_parse_json(raw)
+        acts += _extract_activities_list(parsed if parsed is not None else raw)
+        if not (isinstance(parsed, dict) and parsed.get("has_more")):
+            break
+    out = []
+    for act in acts:
+        iso = _extract_activity_date_iso(act) if isinstance(act, dict) else None
+        if iso and start.isoformat() <= iso <= end.isoformat():
+            out.append(act)
+    return sorted(out, key=lambda a: _extract_activity_date_iso(a) or "")
+
+
+async def _build_period_activities_markdown(mcp_session, user_message: str) -> str:
+    """Kilómetros de un periodo o su actividad más larga, por deporte, con los datos de Garmin."""
+    start, end, label = _resolve_activity_period(user_message)  # el router solo entra con periodo
+    families = _requested_families(user_message)
+    acts = [a for a in await _period_activities(mcp_session, start, end)
+            if families is None or _activity_family(a) in families]
+    sport_label = " y ".join(f.lower() for f in families) if families else "todas las actividades"
+    footer = ["", "## 🎯 Próximo paso",
+              "- Fuente: respuesta determinista (actividades de Garmin del periodo, sin LLM)."]
+    if not acts:
+        return "\n".join(["## 🧭 Resumen",
+                          f"No hay actividades de {sport_label} en {label} ({start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}).",
+                          *footer])
+
+    def _num(act, key):
+        try:
+            return float(act.get(key) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _line(act):
+        iso = _extract_activity_date_iso(act) or ""
+        when = date.fromisoformat(iso).strftime("%d/%m") if iso else "?"
+        dist = _num(act, "distance")
+        return (f"- {when} · {_activity_family(act)} · {str(act.get('activityName') or 'Actividad').strip()} · "
+                f"{_fmt_km(dist) if dist > 0 else 'sin distancia'} · {_seconds_to_hhmmss(_num(act, 'duration'))}"
+                + (f" · +{_num(act, 'elevationGain'):.0f} m" if _num(act, 'elevationGain') > 0 else ""))
+
+    if _is_period_longest_intent(user_message) and not _is_period_distance_intent(user_message):
+        by_distance = max(acts, key=lambda a: (_num(a, "distance"), _num(a, "duration")))
+        by_time = max(acts, key=lambda a: (_num(a, "duration"), _num(a, "distance")))
+        lines = ["## 🧭 Resumen"]
+        if _num(by_distance, "distance") > 0:
+            lines.append(f"La actividad más larga de {sport_label} en {label}, por distancia:")
+            lines.append(_line(by_distance))
+        if by_time is not by_distance or _num(by_distance, "distance") <= 0:
+            lines += ["", "Por tiempo:"]
+            lines.append(_line(by_time))
+        top = sorted(acts, key=lambda a: (_num(a, "distance"), _num(a, "duration")), reverse=True)[:5]
+        lines += ["", "## 📊 Métricas clave", f"Las {len(top)} más largas por distancia de {len(acts)} actividades:"]
+        lines += [_line(a) for a in top]
+        return "\n".join(lines + footer)
+
+    by_family: dict[str, list[dict]] = {}
+    for act in acts:
+        by_family.setdefault(_activity_family(act), []).append(act)
+    total_dist = sum(_num(a, "distance") for a in acts)
+    lines = ["## 🧭 Resumen",
+             f"{sport_label.capitalize()} en {label}: {_fmt_km(total_dist)} en {len(acts)} actividades "
+             f"({_seconds_to_hhmmss(sum(_num(a, 'duration') for a in acts))}).",
+             "", "## 📊 Métricas clave",
+             "| Deporte | Actividades | Distancia | Tiempo | Desnivel + |", "|---|---:|---:|---:|---:|"]
+    for fam, items in sorted(by_family.items(), key=lambda kv: -sum(_num(a, "distance") for a in kv[1])):
+        lines.append(f"| {fam} | {len(items)} | {_fmt_km(sum(_num(a, 'distance') for a in items))} | "
+                     f"{_seconds_to_hhmmss(sum(_num(a, 'duration') for a in items))} | "
+                     f"{sum(_num(a, 'elevationGain') for a in items):.0f} m |")
+    if len(by_family) > 1:
+        lines.append(f"| **Total** | {len(acts)} | {_fmt_km(total_dist)} | "
+                     f"{_seconds_to_hhmmss(sum(_num(a, 'duration') for a in acts))} | "
+                     f"{sum(_num(a, 'elevationGain') for a in acts):.0f} m |")
+    lines += ["", "Actividades:"] + [_line(a) for a in acts]
+    return "\n".join(lines + footer)
+
+
+_SLEEP_Q_RE = re.compile(r"dorm[ií]|he dormido|sue[nñ]o")
+_SLEEP_TREND_RE = re.compile(r"semana|[uú]ltim|media|evoluci|tendencia|mes\b|meses|noches")
+
+
+# Otra noche (ayer, un día con nombre o con fecha) o una decisión de entrenamiento: no es esta ruta.
+_SLEEP_OTHER_RE = re.compile(
+    r"\bayer\b|anteayer|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|\d|"
+    r"entren|puedo|sesi[oó]n|plan\b|recomiend|hrv|carga|bater[ií]a|estr[eé]s"
+)
+
+
+def _is_sleep_last_night_intent(user_message: str) -> bool:
+    """"¿Cómo dormí anoche?", "¿qué tal he dormido?", "mi sueño de hoy": la última noche y nada más."""
+    text = (user_message or "").lower()
+    return (bool(_SLEEP_Q_RE.search(text)) and not _SLEEP_TREND_RE.search(text)
+            and not _SLEEP_OTHER_RE.search(text))
+
+
+async def _build_sleep_last_night_markdown(mcp_session) -> str:
+    """Sueño de la última noche (Garmin lo fecha el día en que te despiertas) y media de las 7 anteriores."""
+    today = date.today()
+    days = [today - timedelta(days=i) for i in range(8)]
+    raws = await asyncio.gather(*(call_tool(mcp_session, "get_sleep_summary", {"date": d.isoformat()}) for d in days),
+                                return_exceptions=True)
+
+    def _parse(raw):
+        data = _try_parse_json(raw) if isinstance(raw, str) else None
+        if not isinstance(data, dict):
+            return None
+        try:
+            secs = float(data.get("sleepTimeSeconds") or 0)
+        except (TypeError, ValueError):
+            secs = 0.0
+        return data if secs > 0 else None
+
+    nights = [_parse(r) for r in raws]
+    footer = ["", "## 🎯 Próximo paso", "- Fuente: respuesta determinista (sueño de Garmin, sin LLM)."]
+    # Sin la noche de hoy (reloj sin sincronizar) se muestra la última registrada, con su fecha.
+    idx = next((i for i, n in enumerate(nights) if n), None)
+    if idx is None:
+        return "\n".join(["## 🧭 Resumen",
+                          f"Garmin no tiene sueño registrado en los últimos {len(days)} días. "
+                          "Sincroniza el reloj con Garmin Connect y vuelve a preguntar.", *footer])
+    last = nights[idx]
+    previous = [n for n in nights[idx + 1:] if n]
+    night_end = days[idx].strftime('%d/%m/%Y')
+    pending = []
+    if idx > 0:
+        pending = [f"Garmin aún no tiene el sueño de anoche (noche que termina el {today.strftime('%d/%m/%Y')}): "
+                   "sincroniza el reloj con Garmin Connect. Esta es la última noche registrada.", ""]
+
+    total = float(last["sleepTimeSeconds"])
+
+    def _hm(seconds: float) -> str:
+        minutes = int(round(seconds / 60))
+        return f"{minutes // 60} h {minutes % 60:02d} min"
+
+    score = last.get("sleepScore")
+    avg_secs = sum(float(n["sleepTimeSeconds"]) for n in previous) / len(previous) if previous else None
+    scores = [float(n["sleepScore"]) for n in previous if n.get("sleepScore") is not None]
+    avg_score = sum(scores) / len(scores) if scores else None
+    lines = ["## 🧭 Resumen", *pending,
+             (f"Anoche (noche que termina el {night_end}) dormiste {_hm(total)}" if idx == 0
+              else f"La noche que terminó el {night_end} dormiste {_hm(total)}")
+             + (f", puntuación {float(score):.0f}/100" if score is not None else "") + "."]
+    if avg_secs is not None:
+        lines.append(f"Media de las {len(previous)} noches anteriores: {_hm(avg_secs)}"
+                     + (f", puntuación {avg_score:.0f}/100" if avg_score is not None else "") + ".")
+    lines += ["", "## 📊 Métricas clave", "| Fase | Tiempo | % del sueño |", "|---|---:|---:|"]
+    for label, key in (("Profundo", "deepSleepSeconds"), ("Ligero", "lightSleepSeconds"), ("REM", "remSleepSeconds")):
+        try:
+            secs = float(last.get(key) or 0)
+        except (TypeError, ValueError):
+            secs = 0.0
+        lines.append(f"| {label} | {_hm(secs)} | {100 * secs / total:.0f} % |")
+    try:
+        awake = float(last.get("awakeSleepSeconds") or 0)
+    except (TypeError, ValueError):
+        awake = 0.0
+    lines.append(f"| Despierto | {_hm(awake)} | — |")
+    return "\n".join(lines + footer)
 
 
 def _activity_matches_sport(act: dict, sport_filter: str) -> bool:
@@ -11786,6 +12062,14 @@ class TrainerAgent:
             assistant_reply = _build_today_load_status_markdown(self.user_profile)
             assistant_reply = await self._augment_with_llm_coaching_if_needed(user_message, assistant_reply, route="today_load_status")
             return await self._finalize_chat_reply(user_message, assistant_reply, route="today_load_status")
+
+        if route_key == "period_activities":
+            assistant_reply = await _build_period_activities_markdown(self.mcp_session, user_message)
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="period_activities")
+
+        if route_key == "sleep_last_night":
+            assistant_reply = await _build_sleep_last_night_markdown(self.mcp_session)
+            return await self._finalize_chat_reply(user_message, assistant_reply, route="sleep_last_night")
 
         # Ruta determinista para detalle de entrenamiento por día/fecha.
         # Evita timeouts del LLM en preguntas factuales como "entrenamiento del martes".

@@ -5050,8 +5050,10 @@ class TestMcpFactualDeterministicRoute:
                   "Tendencia de mi sueño en las últimas semanas", "Evolución de mi FC en reposo este mes"):
             assert not ta._is_mcp_factual_query_intent(q), q
             assert router.route_key(q, [], {}) is None, q
-        for q in ("¿Cómo está mi HRV hoy?", "¿Qué HRV tuve ayer?", "¿Cómo dormí anoche?", "¿Cuál fue mi FC en reposo ayer?"):
+        for q in ("¿Cómo está mi HRV hoy?", "¿Qué HRV tuve ayer?", "¿Cuál fue mi FC en reposo ayer?"):
             assert router.route_key(q, [], {}) == "mcp_factual", q
+        # Desde el 25/10 el sueño de anoche tiene su ruta (antes, tabla de todo el día).
+        assert router.route_key("¿Cómo dormí anoche?", [], {}) == "sleep_last_night"
         assert router.route_key("¿Cuál es mi tendencia de carga de las últimas 4 semanas?", [], {}) == "load_trend"
         assert router.route_key("¿Dime los TSS de mis 20 ultimas actividades de Trail?", [], {}) == "recent_tss_by_sport"
 
@@ -6689,3 +6691,80 @@ class TestHrZonesFromGarmin:
             await agent._refresh_hr_zones_from_garmin()
         save_mock.assert_not_called()
         assert profile["performance"]["hr_zones_garmin"]["sports"] == self.GARMIN["sports"]
+
+
+class TestPeriodAndSleepRoutes:
+    """Rutas deterministas del punto 3 de producción (25/10): periodo (km, la más larga) y sueño de anoche."""
+
+    TODAY = date(2026, 10, 25)
+
+    def test_resolve_activity_period(self):
+        r = ta._resolve_activity_period
+        assert r("¿Cuántos km este mes?", self.TODAY)[:2] == (date(2026, 10, 1), self.TODAY)
+        assert r("¿Y el mes pasado?", self.TODAY)[:2] == (date(2026, 9, 1), date(2026, 9, 30))
+        assert r("La más larga de septiembre", self.TODAY)[:2] == (date(2026, 9, 1), date(2026, 9, 30))
+        # Un mes posterior al actual sin año es el del año pasado; con año, el pedido.
+        assert r("km de diciembre", self.TODAY)[:2] == (date(2025, 12, 1), date(2025, 12, 31))
+        assert r("km de febrero de 2026", self.TODAY)[:2] == (date(2026, 2, 1), date(2026, 2, 28))
+        assert r("km este año", self.TODAY)[:2] == (date(2026, 1, 1), self.TODAY)
+        assert r("km la semana pasada", self.TODAY)[:2] == (date(2026, 10, 12), date(2026, 10, 18))  # 25/10 es domingo
+        assert r("km esta semana", self.TODAY)[:2] == (date(2026, 10, 19), self.TODAY)
+        assert r("¿Cuántos km corrí el 30/08?", self.TODAY) is None
+
+    ACTS = [
+        {"activityName": "Rodaje", "startTimeLocal": "2026-09-01 08:00:00", "distance": 16520.0,
+         "duration": 5447.0, "elevationGain": 199.0, "activityType": {"typeKey": "running"}},
+        {"activityName": "Trail largo", "startTimeLocal": "2026-09-11 08:00:00", "distance": 33520.0,
+         "duration": 19858.0, "elevationGain": 1968.0, "activityType": {"typeKey": "trail_running"}},
+        {"activityName": "Fuerza", "startTimeLocal": "2026-09-02 19:00:00", "distance": 0.0,
+         "duration": 3880.0, "activityType": {"typeKey": "strength_training"}},
+        {"activityName": "Fuera de rango", "startTimeLocal": "2026-10-01 08:00:00", "distance": 90000.0,
+         "duration": 30000.0, "activityType": {"typeKey": "running"}},
+    ]
+
+    @pytest.mark.asyncio
+    async def test_period_distance_sums_requested_sport_and_pages(self, monkeypatch):
+        calls = []
+
+        async def fake_call(_session, name, args):
+            calls.append(args["page"])
+            page = self.ACTS[:2] if args["page"] == 0 else self.ACTS[2:]
+            return json.dumps({"activities": page, "has_more": args["page"] == 0})
+
+        monkeypatch.setattr(ta, "call_tool", fake_call)
+        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        out = await ta._build_period_activities_markdown(None, "¿Cuántos kilómetros he corrido en septiembre?")
+        assert calls == [0, 1]
+        assert "50.04 km en 2 actividades" in out  # carrera + trail; ni fuerza ni la de octubre
+        assert "Fuerza" not in out and "Fuera de rango" not in out
+
+    @pytest.mark.asyncio
+    async def test_period_longest_activity(self, monkeypatch):
+        async def fake_call(_session, name, args):
+            return json.dumps({"activities": self.ACTS, "has_more": False})
+
+        monkeypatch.setattr(ta, "call_tool", fake_call)
+        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        out = await ta._build_period_activities_markdown(None, "¿Cuál fue mi actividad más larga de septiembre?")
+        summary = out.split("## 📊")[0]
+        assert "Trail largo · 33.52 km" in summary and "Fuera de rango" not in out
+
+    @pytest.mark.asyncio
+    async def test_sleep_last_night_falls_back_to_last_recorded_night(self, monkeypatch):
+        nights = {"2026-10-24": {"sleepTimeSeconds": 24540, "sleepScore": 74, "deepSleepSeconds": 2940,
+                                 "lightSleepSeconds": 18480, "remSleepSeconds": 3120, "awakeSleepSeconds": 60},
+                  "2026-10-23": {"sleepTimeSeconds": 28800, "sleepScore": 80}}
+
+        async def fake_call(_session, name, args):
+            return json.dumps(nights.get(args["date"], {"date": args["date"], "sleepTimeSeconds": None}))
+
+        monkeypatch.setattr(ta, "call_tool", fake_call)
+        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        out = await ta._build_sleep_last_night_markdown(None)
+        assert "aún no tiene el sueño de anoche" in out
+        assert "La noche que terminó el 24/10/2026 dormiste 6 h 49 min, puntuación 74/100" in out
+        assert "Media de las 1 noches anteriores: 8 h 00 min" in out
+        nights["2026-10-25"] = {"sleepTimeSeconds": 27000, "sleepScore": 85}
+        out = await ta._build_sleep_last_night_markdown(None)
+        assert out.count("Anoche (noche que termina el 25/10/2026) dormiste 7 h 30 min") == 1
+        assert "aún no tiene" not in out
