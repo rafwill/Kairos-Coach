@@ -179,7 +179,7 @@ class Truth:
 
 # ─── Comprobaciones globales (G1–G5) ────────────────────────────────────────
 
-def global_checks(v: Verdict, body: str) -> None:
+def global_checks(v: Verdict, body: str, today: date | None = None) -> None:
     v.check(bool(body.strip()) and "(sin respuesta)" not in body and "SIN RESPUESTA" not in body,
             "G1: respuesta vacía")
     v.check("Traceback" not in body and "No pude generar" not in body, "G1: error o coaching no generado")
@@ -192,6 +192,8 @@ def global_checks(v: Verdict, body: str) -> None:
     # S25 (diferencia de HRV) en toda la respuesta; S26 (etiqueta del TSS) del coaching frente a los datos de arriba.
     v.sense(sensors.find_wrong_hrv_deviation(body))
     v.sense(sensors.find_swapped_tss_label(coaching, body.split("Interpretación de coaching", 1)[0]))
+    # S27: "mañana", "hoy"… con el día que les toca respecto a la fecha de la transcripción.
+    v.sense(sensors.find_wrong_relative_day(body, today))
 
 
 # ─── Comprobaciones por pregunta ────────────────────────────────────────────
@@ -425,7 +427,7 @@ def main() -> int:
     verdicts: list[Verdict] = []
     for n, q, secs, body in load_transcript(path):
         v = Verdict(n, q, secs)
-        global_checks(v, body)
+        global_checks(v, body, truth.today)
         try:
             specific_checks(v, q, body, truth)
         except Exception as exc:  # el juez nunca debe tumbarse por una respuesta inesperada

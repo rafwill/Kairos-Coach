@@ -11805,7 +11805,8 @@ class TrainerAgent:
         zones, _ = _resolve_hr_zones(self.user_profile, "running")
         zones_cycling, _ = _resolve_hr_zones(self.user_profile, "cycling")
         pace = _resolve_running_threshold_pace_for_date(self.user_profile, date.today().isoformat())
-        return _sensors.findings_to_retry(text, zones, zones_cycling, pace, reference=reference, decision=decision)
+        return _sensors.findings_to_retry(text, zones, zones_cycling, pace, reference=reference, decision=decision,
+                                          today=date.today())
 
     def _has_insulin_diabetes(self) -> bool:
         health = (self.user_profile or {}).get("health") or {}

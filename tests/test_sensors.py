@@ -3,6 +3,8 @@ tests/test_sensors.py
 Sensores computacionales sobre el texto del LLM (agent/sensors.py, docs/Harness.md §5).
 """
 
+from datetime import date
+
 from agent import sensors
 
 ZONES = [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
@@ -232,3 +234,34 @@ class TestTssLabelS26:
         text = "HRV anoche 58 ms (media 59 ms) → > 10 % por debajo. Rodaje: 58.1 hrTSS."
         found = sensors.findings_to_retry(text, [], None, None, reference=self.REF)
         assert {f.sensor for f in found} == {"S25", "S26"}
+
+
+class TestRelativeDayS27:
+    SAT = date(2026, 10, 24)  # sábado: mañana es domingo 25/10, pasado mañana lunes 26/10
+
+    def test_real_cases_of_24_10_are_caught(self):
+        found = sensors.find_wrong_relative_day("Mañana 26/10 (lunes) → SESIÓN SUAVE", self.SAT)
+        assert [f.sensor for f in found] == ["S27"] and "domingo 25/10" in found[0].hint
+        assert sensors.find_wrong_relative_day("✅ Recomendación para mañana lunes 26/10", self.SAT)
+        assert sensors.find_wrong_relative_day("1 Mañana lunes: mide HRV y glucemia al despertar.", self.SAT)
+
+    def test_right_days_pass(self):
+        ok = [
+            "Pasado mañana (lunes 26/10): rodaje suave.",
+            "Mañana domingo 25/10 descanso; hoy sábado 24/10 fuerza.",
+            "Ayer viernes 23/10 hiciste 11.7 km. Anteayer 22/10, series.",
+            "Hoy 24/10/2026: estado fresco. hoy=24/10/2026",
+            # Solo la palabra, o "mañana" como parte del día: no se juzga.
+            "Mañana, si la HRV baja, descansa.",
+            "Entrena por la mañana del 26/10 o cada mañana 10'.",
+            "Esta mañana 24/10 la HRV fue 58 ms.",
+        ]
+        for text in ok:
+            assert sensors.find_wrong_relative_day(text, self.SAT) == [], text
+
+    def test_without_date_nothing_is_judged(self):
+        assert sensors.find_wrong_relative_day("Mañana lunes 26/10", None) == []
+
+    def test_live_retry_includes_it(self):
+        found = sensors.findings_to_retry("Mañana lunes 26/10: rodaje.", [], None, None, today=self.SAT)
+        assert [f.sensor for f in found] == ["S27"]

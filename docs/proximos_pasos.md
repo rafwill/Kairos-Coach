@@ -13,7 +13,7 @@ La bitácora anterior (investigación del TSS frente a TrainingPeaks y sesiones 
 1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`** (punto 6 de la lista previa a producción; los puntos 1 a 5 se cerraron entre el 24 y el 25/10). Usar Kairos unos días con preguntas reales y revisar juntos:
    - cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7);
    - **posible falso positivo de S10** (24/10, 09:18): marcó como fuera de zona 105–124 y 159–179 lpm, que son justo la Z1 y la Z5 de bici. Parece que tomó una línea de ciclismo como de carrera (detección del deporte en `_range_sport`). Reproducirlo con la respuesta completa antes de tocar el sensor;
-   - si **S25** (diferencia de HRV) y **S26** (etiqueta rTSS/hrTSS) saltan con preguntas reales.
+   - si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS) y **S27** ("mañana" con el día que no toca) saltan con preguntas reales; S27 solo ve el error cuando el LLM escribe el día o la fecha, no un "mañana" a secas.
 2. **Ordenador 2 (ECI)**:
    - `git pull` y entrar una vez en Kairos con el email y la contraseña (Supabase Auth). Hasta entonces, la versión antigua de allí no ve ningún dato;
    - activar el pre-commit con `make hooks` (necesita `requirements-dev.txt`; si se instaló con `SkipDev`, el hook falla por falta de ruff o pytest);
@@ -21,20 +21,19 @@ La bitácora anterior (investigación del TSS frente a TrainingPeaks y sesiones 
 
 ### B. Chat y LLM
 
-3. **"Mañana" por pasado mañana.** El LLM a veces llama "mañana" a pasado mañana. No tiene sensor; solo lo frena la guía del horizonte (`_coaching_horizon`).
-4. **Sueño fuera de la ruta determinista.** "¿Cómo dormí el martes?" (otra noche) y las tendencias de sueño siguen yendo al LLM. Candidatas a ruta como `sleep_last_night`.
-5. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
-6. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
+3. **Sueño fuera de la ruta determinista.** "¿Cómo dormí el martes?" (otra noche) y las tendencias de sueño siguen yendo al LLM. Candidatas a ruta como `sleep_last_night`.
+4. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
+5. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
 
-7. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
-8. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
-9. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
-10. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
-11. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
+6. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
+7. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
+8. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
+9. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
+10. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
 
 ### Descartado
 
@@ -80,3 +79,9 @@ Formato de `docs/Harness.md` §7: **señal** (qué falló y dónde), **lección*
 - Señal: `agent/main.py` al 34 % de cobertura; los comandos que más se usan (`/perfil`, `/plan`, `/carga`, `/modelo`) no tenían tests porque vivían dentro del bucle de `main()`.
 - Lección: sacar el despacho a funciones (`_handle_cli_command`, `_switch_provider`) permite probar cada comando sin arrancar Kairos; `main()` se prueba entero con dobles de Supabase, Garmin y el LLM.
 - Evidencia: 34 % → 89 % (criterio ≥ 70 %), 55 tests nuevos, comandos en vivo sin cambios.
+
+### 25/10/2026 — Sensor de "mañana" y pasado mañana
+
+- Señal: auditoría del 24/10 (sábado). A "¿qué hago pasado mañana?" el LLM respondía "Mañana 26/10 (lunes)"; ningún sensor lo veía.
+- Lección: el error solo es comprobable cuando la palabra relativa va con un día o una fecha; entonces basta con la fecha de hoy. "Mañana" también es la parte del día ("por la mañana", "esta mañana") y se excluye.
+- Evidencia: sobre 554 respuestas con fecha, 3 avisos y los 3 son el error real; 0 falsos positivos. Detalle en CHANGELOG y `docs/Harness.md`.

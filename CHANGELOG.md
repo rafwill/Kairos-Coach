@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-25
 
+### Added (sensor S27: palabra relativa y día)
+- `find_wrong_relative_day`: "mañana", "pasado mañana", "hoy", "ayer" o "anteayer" seguidos de un día de la semana o una fecha que no les toca respecto a hoy. Caso de la auditoría del 24/10 (sábado): a "¿qué hago pasado mañana?" el LLM respondía "Mañana 26/10 (lunes)". Solo se juzga si hay día o fecha junto a la palabra; "mañana" como parte del día ("por la mañana", "esta mañana") no cuenta. Reintento en vivo con la fecha de hoy y en el juez con la de la transcripción.
+- Criterio fijado antes: 0 falsos positivos en las baterías guardadas y cada aviso revisado a mano. Sobre 554 respuestas con fecha: 3 avisos, los 3 el error real (24/10, "mañana" con el lunes 26/10). Tests: 722.
+
 ### Tests (cobertura de la CLI, `agent/main.py`)
 - El despacho de comandos sale del bucle de `main()` sin cambiar su comportamiento: `_handle_cli_command` (/perfil, /perfil editar…, /perfil umbral, /perfil fc, /carga, /plan…, /menu, /ayuda) y `_switch_provider` (/modelo).
 - `tests/test_main_cli.py` (55 tests): cada comando, pantallas de perfil, planes y carga (con la tabla real), preguntas de objetivos y salud con valores inválidos, cambio de modelo, comprobaciones de arranque (proveedor, claves, Supabase, Garmin, contraseña de Garmin cambiada, logging solo a fichero) y `main()` de principio a fin con dobles (respuesta, error del LLM, Ctrl+C, usuario nuevo, Garmin sin acceso).

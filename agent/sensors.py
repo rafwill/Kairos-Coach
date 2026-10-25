@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 Zones = list[tuple[str, int, int]]  # (nombre, lpm mínimo, lpm máximo), de Z1 a Z5
 
@@ -431,6 +432,74 @@ def find_swapped_tss_label(text: str, reference: str) -> list[Finding]:
     return out
 
 
+# ─── S27: "mañana", "hoy"… con el día o la fecha que les toca ───────────────
+
+_RELATIVE_OFFSETS = {"anteayer": -2, "ayer": -1, "hoy": 0, "mañana": 1, "pasado mañana": 2}
+_WEEKDAYS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+_WEEKDAY_INDEX = {**{d: i for i, d in enumerate(_WEEKDAYS)}, "miercoles": 2, "sabado": 5}
+# Palabra relativa, separador corto (espacio, coma, paréntesis, dos puntos o guion) y un día de la semana, una
+# fecha DD/MM(/AAAA) o los dos. "La mañana del 26/10", "por la mañana" o "cada mañana" son la parte del día.
+_RELATIVE_DAY = re.compile(
+    r"(?i)(?<![\wáéíóú])(?<!la )(?<!esta )(?<!cada )(?<!una )"
+    r"(pasado mañana|anteayer|mañana|hoy|ayer)[ \t]*[,(:–\-]?[ \t]*"
+    r"(?:(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b[ \t,]*)?"
+    r"(?:(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?![\d/]))?"
+)
+
+
+def _nearest_date(day: int, month: int, today: date) -> date | None:
+    """DD/MM sin año: el año que deja la fecha más cerca de hoy."""
+    candidates = []
+    for year in (today.year - 1, today.year, today.year + 1):
+        try:
+            candidates.append(date(year, month, day))
+        except ValueError:
+            continue
+    return min(candidates, key=lambda d: abs((d - today).days)) if candidates else None
+
+
+def find_wrong_relative_day(text: str, today: date | None) -> list[Finding]:
+    """Una palabra relativa ("mañana", "pasado mañana", "hoy", "ayer") va con el día de la semana o la fecha que
+    le toca respecto a hoy. Caso de la auditoría del 24/10: el LLM llamaba "mañana" a pasado mañana.
+
+    Solo se juzga si junto a la palabra hay un día o una fecha; "mañana" a secas no se puede comprobar.
+    """
+    if today is None:
+        return []
+    out: list[Finding] = []
+    seen: set[str] = set()
+    for m in _RELATIVE_DAY.finditer(text):
+        word, weekday, dd, mm, yy = m.group(1).lower(), m.group(2), m.group(3), m.group(4), m.group(5)
+        if not weekday and not dd:
+            continue
+        expected = today + timedelta(days=_RELATIVE_OFFSETS[word])
+        wrong = []
+        if weekday and _WEEKDAY_INDEX[weekday.lower()] != expected.weekday():
+            wrong.append(weekday.lower())
+        if dd:
+            if yy:
+                year = int(yy) + (2000 if len(yy) == 2 else 0)
+                try:
+                    cited = date(year, int(mm), int(dd))
+                except ValueError:
+                    cited = None
+            else:
+                cited = _nearest_date(int(dd), int(mm), today)
+            if cited and cited != expected:
+                wrong.append(f"{int(dd):02d}/{int(mm):02d}")
+        if not wrong:
+            continue
+        quote = m.group(0).strip()
+        if quote in seen:
+            continue
+        seen.add(quote)
+        right = f"{_WEEKDAYS[expected.weekday()]} {expected.strftime('%d/%m')}"
+        out.append(Finding("S27", f"LLM: \"{quote}\" no cuadra: {word} es {right}",
+                           f"Hoy es {_WEEKDAYS[today.weekday()]} {today.strftime('%d/%m')}: {word} es {right}, "
+                           f"no {' '.join(wrong)}. Corrige el día o la palabra (mañana, pasado mañana…)."))
+    return out
+
+
 # ─── S16: nota de seguridad glucémica ───────────────────────────────────────
 
 _INSULIN_DIABETES = re.compile(r"(?i)\bdt\s?1\b|diabetes\s+tipo\s*1|\btipo\s*1\b|\blada\b|insulin")
@@ -468,8 +537,9 @@ def findings_to_retry(
     pace_today_s: float | None,
     reference: str = "",
     decision: str | None = None,
+    today: date | None = None,
 ) -> list[Finding]:
-    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12, S14, S15, S25, S26 y el marcador
+    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12, S14, S15, S25–S27 y el marcador
     vacío (G4).
 
     S8 (turnos inventados), S13 (fechas ISO) y S16 (nota glucémica) no están aquí porque se corrigen sin LLM.
@@ -480,6 +550,7 @@ def findings_to_retry(
         + find_intensity_against_decision(text, decision, zones)
         + find_wrong_hrv_deviation(text)
         + find_swapped_tss_label(text, reference)
+        + find_wrong_relative_day(text, today)
         + find_empty_data_lines(text)
     )
 
