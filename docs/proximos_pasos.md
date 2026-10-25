@@ -1292,3 +1292,11 @@ Si quieres, convierto este diagnóstico en una página para compartir.
 - Lección: una suma o un máximo sobre una lista no se deja al LLM. Además, `get_activities_by_date` pagina de 100 en 100: la primera versión daba "100 actividades" en el año (285 reales); hay que pedir páginas hasta `has_more = false`. Y el sueño de hoy puede no estar sincronizado: se dice y se muestra la última noche con su fecha.
 - Evidencia: rutas `period_activities` y `sleep_last_night`; cifras iguales a la suma directa del servidor (151,42 km en octubre, 309,24 km en septiembre, 149 carreras en el año); 2–3 s por mes, 22 s el año entero; batería 25/25. Detalle en CHANGELOG.
 - Pendiente: "¿cómo dormí el martes?" y las tendencias de sueño siguen en el LLM.
+
+
+25/10/2026 — Sensores de HRV y de etiqueta del TSS (biblioteca de experiencia)
+
+- Señal: auditoría del 24/10; el LLM decía "> 10 % por debajo de su media" con 58 frente a 59 ms y etiquetaba como hrTSS un TSS de carrera. Ningún sensor lo veía.
+- Lección: un % afirmado se comprueba con las cifras de la misma línea, pero el orden de las cifras no es fiable ("60 ms vs. ~67 ms de referencia"): el sensor acepta si alguna pareja lo justifica. Los IDs S18–S24 ya eran sensores fuera de línea, así que los nuevos son S25 y S26.
+- Evidencia: sobre 891 respuestas guardadas, S25 da 4 avisos y los 4 son el error real; S26, 0. Batería 25/25. Detalle en CHANGELOG y docs/Harness.md.
+- Pendiente: "mañana" por pasado mañana sigue sin sensor; ver si S25 o S26 saltan en uso real (líneas [SENSOR] de agent.log).

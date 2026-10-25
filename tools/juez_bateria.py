@@ -189,6 +189,9 @@ def global_checks(v: Verdict, body: str) -> None:
     v.sense(sensors.find_empty_data_lines(body))
     coaching = body.split("Interpretación de coaching", 1)[1] if "Interpretación de coaching" in body else ""
     v.sense(sensors.find_invented_user_turn(body, coaching))
+    # S25 (diferencia de HRV) en toda la respuesta; S26 (etiqueta del TSS) del coaching frente a los datos de arriba.
+    v.sense(sensors.find_wrong_hrv_deviation(body))
+    v.sense(sensors.find_swapped_tss_label(coaching, body.split("Interpretación de coaching", 1)[0]))
 
 
 # ─── Comprobaciones por pregunta ────────────────────────────────────────────

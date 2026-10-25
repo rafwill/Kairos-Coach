@@ -353,6 +353,84 @@ def find_intensity_against_decision(text: str, decision: str | None, zones: Zone
     return []
 
 
+# ─── S25: la diferencia de HRV que se afirma = la de las cifras de la línea ─
+
+_HRV_CLAIM = re.compile(
+    r"(?i)(>\s*|m[aá]s de\s+|un\s+)?(\d{1,2}(?:[.,]\d)?)\s*%\s*(por debajo|por encima|menos|m[aá]s|inferior|superior)"
+)
+_HRV_MS = re.compile(r"(\d{2,3}(?:[.,]\d)?)\s*ms\b")
+_HRV_BASELINE = re.compile(r"(?i)media|base|referencia|habitual|promedio")
+_CONDITIONAL_LINE = re.compile(r"(?i)^\W*si\b")
+
+
+def _claim_holds(dev: float, claimed: float, below: bool, at_least: bool) -> bool:
+    if (dev < 0) != below and abs(dev) >= 0.5:
+        return False
+    return abs(dev) + 0.5 >= claimed if at_least else abs(abs(dev) - claimed) <= 1.5
+
+
+def find_wrong_hrv_deviation(text: str) -> list[Finding]:
+    """Una línea con la HRV y su media en ms no afirma una diferencia en % que no sale de esas cifras.
+
+    Caso real (24/10): "anoche 58 ms (media 7 d 59 ms) → > 10 % por debajo de su media" (es −1,7 %).
+    Conservador: basta con que una pareja de cifras de la línea la justifique (el orden "60 ms vs. ~67 ms de
+    referencia" no siempre es medida → media). No cuentan los umbrales de alerta sin cifra medida ("si la HRV
+    baja > 10 % de tu media (59 ms)…": una sola cifra).
+    """
+    out: list[Finding] = []
+    for line in text.splitlines():
+        if not re.search(r"(?i)\bhrv\b", line) or _CONDITIONAL_LINE.search(line) or not _HRV_BASELINE.search(line):
+            continue
+        claim = _HRV_CLAIM.search(line)
+        values = [_to_float(v) for v in _HRV_MS.findall(line)]
+        if not claim or len(values) < 2:
+            continue
+        claimed = _to_float(claim.group(2))
+        below = claim.group(3).lower() in ("por debajo", "menos", "inferior")
+        at_least = bool(claim.group(1)) and not claim.group(1).strip().lower().startswith("un")
+        pairs = [(x, b) for i, x in enumerate(values) for j, b in enumerate(values) if i != j and b > 0]
+        if any(_claim_holds(100.0 * (x - b) / b, claimed, below, at_least) for x, b in pairs):
+            continue
+        measured, base = values[0], values[1]
+        dev = 100.0 * (measured - base) / base
+        out.append(Finding("S25", f"LLM: HRV {measured:g} ms frente a {base:g} ms no es "
+                                  f"{claim.group(0).strip()} (es {dev:+.1f} %)",
+                           f"La HRV de {measured:g} ms frente a {base:g} ms es un {dev:+.1f} %: "
+                           "corrige esa diferencia y lo que deduces de ella."))
+    return out
+
+
+# ─── S26: la etiqueta del TSS (rTSS / hrTSS) = la de los datos ──────────────
+
+_TSS_LABEL_AFTER = re.compile(r"\b(hrTSS|rTSS)\b[\s:=(]{0,3}(\d{1,3}[.,]\d)")
+_TSS_LABEL_BEFORE = re.compile(r"(\d{1,3}[.,]\d)\s{0,2}(hrTSS|rTSS)\b")
+
+
+def _tss_labels(text: str) -> list[tuple[str, str]]:
+    pairs = [(m.group(1), m.group(2).replace(",", ".")) for m in _TSS_LABEL_AFTER.finditer(text)]
+    return pairs + [(m.group(2), m.group(1).replace(",", ".")) for m in _TSS_LABEL_BEFORE.finditer(text)]
+
+
+def find_swapped_tss_label(text: str, reference: str) -> list[Finding]:
+    """Un TSS citado como hrTSS que en los datos es rTSS (o al revés). Kairos calcula cada TSS con el modelo de
+    su deporte y le pone la etiqueta (rTSS en carrera, hrTSS por FC); el LLM la conserva.
+
+    Solo cifras con decimal y pegadas a la etiqueta en los dos textos; una cifra sin etiqueta en los datos no
+    se juzga, y llamarlo "TSS" a secas no es un error.
+    """
+    if not reference:
+        return []
+    ref = _tss_labels(reference)
+    out: list[Finding] = []
+    for label, value in dict.fromkeys(_tss_labels(text)):
+        ref_labels = {lab for lab, v in ref if v == value}
+        if ref_labels and label not in ref_labels:
+            right = sorted(ref_labels)[0]
+            out.append(Finding("S26", f"LLM: {label} {value} en los datos es {right} {value}",
+                               f"El TSS {value} es {right} en tus datos, no {label}: conserva la etiqueta que trae."))
+    return out
+
+
 # ─── S16: nota de seguridad glucémica ───────────────────────────────────────
 
 _INSULIN_DIABETES = re.compile(r"(?i)\bdt\s?1\b|diabetes\s+tipo\s*1|\btipo\s*1\b|\blada\b|insulin")
@@ -391,7 +469,8 @@ def findings_to_retry(
     reference: str = "",
     decision: str | None = None,
 ) -> list[Finding]:
-    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12, S14, S15 y el marcador vacío (G4).
+    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12, S14, S15, S25, S26 y el marcador
+    vacío (G4).
 
     S8 (turnos inventados), S13 (fechas ISO) y S16 (nota glucémica) no están aquí porque se corrigen sin LLM.
     """
@@ -399,6 +478,8 @@ def findings_to_retry(
         check_coaching_text(text, zones, zones_cycling, pace_today_s)
         + find_unsupported_load_figures(text, reference)
         + find_intensity_against_decision(text, decision, zones)
+        + find_wrong_hrv_deviation(text)
+        + find_swapped_tss_label(text, reference)
         + find_empty_data_lines(text)
     )
 

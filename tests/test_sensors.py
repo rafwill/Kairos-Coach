@@ -185,3 +185,50 @@ def test_sensors_module_does_not_import_the_agent():
         for a in (n.names if isinstance(n, ast.Import) else [n])
     }
     assert not any(m.startswith("agent") for m in imported), imported
+
+
+class TestHrvDeviationS25:
+    def test_real_case_of_24_10_is_caught(self):
+        line = "- HRV: anoche 58 ms (media 7 d 59 ms, estado UNBALANCED) · noche anterior 63 ms → > 10 % por debajo de su media"
+        found = sensors.find_wrong_hrv_deviation(line)
+        assert [f.sensor for f in found] == ["S25"]
+        assert "-1.7 %" in found[0].hint
+
+    def test_table_row_from_the_tool_loop_is_caught(self):
+        assert sensors.find_wrong_hrv_deviation("| HRV noche | 58 ms | Media 7d: 59 ms | 🔴 UNBALANCED (>10 % por debajo) |")
+
+    def test_true_claims_and_alert_thresholds_pass(self):
+        ok = [
+            "HRV anoche 52 ms (media 7 d 59 ms): un 12 % por debajo de tu media.",
+            "HRV 52 ms frente a una media de 59 ms: > 10 % por debajo.",
+            # El orden no siempre es medida → media: 60 frente a 67 es −10,4 %.
+            "La HRV está > 10 % por debajo de su media habitual (60 ms vs. ~67 ms de referencia)",
+            # Umbrales de alerta: una sola cifra o línea condicional.
+            "- HRV > 10 % por debajo de tu media semanal (≈ < 53 ms) dos mañanas seguidas.",
+            "- Si la HRV de mañana (58 ms hoy, media 59 ms) baja > 10 % por debajo, descansa.",
+            "HRV (22/10) 56,5 ms (base ~58 ms) -2,6 % → no supera el -10 % de umbral",
+        ]
+        for line in ok:
+            assert sensors.find_wrong_hrv_deviation(line) == [], line
+
+    def test_wrong_direction_is_caught(self):
+        assert sensors.find_wrong_hrv_deviation("HRV 70 ms (media 59 ms): un 12 % por debajo de lo normal")
+
+
+class TestTssLabelS26:
+    REF = "- martes 20/10: 58.1 (rTSS 58.1 · hrTSS 0.0 · TSS 0.0)\n- viernes 23/10: Fuerza · hrTSS 36.6"
+
+    def test_running_tss_called_hrtss_is_caught(self):
+        found = sensors.find_swapped_tss_label("El rodaje del martes sumó 58.1 hrTSS.", self.REF)
+        assert [f.sensor for f in found] == ["S26"] and "rTSS" in found[0].hint
+
+    def test_same_label_plain_tss_or_unlabelled_reference_pass(self):
+        assert sensors.find_swapped_tss_label("Rodaje: rTSS 58.1; fuerza: 36.6 hrTSS.", self.REF) == []
+        assert sensors.find_swapped_tss_label("El martes hiciste 58.1 TSS.", self.REF) == []
+        assert sensors.find_swapped_tss_label("Trail: 120.4 hrTSS.", "TSS 120.4 (actividad)") == []
+        assert sensors.find_swapped_tss_label("58.1 hrTSS", "") == []
+
+    def test_live_retry_includes_both(self):
+        text = "HRV anoche 58 ms (media 59 ms) → > 10 % por debajo. Rodaje: 58.1 hrTSS."
+        found = sensors.findings_to_retry(text, [], None, None, reference=self.REF)
+        assert {f.sensor for f in found} == {"S25", "S26"}

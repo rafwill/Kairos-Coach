@@ -99,6 +99,8 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | S15 | Con decisión del motor diario de descanso, suave o reducir, la sesión de hoy no lleva Z4–Z5 ni FC desde el inicio de Z4 (solo respuestas para hoy; no cuentan líneas condicionales ni rangos que no son de FC) | Computacional | Reintenta | `find_intensity_against_decision` (`agent/sensors.py`), decisión desde la ruta de estado del día | ✓ |
 | S16 | Nota de seguridad glucémica si el perfil tiene diabetes con insulina y la respuesta prescribe una sesión sin hablar de glucemia | Computacional | Corrige (añade la nota fija `GLUCOSE_NOTE`, del protocolo de `coaching_rules.md`) | `add_glucose_note` (`agent/sensors.py`) | ✓ |
 | S17 | Responde al horizonte preguntado | Inferencial (no hay forma fiable de comprobarlo con código) | Registra | — | ✗ (solo si S10–S16 no bastan) |
+| S25 | La diferencia de HRV que afirma una línea ("> 10 % por debajo") sale de las cifras en ms de esa línea (medida y media); conservador: basta con que una pareja la justifique; no cuentan los umbrales de alerta (una sola cifra o "si…") | Computacional | Reintenta | `find_wrong_hrv_deviation` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
+| S26 | La etiqueta de un TSS citado (rTSS / hrTSS) es la que trae en los datos; solo cifras con decimal pegadas a la etiqueta en los dos textos; "TSS" a secas no es error | Computacional | Reintenta | `find_swapped_tss_label` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
 
 ### Fuera de línea
 
@@ -114,13 +116,13 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 
 No hay sensores inferenciales (LLM como juez) a propósito: son caros, no deterministas y, para un consejo de entrenamiento, el criterio final es del usuario. La calidad del consejo queda en revisión humana.
 
-## 6. Autocorrección (en vivo desde el 23/10: S8, S10–S16)
+## 6. Autocorrección (en vivo desde el 23/10: S8, S10–S16; S25 y S26 desde el 25/10)
 
 Los sensores de la respuesta del LLM viven en un único módulo (`agent/sensors.py`) que usan a la vez Kairos en vivo y el juez de la batería, para que haya una sola definición de cada regla.
 
 1. El LLM responde.
 2. Se pasan S8, S13 y S16, que corrigen sin LLM.
-3. Se pasan S10, S11, S12, S14 y S15. Si alguno falla, se hace **una** llamada más con el fallo redactado para que el LLM actúe, por ejemplo: "El rango 115–150 lpm no cabe en ninguna zona. Zonas: Z1 115–134, Z2 135–145, Z3 146–157. Reescribe esa línea con una sola zona, o Z1–Z2 si es un rodaje suave."
+3. Se pasan S10, S11, S12, S14, S15, S25 y S26. Si alguno falla, se hace **una** llamada más con el fallo redactado para que el LLM actúe, por ejemplo: "El rango 115–150 lpm no cabe en ninguna zona. Zonas: Z1 115–134, Z2 135–145, Z3 146–157. Reescribe esa línea con una sola zona, o Z1–Z2 si es un rodaje suave."
 4. Si el segundo intento también falla, Kairos se queda con la versión con menos fallos, añade al pie "⚠️ Comprobación de Kairos" con lo que no cuadra y lo registra en `agent.log` con el ID del sensor.
 
 En el código: `TrainerAgent._apply_output_sensors(texto, mensajes, tipo)` sobre las tres salidas del LLM (capa de coaching, respuesta final del bucle con tools y rescates). El reintento recibe los mensajes de sistema y de usuario y su propia respuesta, sin tools ni resultados de tools, con `prompts/system/sensor_correction.md`. Cada salto queda en `agent.log` como `[SENSOR] <tipo>: <ID> <mensaje>`.
