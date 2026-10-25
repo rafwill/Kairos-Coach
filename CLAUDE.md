@@ -79,7 +79,6 @@ Anclajes por fecha (perfil `performance`):
 - Bici sin potencia > 2 h: 07/08 Kairos 65.9 frente a TP 93 (la tabla no tiene datos de bici por encima del 85 %).
 - Si cambia el umbral de FC de TP, añadir la entrada con fecha a `hr_threshold_tp_history` el mismo día (no hay comando; el ritmo umbral sí: `/perfil umbral` añade la entrada de hoy al historial).
 - Revalidación periódica con un export nuevo de TP (prueba sin escribir, criterio fijado antes, solo filas esperadas).
-- Capturar el RPE de fuerza después de la sesión (persistido por `activity_id`).
 
 ## Limitaciones aceptadas (no bugs abiertos)
 
