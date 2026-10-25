@@ -1300,3 +1300,8 @@ Si quieres, convierto este diagnóstico en una página para compartir.
 - Lección: un % afirmado se comprueba con las cifras de la misma línea, pero el orden de las cifras no es fiable ("60 ms vs. ~67 ms de referencia"): el sensor acepta si alguna pareja lo justifica. Los IDs S18–S24 ya eran sensores fuera de línea, así que los nuevos son S25 y S26.
 - Evidencia: sobre 891 respuestas guardadas, S25 da 4 avisos y los 4 son el error real; S26, 0. Batería 25/25. Detalle en CHANGELOG y docs/Harness.md.
 - Pendiente: "mañana" por pasado mañana sigue sin sensor; ver si S25 o S26 saltan en uso real (líneas [SENSOR] de agent.log).
+
+
+Pendiente para el punto 6 (revisión de las líneas [SENSOR] con uso real)
+
+- Posible falso positivo de S10 en agent.log del 24/10 (09:18): marcó como fuera de zona 105–124 y 159–179 lpm, que son justo la Z1 y la Z5 de bici. Parece que tomó una línea de ciclismo como de carrera (detección del deporte en `_range_sport`). Reproducirlo con la respuesta completa antes de tocar el sensor.
