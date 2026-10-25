@@ -1305,3 +1305,10 @@ Si quieres, convierto este diagnóstico en una página para compartir.
 Pendiente para el punto 6 (revisión de las líneas [SENSOR] con uso real)
 
 - Posible falso positivo de S10 en agent.log del 24/10 (09:18): marcó como fuera de zona 105–124 y 159–179 lpm, que son justo la Z1 y la Z5 de bici. Parece que tomó una línea de ciclismo como de carrera (detección del deporte en `_range_sport`). Reproducirlo con la respuesta completa antes de tocar el sensor.
+
+
+25/10/2026 — Cobertura de la CLI (biblioteca de experiencia)
+
+- Señal: agent/main.py al 32–34 % de cobertura; los comandos que más se usan (/perfil, /plan, /carga, /modelo) no tenían tests porque vivían dentro del bucle de main().
+- Lección: sacar el despacho a funciones (`_handle_cli_command`, `_switch_provider`) permite probar cada comando sin arrancar Kairos; main() se prueba entero con dobles de Supabase, Garmin y el LLM.
+- Evidencia: 34 % → 89 % (criterio ≥ 70 %), 55 tests nuevos, comandos en vivo sin cambios. Lo que queda sin cubrir: ramas de error de la autenticación y de la consola de Windows.

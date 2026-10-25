@@ -1268,6 +1268,151 @@ def _check_and_migrate_supabase() -> None:
         sys.exit(1)
 
 
+def _switch_provider(agent: TrainerAgent, provider: str) -> str:
+    """/modelo: cambia el proveedor del LLM y devuelve el activo (el mismo si se vuelve a elegir)."""
+    # Mostrar tokens usados para el proveedor que está a punto de desactivarse
+    p_tokens = agent.total_prompt_tokens
+    c_tokens = agent.total_completion_tokens
+    t_tokens = p_tokens + c_tokens
+    old_provider_name = provider.capitalize()
+    _debug_console(f"\n[bold dimgray][debug] Cambiando de modelo. Tokens gastados con {old_provider_name} en esta sesión:[/]")
+    _debug_console(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
+    _debug_console(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
+    _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
+
+    # Seleccionar nuevo proveedor
+    new_provider = _select_provider_menu()
+
+    if new_provider == provider:
+        console.print(f"[yellow]El modelo {old_provider_name} ya está activo.[/]")
+        return provider
+
+    # Actualizar el proveedor y reiniciar los tokens de sesión para el nuevo tramo
+    provider = new_provider
+    _check_env(provider)
+    agent.set_provider(provider)
+    agent.total_prompt_tokens = 0
+    agent.total_completion_tokens = 0
+
+    new_provider_name = provider.capitalize()
+    _, label, note = _PROVIDER_INFO[provider]
+    console.print(Panel.fit(
+        f"[bold green]Modelo cambiado con éxito[/]\n"
+        f"Nuevo proveedor: {label}\n"
+        f"[dim]{note}[/dim]",
+        title="[bold blue]Kairos Coach — Cambio de modelo[/]",
+        border_style="green",
+    ))
+
+    # Mostrar info de cuota para el nuevo proveedor
+    daily_info = agent.get_daily_usage_info()
+    if daily_info.get("quota_exhausted", False):
+        console.print(
+            f"[bold red][Aviso][/] La API Key de {new_provider_name} está marcada hoy como agotada por límite de cuota.\n"
+            f"[dim dimgray]        - Consumo registrado: {daily_info['today_usage']:,} / {daily_info['limit']:,} tokens hoy.\n"
+            f"        - Tokens disponibles hoy: 0[/]"
+        )
+    else:
+        _debug_console(
+            f"[dim dimgray][debug] Acumulado diario de {new_provider_name}: "
+            f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
+            f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
+        )
+    return provider
+
+
+def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
+    """Comandos de la CLI (/perfil…, /carga, /plan…, /menu, /ayuda). True si la entrada era un comando."""
+    cmd = user_input.strip().lower()
+    if cmd in {"/perfil", "/profile"}:
+        _show_profile()
+        return True
+
+    if cmd in {"/menu"}:
+        _show_menu()
+        return True
+
+    if cmd in {"/ayuda", "/help", "/?"}:
+        _show_help()
+        return True
+
+    if cmd in {"/perfil editar objetivo", "/perfil editar goal"}:
+        profile = _load_user_profile()
+        _ask_goals(profile)
+        _save_user_profile(profile)
+        agent.user_profile = _load_user_profile()
+        console.print("[green]✓[/] Objetivos actualizados.")
+        return True
+
+    if cmd in {"/perfil editar salud", "/perfil editar health"}:
+        profile = _load_user_profile()
+        _ask_health(profile)
+        _save_user_profile(profile)
+        agent.user_profile = _load_user_profile()
+        console.print("[green]✓[/] Datos de salud actualizados.")
+        return True
+
+    if cmd in {"/perfil editar", "/profile edit"}:
+        profile = _load_user_profile()
+        _ask_goals(profile)
+        _ask_health(profile)
+        _save_user_profile(profile)
+        agent.user_profile = _load_user_profile()
+        console.print("[green]✓[/] Perfil actualizado.")
+        return True
+
+    if cmd.startswith("/perfil umbral"):
+        raw_cmd = user_input.strip()
+        parts = raw_cmd.split(maxsplit=2)
+        if len(parts) < 3 or not parts[2].strip():
+            console.print("[yellow]Uso:[/] /perfil umbral <mm:ss> (ej: /perfil umbral 4:15)")
+            return True
+        profile = _load_user_profile()
+        ok, msg = _set_running_threshold_pace(profile, parts[2].strip())
+        if not ok:
+            console.print(f"[red]✗[/] {msg}")
+            return True
+        _save_user_profile(profile)
+        agent.user_profile = _load_user_profile()
+        console.print(f"[green]✓[/] Umbral running actualizado a [bold]{msg} min/km[/bold].")
+        return True
+
+    if cmd.startswith("/perfil fc"):
+        raw_cmd = user_input.strip()
+        parts = raw_cmd.split()
+        if len(parts) < 4:
+            console.print("[yellow]Uso:[/] /perfil fc <reposo> <max> (ej: /perfil fc 48 186)")
+            return True
+        profile = _load_user_profile()
+        ok, msg = _set_hr_profile_values(profile, parts[2].strip(), parts[3].strip())
+        if not ok:
+            console.print(f"[red]✗[/] {msg}")
+            return True
+        _save_user_profile(profile)
+        agent.user_profile = _load_user_profile()
+        console.print(f"[green]✓[/] Perfil de FC actualizado: [bold]{msg}[/bold].")
+        return True
+
+    if cmd.startswith("/carga"):
+        _show_load_trend_cli(agent, cmd)
+        return True
+
+    if cmd.startswith("/plan"):
+        action, arg = _parse_plan_command(cmd)
+        if action == "list":
+            _show_training_plans()
+        elif action == "view":
+            _show_training_plan(arg or "")
+        elif action == "activate":
+            _activate_training_plan_cli(arg or "", agent)
+        elif action == "create":
+            _create_training_plan_cli(agent)
+        else:
+            _show_plan_help()
+        return True
+    return False
+
+
 async def main() -> None:
     global log, _DEBUG_CONSOLE
     log, _DEBUG_CONSOLE = _configure_logging()
@@ -1460,141 +1605,10 @@ async def main() -> None:
             cmd = user_input.strip().lower()
 
             if cmd in {"/modelo", "/model"}:
-                # Mostrar tokens usados para el proveedor que está a punto de desactivarse
-                p_tokens = agent.total_prompt_tokens
-                c_tokens = agent.total_completion_tokens
-                t_tokens = p_tokens + c_tokens
-                old_provider_name = provider.capitalize()
-                _debug_console(f"\n[bold dimgray][debug] Cambiando de modelo. Tokens gastados con {old_provider_name} en esta sesión:[/]")
-                _debug_console(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
-                _debug_console(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
-                _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
-                
-                # Seleccionar nuevo proveedor
-                new_provider = _select_provider_menu()
-                
-                if new_provider == provider:
-                    console.print(f"[yellow]El modelo {old_provider_name} ya está activo.[/]")
-                    continue
-                
-                # Actualizar el proveedor y reiniciar los tokens de sesión para el nuevo tramo
-                provider = new_provider
-                _check_env(provider)
-                agent.set_provider(provider)
-                agent.total_prompt_tokens = 0
-                agent.total_completion_tokens = 0
-                
-                new_provider_name = provider.capitalize()
-                _, label, note = _PROVIDER_INFO[provider]
-                console.print(Panel.fit(
-                    f"[bold green]Modelo cambiado con éxito[/]\n"
-                    f"Nuevo proveedor: {label}\n"
-                    f"[dim]{note}[/dim]",
-                    title="[bold blue]Kairos Coach — Cambio de modelo[/]",
-                    border_style="green",
-                ))
-                
-                # Mostrar info de cuota para el nuevo proveedor
-                daily_info = agent.get_daily_usage_info()
-                if daily_info.get("quota_exhausted", False):
-                    console.print(
-                        f"[bold red][Aviso][/] La API Key de {new_provider_name} está marcada hoy como agotada por límite de cuota.\n"
-                        f"[dim dimgray]        - Consumo registrado: {daily_info['today_usage']:,} / {daily_info['limit']:,} tokens hoy.\n"
-                        f"        - Tokens disponibles hoy: 0[/]"
-                    )
-                else:
-                    _debug_console(
-                        f"[dim dimgray][debug] Acumulado diario de {new_provider_name}: "
-                        f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
-                        f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
-                    )
+                provider = _switch_provider(agent, provider)
                 continue
 
-            if cmd in {"/perfil", "/profile"}:
-                _show_profile()
-                continue
-
-            if cmd in {"/menu"}:
-                _show_menu()
-                continue
-
-            if cmd in {"/ayuda", "/help", "/?"} :
-                _show_help()
-                continue
-
-            if cmd in {"/perfil editar objetivo", "/perfil editar goal"}:
-                profile = _load_user_profile()
-                _ask_goals(profile)
-                _save_user_profile(profile)
-                agent.user_profile = _load_user_profile()
-                console.print("[green]✓[/] Objetivos actualizados.")
-                continue
-
-            if cmd in {"/perfil editar salud", "/perfil editar health"}:
-                profile = _load_user_profile()
-                _ask_health(profile)
-                _save_user_profile(profile)
-                agent.user_profile = _load_user_profile()
-                console.print("[green]✓[/] Datos de salud actualizados.")
-                continue
-
-            if cmd in {"/perfil editar", "/profile edit"}:
-                profile = _load_user_profile()
-                _ask_goals(profile)
-                _ask_health(profile)
-                _save_user_profile(profile)
-                agent.user_profile = _load_user_profile()
-                console.print("[green]✓[/] Perfil actualizado.")
-                continue
-
-            if cmd.startswith("/perfil umbral"):
-                raw_cmd = user_input.strip()
-                parts = raw_cmd.split(maxsplit=2)
-                if len(parts) < 3 or not parts[2].strip():
-                    console.print("[yellow]Uso:[/] /perfil umbral <mm:ss> (ej: /perfil umbral 4:15)")
-                    continue
-                profile = _load_user_profile()
-                ok, msg = _set_running_threshold_pace(profile, parts[2].strip())
-                if not ok:
-                    console.print(f"[red]✗[/] {msg}")
-                    continue
-                _save_user_profile(profile)
-                agent.user_profile = _load_user_profile()
-                console.print(f"[green]✓[/] Umbral running actualizado a [bold]{msg} min/km[/bold].")
-                continue
-
-            if cmd.startswith("/perfil fc"):
-                raw_cmd = user_input.strip()
-                parts = raw_cmd.split()
-                if len(parts) < 4:
-                    console.print("[yellow]Uso:[/] /perfil fc <reposo> <max> (ej: /perfil fc 48 186)")
-                    continue
-                profile = _load_user_profile()
-                ok, msg = _set_hr_profile_values(profile, parts[2].strip(), parts[3].strip())
-                if not ok:
-                    console.print(f"[red]✗[/] {msg}")
-                    continue
-                _save_user_profile(profile)
-                agent.user_profile = _load_user_profile()
-                console.print(f"[green]✓[/] Perfil de FC actualizado: [bold]{msg}[/bold].")
-                continue
-
-            if cmd.startswith("/carga"):
-                _show_load_trend_cli(agent, cmd)
-                continue
-
-            if cmd.startswith("/plan"):
-                action, arg = _parse_plan_command(cmd)
-                if action == "list":
-                    _show_training_plans()
-                elif action == "view":
-                    _show_training_plan(arg or "")
-                elif action == "activate":
-                    _activate_training_plan_cli(arg or "", agent)
-                elif action == "create":
-                    _create_training_plan_cli(agent)
-                else:
-                    _show_plan_help()
+            if _handle_cli_command(user_input, agent):
                 continue
 
             if not user_input.strip():

@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-25
 
+### Tests (cobertura de la CLI, `agent/main.py`)
+- El despacho de comandos sale del bucle de `main()` sin cambiar su comportamiento: `_handle_cli_command` (/perfil, /perfil editar…, /perfil umbral, /perfil fc, /carga, /plan…, /menu, /ayuda) y `_switch_provider` (/modelo).
+- `tests/test_main_cli.py` (55 tests): cada comando, pantallas de perfil, planes y carga (con la tabla real), preguntas de objetivos y salud con valores inválidos, cambio de modelo, comprobaciones de arranque (proveedor, claves, Supabase, Garmin, contraseña de Garmin cambiada, logging solo a fichero) y `main()` de principio a fin con dobles (respuesta, error del LLM, Ctrl+C, usuario nuevo, Garmin sin acceso).
+- Criterio fijado antes: ≥ 70 % y un test por comando. Cobertura de `agent/main.py`: 34 % → 89 %. En vivo, los comandos por terminal responden igual. Tests: 718.
+
 ### Added (sensores S25 y S26)
 - S25 `find_wrong_hrv_deviation`: una línea con la HRV y su media en ms no puede afirmar una diferencia en % que no sale de esas cifras. Caso real del 24/10: "anoche 58 ms (media 7 d 59 ms) → > 10 % por debajo" (es −1,7 %). Conservador: basta con que una pareja de cifras de la línea justifique lo afirmado, y no cuentan los umbrales de alerta (una sola cifra o línea con "si…").
 - S26 `find_swapped_tss_label`: un TSS citado como hrTSS que en los datos es rTSS (o al revés). Solo cifras con decimal pegadas a la etiqueta en el texto y en los datos; "TSS" a secas no es error.
