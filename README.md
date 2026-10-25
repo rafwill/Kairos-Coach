@@ -128,7 +128,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | [`CLAUDE.md`](CLAUDE.md) | Estado vigente del cálculo de carga, reglas de método, datos y pendientes (hoja de ruta) |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Capas, tablas de Supabase, flujos de arranque, cálculo y chat, MCP y seguridad |
 | [`docs/Harness.md`](docs/Harness.md) | Guías y sensores que rodean al LLM (qué existe, dónde vive y su estado) y rúbrica de la batería |
-| [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Bitácora de investigación |
+| [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Pendientes y biblioteca de experiencia |
 | [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración, problemas frecuentes (429/403, certificados) y catálogo de las 42 tools (generado) |
 | [`CHANGELOG.md`](CHANGELOG.md) | Cambios (los pendientes, en `CLAUDE.md`) |
 
