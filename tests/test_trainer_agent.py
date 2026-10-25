@@ -5047,13 +5047,15 @@ class TestMcpFactualDeterministicRoute:
 
         router = ta.ToolRouter(enabled=True)
         for q in ("¿Cómo ha evolucionado mi HRV en las últimas dos semanas?", "¿Cómo ha ido mi HRV este mes?",
-                  "Tendencia de mi sueño en las últimas semanas", "Evolución de mi FC en reposo este mes"):
+                  "Evolución de mi FC en reposo este mes"):
             assert not ta._is_mcp_factual_query_intent(q), q
             assert router.route_key(q, [], {}) is None, q
         for q in ("¿Cómo está mi HRV hoy?", "¿Qué HRV tuve ayer?", "¿Cuál fue mi FC en reposo ayer?"):
             assert router.route_key(q, [], {}) == "mcp_factual", q
         # Desde el 25/10 el sueño de anoche tiene su ruta (antes, tabla de todo el día).
-        assert router.route_key("¿Cómo dormí anoche?", [], {}) == "sleep_last_night"
+        assert router.route_key("¿Cómo dormí anoche?", [], {}) == "sleep_night"
+        # La tendencia de sueño tiene su ruta mixta (25/10): tabla de Python y lectura del LLM.
+        assert router.route_key("Tendencia de mi sueño en las últimas semanas", [], {}) == "sleep_trend"
         assert router.route_key("¿Cuál es mi tendencia de carga de las últimas 4 semanas?", [], {}) == "load_trend"
         assert router.route_key("¿Dime los TSS de mis 20 ultimas actividades de Trail?", [], {}) == "recent_tss_by_sport"
 
@@ -6284,6 +6286,29 @@ class TestStructuredPlanEngine:
         assert "MARCO-DE-HOY" in today_user
         assert "MARCO-DE-HOY" not in week_user
 
+    @pytest.mark.asyncio
+    async def test_sleep_trend_always_gets_its_own_prompt_and_period(self, monkeypatch):
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.model = "m"
+        agent.provider = "nvidia"
+        agent.total_prompt_tokens = agent.total_completion_tokens = 0
+        reply = MagicMock()
+        reply.choices = [MagicMock(message=MagicMock(content="- Sueño estable."))]
+        reply.usage = None
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(return_value=reply)
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+
+        # Sin palabras de recomendación: con always=True la lectura del LLM se añade igual.
+        out = await agent._augment_with_llm_coaching_if_needed(
+            "¿Cómo he dormido últimamente?", "TABLA", "sleep_trend", always=True, prompt="coaching/sleep_trend",
+            horizon="las últimas 7 noches frente a las 7 anteriores")
+        messages = agent.client.chat.completions.create.await_args.kwargs["messages"]
+        assert ta._render_prompt("coaching/sleep_trend") in messages[0]["content"]
+        assert "las últimas 7 noches frente a las 7 anteriores" in messages[1]["content"]
+        assert "TABLA" in out and "Sueño estable" in out
+
     def test_structured_summary_names_garmin_zone(self):
         row = {"structured_workout": {"steps": [
             {"type": "warmup", "duration_min": 10},
@@ -6760,11 +6785,62 @@ class TestPeriodAndSleepRoutes:
 
         monkeypatch.setattr(ta, "call_tool", fake_call)
         monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
-        out = await ta._build_sleep_last_night_markdown(None)
+        out = await ta._build_sleep_night_markdown(None)
         assert "aún no tiene el sueño de anoche" in out
-        assert "La noche que terminó el 24/10/2026 dormiste 6 h 49 min, puntuación 74/100" in out
+        assert "La noche que terminó el sábado 24/10/2026 dormiste 6 h 49 min, puntuación 74/100" in out
         assert "Media de las 1 noches anteriores: 8 h 00 min" in out
         nights["2026-10-25"] = {"sleepTimeSeconds": 27000, "sleepScore": 85}
-        out = await ta._build_sleep_last_night_markdown(None)
-        assert out.count("Anoche (noche que termina el 25/10/2026) dormiste 7 h 30 min") == 1
+        out = await ta._build_sleep_night_markdown(None)
+        assert out.count("Anoche (noche que termina el domingo 25/10/2026) dormiste 7 h 30 min") == 1
         assert "aún no tiene" not in out
+
+    def test_resolve_sleep_night_and_window(self):
+        r = ta._resolve_sleep_night
+        assert r("¿Cómo dormí anoche?", self.TODAY) == self.TODAY
+        assert r("¿Qué tal dormí ayer?", self.TODAY) == date(2026, 10, 24)
+        assert r("¿Y anteayer?  sueño", self.TODAY) == date(2026, 10, 23)
+        assert r("¿Cómo dormí el martes?", self.TODAY) == date(2026, 10, 20)  # el último martes, fecha de Garmin
+        assert r("¿Cómo dormí el 20/10?", self.TODAY) == date(2026, 10, 20)
+        assert r("mi sueño del 18 de octubre", self.TODAY) == date(2026, 10, 18)
+        assert r("¿Cómo dormí el 30/12?", self.TODAY) == date(2025, 12, 30)  # sin año, nunca futura
+        assert r("¿Cómo he dormido últimamente?", self.TODAY) is None
+        assert r("Dormí mal, ¿puedo entrenar?", self.TODAY) is None
+        w = ta._resolve_sleep_window
+        assert w("¿Cómo he dormido últimamente?") == 7
+        assert w("¿Cómo he dormido las últimas 10 noches?") == 10
+        assert w("Tendencia de mi sueño en las últimas semanas") == 14
+        assert w("¿Cómo ha ido mi sueño este mes?") == 30
+        assert w("¿Cómo dormí anoche?") is None
+
+    @pytest.mark.asyncio
+    async def test_other_night_without_data_says_so(self, monkeypatch):
+        async def fake_call(_session, name, args):
+            return json.dumps({"date": args["date"], "sleepTimeSeconds": None})
+
+        monkeypatch.setattr(ta, "call_tool", fake_call)
+        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        out = await ta._build_sleep_night_markdown(None, date(2026, 10, 20))
+        assert "no tiene sueño registrado de la noche que termina el martes 20/10/2026" in out
+
+    @pytest.mark.asyncio
+    async def test_sleep_trend_compares_with_previous_period(self, monkeypatch):
+        # Últimas 7 noches: 7 h salvo una de 5 h; las 7 anteriores: 8 h. Una noche sin datos.
+        def night(i):
+            if i == 3:
+                return None
+            hours = (5 if i == 1 else 7) if i < 7 else 8
+            return {"sleepTimeSeconds": hours * 3600, "sleepScore": 70 if i < 7 else 85,
+                    "deepSleepSeconds": 3600, "remSleepSeconds": 3600}
+
+        async def fake_call(_session, name, args):
+            i = (self.TODAY - date.fromisoformat(args["date"])).days
+            return json.dumps(night(i) or {"sleepTimeSeconds": None})
+
+        monkeypatch.setattr(ta, "call_tool", fake_call)
+        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        out = await ta._build_sleep_trend_markdown(None, 7)
+        # 6 noches con datos: 5 de 7 h y 1 de 5 h → 6 h 40 min; frente a 8 h → −80 min y −15 puntos.
+        assert "media 6 h 40 min, puntuación 70/100; 1 por debajo de 6 h. Sin datos en 1 noche(s)." in out
+        assert "-80 min de sueño y -15 puntos" in out
+        assert "- jue 22/10: sin datos" in out
+        assert ta._signed(-0.3) == "0" and ta._signed(4.6) == "+5"

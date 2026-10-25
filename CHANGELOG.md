@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-25
 
+### Added (sueño: una noche concreta y tendencias)
+- Una noche concreta ("¿cómo dormí el martes?", "ayer", "el 20/10", "el 18 de octubre"): la ruta de anoche pasa a `sleep_night` y acepta el día. Fecha de Garmin = día en que te despiertas, y la respuesta lo dice ("la noche que terminó el martes 20/10/2026"); un día de la semana es el último que ha pasado y una fecha sin año nunca es futura. Sin datos de esa noche, lo dice.
+- Tendencias ("¿cómo he dormido últimamente?", "las últimas 10 noches", "este mes"): ruta mixta `sleep_trend`. Python calcula las últimas N noches (7 por defecto, 14 con "últimas semanas", 30 con "mes") frente a las N anteriores: sueño y puntuación medios, % de profundo y REM, noches por debajo de 6 h, noches sin datos y diferencias; con 14 noches o menos, noche a noche. Después, siempre, la lectura del LLM con su prompt (`prompts/coaching/sleep_trend.md`: lectura, relación con el entrenamiento y la glucemia, qué cambiar) y sin recalcular cifras. `_augment_with_llm_coaching_if_needed` admite `always`, `prompt` y `horizon`.
+- Las noches se piden de 4 en 4 (el servidor atiende 4 llamadas a Garmin a la vez y Kairos corta cada una a los 8 s).
+- En vivo: una noche, 2–3 s; tendencia de 7 y de 30 noches, 22 s con la lectura del LLM. Cifras comprobadas contra Garmin directamente (las dos últimas semanas salen iguales de verdad: 194.685 s frente a 194.702 s). Batería 25/25. Tests: 726.
+
 ### Added (sensor S27: palabra relativa y día)
 - `find_wrong_relative_day`: "mañana", "pasado mañana", "hoy", "ayer" o "anteayer" seguidos de un día de la semana o una fecha que no les toca respecto a hoy. Caso de la auditoría del 24/10 (sábado): a "¿qué hago pasado mañana?" el LLM respondía "Mañana 26/10 (lunes)". Solo se juzga si hay día o fecha junto a la palabra; "mañana" como parte del día ("por la mañana", "esta mañana") no cuenta. Reintento en vivo con la fecha de hoy y en el juez con la de la transcripción.
 - Criterio fijado antes: 0 falsos positivos en las baterías guardadas y cada aviso revisado a mano. Sobre 554 respuestas con fecha: 3 avisos, los 3 el error real (24/10, "mañana" con el lunes 26/10). Tests: 722.

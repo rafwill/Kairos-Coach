@@ -21,19 +21,18 @@ La bitácora anterior (investigación del TSS frente a TrainingPeaks y sesiones 
 
 ### B. Chat y LLM
 
-3. **Sueño fuera de la ruta determinista.** "¿Cómo dormí el martes?" (otra noche) y las tendencias de sueño siguen yendo al LLM. Candidatas a ruta como `sleep_last_night`.
-4. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
-5. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
+3. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
+4. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
 
-6. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
-7. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
-8. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
-9. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
-10. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
+5. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
+6. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
+7. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
+8. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
+9. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
 
 ### Descartado
 
@@ -85,3 +84,9 @@ Formato de `docs/Harness.md` §7: **señal** (qué falló y dónde), **lección*
 - Señal: auditoría del 24/10 (sábado). A "¿qué hago pasado mañana?" el LLM respondía "Mañana 26/10 (lunes)"; ningún sensor lo veía.
 - Lección: el error solo es comprobable cuando la palabra relativa va con un día o una fecha; entonces basta con la fecha de hoy. "Mañana" también es la parte del día ("por la mañana", "esta mañana") y se excluye.
 - Evidencia: sobre 554 respuestas con fecha, 3 avisos y los 3 son el error real; 0 falsos positivos. Detalle en CHANGELOG y `docs/Harness.md`.
+
+### 25/10/2026 — Sueño: una noche concreta y tendencias
+
+- Señal: "¿cómo dormí el martes?" y "¿cómo he dormido últimamente?" iban al LLM libre, que pide los días a Garmin, suma y compara él (donde salen las cifras mal leídas y los días equivocados).
+- Lección: buscar un dato (una noche) es determinista; interpretar una tendencia es del LLM, pero con las medias y diferencias ya calculadas (ruta mixta). Una tabla con dos periodos iguales no es un fallo hasta comprobarlo en la fuente: las dos últimas semanas daban lo mismo de verdad.
+- Evidencia: rutas `sleep_night` y `sleep_trend`; cifras contra Garmin directo; una noche en 2–3 s, tendencia en 22 s con la lectura; batería 25/25.

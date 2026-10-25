@@ -45,12 +45,15 @@ class TestToolRouter:
         assert router.route_key("¿Cuántos km hice la semana pasada en bici?", [], profile) == "period_activities"
         assert router.route_key("¿Cuál fue mi tirada más larga este año?", [], profile) == "period_activities"
         # Antes: tabla de todo el día en lugar del sueño.
-        assert router.route_key("¿Cómo dormí anoche?", [], profile) == "sleep_last_night"
-        assert router.route_key("¿Cuánto he dormido hoy?", [], profile) == "sleep_last_night"
-        # Tendencias, otras noches o decisiones de entrenamiento no entran en la ruta del sueño.
-        assert router.route_key("Tendencia de mi sueño en las últimas semanas", [], profile) != "sleep_last_night"
-        assert router.route_key("¿Cómo dormí el martes?", [], profile) != "sleep_last_night"
-        assert router.route_key("Dormí mal, ¿puedo entrenar fuerte?", [], profile) != "sleep_last_night"
+        assert router.route_key("¿Cómo dormí anoche?", [], profile) == "sleep_night"
+        assert router.route_key("¿Cuánto he dormido hoy?", [], profile) == "sleep_night"
+        # Otra noche concreta (25/10): misma ruta; las tendencias, ruta mixta con la lectura del LLM.
+        assert router.route_key("¿Cómo dormí el martes?", [], profile) == "sleep_night"
+        assert router.route_key("¿Qué tal dormí el 20/10?", [], profile) == "sleep_night"
+        assert router.route_key("Tendencia de mi sueño en las últimas semanas", [], profile) == "sleep_trend"
+        assert router.route_key("¿Cómo he dormido últimamente?", [], profile) == "sleep_trend"
+        # Una decisión de entrenamiento no es una pregunta de sueño.
+        assert router.route_key("Dormí mal, ¿puedo entrenar fuerte?", [], profile) not in ("sleep_night", "sleep_trend")
         # Sin periodo no es esta ruta; las de TSS y actividades de la semana no cambian.
         assert router.route_key("¿Cuántos km corrí el 30/08?", [], profile) != "period_activities"
         assert router.route_key("¿Cuánto TSS hice esta semana?", [], profile) == "week_tss"

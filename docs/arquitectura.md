@@ -112,8 +112,8 @@ Una sola regla para todo Kairos (`load_metrics.form_zone` y `resolve_load_status
 
 `TrainerAgent.chat()` pasa por `ToolRouter` (`docs/Harness.md`):
 
-1. **Rutas deterministas** (sin LLM): estado del plan, TSS y actividades de una semana, kilómetros y actividad más larga de un periodo (`period_activities`), sueño de anoche (`sleep_last_night`), TSS de las últimas N actividades por deporte, umbrales, récords personales, objetivo, detalle de una actividad por fecha, configuración.
-2. **Rutas mixtas** (estado de hoy, "¿qué me toca?", "¿puedo entrenar fuerte mañana?", sesión de la semana): bloque factual determinista y después la capa de coaching del LLM, limitada a esos datos, con el horizonte que pide el usuario (`_coaching_horizon`). Si el LLM falla, se dice explícitamente y queda solo el bloque factual.
+1. **Rutas deterministas** (sin LLM): estado del plan, TSS y actividades de una semana, kilómetros y actividad más larga de un periodo (`period_activities`), sueño de una noche (`sleep_night`), TSS de las últimas N actividades por deporte, umbrales, récords personales, objetivo, detalle de una actividad por fecha, configuración.
+2. **Rutas mixtas** (estado de hoy, "¿qué me toca?", "¿puedo entrenar fuerte mañana?", sesión de la semana, tendencia de sueño): bloque factual determinista y después la capa de coaching del LLM, limitada a esos datos, con el horizonte que pide el usuario (`_coaching_horizon`). Si el LLM falla, se dice explícitamente y queda solo el bloque factual.
 3. **Planificación:** motor determinista multisemana (`_generate_structured_plan_payload`) con el volumen real de las últimas 4 semanas (`_build_plan_load_context`), fases base → build → peak → taper, ninguna semana más de un 10 % sobre lo sostenido y validación antes de guardar.
 4. **Resto:** LLM con tool-calling sobre el MCP (hasta 15 iteraciones, resultados compactados).
 
