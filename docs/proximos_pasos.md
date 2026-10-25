@@ -1245,3 +1245,42 @@ Lo que queda abierto es el bucle de gobierno: usar Kairos unos días y revisar l
 - Lección: el filtro por usuario tiene que estar en la base de datos (RLS), no en el cliente; y ningún fichero de esquema debe desactivar RLS al reejecutarse (schema.sql lo hacía en cada ejecución).
 - Evidencia: Supabase Auth + rls.sql aplicados; check_rls 0 filas sin sesión; escrituras ajenas rechazadas; batería 25/25 antes y después de activar las políticas. Detalle en supabase/README.md y CHANGELOG.
 - Pendiente: el segundo app_user (entrará con su cuenta o se borra si es de pruebas); el otro ordenador necesita git pull y entrar una vez.
+
+
+Para que quede cerrado del todo faltan dos cosas que no dependen de la base de datos:
+
+Subir los 4 commits. Solo lo hago cuando me lo digas.
+El otro ordenador: git pull y entrar una vez en Kairos con tu email y contraseña. Mientras no lo hagas, la versión antigua de allí no verá ningún dato.
+
+
+Lo que creo que hay que hacer antes de producción
+Seguridad de Supabase (bloqueante). Las 11 tablas tienen Row Level Security desactivado y Kairos usa la clave anon, que va en el .env de cada instalación. Con la URL y esa clave, cualquiera puede leer y modificar los datos de todos los usuarios. Hay que elegir entre dos caminos:
+
+Supabase Auth con políticas RLS por usuario;
+o un backend propio que use la clave de servicio, de forma que los clientes no hablen con la base de datos.
+Es una decisión de arquitectura y no la he tocado.
+
+Fiabilidad frente a Garmin. El servidor MCP procesa las llamadas de una en una, y garminconnect espera hasta 30 s por petición. El cortacircuitos limita el daño, pero lo correcto es bajar el límite de tiempo de garminconnect en el servidor o hacer que atienda las llamadas en paralelo.
+
+Más rutas deterministas para preguntas factuales. Cada error de datos de hoy lo ha cometido el LLM leyendo series ("¿qué día…?", "¿cuál fue la última…?"). Los siguientes candidatos son "¿cómo dormí anoche?" (hoy devuelve la tabla de todo el día), "km este mes" y "actividad más larga de un mes".
+
+Errores del LLM que los sensores no ven:
+
+lee mal la HRV: dice ">10 % por debajo" con 58 frente a 59 ms;
+llama "mañana" a pasado mañana;
+etiqueta como hrTSS un TSS de carrera.
+Un sensor sobre la etiqueta del TSS y sobre la diferencia de HRV (S14 ampliado) cubriría los dos primeros tipos.
+
+Cobertura de agent/main.py (32%). Los comandos de la CLI no tienen apenas tests y es lo que más usarás.
+
+Uso real unos días con las líneas [SENSOR] de agent.log, que ahora ya no se mezclan con las de los tests.
+
+Si quieres, convierto este diagnóstico en una página para compartir.
+
+
+
+25/10/2026 — Fiabilidad frente a Garmin (biblioteca de experiencia)
+
+- Señal: exploración del 24/10, "¿cuál fue mi actividad más larga de septiembre?": 5 timeouts de get_activity seguidos y 144 s.
+- Lección: FastMCP ejecuta las tools síncronas dentro de su bucle de eventos; una petición lenta a Garmin (hasta 30 s en garminconnect) paraba el servidor y encolaba las demás, y Kairos, que corta a los 8 s, seguía mandando llamadas que también caducaban. Las tools van en hilos con un tope (4) para no provocar 429, el login con un cerrojo, y Kairos lanza a la vez las tools de un mismo mensaje del LLM. No se baja el límite de 30 s de garminconnect (fijo en cada petición; habría que parchear la librería).
+- Evidencia: 6 tools reales 3,14 s en serie frente a 1,36 s en paralelo; la misma pregunta, 30 s y 0 timeouts; batería 25/25; ningún 429. Detalle en garmin_mcp/README.md (Configuración), docs/arquitectura.md (Cliente MCP), docs/Harness.md (S7) y CHANGELOG.

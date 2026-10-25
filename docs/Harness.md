@@ -83,7 +83,7 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | S4 | Ninguna tool de escritura | Computacional | Bloquea (las oculta al LLM y las rechaza en el bucle) | `MCP_READ_ONLY`, `_is_write_mcp_tool` | ✓ |
 | S5 | Argumentos obligatorios de cada tool | Computacional | Bloquea con error de contrato, sin llamar a Garmin | `validate_min_input_contract` (`agent/mcp/contracts.py`) | ✓ |
 | S6 | Errores de Garmin (tipo, HTTP, `retry_after`) | Computacional | Avisa (bloque "Transparencia de datos") | `_classify_mcp_error_text` (`agent/mcp/client.py`) | ✓ |
-| S7 | Bucle de tools acotado | Computacional | Bloquea a las 15 iteraciones | `_MAX_TOOL_ITER` | ✓ |
+| S7 | Bucle de tools acotado: 15 iteraciones como máximo; tras 2 timeouts en una respuesta no se llama más a Garmin (cortacircuitos, 24/10); las tools de un mismo mensaje van en paralelo y el servidor las atiende en hilos con 4 llamadas simultáneas como máximo (24/10) | Computacional | Bloquea | `_MAX_TOOL_ITER`, `_MAX_TOOL_TIMEOUTS` (`agent/trainer_agent.py`), `GARMIN_MAX_CONCURRENT_CALLS` (`garmin_mcp/server.py`) | ✓ |
 
 ### En vivo, sobre la respuesta del LLM
 
