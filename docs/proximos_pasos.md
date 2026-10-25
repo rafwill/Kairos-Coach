@@ -6,6 +6,16 @@ Este fichero tiene dos partes: **lo que queda pendiente** y la **biblioteca de e
 
 La bitácora anterior (investigación del TSS frente a TrainingPeaks y sesiones del 16/09 al 25/10/2026) se quitó en esta revisión; se puede consultar en git con `git show 4578226:docs/proximos_pasos.md`.
 
+## Dónde lo dejamos
+
+Se reescribe al final de cada sesión (la anterior se pierde: el detalle está en git y en el CHANGELOG).
+
+**Sesión del 25/10/2026** (ordenador 1). Todo subido a GitHub (último commit `5ca8f84`, CI en verde), sin cambios a medias.
+
+- Hecho: puntos 1 a 5 de la lista previa a producción (Supabase Auth + RLS; llamadas a Garmin en paralelo; rutas de periodo y de sueño; sensores S25–S27; cobertura de la CLI al 89 %), sueño de una noche concreta y tendencia de sueño, y esta reorganización del fichero.
+- Al empezar en el ordenador 2: hacer primero el punto 2 de Pendiente (`git pull`, entrar una vez en Kairos con Supabase Auth, `make hooks`, comprobar `ENCRYPTION_KEY`) y lanzar la batería (`tools/run_bateria.py` + `tools/juez_bateria.py`) para confirmar que allí sale 25/25.
+- Siguiente paso propuesto: el punto 3 (Kairos para DT1, DT2 o sin diabetes), empezando por decidir el campo del perfil y la pregunta de la configuración inicial. El punto 1 (uso real y revisión de `[SENSOR]`) sigue en marcha mientras se usa Kairos.
+
 ## Pendiente
 
 ### A. Puesta en producción

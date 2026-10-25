@@ -11,6 +11,10 @@
 - Pre-commit versionado (`.githooks/pre-commit`, activado con `make hooks` o por los setup): ruff (F y E9, reglas fijadas en `pyproject.toml`) y tests; la CI pasa el mismo lint. Si falla, se corrige; nunca `--no-verify`.
 - Sin push hasta orden expresa. Commits firmados con la clave GPG personal (rafwill2@gmail.com, la elige `~/.gitconfig-personal` por el remoto `github.com/rafwill/...`); `gpg-agent` recuerda la contraseña 8 h. Si la firma falla por falta de contraseña, pedir al usuario que haga él el commit (la escribe y queda recordada); nunca `--no-gpg-sign`.
 
+## Al empezar una sesión
+
+Leer `docs/proximos_pasos.md`: "Dónde lo dejamos" dice en qué punto quedó la última sesión y por dónde seguir; "Pendiente", lo que queda. Al terminar, reescribir "Dónde lo dejamos" (fecha, ordenador, último commit, siguiente paso) para que la siguiente sesión, en este u otro ordenador, empiece desde ahí.
+
 ## Objetivo
 
 Cuantificar cada sesión con TSS (TSS/hrTSS/rTSS) como lo haría TrainingPeaks, para que ATL/CTL/TSB se parezcan lo más posible a los de TP. Cada actividad tiene UN TSS, calculado una vez, guardado en `activity_tss`, y todas las pantallas leen ese número. La carga nativa de Garmin nunca es TSS (solo columna `native_load` / "Carga Garmin").
