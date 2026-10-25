@@ -21,18 +21,24 @@ La bitácora anterior (investigación del TSS frente a TrainingPeaks y sesiones 
 
 ### B. Chat y LLM
 
-3. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
-4. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
+3. **Kairos para atletas con DT1, DT2 o sin diabetes** (decisión del usuario, 25/10). Kairos tiene que servir a los tres casos:
+   - **Sin diabetes:** si al crear el perfil el atleta dice que no tiene diabetes, no se le vuelve a preguntar, y los planes, el análisis y el coaching se hacen sin ese parámetro (ni nota glucémica ni menciones a la glucemia).
+   - **Con diabetes** (como el usuario, DT1): Kairos mantiene su conocimiento sobre diabetes y deporte.
+   - **Otra patología:** se deja al LLM, con lo que el atleta haya escrito en su perfil.
+   - Hoy: la diabetes sale de un campo de texto libre ("Lesiones o enfermedades", `_ask_health`), no de una pregunta propia; el protocolo de diabetes con insulina de `prompts/coaching_rules.md` va en todas las llamadas al LLM aunque el atleta no la tenga (el texto dice "si el perfil incluye DT1…" y decide el LLM); no hay protocolo para DT2 sin insulina (menos riesgo de hipoglucemia, salvo con algunos fármacos); `/ayuda` menciona la DT1 a todos. Lo que ya va por perfil: la nota glucémica S16 (`has_insulin_diabetes`).
+   - A decidir: campo estructurado en el perfil (p. ej. `health.diabetes` = no / DT1 / DT2 / otra, con o sin insulina), pregunta única en la configuración inicial y en `/perfil editar salud`, y cargar el protocolo de diabetes en el prompt solo cuando aplique (separado de `coaching_rules.md`).
+4. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
+5. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
 
-5. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
-6. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
-7. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
-8. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
-9. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
+6. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
+7. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
+8. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
+9. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
+10. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
 
 ### Descartado
 
