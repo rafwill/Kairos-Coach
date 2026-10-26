@@ -100,6 +100,12 @@ class TestOtherSensors:
         assert _ids(out) == ["S11"]
         assert "4:00" in out[0].hint
 
+    def test_zone_names_are_not_the_threshold_pace(self):
+        # 26/10: "Supraumbral" contiene "umbral" y la cifra de la zona se leía como ritmo umbral.
+        assert sensors.find_wrong_threshold_pace("Z5 Supraumbral (≥ 169 lpm) o ritmo 3:30–3:40 min/km", 240) == []
+        assert sensors.find_wrong_threshold_pace("Z4 Subumbral: 4:05/km", 240) == []
+        assert _ids(sensors.find_wrong_threshold_pace("Umbral: 3:30/km", 240)) == ["S11"]
+
     def test_ctl_with_atl_max(self):
         assert _ids(sensors.find_ctl_with_atl_max("Tu CTL 50 (máximo habitual 70).")) == ["S12"]
         assert sensors.find_ctl_with_atl_max("Tu CTL 50; ATL 60 (máximo habitual 70).") == []
@@ -288,3 +294,33 @@ class TestRelativeDayS27:
     def test_live_retry_includes_it(self):
         found = sensors.findings_to_retry("Mañana lunes 26/10: rodaje.", [], None, None, today=self.SAT)
         assert [f.sensor for f in found] == ["S27"]
+
+
+class TestWeekdayDateS28:
+    MON = date(2026, 10, 26)  # lunes
+
+    def test_real_cases_are_caught(self):
+        # 26/10: semanas desplazadas un día en una respuesta libre y "domingo 2/11" (es lunes).
+        text = "• Esta semana (lunes 20/10 – domingo 26/10): 151 795 pasos."
+        found = sensors.find_wrong_weekday_date(text, self.MON)
+        assert [f.sensor for f in found] == ["S28", "S28"]
+        assert "martes" in found[0].message and "lunes" in found[1].message
+        assert sensors.find_wrong_weekday_date("¿Programo la tirada larga el domingo 2/11?", self.MON)
+        assert sensors.find_wrong_weekday_date("lo que hiciste el domingo (20/10)", self.MON)
+        assert sensors.find_wrong_weekday_date("Rodaje el 20/10 (lunes).", self.MON)
+
+    def test_right_days_and_non_dates_pass(self):
+        ok = [
+            "Semana del lunes 19/10 al domingo 25/10; hoy lunes, 26/10/2026.",
+            "El 25/10 (domingo) hiciste 2 h en Z2.",
+            "Domingo día 1/11: tirada larga.",
+            "El lunes te duele 4/10.",          # puntuación, no fecha
+            "Martes: series. 20/10 fue el test.",  # el día no va pegado a la fecha
+        ]
+        for text in ok:
+            assert sensors.find_wrong_weekday_date(text, self.MON) == [], text
+        assert sensors.find_wrong_weekday_date("domingo 20/10", None) == []
+
+    def test_live_retry_includes_it(self):
+        found = sensors.findings_to_retry("Tirada larga el domingo 2/11.", [], None, None, today=self.MON)
+        assert [f.sensor for f in found] == ["S28"]

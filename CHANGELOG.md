@@ -4,6 +4,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Added / Fixed (sensores: S28 nuevo, S11 y tablas partidas en el juez)
+- **S28** (`find_wrong_weekday_date`): un día de la semana junto a una fecha ("domingo 20/10", "20/10 (domingo)") tiene que ser el día en que cae; sin año, el que deja la fecha más cerca de hoy. Reintenta en vivo y lo pasa el juez. Criterio fijado antes: 0 falsos positivos en las baterías guardadas y cada aviso revisado a mano. Sobre las 220 respuestas del ordenador 2 (173 pares día + fecha): 5 avisos, los 5 errores reales ("lunes 20/10 – domingo 26/10" para la semana del 19 al 25; "domingo 2/11", que es lunes). En casa se repite con las 891.
+- **S11**: "umbral" solo cuenta como palabra suelta; en "Z5 Supraumbral" o "Z4 Subumbral" es el nombre de la zona ("Z5 Supraumbral (≥ 169 lpm) o ritmo 3:30–3:40 min/km" daba S11). En las 220 respuestas solo desaparece ese aviso.
+- **Juez con tablas partidas**: `run_bateria` pinta a 400 columnas (antes 110): cada fila de tabla y cada párrafo en una línea, como el texto que ven los sensores en vivo. A 110, Rich partía la celda y "progresivo" quedaba en otra línea que su rango (batería 20261026_100523, pregunta 9).
+- Batería de 25 a 400 columnas: 25/25, y la memoria del atleta sigue vacía después. `juez_bateria` pasa su salida a UTF-8 (en la consola de Windows, cp1252, los ✅/❌ del resumen la rompían).
+- Corrección de la nota de pendientes: el 20/10/2026 fue martes, no lunes ("el domingo (20/10)" seguía siendo un error).
+
 ### Fixed (la batería ya no toca la memoria del atleta)
 - Al comprobar la memoria entre sesiones en el ordenador 2 (funciona: resumen del día e historial en `session_context`), los resúmenes del 23 al 26/10 resultaron ser solo preguntas de batería; el LLM las habría recibido como temas del atleta. `tools/run_bateria.py` arranca Kairos con `KAIROS_SESSION_MEMORY=false`: no guarda historial ni resumen del día y no lee los anteriores, así que cada pasada tampoco depende de la anterior. La memoria del atleta se vació en Supabase (50 entradas de historial y 10 resúmenes, todo de baterías; prueba, aplicación y lectura de vuelta).
 

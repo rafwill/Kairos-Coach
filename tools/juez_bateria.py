@@ -194,6 +194,8 @@ def global_checks(v: Verdict, body: str, today: date | None = None) -> None:
     v.sense(sensors.find_swapped_tss_label(coaching, body.split("Interpretación de coaching", 1)[0]))
     # S27: "mañana", "hoy"… con el día que les toca respecto a la fecha de la transcripción.
     v.sense(sensors.find_wrong_relative_day(body, today))
+    # S28: día de la semana junto a una fecha que no cae en ese día.
+    v.sense(sensors.find_wrong_weekday_date(body, today))
 
 
 # ─── Comprobaciones por pregunta ────────────────────────────────────────────
@@ -409,6 +411,8 @@ def specific_checks(v: Verdict, q: str, body: str, t: Truth) -> None:
 
 
 def main() -> int:
+    # En la consola de Windows (cp1252) los ✅/❌ del resumen rompían la salida tras escribir el informe.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("transcripcion", help="fichero .md generado por tools/run_bateria.py")
     ap.add_argument("--username", default=None)

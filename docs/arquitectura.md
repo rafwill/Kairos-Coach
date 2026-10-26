@@ -35,7 +35,7 @@ El servidor no importa nada de `agent/` (lo comprueba `test_server_package_does_
 | --- | --- |
 | `app_user` | Usuario de la aplicación, vinculado a su cuenta de Supabase Auth (`auth_user_id`), y credenciales auxiliares (contraseña de Garmin cifrada con Fernet). `password_hash` (PBKDF2) solo en cuentas anteriores al 24/10 sin migrar. |
 | `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y caché de `load_metrics`. |
-| `session_context` | Historial reciente de conversación y resúmenes de sesión. |
+| `session_context` | Historial reciente de conversación y resúmenes de sesión (memoria entre sesiones; la batería no la lee ni la escribe). |
 | `athlete_knowledge` | Base de conocimiento textual del atleta (RAG ligero). |
 | `ia_provider` | Proveedor de IA del atleta (proveedor, URL compatible con OpenAI, modelo) y consumo diario de tokens. La clave no: va en `.env`. |
 | `training_plan`, `training_plan_session`, `training_plan_version` | Planes, sesiones (`structured_workout`) y snapshots de cada versión. |

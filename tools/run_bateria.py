@@ -63,7 +63,9 @@ def clean(block: str) -> str:
 
 def run(questions: list[str], username: str, model: str | None) -> tuple[str, float, list[dict]]:
     env = os.environ.copy()
-    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "COLUMNS": "110", "TERM": "dumb",
+    # 400 columnas: cada fila de tabla y cada párrafo en una línea, como el texto que ven los sensores en vivo.
+    # A 110, Rich partía las celdas y el juez leía "progresivo" en otra línea que su rango (S10, 26/10).
+    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "COLUMNS": "400", "TERM": "dumb",
                 "KAIROS_SESSION_MEMORY": "false"})  # ni lee ni escribe la memoria del atleta
     if model:
         env["KAIROS_MODEL"] = model

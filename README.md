@@ -118,7 +118,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 - **Tests:** 623 passed (23/10/2026). No necesitan red. Los pasan el pre-commit y la CI.
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
 - **`healthcheck_mcp`:** llama a las 42 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
-- **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
+- **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`; no lee ni escribe la memoria del atleta); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
 - Las salidas con datos reales van a `.tmp/`, que está en `.gitignore`.
 
 ## Documentación

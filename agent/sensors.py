@@ -258,7 +258,8 @@ def find_wrong_threshold_pace(coaching: str, pace_today_s: float | None) -> list
     if not pace_today_s:
         return out
     vigente = f"{int(pace_today_s // 60)}:{int(pace_today_s % 60):02d}"
-    for m in re.finditer(r"(?i)umbral([^\n]{0,40}?)(\d):(\d{2})\s*(?:–\s*\d:\d{2}\s*)?(?:min)?/km", coaching):
+    # "umbral" suelto: en "Z5 Supraumbral" o "Z4 Subumbral" es el nombre de la zona (falso positivo del 26/10).
+    for m in re.finditer(r"(?i)(?<!\w)umbral([^\n]{0,40}?)(\d):(\d{2})\s*(?:–\s*\d:\d{2}\s*)?(?:min)?/km", coaching):
         if _PACE_GOAL_WORDS.search(m.group(1)):
             continue
         p = (m.group(2), m.group(3))
@@ -521,6 +522,48 @@ def find_wrong_relative_day(text: str, today: date | None) -> list[Finding]:
     return out
 
 
+# ─── S28: día de la semana con su fecha ─────────────────────────────────────
+
+# Día de la semana pegado a una fecha DD/MM(/AAAA): "domingo 20/10", "el domingo (20/10)", "lunes, 27/10/2026",
+# o al revés, "20/10 (domingo)".
+_WD = r"(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)"
+_DM = r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?![\d/])"
+_WEEKDAY_DATE = re.compile(rf"(?i)(?<![\wáéíóú]){_WD}[ \t]*[,(]?[ \t]*(?:d[ií]a[ \t]+)?{_DM}")
+_DATE_WEEKDAY = re.compile(rf"(?i)(?<![\d/]){_DM}[ \t]*[(,][ \t]*{_WD}\b")
+
+
+def find_wrong_weekday_date(text: str, today: date | None) -> list[Finding]:
+    """Un día de la semana junto a una fecha que no cae en ese día. Caso del 26/10: "el domingo (20/10)", y el
+    20/10/2026 fue lunes. Sin año, el que deja la fecha más cerca de hoy (como S27)."""
+    if today is None:
+        return []
+    out: list[Finding] = []
+    seen: set[str] = set()
+    hits = [(m, m.group(1), m.group(2), m.group(3), m.group(4)) for m in _WEEKDAY_DATE.finditer(text)]
+    hits += [(m, m.group(4), m.group(1), m.group(2), m.group(3)) for m in _DATE_WEEKDAY.finditer(text)]
+    for m, weekday, dd, mm, yy in hits:
+        if _is_score(text, m, dd, mm, yy):
+            continue
+        if yy:
+            try:
+                cited = date(int(yy) + (2000 if len(yy) == 2 else 0), int(mm), int(dd))
+            except ValueError:
+                continue
+        else:
+            cited = _nearest_date(int(dd), int(mm), today)
+        if not cited or _WEEKDAY_INDEX[weekday.lower()] == cited.weekday():
+            continue
+        quote = m.group(0).strip()
+        if quote in seen:
+            continue
+        seen.add(quote)
+        right = _WEEKDAYS[cited.weekday()]
+        out.append(Finding("S28", f"LLM: \"{quote}\" no cuadra: el {cited.strftime('%d/%m/%Y')} es {right}",
+                           f"El {cited.strftime('%d/%m')} es {right}, no {weekday.lower()}: corrige el día o la "
+                           "fecha según los datos."))
+    return out
+
+
 # ─── S16: nota de seguridad glucémica ───────────────────────────────────────
 
 _INSULIN_DIABETES = re.compile(r"(?i)\bdt\s?1\b|diabetes\s+tipo\s*1|\btipo\s*1\b|\blada\b|insulin")
@@ -561,7 +604,7 @@ def findings_to_retry(
     decision: str | None = None,
     today: date | None = None,
 ) -> list[Finding]:
-    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12, S14, S15, S25–S27 y el marcador
+    """Sensores en vivo que piden reintento al LLM (docs/Harness.md §6): S10–S12, S14, S15, S25–S28 y el marcador
     vacío (G4).
 
     S8 (turnos inventados), S13 (fechas ISO) y S16 (nota glucémica) no están aquí porque se corrigen sin LLM.
@@ -573,6 +616,7 @@ def findings_to_retry(
         + find_wrong_hrv_deviation(text)
         + find_swapped_tss_label(text, reference)
         + find_wrong_relative_day(text, today)
+        + find_wrong_weekday_date(text, today)
         + find_empty_data_lines(text)
     )
 

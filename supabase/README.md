@@ -54,7 +54,7 @@ Kairos ──(email + contraseña)──> Supabase Auth ──> token de sesión
   - Las 8 tablas con `app_user_id`: todo (ver, crear, modificar, borrar) solo sobre tus filas.
   - `training_plan_session` y `training_plan_version`: solo las de tus planes.
   - Sin sesión (rol `anon`): ninguna política, así que no se ve nada.
-- **Sesión guardada.** Kairos guarda la sesión en `~/.kairos/supabase_session.json` (fuera del repo, como los tokens de Garmin en `~/.garminconnect/`) y la renueva sola. Al arrancar no pide contraseña mientras la sesión siga válida. Las herramientas (`juez_bateria.py`, `rebuild_tss_baseline.py`, `check_rls.py`) usan la misma sesión. Se puede cambiar la ruta con `KAIROS_SESSION_FILE`.
+- **Sesión guardada.** Kairos guarda la sesión en `~/.kairos/supabase_session.json` (fuera del repo, como los tokens de Garmin en `~/.garminconnect/`) y la renueva sola: antes de cada consulta mira por la hora del reloj si el token caduca en menos de un minuto (desde el 26/10; tras suspender el equipo, el auto-refresco del cliente llegaba tarde y un "JWT expired" cerraba Kairos). Al arrancar no pide contraseña mientras la sesión siga válida. Las herramientas (`juez_bateria.py`, `rebuild_tss_baseline.py`, `check_rls.py`) usan la misma sesión. Se puede cambiar la ruta con `KAIROS_SESSION_FILE`.
 - **Nada antes de entrar.** Kairos ya no lee la base de datos antes de iniciar sesión. La contraseña de Garmin sigue guardada cifrada en `app_user.credentials` (con la `ENCRYPTION_KEY` local) y se descifra después de entrar.
 
 ## 4. Puesta en marcha
