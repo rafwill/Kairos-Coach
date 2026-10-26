@@ -12621,9 +12621,7 @@ class TrainerAgent:
 
         _MAX_TOOL_ITER = 15
         # Metatooling (26/10): solo los grupos de tools que pide la pregunta; el LLM puede pedir más.
-        # KAIROS_TOOL_GROUPS=0 lo apaga (van las 45, como antes).
-        self._turn_tool_groups = (_tool_groups.groups_for(user_message)
-                                  if os.environ.get("KAIROS_TOOL_GROUPS") != "0" else set())
+        self._turn_tool_groups = _tool_groups.groups_for(user_message)
         log.info("[TOOL] grupos de la pregunta: %s", ",".join(sorted(self._turn_tool_groups)) or "todos")
         # Cortacircuitos (24/10): garminconnect espera hasta 30 s por petición y aquí se corta a los 8 s; con
         # Garmin lento, cada llamada nueva se encolaba tras la abandonada y agotaba también su tiempo (5 seguidas,
