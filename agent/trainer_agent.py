@@ -22,6 +22,7 @@ from mcp import ClientSession
 from agent import sensors as _sensors
 from agent import diabetes as _diabetes
 from agent import ia_provider as _ia_provider
+from agent import tool_groups as _tool_groups
 from agent.sensors import strip_simulated_user_turn as _strip_simulated_user_turn
 from agent.mcp.client import (
     list_available_tools,
@@ -764,6 +765,9 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
             except (TypeError, ValueError):
                 pass
         if isinstance(data, list):
+            if len(data) > 8:
+                # Medición del metatooling (26/10): cuántas veces el LLM recibe una lista recortada.
+                log.info("[TOOL] %s lista recortada: %d → 8 elementos", tool_name or "?", len(data))
             data = data[:8]  # máximo 8 elementos de arrays
             data = [
                 _strip_garmin_object(item) if isinstance(item, dict) else item
@@ -773,10 +777,12 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
             data = _strip_garmin_object(data)
         compact = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
         if len(compact) > _MAX_TOOL_RESULT_CHARS:
+            log.info("[TOOL] %s resultado cortado: %d → %d caracteres", tool_name or "?", len(compact), _MAX_TOOL_RESULT_CHARS)
             compact = compact[:_MAX_TOOL_RESULT_CHARS] + "...(truncado)"
         return compact
     except (json.JSONDecodeError, TypeError):
         if len(raw) > _MAX_TOOL_RESULT_CHARS:
+            log.info("[TOOL] %s resultado cortado: %d → %d caracteres", tool_name or "?", len(raw), _MAX_TOOL_RESULT_CHARS)
             return raw[:_MAX_TOOL_RESULT_CHARS] + "...(truncado)"
         return raw
 
@@ -11658,6 +11664,18 @@ class TrainerAgent:
     async def _handle_internal_tool(self, tool_name: str, arguments: dict) -> str:
         """Despacha herramientas internas kairos_* sin llamar al servidor MCP."""
         args = arguments if isinstance(arguments, dict) else {}
+        if tool_name == _tool_groups.REQUEST_TOOL:
+            group = str(args.get("grupo") or "")
+            if group not in _tool_groups.GROUPS:
+                return json.dumps({"error": f"Grupo '{group}' no existe.", "grupos": sorted(_tool_groups.GROUPS)},
+                                  ensure_ascii=False)
+            groups = getattr(self, "_turn_tool_groups", None)
+            if groups is not None and groups:
+                groups.add(group)
+            log.info("[TOOL] el LLM pide el grupo %s", group)
+            return json.dumps({"ok": True, "grupo": group, "herramientas": list(_tool_groups.GROUPS[group]),
+                               "nota": "Ya las tienes disponibles: llámalas en tu siguiente paso."},
+                              ensure_ascii=False)
         if tool_name == "kairos_load_trends":
             return _kairos_load_trends(
                 self.user_profile,
@@ -12602,6 +12620,11 @@ class TrainerAgent:
                 log.debug(f"Pre-fetch {user_date}: no se encontro actividad")
 
         _MAX_TOOL_ITER = 15
+        # Metatooling (26/10): solo los grupos de tools que pide la pregunta; el LLM puede pedir más.
+        # KAIROS_TOOL_GROUPS=0 lo apaga (van las 45, como antes).
+        self._turn_tool_groups = (_tool_groups.groups_for(user_message)
+                                  if os.environ.get("KAIROS_TOOL_GROUPS") != "0" else set())
+        log.info("[TOOL] grupos de la pregunta: %s", ",".join(sorted(self._turn_tool_groups)) or "todos")
         # Cortacircuitos (24/10): garminconnect espera hasta 30 s por petición y aquí se corta a los 8 s; con
         # Garmin lento, cada llamada nueva se encolaba tras la abandonada y agotaba también su tiempo (5 seguidas,
         # 144 s en una pregunta). Tras 2 timeouts en la misma respuesta no se llama más a Garmin.
@@ -12616,14 +12639,15 @@ class TrainerAgent:
                 return await self._finalize_chat_reply(user_message, assistant_reply, route="max_tool_iterations")
             try:
                 _t0 = time.perf_counter()
+                turn_tools = _tool_groups.select(self.tools_schema, self._turn_tool_groups) if self.tools_schema else []
                 log.info("[LLM] ▶ llamada iter=%d modelo=%s route=chat msgs=%d",
                          iteration, self.model, len(messages))
                 response = await asyncio.wait_for(
                     self.client.chat.completions.create(
                         model=self.model,
                         messages=messages,
-                        tools=self.tools_schema if self.tools_schema else None,
-                        tool_choice="auto" if self.tools_schema else None,
+                        tools=turn_tools or None,
+                        tool_choice="auto" if turn_tools else None,
                         **({
                             "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
                         } if getattr(self, "provider", "") == "nvidia" else {}),
@@ -12694,7 +12718,9 @@ class TrainerAgent:
                 self.total_prompt_tokens += p_toks
                 self.total_completion_tokens += c_toks
                 total_step_tokens = p_toks + c_toks
-                log.debug(f"Tokens - Entrada: {p_toks} | Salida: {c_toks} | Total paso: {total_step_tokens}")
+                # Medición del metatooling (26/10): tokens de cada vuelta y cuántas tools se mandaron.
+                log.info("[LLM] ◀ iter=%d tools=%d tokens entrada=%d salida=%d",
+                         iteration, len(turn_tools), p_toks, c_toks)
                 _add_ia_tokens(total_step_tokens)
 
             message = response.choices[0].message
@@ -12787,6 +12813,11 @@ class TrainerAgent:
                                            "el perfil, el objetivo y el plan ya están en el contexto.",
                             }, ensure_ascii=False),
                         }
+
+                    group = _tool_groups.GROUP_OF.get(tool_name)
+                    if group and self._turn_tool_groups and group not in self._turn_tool_groups:
+                        log.info("[TOOL] %s fuera de los grupos enviados: se añade %s", tool_name, group)
+                        self._turn_tool_groups.add(group)
 
                     if tool_timeouts >= _MAX_TOOL_TIMEOUTS and not tool_name.startswith("kairos_"):
                         return {

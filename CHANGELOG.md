@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Added (metatooling: grupos de tools según la pregunta)
+- Antes, cada llamada del bucle con tools mandaba las 45 tools (≈ 6.000 tokens, de ≈ 20.000 de entrada por llamada). `agent/tool_groups.py` las reparte en 5 grupos (actividades, sueño y recuperación, día a día, rendimiento, semanal y cuerpo); reglas sobre la pregunta (sin LLM) eligen los grupos, y las `kairos_*` van siempre. Si ninguna regla encaja, van todas, como antes. El LLM puede pedir otro grupo con `kairos_pedir_herramientas`, y una tool real de otro grupo que pida por nombre se ejecuta igualmente y añade su grupo. `KAIROS_TOOL_GROUPS=0` lo apaga.
+- Medición nueva en `agent.log`: tokens y número de tools de cada llamada (`[LLM] ◀ … tools= tokens entrada=`), resultados cortados a 3.000 caracteres y listas recortadas a 8 elementos (`[TOOL]`).
+- Criterio fijado antes; 10 preguntas libres que van al bucle (`docs/bateria_tools_libres.txt`) y batería de 25. Sin grupos → con grupos: 45 → 17 tools por llamada de media; 20.024 → 15.636 tokens de entrada por llamada (−22 %; se esperaba −50 %: el prompt de sistema, ≈ 7.000, y el contexto pesan más que las tools); 480.567 → 343.990 en total (−28 %); mismas respuestas; la meta-tool no hizo falta (0/9); batería 25/25. La batería de 25 no pasa por el bucle con tools (todo es determinista o coaching sin tools). Resultados cortados: 1 de 24 llamadas en las dos pasadas.
+- Lección: en un agente con rutas deterministas, el metatooling solo toca las preguntas libres, y el ahorro lo limita el resto del contexto; medir antes de estimar.
+
 ### Changed (.env.example limpio)
 - Solo lo que se configura de verdad, en el orden del `.env` del ordenador 2: Garmin (con `ENCRYPTION_KEY`), `KAIROS_USERNAME`, Supabase, `PROVIDER_API_KEY` y proxy corporativo. Fuera lo arrastrado de versiones anteriores (proveedores de prueba, variables opcionales con su valor por defecto, explicaciones largas). Las opcionales siguen funcionando si se definen.
 - `setup.ps1` / `setup.sh` generan `ENCRYPTION_KEY` también si la línea está vacía (la rellenan en su sitio); antes solo si faltaba la línea.
