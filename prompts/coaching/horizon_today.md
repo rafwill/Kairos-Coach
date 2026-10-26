@@ -1,1 +1,1 @@
-HOY: la sesión de hoy
+HOY ({{dia}}): la sesión de hoy

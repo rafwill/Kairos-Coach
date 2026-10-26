@@ -1,1 +1,1 @@
-MAÑANA: la sesión de mañana
+MAÑANA ({{dia}}): la sesión de mañana

@@ -63,6 +63,8 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | G10 | Resultados de tools compactados (3 000 caracteres; series diarias completas en columnas) | Computacional | `_compact_tool_result`, `_DAILY_SERIES_TOOLS` | ✓ |
 | G11 | Base de conocimiento del atleta (fragmentos relevantes de sus notas) | Computacional | `_build_athlete_knowledge_context`, `ATHLETE_KB_PATHS` | ✓ |
 | G12 | Marco de la sesión de hoy: decisión, sesión, zonas de Garmin permitidas (con lpm) y duración máxima, calculados con G7; el LLM los recibe junto a los datos deterministas y redacta dentro de ellos; S15 lo hace cumplir | Computacional | `_build_today_session_frame`, `prompts/coaching/session_frame.md` (ruta de estado del día, solo para hoy) | ✓ |
+| G13 | Calendario: ayer, hoy, mañana y pasado mañana con su día y fecha, y las dos semanas de lunes a domingo; "HOY" y "MAÑANA" del horizonte con su fecha. Antes el LLM solo tenía hoy y ayer en ISO y deducía los días (errores que veían S27 y S28) | Computacional | `_calendar_block`, `prompts/system/calendar.md` (bucle con tools, coaching y rescates) | ✓ |
+| G14 | Diferencia de la HRV de la noche frente a su media de 7 días ya calculada en los datos ("-2 % frente a su media de 7 días"); antes el LLM hacía la cuenta (error que veía S25) | Computacional | `_hrv_deviation_text` en `_format_hrv_day` y en el bloque de diagnóstico | ✓ |
 
 ## 5. Sensores
 

@@ -509,8 +509,26 @@ class TestCoachingHorizon:
 
     def test_day_after_tomorrow_is_not_tomorrow(self):
         assert ta._coaching_horizon("¿Qué hago pasado mañana?") == "PASADO MAÑANA (lunes 26/10): la sesión de ese día"
-        assert ta._coaching_horizon("¿Y mañana?") == "MAÑANA: la sesión de mañana"
+        assert ta._coaching_horizon("¿Y mañana?") == "MAÑANA (domingo 25/10): la sesión de mañana"
         assert ta._coaching_horizon("¿Qué me toca?").startswith("HOY")
+        assert ta._coaching_horizon("¿Qué me toca?") == "HOY (sábado 24/10): la sesión de hoy"
+
+    def test_calendar_gives_the_llm_days_and_dates(self):
+        # 24/10/2026 es sábado: el LLM llamaba "mañana" al lunes 26/10 (S27) y ponía días que no tocaban (S28).
+        cal = ta._calendar_block()
+        assert "- Hoy: sábado 24/10/2026" in cal and "- Ayer: viernes 23/10/2026" in cal
+        assert "- Mañana: domingo 25/10/2026" in cal and "- Pasado mañana: lunes 26/10/2026" in cal
+        assert "lun 19/10, mar 20/10, mié 21/10, jue 22/10, vie 23/10, sáb 24/10, dom 25/10" in cal
+        assert "La semana que viene: lun 26/10" in cal and "dom 01/11" in cal
+
+    def test_hrv_deviation_is_given_already_computed(self):
+        assert ta._hrv_deviation_text(58, 59) == "-2 % frente a su media de 7 días"
+        assert ta._hrv_deviation_text(66, 59) == "+12 % frente a su media de 7 días"
+        assert ta._hrv_deviation_text(59.2, 59) == "igual que su media de 7 días"
+        assert ta._hrv_deviation_text(None, 59) == "" and ta._hrv_deviation_text(58, 0) == ""
+        day = {"calendarDate": "2026-10-24", "lastNightAvg": 58, "weeklyAvg": 59, "status": "UNBALANCED"}
+        assert ta._format_hrv_day([day], "2026-10-24") == (
+            "58.0 ms · 7d 59.0 ms · -2 % frente a su media de 7 días · UNBALANCED")
 
 
 class TestOutputSensors:

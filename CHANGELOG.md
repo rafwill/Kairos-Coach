@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Changed (guías contra los errores de días y de HRV)
+- Calendario para el LLM (`_calendar_block`, `prompts/system/calendar.md`): ayer, hoy, mañana y pasado mañana con su día y fecha, y esta semana y la que viene de lunes a domingo. Va en el bucle con tools, en la capa de coaching y en los dos rescates; "HOY" y "MAÑANA" del horizonte llevan su fecha. Antes solo recibía hoy y ayer en ISO y deducía él los días ("Mañana 26/10 (lunes)" un sábado 24/10: S27 y S28).
+- HRV: la diferencia de la noche frente a su media de 7 días va ya calculada en los datos ("58.0 ms · 7d 59.0 ms · -2 % frente a su media de 7 días"), en el estado del día y en el bloque de diagnóstico. Antes el LLM hacía la cuenta y escribía "> 10 % por debajo" con 58 frente a 59 (S25).
+- Los sensores S25, S27 y S28 se quedan como red de seguridad. En vivo: 4 preguntas de la exploración del 24/10 (pasado mañana, la semana que viene, estado de hoy, series mañana) y la batería base (25/25): 0 avisos de días ni de HRV en las respuestas finales; el LLM cita la cifra calculada ("69 ms (media 7d 62 ms, +11 %)"). S28 saltó una vez en "la semana que viene" ("Martes 28/10") y el reintento lo corrigió. Tests: 784.
+
 ### Fixed (repaso de sensores con las baterías de casa)
 - Sensores de antes (`87e7717`) frente a los actuales sobre las 941 respuestas guardadas en casa, con las mismas llamadas que el juez y, aparte, S10–S12 sobre las 166 respuestas libres del LLM (las que en vivo también pasan por los sensores). Criterio fijado antes: solo pueden desaparecer falsos positivos y cada aviso nuevo se revisa a mano.
 - Tres falsos positivos corregidos:

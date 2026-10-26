@@ -98,3 +98,9 @@ Revisión completa de código y documentación: incoherencias, código que sobra
 - Señal: S10 marcaba fuera de zona rangos correctos de carrera (115→145) por heredar "bici" de la línea de encima; S28 leía "(lunes a domingo)" como el día de una fecha.
 - Lección: el deporte de un rango sale de su frase, y la frase incluye lo que va pegado detrás dentro del paréntesis; el vocabulario de carrera tiene que incluir la jerga ("tirada"). Repasar también las respuestas libres del LLM, no solo la capa de coaching: en vivo los sensores pasan por las dos.
 - Evidencia: 941 respuestas (166 libres del LLM); 3 falsos positivos corregidos, 0 nuevos, todos los avisos reales se mantienen. Detalle en CHANGELOG.
+
+### 26/10/2026 — Guías contra los errores de días y de HRV
+
+- Señal: los avisos reales que quedaban en las baterías de casa eran de días (S27 ×3, S28) y de HRV (S25 ×4), todos del mismo tipo: el LLM calculaba fechas o porcentajes a partir de datos sueltos.
+- Lección: un error que se repite se ataca con una guía (darle el dato ya calculado), no solo con un sensor (`docs/Harness.md` §7). El sensor se queda como red: con el calendario, S28 aún saltó una vez y el reintento lo corrigió.
+- Evidencia: G13 (calendario) y G14 (diferencia de HRV calculada); 4 preguntas de la exploración y batería 25/25 sin avisos en las respuestas finales.

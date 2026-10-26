@@ -1487,6 +1487,19 @@ def _format_body_battery_day(payload: Any, target_date: str) -> str:
     return "sin datos"
 
 
+def _hrv_deviation_text(avg: Any, weekly: Any) -> str:
+    """Diferencia de la HRV de la noche frente a su media de 7 días, ya calculada para el LLM (26/10: con "58 ms" y
+    "media 59 ms" por separado escribía "> 10 % por debajo"; sensor S25)."""
+    try:
+        night, base = float(avg), float(weekly)
+    except (TypeError, ValueError):
+        return ""
+    if base <= 0:
+        return ""
+    pct = round(100.0 * (night - base) / base)
+    return f"{pct:+d} % frente a su media de 7 días" if pct else "igual que su media de 7 días"
+
+
 def _format_hrv_day(payload: Any, target_date: str) -> str:
     """Formatea HRV con métricas relevantes (ms) del día."""
     day = _pick_day_payload(payload, target_date)
@@ -1507,6 +1520,9 @@ def _format_hrv_day(payload: Any, target_date: str) -> str:
         parts.append(f"{float(avg):.1f} ms")
     if weekly is not None:
         parts.append(f"7d {float(weekly):.1f} ms")
+    deviation = _hrv_deviation_text(avg, weekly)
+    if deviation:
+        parts.append(deviation)
     if status:
         parts.append(str(status))
 
@@ -3192,8 +3208,32 @@ def _coaching_horizon(user_message: str) -> str:
     if "pasado mañana" in text or "pasado manana" in text:
         return _render_prompt("coaching/horizon_day_after", dia=_day(today + timedelta(days=2)))
     if "mañana" in text or "manana" in text:
-        return _render_prompt("coaching/horizon_tomorrow")
-    return _render_prompt("coaching/horizon_today")
+        return _render_prompt("coaching/horizon_tomorrow", dia=_day(today + timedelta(days=1)))
+    return _render_prompt("coaching/horizon_today", dia=_day(today))
+
+
+def _calendar_block(today: date | None = None) -> str:
+    """Calendario para el LLM: ayer, hoy, mañana, pasado mañana y las dos semanas con su día y fecha.
+
+    Antes solo recibía "hoy" y "ayer" en ISO y deducía él los días: "Mañana 26/10 (lunes)" un sábado 24/10
+    (sensores S27 y S28, 24–26/10).
+    """
+    today = today or date.today()
+
+    def _day(d: date) -> str:
+        return f"{_WEEKDAY_NAMES_ES[d.weekday()]} {d.strftime('%d/%m/%Y')}"
+
+    def _week(monday: date) -> str:
+        return ", ".join(f"{_WEEKDAY_NAMES_ES[d.weekday()][:3]} {d.strftime('%d/%m')}"
+                         for d in (monday + timedelta(days=i) for i in range(7)))
+
+    monday = today - timedelta(days=today.weekday())
+    return _render_prompt(
+        "system/calendar",
+        ayer=_day(today - timedelta(days=1)), hoy=_day(today), manana=_day(today + timedelta(days=1)),
+        pasado_manana=_day(today + timedelta(days=2)), semana=_week(monday),
+        semana_que_viene=_week(monday + timedelta(days=7)),
+    )
 
 
 def _build_today_load_status_markdown(profile: dict) -> str:
@@ -9401,6 +9441,8 @@ def _build_activity_analysis_block(
                     lines.append(f"HRV promedio noche: {float(avg_hrv):.0f} ms")
                 if weekly_hrv:
                     lines.append(f"HRV media 7 dias: {float(weekly_hrv):.0f} ms")
+                if _hrv_deviation_text(avg_hrv, weekly_hrv):
+                    lines.append(f"HRV noche: {_hrv_deviation_text(avg_hrv, weekly_hrv)}")
                 if high_hrv:
                     lines.append(f"HRV maximo 5min: {float(high_hrv):.0f} ms")
                 if status_hrv:
@@ -11657,7 +11699,8 @@ class TrainerAgent:
         """Construye el system prompt incluyendo la fecha actual y el perfil del usuario."""
         today_str = date.today().isoformat()
         yesterday_str = (date.today() - timedelta(days=1)).isoformat()
-        date_context = "\n\n" + _render_prompt("system/date", hoy=today_str, ayer=yesterday_str) + "\n"
+        date_context = ("\n\n" + _render_prompt("system/date", hoy=today_str, ayer=yesterday_str)
+                        + "\n\n" + _calendar_block() + "\n")
         profile_context = self._profile_context_block() + self._load_and_anchors_context_block() + self._plan_context_block()
 
         # Incluir resúmenes de sesiones anteriores para memoria a largo plazo
@@ -11883,6 +11926,7 @@ class TrainerAgent:
                     "content": (
                         _render_prompt("coaching/system")
                         + " " + _render_prompt(prompt or ("coaching/readiness" if is_readiness else "coaching/brief"))
+                        + "\n\n" + _calendar_block()
                         # Reglas de entrenador: las mismas que el system prompt (prompts/coaching_rules.md).
                         + "\n\n" + _load_coaching_rules()
                         + self._profile_context_block()
@@ -12973,6 +13017,7 @@ class TrainerAgent:
                             "role": "system",
                             "content": (
                                 _render_prompt("rescue/activity_feedback")
+                                + "\n\n" + _calendar_block()
                                 + "\n\n" + _load_coaching_rules()
                                 + self._profile_context_block()
                                 + self._plan_context_block()
@@ -13009,6 +13054,7 @@ class TrainerAgent:
                             "role": "system",
                             "content": (
                                 _render_prompt("rescue/next_session", horizonte=_coaching_horizon(user_message))
+                                + "\n\n" + _calendar_block()
                                 + "\n\n" + _load_coaching_rules()
                                 + self._profile_context_block()
                                 + self._load_and_anchors_context_block()
