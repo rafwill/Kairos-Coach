@@ -23,8 +23,6 @@ Se reescribe al final de cada sesión.
 ### A. Puesta en producción
 
 1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`.** Usar Kairos unos días con preguntas reales y revisar juntos cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7). En concreto:
-   - **En casa, con las baterías guardadas allí (891 respuestas)**: repasar con los sensores del 26/10 (S10 con la marca de progresivo detrás del rango, S11 sin "Supraumbral"/"Subumbral" y S28 nuevo) y confirmar que solo desaparecen falsos positivos y que S28 sigue sin ninguno (en las 220 del ordenador 2: S11 quita solo el caso conocido; S28, 5 avisos, los 5 errores reales).
-   - **Posible falso positivo de S10** (24/10, 09:18, ordenador 1): marcó como fuera de zona 105–124 y 159–179 lpm, que son la Z1 y la Z5 de bici; parece que tomó una línea de ciclismo como de carrera (`_range_sport`). Reproducirlo con la respuesta completa (`agent.log` de casa) antes de tocar el sensor.
    - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales.
 
 ### B. Chat y LLM
@@ -94,3 +92,9 @@ Revisión completa de código y documentación: incoherencias, código que sobra
 - Capturar el RPE de fuerza después de la sesión: el TSS de fuerza sale de la FC (modelo B) y ya cuadra con TP (≈ 1,00); decidido quitarlo (25/10).
 - Sensor que impida nombrar la hipoglucemia a un atleta con DT2 y metformina: el LLM la menciona para tranquilizar, no como aviso, y no limita el entrenamiento; aceptado sin sensor (26/10).
 - Menú con los 5 proveedores de prueba (NVIDIA, Gemini, Groq, Mistral, Cerebras): sustituido por el proveedor de IA que diga cada atleta (26/10).
+
+### 26/10/2026 — Repaso de sensores con las baterías de casa
+
+- Señal: S10 marcaba fuera de zona rangos correctos de carrera (115→145) por heredar "bici" de la línea de encima; S28 leía "(lunes a domingo)" como el día de una fecha.
+- Lección: el deporte de un rango sale de su frase, y la frase incluye lo que va pegado detrás dentro del paréntesis; el vocabulario de carrera tiene que incluir la jerga ("tirada"). Repasar también las respuestas libres del LLM, no solo la capa de coaching: en vivo los sensores pasan por las dos.
+- Evidencia: 941 respuestas (166 libres del LLM); 3 falsos positivos corregidos, 0 nuevos, todos los avisos reales se mantienen. Detalle en CHANGELOG.

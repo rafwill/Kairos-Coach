@@ -4,6 +4,15 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Fixed (repaso de sensores con las baterías de casa)
+- Sensores de antes (`87e7717`) frente a los actuales sobre las 941 respuestas guardadas en casa, con las mismas llamadas que el juez y, aparte, S10–S12 sobre las 166 respuestas libres del LLM (las que en vivo también pasan por los sensores). Criterio fijado antes: solo pueden desaparecer falsos positivos y cada aviso nuevo se revisa a mano.
+- Tres falsos positivos corregidos:
+  - S10, "tirada" no contaba como carrera: "Tirada larga progresiva Z1→Z2 (115→145 lpm)" heredaba "bici" de la fila de encima (dos respuestas). `_RUNNING_LINE` incluye "tirada(s)" y "rodajes".
+  - S10, el deporte escrito detrás del rango, dentro de su paréntesis: "(115→145 lpm running)" con una viñeta de cycling encima. Ese tramo cuenta para decidir el deporte.
+  - S28, "del 26/10 al 01/11 (lunes a domingo)": el paréntesis es el rango de días, no el día del 01/11.
+- El caso pendiente de S10 del 24/10 (105–124 y 159–179 en "Dame mis zonas de FC") ya no se reproduce: era la fila "Cycling" de la tabla de zonas, corregida ese mismo día.
+- Resultado: siguen los avisos reales (S10: rodaje de carrera con la FC de bici 105–135; S28: "domingo 26/10"; S25 ×4; S27 ×3; G3 ×5) y 0 falsos positivos. Tests: 782.
+
 ### Investigado (bici sin potencia: no era un fallo del modelo)
 - Pendiente "bici sin potencia > 2 h, 07/08: Kairos 65.9 frente a TP 93". Al mirar la sesión (23889452312, gravel) dura 96 min, no más de 2 h (FC media 111, máx. 145). Su gemela del 03/04 (22396245237, 99 min, FC media 112) daba Kairos 69.7. Verificada la fuente en TP (protocolo de outliers): el 93 se metió a mano por estimación (salida sin pedales de potencia); el hrTSS de TP es 62 (Kairos +6 %) y el del 03/04, 65 (+7 %). Referencia mal transcrita → se corrige la referencia, no el código. n = 2: sin calibrar.
 - TP no tiene FC umbral de bici (solo de carrera), así que el hrTSS de bici usa la de carrera, como ya hacía Kairos. Las zonas de bici de Garmin (10 lpm por debajo de las de carrera) ya están en el perfil y solo se usan para los rangos de FC del texto (S10).

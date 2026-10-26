@@ -176,7 +176,8 @@ def _easy_range_ok(lo: int, hi: int, zones: Zones) -> bool:
 
 
 _HR_RANGE = re.compile(r"\d{3}\s*[–\-→]\s*\d{3}")
-_RUNNING_LINE = re.compile(r"(?i)\brunning\b|\bcarrera\b|\bcorrer\b|\brodaje\b|\btrail\b")
+# "Tirada" (26/10): "Tirada larga progresiva Z1→Z2 (115→145 lpm)" heredaba "bici" de la fila de encima.
+_RUNNING_LINE = re.compile(r"(?i)\brunning\b|\bcarrera\b|\bcorrer\b|\brodajes?\b|\btiradas?\b|\btrail\b")
 _MEASURED_RANGE = re.compile(
     r"(?i)\b(?:se estabiliz\w*|estabiliz\w*|estuvo|estuviste|osci\w*|registr\w*|media de|promedio|pico|"
     r"alcanz\w*|llegaste|se mantuvo|mantuviste)\b"
@@ -231,7 +232,10 @@ def find_hr_ranges_outside_zones(coaching: str, zones: Zones, zones_cycling: Zon
         # Un rango que describe lo que pasó ("tu FC se estabilizó en Z4–Z5 (159–178)") no es una prescripción.
         if _MEASURED_RANGE.search(clause):
             continue
-        sport_zones = zones_cycling if zones_cycling and _range_sport(coaching, clause_start, clause) == "cycling" else zones
+        # El deporte puede ir pegado detrás del rango, dentro de su paréntesis: "(115→145 lpm running)" (26/10).
+        tail = re.match(r"[^()\n]{0,15}\)", coaching[mr.end(): mr.end() + 16])
+        sport_clause = clause + (tail.group(0) if tail else "")
+        sport_zones = zones_cycling if zones_cycling and _range_sport(coaching, clause_start, sport_clause) == "cycling" else zones
         fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in sport_zones)
         if not fits:
             fits = _easy_range_ok(lo, hi, sport_zones) or _progressive_range_ok(
@@ -529,7 +533,8 @@ def find_wrong_relative_day(text: str, today: date | None) -> list[Finding]:
 _WD = r"(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)"
 _DM = r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?![\d/])"
 _WEEKDAY_DATE = re.compile(rf"(?i)(?<![\wáéíóú]){_WD}[ \t]*[,(]?[ \t]*(?:d[ií]a[ \t]+)?{_DM}")
-_DATE_WEEKDAY = re.compile(rf"(?i)(?<![\d/]){_DM}[ \t]*[(,][ \t]*{_WD}\b")
+# "Del 26/10 al 01/11 (lunes a domingo)" (26/10): el paréntesis es el rango de días de la semana, no el día del 01/11.
+_DATE_WEEKDAY = re.compile(rf"(?i)(?<![\d/]){_DM}[ \t]*[(,][ \t]*{_WD}\b(?![ \t]*(?:a|al|[–\-])[ \t]*{_WD})")
 
 
 def find_wrong_weekday_date(text: str, today: date | None) -> list[Finding]:

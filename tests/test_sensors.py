@@ -324,3 +324,31 @@ class TestWeekdayDateS28:
     def test_live_retry_includes_it(self):
         found = sensors.findings_to_retry("Tirada larga el domingo 2/11.", [], None, None, today=self.MON)
         assert [f.sensor for f in found] == ["S28"]
+
+
+class TestHomeReview26_10:
+    """Repaso de las 941 respuestas guardadas en casa (26/10): los tres falsos positivos que quedaban."""
+
+    BIKE = [("Z1 Recuperación", 105, 124), ("Z2 Aeróbica", 125, 135), ("Z3 Tempo", 136, 145),
+            ("Z4 Subumbral", 146, 158), ("Z5 Supraumbral", 159, 179)]
+
+    def test_tirada_is_running_even_under_a_bike_row(self):
+        text = ("| Sáb 31 | Rodaje regenerativo (bici/elíptica/andar) | Z1 (105–124 lpm bici) |\n"
+                "| Dom 01 | Tirada larga progresiva | Z1→Z2 (115→145 lpm) |")
+        assert sensors.find_hr_ranges_outside_zones(text, ZONES, self.BIKE) == []
+
+    def test_sport_written_right_after_the_range(self):
+        text = ("- Rodajes suaves: Z1–Z2 (techo 145 lpm en running, 135 lpm en cycling).\n"
+                "- Progresiones: calentamiento de Z1 a Z2 (115→145 lpm running) o vuelta a la calma inversa.")
+        assert sensors.find_hr_ranges_outside_zones(text, ZONES, self.BIKE) == []
+
+    def test_running_session_with_bike_hr_is_still_caught(self):
+        text = "Parte principal: Rodaje 35–45 min en Z1–Z2 (105–135 lpm) · RPE 3–4/10."
+        assert [f.sensor for f in sensors.find_hr_ranges_outside_zones(text, ZONES, self.BIKE)] == ["S10"]
+
+    def test_weekday_range_in_brackets_is_not_a_label(self):
+        today = date(2026, 10, 24)
+        assert sensors.find_wrong_weekday_date("Para la semana del 26/10 al 01/11 (lunes a domingo)", today) == []
+        assert sensors.find_wrong_weekday_date("del 26/10 al 01/11 (lunes-domingo)", today) == []
+        found = sensors.find_wrong_weekday_date("(lunes 19/10 – domingo 26/10)", today)
+        assert [f.sensor for f in found] == ["S28"] and "lunes" in found[0].message
