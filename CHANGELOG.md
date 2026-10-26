@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Fixed (token de Supabase caducado tras suspender el equipo)
+- El "cuelgue" de la batería de las 14:15 no lo fue: el log de Windows muestra el portátil en espera moderna de 14:06 a 15:14, con la red cortada a las 14:15:51 (14 s después de lanzar la llamada de coaching a NVIDIA). Al despertar saltó el `wait_for` (en log de nivel debug, por eso no se veía) y, al guardar el historial, Supabase respondió `JWT expired` (PGRST303): la excepción no la capturaba nadie y cerró Kairos. `run_bateria` contó 3.538 s porque su reloj incluye la suspensión.
+- `storage._supabase()` comprueba la caducidad del token por la hora del reloj y lo renueva (`auth.get_session()`) si le queda menos de un minuto; el auto-refresco del cliente va con un temporizador que una suspensión deja atrás. Sin coste por consulta: solo relee la sesión cuando toca (o a los 30 s si la renovación falla).
+- Un fallo al guardar el historial ya no se lleva la respuesta: se avisa en `agent.log` y sigue. El fallo de la capa de coaching (timeout incluido) pasa de debug a warning.
+- Lección: antes de buscar un bloqueo del bucle de eventos, mirar si el equipo estaba despierto (eventos Kernel-Power 506/507 del registro System).
+
 ### Added (metatooling: grupos de tools según la pregunta)
 - Antes, cada llamada del bucle con tools mandaba las 45 tools (≈ 6.000 tokens, de ≈ 20.000 de entrada por llamada). `agent/tool_groups.py` las reparte en 5 grupos (actividades, sueño y recuperación, día a día, rendimiento, semanal y cuerpo); reglas sobre la pregunta (sin LLM) eligen los grupos, y las `kairos_*` van siempre. Si ninguna regla encaja, van todas, como antes. El LLM puede pedir otro grupo con `kairos_pedir_herramientas`, y una tool real de otro grupo que pida por nombre se ejecuta igualmente y añade su grupo.
 - Medición nueva en `agent.log`: tokens y número de tools de cada llamada (`[LLM] ◀ … tools= tokens entrada=`), resultados cortados a 3.000 caracteres y listas recortadas a 8 elementos (`[TOOL]`).

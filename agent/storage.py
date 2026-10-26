@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 _zscaler_cache: bool | None = None
 _sb = None
 _sb_ready = False
+_sb_token_check_at = 0.0  # hora (time.time) de la próxima comprobación de caducidad del token
 _active_user_id: str | None = None
 _active_username: str | None = None
 
@@ -78,10 +79,33 @@ def is_zscaler_network() -> bool:
     return _zscaler_cache
 
 
+def _refresh_token_if_expiring() -> None:
+    """Renueva el token de la sesión si caduca en menos de un minuto, mirando la hora del reloj (26/10).
+
+    El auto-refresco del cliente va con un temporizador en segundo plano: tras suspender el equipo, la primera
+    consulta llegaba antes que la renovación y Supabase respondía "JWT expired" (PGRST303), que tumbaba Kairos.
+    `get_session()` renueva si hace falta y avisa al cliente, que pone el token nuevo en las consultas.
+    """
+    global _sb_token_check_at
+    now = time.time()
+    if now < _sb_token_check_at:
+        return
+    try:
+        session = _sb.auth.get_session()
+    except Exception as exc:  # noqa: BLE001 — sin red o refresh token rechazado: la consulta fallará como antes
+        log.warning("[storage] No se pudo renovar la sesión de Supabase: %s", exc)
+        _sb_token_check_at = now + 30
+        return
+    expires_at = getattr(session, "expires_at", None) if session else None
+    _sb_token_check_at = (expires_at - 60) if expires_at else now + 60
+
+
 def _supabase():
     """Devuelve el cliente Supabase si está configurado, o None."""
     global _sb, _sb_ready
     if _sb_ready:
+        if _sb:
+            _refresh_token_if_expiring()
         return _sb
     _sb_ready = True
 

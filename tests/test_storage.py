@@ -235,6 +235,62 @@ def test_restore_session_ignores_session_of_another_email(monkeypatch):
     assert storage.restore_session("runner@example.com") is None
 
 
+class _ExpiringAuth:
+    """get_session() como el de supabase_auth: renueva si el token caduca; cuenta las llamadas."""
+
+    def __init__(self, expires_at, error=None):
+        self.expires_at = expires_at
+        self.error = error
+        self.calls = 0
+
+    def get_session(self):
+        self.calls += 1
+        if self.error:
+            raise Exception(self.error)
+        session = _FakeSession("runner@example.com")
+        session.expires_at = self.expires_at
+        return session
+
+
+def _client_with(monkeypatch, auth, now):
+    fake = _DummySupabase()
+    fake.auth = auth
+    monkeypatch.setattr(storage, "_sb", fake)
+    monkeypatch.setattr(storage, "_sb_ready", True)
+    monkeypatch.setattr(storage, "_sb_token_check_at", 0.0)
+    monkeypatch.setattr(storage.time, "time", lambda: now[0])
+    return fake
+
+
+def test_supabase_renews_token_by_wall_clock_after_suspend(monkeypatch):
+    # 26/10: el portátil se suspendió una hora con Kairos esperando; al despertar, la primera consulta
+    # llevaba el token caducado ("JWT expired") y tumbó la sesión. Ahora se comprueba la caducidad por la hora.
+    now = [1_000.0]
+    auth = _ExpiringAuth(expires_at=1_000 + 3600)
+    _client_with(monkeypatch, auth, now)
+
+    storage._supabase()
+    storage._supabase()
+    assert auth.calls == 1  # token vigente: no se relee la sesión en cada consulta
+
+    now[0] += 3600  # vuelta de la suspensión, token caducado
+    storage._supabase()
+    assert auth.calls == 2  # get_session() lo renueva
+
+
+def test_supabase_token_refresh_failure_does_not_break_the_query(monkeypatch):
+    now = [1_000.0]
+    auth = _ExpiringAuth(expires_at=None, error="network down")
+    fake = _client_with(monkeypatch, auth, now)
+
+    assert storage._supabase() is fake
+    storage._supabase()
+    assert auth.calls == 1  # reintenta a los 30 s, no en cada consulta
+    now[0] += 31
+    storage._supabase()
+    assert auth.calls == 2
+
+
 def test_create_app_user_links_auth_and_never_persists_garmin_password(monkeypatch):
     fake = _AuthSupabase(_FakeAuth(session_email="new@example.com"))
     monkeypatch.setattr(storage, "_require_supabase", lambda: fake)

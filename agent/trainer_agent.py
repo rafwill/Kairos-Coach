@@ -90,8 +90,15 @@ def _load_session_context() -> dict:
 
 
 def _save_history_entry(role: str, content: str) -> None:
-    """Añade una entrada al historial de conversación persistente."""
-    _storage.save_history_entry(role, content)
+    """Añade una entrada al historial de conversación persistente.
+
+    Si Supabase falla, se pierde esa entrada, no la respuesta: el 26/10 un "JWT expired" aquí cerró Kairos
+    con la respuesta ya generada.
+    """
+    try:
+        _storage.save_history_entry(role, content)
+    except Exception as exc:  # noqa: BLE001 — cualquier fallo de red o de Supabase
+        log.warning("No se pudo guardar el historial (%s): %s", role, exc)
 
 
 def _load_session_summaries() -> list[dict]:
@@ -11924,7 +11931,7 @@ class TrainerAgent:
                 + "\n\n_Fase coaching por LLM sobre datos deterministas (sin recalcular métricas)._"
             )
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError) as exc:
-            log.debug("No se pudo completar capa LLM de coaching (route=%s): %s", route, exc)
+            log.warning("No se pudo completar capa LLM de coaching (route=%s): %s", route, exc or type(exc).__name__)
             return (
                 deterministic_reply
                 + "\n\n## 🧠 Interpretación de coaching\n"
