@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Tests (inicio de sesión)
+- Ramas de error de `_authenticate_or_register_user`: email vacío o sin @, sesión recuperada con contraseña de Garmin cifrada con otra `ENCRYPTION_KEY`, alta rechazada, contraseñas que no coinciden, alta fallida, alta sin confirmación por correo, error que no es de contraseña y fallo al crear el usuario de Kairos. También `/menu`. `agent/main.py` pasa del 90 % al 94 %. Sin test: los `except: pass` del ajuste UTF-8 de la consola de Windows (habría que recargar el módulo con `ctypes` roto para comprobar que no hace nada).
+
 ### Fixed (token de Supabase caducado tras suspender el equipo)
 - El "cuelgue" de la batería de las 14:15 no lo fue: el log de Windows muestra el portátil en espera moderna de 14:06 a 15:14, con la red cortada a las 14:15:51 (14 s después de lanzar la llamada de coaching a NVIDIA). Al despertar saltó el `wait_for` (en log de nivel debug, por eso no se veía) y, al guardar el historial, Supabase respondió `JWT expired` (PGRST303): la excepción no la capturaba nadie y cerró Kairos. `run_bateria` contó 3.538 s porque su reloj incluye la suspensión.
 - `storage._supabase()` comprueba la caducidad del token por la hora del reloj y lo renueva (`auth.get_session()`) si le queda menos de un minuto; el auto-refresco del cliente va con un temporizador que una suspensión deja atrás. Sin coste por consulta: solo relee la sesión cuando toca (o a los 30 s si la renovación falla).

@@ -10,9 +10,9 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 4578226:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 26/10/2026** (ordenador 2). Sin cambios a medias. 766 tests; batería 25/25.
+**Sesión del 26/10/2026** (ordenador 2). Sin cambios a medias. 770 tests; batería 25/25.
 
-- Hecho hoy: patologías y lesiones separadas con protocolo de diabetes según medicación; proveedor de IA del atleta (tabla `ia_provider`, clave en `PROVIDER_API_KEY`); `.env.example` limpio; metatooling por grupos de tools, siempre activo (sin variable); el "cuelgue" de las 14:15 era el portátil suspendido, y lo que de verdad fallaba (token de Supabase caducado al despertar, que cerraba Kairos) está arreglado.
+- Hecho hoy: patologías y lesiones separadas con protocolo de diabetes según medicación; proveedor de IA del atleta (tabla `ia_provider`, clave en `PROVIDER_API_KEY`); `.env.example` limpio; metatooling por grupos de tools, siempre activo (sin variable); el "cuelgue" de las 14:15 era el portátil suspendido, y lo que de verdad fallaba (token de Supabase caducado al despertar, que cerraba Kairos) está arreglado; tests de las ramas de error del inicio de sesión (`agent/main.py` del 90 % al 94 %).
 - Supabase ya tiene la tabla `ia_provider` (RLS comprobado) y el perfil del usuario está migrado (patologías y lesiones separadas, medicación de la diabetes, proveedor de IA `nvidia`).
 - Al empezar en casa: `git pull`, `pip install -r requirements.txt` (`google-genai` ya no hace falta; se puede desinstalar) y entrar una vez en Kairos. No preguntará nada: la clave `NVIDIA_API_KEY` del `.env` pasa sola a `PROVIDER_API_KEY`. Después, el repaso de S10 con las baterías guardadas allí (punto 1).
 - Siguiente paso propuesto: los sensores pendientes del punto 1 (mejor en casa, con las 891 respuestas guardadas).
@@ -33,17 +33,16 @@ Se reescribe al final de cada sesión.
 ### B. Chat y LLM
 
 3. **Metatooling, siguientes pasos** (grupos de tools hechos el 26/10: −22 % de tokens por llamada, mismas respuestas). Si hace falta más: (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
-4. **Cobertura restante de `agent/main.py`.** Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
 
-5. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
-6. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
-7. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
-8. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
-9. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
+4. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
+5. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
+6. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
+7. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
+8. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
 
 ## Descartado
 

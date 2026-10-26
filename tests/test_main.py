@@ -625,3 +625,79 @@ class TestAuthenticateWithSupabaseAuth:
         assert is_new is True and user == "new@example.com"
         create.assert_called_once()
         assert create.call_args.kwargs["credentials"] == {"garmin_email": "new@example.com", "garmin_password_encrypted": "enc"}
+
+    def test_bad_email_input_and_undecryptable_saved_password(self):
+        # Email vacío y sin @: se vuelve a pedir. Sesión recuperada con otra ENCRYPTION_KEY: se pide la
+        # contraseña de Garmin y se guarda cifrada con la de este ordenador.
+        from agent import main as m
+
+        row = {"id": "u1", "credentials": {"garmin_password_encrypted": "de-otro-pc"}}
+        with patch.object(m, "restore_session", return_value=row) as restore, \
+             patch.object(m, "decrypt_password", return_value=None), \
+             patch.object(m, "encrypt_password", return_value="enc-aqui"), \
+             patch.object(m, "update_user_credentials") as update_creds, \
+             patch.object(m.Prompt, "ask", side_effect=["", "runner", "runner@example.com", "garmin-pw"]), \
+             patch.object(m.console, "print"):
+            user, creds, is_new, password = m._authenticate_or_register_user()
+
+        restore.assert_called_once_with("runner@example.com")
+        assert (user, is_new, password) == ("runner@example.com", False, "garmin-pw")
+        assert update_creds.call_args.args[0] == {"garmin_password_encrypted": "enc-aqui"}
+
+    def test_sign_up_errors_ask_again(self):
+        # Credenciales no válidas: (1) no crea la cuenta, (2) la repetición no coincide, (3) el alta falla,
+        # (4) alta sin confirmación por correo → entra directamente.
+        from agent import main as m
+
+        invalid = {"ok": False, "reason": "invalid", "error": "Email o contraseña incorrectos"}
+        linked = {"id": "u1", "credentials": {}}
+        with patch.object(m, "restore_session", return_value=None), \
+             patch.object(m, "sign_in", side_effect=[invalid] * 4 + [{"ok": True, "app_user": linked}]) as sign_in, \
+             patch.object(m, "sign_up", side_effect=[{"ok": False, "error": "red"},
+                                                     {"ok": True, "needs_confirmation": False}]) as sign_up, \
+             patch.object(m, "encrypt_password", return_value="enc"), \
+             patch.object(m, "update_user_credentials"), \
+             patch.object(m.Confirm, "ask", side_effect=[False, True, True, True]), \
+             patch.object(m.Prompt, "ask", side_effect=[
+                 "r@example.com", "pw1",            # (1) no quiere crear la cuenta
+                 "r@example.com", "pw1", "pw2",     # (2) no coinciden
+                 "r@example.com", "pw1", "pw1",     # (3) el alta falla
+                 "r@example.com", "pw1", "pw1",     # (4) alta correcta
+             ]), \
+             patch.object(m.console, "print"):
+            user, _, is_new, password = m._authenticate_or_register_user()
+
+        assert (user, is_new, password) == ("r@example.com", False, "pw1")
+        assert sign_up.call_count == 2 and sign_in.call_count == 5
+
+    def test_other_sign_in_error_and_failed_user_creation_ask_again(self):
+        from agent import main as m
+
+        new_account = {"ok": True, "app_user": None}
+        with patch.object(m, "restore_session", return_value=None), \
+             patch.object(m, "sign_in", side_effect=[{"ok": False, "reason": "network", "error": "sin red"},
+                                                     new_account, new_account]), \
+             patch.object(m, "encrypt_password", return_value="enc"), \
+             patch.object(m, "create_app_user", side_effect=[RuntimeError("permiso denegado"), None]) as create, \
+             patch.object(m.Prompt, "ask", side_effect=[
+                 "n@example.com", "pw",                    # error que no es de contraseña
+                 "n@example.com", "pw", "n@example.com",   # falla la creación del usuario
+                 "n@example.com", "pw", "n@example.com",   # se crea
+             ]), \
+             patch.object(m.console, "print"):
+            user, _, is_new, _ = m._authenticate_or_register_user()
+
+        assert (user, is_new) == ("n@example.com", True)
+        assert create.call_count == 2
+
+
+def test_show_menu_lists_every_command():
+    from agent import main as m
+
+    with patch.object(m.console, "print") as out:
+        m._show_menu()
+
+    table = out.call_args_list[1].args[0]
+    commands = list(table.columns[1].cells)
+    for cmd in ("/perfil", "/plan crear", "/carga", "/proveedor", "/perfil editar salud", "salir"):
+        assert cmd in commands
