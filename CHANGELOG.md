@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Changed (.env.example limpio)
+- Solo lo que se configura de verdad, en el orden del `.env` del ordenador 2: Garmin (con `ENCRYPTION_KEY`), `KAIROS_USERNAME`, Supabase, `PROVIDER_API_KEY` y proxy corporativo. Fuera lo arrastrado de versiones anteriores (proveedores de prueba, variables opcionales con su valor por defecto, explicaciones largas). Las opcionales siguen funcionando si se definen.
+- `setup.ps1` / `setup.sh` generan `ENCRYPTION_KEY` también si la línea está vacía (la rellenan en su sitio); antes solo si faltaba la línea.
+
 ### Changed (proveedor de IA del atleta; fuera los 5 proveedores de prueba)
 - Cambio de foco del usuario: los 5 proveedores (NVIDIA, Gemini, Groq, Mistral, Cerebras) eran para probar Kairos cambiando de modelo; ahora cada atleta usa su propio proveedor. Sustituye al menú de la entrada "modelo elegido por el atleta" de este mismo día.
 - La primera vez Kairos pregunta "¿Cuál es tu proveedor de IA?" (texto libre, sin menú). Si lo conoce (`agent/ia_provider.py`: NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, Cerebras, OpenRouter, DeepSeek) rellena la URL y propone un modelo; si no, pide la URL de su API compatible con OpenAI y el modelo. Después, la clave: se prueba con 1 token y se guarda en `.env` en `PROVIDER_API_KEY`, la misma variable para cualquier proveedor, con un comentario encima que dice cuál es (petición del usuario). Un `.env` antiguo con `NVIDIA_API_KEY` (u otra `<PROVEEDOR>_API_KEY`) se traslada solo la primera vez, sin volver a pedirla. Al cambiar a otro proveedor con `/proveedor` se pide siempre su clave.

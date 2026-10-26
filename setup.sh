@@ -47,14 +47,19 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
-if ! grep -q '^ENCRYPTION_KEY=' .env; then
-  echo "[setup] Generando ENCRYPTION_KEY y añadiéndola a .env..."
+if ! grep -q '^ENCRYPTION_KEY=.' .env; then
+  echo "[setup] Generando ENCRYPTION_KEY en .env..."
   KEY="$($VENV_PY -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-  {
-    echo
-    echo "# Clave de cifrado local (generada automáticamente)"
-    echo "ENCRYPTION_KEY=$KEY"
-  } >> .env
+  if grep -q '^ENCRYPTION_KEY=' .env; then
+    # La línea vacía de .env.example se rellena en su sitio.
+    sed -i.bak "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$KEY|" .env && rm -f .env.bak
+  else
+    {
+      echo
+      echo "# Clave de cifrado local (generada automáticamente)"
+      echo "ENCRYPTION_KEY=$KEY"
+    } >> .env
+  fi
 fi
 
 echo

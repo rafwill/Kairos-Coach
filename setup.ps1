@@ -46,12 +46,18 @@ if (-not (Test-Path ".env")) {
 }
 
 $envContent = Get-Content ".env" -Raw
-if ($envContent -notmatch "(?m)^ENCRYPTION_KEY=") {
-    Write-Host "[setup] Generando ENCRYPTION_KEY y añadiéndola a .env..."
+if ($envContent -notmatch "(?m)^ENCRYPTION_KEY=\S") {
+    Write-Host "[setup] Generando ENCRYPTION_KEY en .env..."
     $key = & $venvPython -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    Add-Content ".env" ""
-    Add-Content ".env" "# Clave de cifrado local (generada automáticamente)"
-    Add-Content ".env" "ENCRYPTION_KEY=$key"
+    if ($envContent -match "(?m)^ENCRYPTION_KEY=") {
+        # La línea vacía de .env.example se rellena en su sitio.
+        $envContent = $envContent -replace "(?m)^ENCRYPTION_KEY=[^\r\n]*", "ENCRYPTION_KEY=$key"
+        [System.IO.File]::WriteAllText((Resolve-Path ".env"), $envContent, (New-Object System.Text.UTF8Encoding $false))
+    } else {
+        Add-Content ".env" ""
+        Add-Content ".env" "# Clave de cifrado local (generada automáticamente)"
+        Add-Content ".env" "ENCRYPTION_KEY=$key"
+    }
 }
 
 Write-Host ""
