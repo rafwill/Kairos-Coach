@@ -87,6 +87,18 @@ class TestHandleCliCommand:
         assert profile["performance"]["running_threshold_pace"] == "4:00"
         assert "Umbral running actualizado a 4:00 min/km" in out()
 
+    def test_hr_threshold_updates_both_references_not_the_pace(self, out):
+        profile = {}
+        with patch.object(m, "_load_user_profile", return_value=profile), patch.object(m, "_save_user_profile") as save:
+            m._handle_cli_command("/perfil umbral fc 169", _Agent())
+            m._handle_cli_command("/perfil umbral fc", _Agent())
+            m._handle_cli_command("/perfil umbral fc alto", _Agent())
+        save.assert_called_once()
+        assert profile["performance"]["hr_threshold_tp_history"][-1]["bpm"] == 169
+        assert profile["performance"]["hr_threshold_bpm"] == 169
+        assert "running_threshold_pace" not in profile["performance"]
+        assert "169 lpm" in out() and "Uso:" in out() and "✗" in out()
+
     def test_threshold_pace_usage_and_invalid_value_do_not_save(self, out):
         with patch.object(m, "_load_user_profile", return_value={}), patch.object(m, "_save_user_profile") as save:
             m._handle_cli_command("/perfil umbral", _Agent())

@@ -3537,6 +3537,7 @@ def _build_config_options_markdown() -> str:
             "- `/perfil editar salud`: patologías (y medicación si hay diabetes), lesiones y notas.",
             "- `/perfil editar`: edición completa.",
             "- `/perfil umbral <mm:ss>`: ritmo umbral running (ej: `/perfil umbral 4:15`).",
+            "- `/perfil umbral fc <lpm>`: FC umbral tras un test, la misma que en TrainingPeaks (ej: `/perfil umbral fc 169`).",
             "- `/perfil fc <reposo> <max>`: FC reposo/máxima (ej: `/perfil fc 48 190`).",
             "",
             "Gestionar planes:",

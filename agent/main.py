@@ -287,6 +287,37 @@ def _set_running_threshold_pace(profile: dict, pace_raw: str) -> tuple[bool, str
     return True, str(perf["running_threshold_pace"])
 
 
+def _set_hr_threshold(profile: dict, bpm_raw: str) -> tuple[bool, str]:
+    """FC umbral nueva tras un test (26/10): en Garmin la detecta el reloj y no se cambia desde la web, así que
+    se carga a mano en Kairos. Un solo número para las dos referencias, el mismo que se pone en TrainingPeaks:
+    la FC umbral de Kairos (`hr_threshold_bpm`: hrTSS de fuerza, elíptica y remo; contexto del LLM) y la entrada
+    de hoy en `hr_threshold_tp_history` (hrTSS de trail y bici sin potencia). Rige desde hoy: el TSS ya guardado
+    no cambia. Las zonas siguen siendo las del reloj.
+    """
+    try:
+        bpm = int(bpm_raw)
+    except (TypeError, ValueError):
+        return False, "Formato no válido. Usa un entero en lpm (ej: /perfil umbral fc 169)."
+    if not 120 <= bpm <= 230:
+        return False, "Umbral de FC fuera de rango (120-230 lpm)."
+
+    if profile is None:
+        profile = {}
+    perf = profile.setdefault("performance", {})
+    today_iso = date.today().isoformat()
+    history = [
+        entry
+        for entry in (perf.get("hr_threshold_tp_history") or [])
+        if isinstance(entry, dict) and entry.get("date") != today_iso
+    ]
+    history.append({"date": today_iso, "bpm": bpm})
+    perf["hr_threshold_tp_history"] = sorted(history, key=lambda entry: str(entry.get("date")))
+    perf["hr_threshold_bpm"] = bpm
+    perf["hr_threshold_date"] = today_iso
+    perf["performance_params_updated_at"] = today_iso
+    return True, str(bpm)
+
+
 def _set_hr_profile_values(profile: dict, hr_rest_raw: str, hr_max_raw: str) -> tuple[bool, str]:
     """Actualiza FC de reposo y FC máxima en el perfil para modelos de carga."""
     try:
@@ -1165,6 +1196,7 @@ def _show_menu() -> None:
     table.add_row("Editar", "/perfil editar salud", "Editar patologías, lesiones (también las nuevas) y notas de salud")
     table.add_row("Editar", "/perfil editar", "Editar perfil completo")
     table.add_row("Editar", "/perfil umbral <mm:ss>", "Actualizar umbral de running (ej. 4:15)")
+    table.add_row("Editar", "/perfil umbral fc <lpm>", "Actualizar FC umbral tras un test, la misma que en TrainingPeaks (ej. 169)")
     table.add_row("Editar", "/perfil fc <reposo> <max>", "Actualizar FC reposo/máxima (ej. 48 186)")
 
     table.add_row("Plan", "/plan crear", "Crear plan base y activarlo")
@@ -1423,6 +1455,21 @@ def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
         _save_user_profile(profile)
         agent.user_profile = _load_user_profile()
         console.print("[green]✓[/] Perfil actualizado.")
+        return True
+
+    if cmd.startswith("/perfil umbral fc"):
+        parts = user_input.strip().split()
+        if len(parts) < 4:
+            console.print("[yellow]Uso:[/] /perfil umbral fc <lpm> (ej: /perfil umbral fc 169)")
+            return True
+        profile = _load_user_profile()
+        ok, msg = _set_hr_threshold(profile, parts[3].strip())
+        if not ok:
+            console.print(f"[red]✗[/] {msg}")
+            return True
+        _save_user_profile(profile)
+        agent.user_profile = _load_user_profile()
+        console.print(f"[green]✓[/] FC umbral actualizada a [bold]{msg} lpm[/bold] desde hoy (Kairos y referencia de TrainingPeaks).")
         return True
 
     if cmd.startswith("/perfil umbral"):

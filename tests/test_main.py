@@ -27,6 +27,7 @@ from agent.main import (
     _parse_plan_command,
     _set_hr_profile_values,
     _set_running_threshold_pace,
+    _set_hr_threshold,
     _sync_from_garmin,
     _validate_date,
     _validate_hours,
@@ -254,6 +255,27 @@ class TestSetRunningThresholdPace:
         ok, msg = _set_running_threshold_pace(profile, "foo")
         assert ok is False
         assert "Formato no válido" in msg
+
+
+class TestSetHrThreshold:
+    def test_updates_kairos_threshold_and_appends_dated_tp_entry_without_touching_past(self):
+        from datetime import date as _date
+
+        today_iso = _date.today().isoformat()
+        profile = {"performance": {
+            "hr_threshold_bpm": 169,
+            "hr_threshold_tp_history": [{"date": "2026-01-30", "bpm": 166}, {"date": today_iso, "bpm": 170}],
+        }}
+        ok, msg = _set_hr_threshold(profile, "171")
+        assert (ok, msg) == (True, "171")
+        perf = profile["performance"]
+        assert perf["hr_threshold_tp_history"] == [{"date": "2026-01-30", "bpm": 166}, {"date": today_iso, "bpm": 171}]
+        assert (perf["hr_threshold_bpm"], perf["hr_threshold_date"]) == (171, today_iso)
+
+    def test_rejects_invalid_values(self):
+        for raw, error in (("rápido", "Formato no válido"), ("90", "fuera de rango"), ("250", "fuera de rango")):
+            ok, msg = _set_hr_threshold({}, raw)
+            assert ok is False and error in msg
 
 
 class TestSetHrProfileValues:

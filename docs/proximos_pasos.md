@@ -10,9 +10,9 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 4578226:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 26/10/2026** (ordenador 2). Sin cambios a medias. 775 tests; batería 25/25.
+**Sesión del 26/10/2026** (ordenador 2). Sin cambios a medias. 778 tests; batería 25/25.
 
-- Hecho hoy: patologías y lesiones separadas con protocolo de diabetes según medicación; proveedor de IA del atleta (tabla `ia_provider`, clave en `PROVIDER_API_KEY`); `.env.example` limpio; metatooling por grupos de tools, siempre activo (sin variable); el "cuelgue" de las 14:15 era el portátil suspendido, y lo que de verdad fallaba (token de Supabase caducado al despertar, que cerraba Kairos) está arreglado; tests de las ramas de error del inicio de sesión (`agent/main.py` del 90 % al 94 %); memoria entre sesiones comprobada en este ordenador (resumen del día e historial en `session_context`, sin caracteres rotos); la batería ya no la lee ni la escribe (`KAIROS_SESSION_MEMORY=false`) y la memoria del atleta se vació (toda era de baterías); S28 nuevo (día de la semana con su fecha), S11 sin falso positivo con "Supraumbral" y batería pintada a 400 columnas (tablas sin partir para el juez).
+- Hecho hoy: patologías y lesiones separadas con protocolo de diabetes según medicación; proveedor de IA del atleta (tabla `ia_provider`, clave en `PROVIDER_API_KEY`); `.env.example` limpio; metatooling por grupos de tools, siempre activo (sin variable); el "cuelgue" de las 14:15 era el portátil suspendido, y lo que de verdad fallaba (token de Supabase caducado al despertar, que cerraba Kairos) está arreglado; tests de las ramas de error del inicio de sesión (`agent/main.py` del 90 % al 94 %); memoria entre sesiones comprobada en este ordenador (resumen del día e historial en `session_context`, sin caracteres rotos); la batería ya no la lee ni la escribe (`KAIROS_SESSION_MEMORY=false`) y la memoria del atleta se vació (toda era de baterías); S28 nuevo (día de la semana con su fecha), S11 sin falso positivo con "Supraumbral" y batería pintada a 400 columnas (tablas sin partir para el juez); comando `/perfil umbral fc <lpm>` para el umbral de FC de TP.
 - Supabase ya tiene la tabla `ia_provider` (RLS comprobado) y el perfil del usuario está migrado (patologías y lesiones separadas, medicación de la diabetes, proveedor de IA `nvidia`).
 - Al empezar en casa: `git pull`, `pip install -r requirements.txt` (`google-genai` ya no hace falta; se puede desinstalar) y entrar una vez en Kairos. No preguntará nada: la clave `NVIDIA_API_KEY` del `.env` pasa sola a `PROVIDER_API_KEY`. Después, el repaso de los sensores con las baterías guardadas allí y el caso de S10 en bici (punto 1).
 - **Aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos a diario un par de semanas y luego revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2. Lo único que no espera al uso es el repaso en casa del punto 1.
@@ -38,7 +38,6 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 4. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
 5. **Bici sin potencia de más de 2 h.** 07/08: Kairos 65.9 frente a TP 93. La tabla hrTSS de TP no tiene datos de bici por encima del 85 % del umbral.
 6. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
-7. **Mantenimiento de umbrales.** Si cambia el umbral de FC en TP, añadir ese mismo día la entrada con fecha a `hr_threshold_tp_history` (no hay comando). El ritmo umbral se registra con `/perfil umbral`.
 
 ## Descartado
 

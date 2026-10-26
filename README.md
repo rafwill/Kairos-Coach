@@ -58,6 +58,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/ayuda` | Ejemplos de preguntas, comandos e indicadores |
 | `/perfil` · `/perfil editar [objetivo\|salud]` | Ver o editar el perfil |
 | `/perfil umbral <mm:ss>` | Nuevo ritmo umbral de running (rige desde hoy) |
+| `/perfil umbral fc <lpm>` | Nueva FC umbral tras un test, la misma que en TrainingPeaks (rige desde hoy) |
 | `/perfil fc <reposo> <max>` | FC de reposo y máxima |
 | `/plan listar` · `/plan ver <id>` · `/plan activar <id>` · `/plan crear` | Planes de entrenamiento |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |

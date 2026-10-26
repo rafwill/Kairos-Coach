@@ -45,7 +45,7 @@ Tabla hrTSS de TP (`TP_HRTSS_RATES`): FC/umbral TP < 85 % → 40.8 TSS/h; 85–9
 
 Anclajes por fecha (perfil `performance`):
 
-- `hr_threshold_tp_history`: umbral de FC con el que TP calcula su hrTSS (166 desde 30/01/2026, 169 desde 21/10/2026). Distinto del umbral fisiológico `hr_threshold_bpm` = 169 (Garmin; VT2 de la prueba de esfuerzo).
+- `hr_threshold_tp_history`: umbral de FC con el que TP calcula su hrTSS (166 desde 30/01/2026, 169 desde 21/10/2026). Distinto del umbral fisiológico `hr_threshold_bpm` = 169 (VT2 de la prueba de esfuerzo; Garmin lo detecta en el reloj y no se cambia desde la web, así que tras un test se carga a mano: `/perfil umbral fc <lpm>` actualiza los dos con el mismo número, desde el 26/10, decisión del usuario).
 - `running_threshold_pace_history`: 3:50/km (230 s) desde 30/01/2026, 4:12 (252 s) desde 09/05/2026, 4:00 (240 s) desde 22/10/2026 (test: carrera del 18/10, actividad 24764615547, 27 min, NGP 3:49 llevado a 60 min con Riegel ×1.049; el usuario lo cambia también en TP y Connect). VT2 de la prueba de esfuerzo: 4:15.
 - hr_rest = media del RHR de los 14 días previos. FTP bici 205 (igual que TP). Umbral de marcha = anclaje del perfil.
 
@@ -83,7 +83,7 @@ Anclajes por fecha (perfil `performance`):
 - Trail rápido: vigilar con más sesiones (16/08: Kairos 128.0 frente a TP 112.4 rTSS).
 - Series cortas de running (6x500, 6x1000, 4x400, 8x500) en +11 % a +20 % frente a TP; 23966766696 (13/08, 8x45" cuestas) ×1.20. Plantear hipótesis antes de tocar umbrales (p. ej. relación FC-velocidad con retraso fisiológico).
 - Bici sin potencia > 2 h: 07/08 Kairos 65.9 frente a TP 93 (la tabla no tiene datos de bici por encima del 85 %).
-- Si cambia el umbral de FC de TP, añadir la entrada con fecha a `hr_threshold_tp_history` el mismo día (no hay comando; el ritmo umbral sí: `/perfil umbral` añade la entrada de hoy al historial).
+- Si cambia la FC umbral (test), registrarla el mismo día que en TP con `/perfil umbral fc <lpm>` (`hr_threshold_bpm` y entrada de hoy en `hr_threshold_tp_history`). El ritmo umbral, con `/perfil umbral <mm:ss>`.
 - Revalidación periódica con un export nuevo de TP (prueba sin escribir, criterio fijado antes, solo filas esperadas).
 
 ## Limitaciones aceptadas (no bugs abiertos)

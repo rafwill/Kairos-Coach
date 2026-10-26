@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Added (FC umbral cargada a mano: `/perfil umbral fc <lpm>`)
+- En Garmin la FC umbral la detecta el reloj tras un test y no se cambia desde la web; Kairos la traía de Garmin una sola vez y no había forma de cambiarla, ni tampoco el umbral de TP (había que editar el perfil a mano). Decisión del usuario: un solo número tras el test, el mismo que se pone en TrainingPeaks. `/perfil umbral fc <lpm>` actualiza `hr_threshold_bpm` (hrTSS de fuerza, elíptica y remo; contexto del LLM) y añade la entrada de hoy a `hr_threshold_tp_history` (hrTSS de trail y bici sin potencia). Rige desde hoy (el TSS guardado no cambia, como con `/perfil umbral <mm:ss>`); las zonas siguen siendo las del reloj. Rango 120–230 lpm. En `/menu`, `/ayuda`, el README y el prompt de sistema (decía que la FC umbral se cambiaba con `/perfil umbral`, que solo cambia el ritmo).
+
 ### Added / Fixed (sensores: S28 nuevo, S11 y tablas partidas en el juez)
 - **S28** (`find_wrong_weekday_date`): un día de la semana junto a una fecha ("domingo 20/10", "20/10 (domingo)") tiene que ser el día en que cae; sin año, el que deja la fecha más cerca de hoy. Reintenta en vivo y lo pasa el juez. Criterio fijado antes: 0 falsos positivos en las baterías guardadas y cada aviso revisado a mano. Sobre las 220 respuestas del ordenador 2 (173 pares día + fecha): 5 avisos, los 5 errores reales ("lunes 20/10 – domingo 26/10" para la semana del 19 al 25; "domingo 2/11", que es lunes). En casa se repite con las 891.
 - **S11**: "umbral" solo cuenta como palabra suelta; en "Z5 Supraumbral" o "Z4 Subumbral" es el nombre de la zona ("Z5 Supraumbral (≥ 169 lpm) o ritmo 3:30–3:40 min/km" daba S11). En las 220 respuestas solo desaparece ese aviso.
