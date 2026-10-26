@@ -14,7 +14,9 @@ Se reescribe al final de cada sesión (la anterior se pierde: el detalle está e
 
 - Hecho: puesta al día del ordenador 2 (`.venv`, pre-commit, `NVIDIA_MODEL`, Supabase Auth; batería 25/25 con el juez nuevo); S10 con la marca de progresivo detrás del rango; perfil de salud (patologías y lesiones separadas, diabetes con su medicación, protocolo solo si aplica, atleta sano sin preguntas); reglas de lesiones a lo largo de la temporada; S27 sin confundir "4/10" de dolor con una fecha.
 - Al empezar en casa: `git pull`, entrar una vez en Kairos (el perfil ya está migrado en Supabase, no preguntará nada) y repasar con S10 nuevo las baterías guardadas allí (punto 1).
-- Siguiente paso propuesto: las notas del usuario del final de este fichero (modelo elegido por atleta en la primera entrada; "45 herramientas"). El atleta sano y DT2 en vivo quedó comprobado el 26/10.
+- También hecho el 26/10: atleta sano y DT2 comprobados en vivo; modelo elegido por el atleta (perfil) con la clave en `.env` y renovación de la clave caducada; "45 herramientas" explicado (42 de Garmin + 3 de Kairos).
+- Al entrar por primera vez tras este cambio, Kairos enseña el menú de modelo una vez (el perfil aún no tiene `llm.provider`); en casa, si el `.env` no tiene la clave elegida, la pide.
+- Siguiente paso propuesto: punto 4 (límite de tools y metatooling) o los sensores pendientes del punto 1.
 
 ## Pendiente
 
@@ -114,9 +116,8 @@ Formato de `docs/Harness.md` §7: **señal** (qué falló y dónde), **lección*
 - Evidencia: protocolo según patologías y medicación (`agent/diabetes.py`, `prompts/diabetes/`); formulario y migración de perfiles; 750 tests. En vivo (perfil sustituido solo en memoria, 4 preguntas de coaching): sano con periostitis, 0 menciones a la diabetes y la periostitis en todos los planes; DT2 con insulina, protocolo completo; DT2 con metformina, sin nota S16 ni carbohidratos preventivos. Detalle en CHANGELOG.
 - Lección añadida: el título de un protocolo también ceba al LLM ("sin riesgo de hipoglucemia" hacía que lo repitiera en 3 de 4 respuestas). Aun quitándolo, el LLM nombra la hipoglucemia por su cuenta para tranquilizar (2 de 4): un prompt no borra lo que el modelo sabe. Aceptado por el usuario (26/10): no son avisos ni limitan el entrenamiento; no se añade sensor.
 
+### 26/10/2026 — El atleta elige su modelo; la clave caducada se vuelve a pedir
 
-Al inicio de kairos teniamos selección de modelo. El objetivo es productivizar kairos, con lo cual, lo que vamos a provocar es que cuando un atleta meta su correo por primera vez sea el quien indique el modelo a utilizar. Se pedirá la key correspondiente y la guardaremos en el fichero .env.
-De esta manera, cuando vuelva a entrar posteriormente ya no se le mostrará el menu de selección de modelo, sino que se utilizará automáticamente el modelo previamente elegido. Como la key puede expirar cuando caduque, se pedirá de nuevo y se actualizará en el fichero .env.
-
-
-45 herramientas disponibles??
+- Señal: nota del usuario para productizar Kairos (el menú de modelo salía en cada arranque y solo con claves ya escritas en `.env`). Al revisarlo: un 401 en la capa de coaching cerraba la sesión, y una clave mala de NVIDIA no da 401 sino 403 "Authorization failed".
+- Lección: lo que es del atleta (su modelo) va en su perfil; lo que es del ordenador (la clave), en `.env`. Un error de clave se detecta en un solo punto (la llamada al LLM) y se convierte en un tipo que todas las capas ya capturan. El código de error de un proveedor se comprueba en vivo antes de clasificarlo: el supuesto (401) era falso para NVIDIA.
+- Evidencia: primera vez con menú y clave, siguientes sin menú, otro ordenador solo con la clave, clave caducada pedida y pregunta repetida (tests); en vivo, clave real "ok" y clave inventada "auth"; batería sin menú con `KAIROS_PROVIDER`. "45 herramientas" = 42 de Garmin + 3 internas de Kairos, ahora desglosado al arrancar.

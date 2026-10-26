@@ -8479,6 +8479,61 @@ class _GeminiClient:
         self.chat = _GeminiChat(api_key)
 
 
+# ─── Proveedores de LLM y su clave ──────────────────────────────────────────
+
+class LLMAuthError(RuntimeError):
+    """El proveedor rechaza la clave (caducada o no válida): la CLI la pide de nuevo y la guarda en .env (26/10)."""
+
+
+# 401 o mensaje de clave no válida. Un 403 a secas no cuenta: en la red con proxy es el proxy (Zscaler), no la
+# clave. NVIDIA, en cambio, rechaza una clave mala con 403 "Authorization failed" (comprobado en vivo el 26/10).
+_LLM_AUTH_ERROR = re.compile(
+    r"(?i)\b401\b|unauthori[sz]ed|invalid[ _-]?api[ _-]?key|incorrect api key|api key not valid|api_key_invalid|"
+    r"authentication|authori[sz]ation failed"
+)
+
+
+def _is_llm_auth_error(exc: BaseException) -> bool:
+    return getattr(exc, "status_code", None) == 401 or bool(_LLM_AUTH_ERROR.search(str(exc)))
+
+
+# proveedor → (variable de la clave, URL de la API compatible con OpenAI, variable del modelo, modelo por defecto)
+_LLM_PROVIDERS = {
+    "groq": ("GROQ_API_KEY", "https://api.groq.com/openai/v1", "GROQ_MODEL", "llama-3.3-70b-versatile"),
+    "gemini": ("GEMINI_API_KEY", None, "GEMINI_MODEL", "gemini-2.0-flash"),  # API nativa (x-goog-api-key)
+    "mistral": ("MISTRAL_API_KEY", "https://api.mistral.ai/v1", "MISTRAL_MODEL", "mistral-small-latest"),
+    "cerebras": ("CEREBRAS_API_KEY", "https://api.cerebras.ai/v1", "CEREBRAS_MODEL", "llama-3.3-70b"),
+    "nvidia": ("NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1", "NVIDIA_MODEL",
+               "nvidia/nemotron-3.5-lightning-30b-a3b"),
+}
+
+
+def _build_llm_client(provider: str) -> tuple[Any, str, str]:
+    """Cliente, modelo y clave del proveedor, con la clave de os.environ (.env)."""
+    if provider not in _LLM_PROVIDERS:
+        raise ValueError(f"Proveedor desconocido: '{provider}'. Opciones válidas: {', '.join(_LLM_PROVIDERS)}.")
+    key_var, base_url, model_var, default_model = _LLM_PROVIDERS[provider]
+    api_key = os.environ[key_var]
+    client = _GeminiClient(api_key=api_key) if base_url is None else AsyncOpenAI(base_url=base_url, api_key=api_key)
+    return client, os.environ.get(model_var, default_model), api_key
+
+
+async def probe_llm_key(provider: str) -> tuple[str, str]:
+    """Prueba la clave con una llamada mínima (1 token): ("ok", ""), ("auth", motivo) o ("error", motivo).
+
+    "error" es todo lo que no es la clave (red, proxy, modelo): no se puede saber si la clave vale.
+    """
+    try:
+        client, model, _ = _build_llm_client(provider)
+        await asyncio.wait_for(
+            client.chat.completions.create(model=model, messages=[{"role": "user", "content": "ok"}], max_tokens=1),
+            timeout=30,
+        )
+        return "ok", ""
+    except Exception as exc:  # cualquier fallo del proveedor se clasifica, nunca se propaga
+        return ("auth" if _is_llm_auth_error(exc) else "error"), str(exc)[:200]
+
+
 # Palabras clave de fecha que algunos LLMs envían en lugar de fechas ISO
 _TODAY_KEYWORDS = {"hoy", "today", "今日", "今天", "ahora", "now", "current", "actual", "este dia"}
 _YESTERDAY_KEYWORDS = {"ayer", "yesterday", "昨日", "昨天"}
@@ -10224,54 +10279,36 @@ class TrainerAgent:
     def set_provider(self, provider: str) -> None:
         """Configura o cambia el proveedor de LLM actual."""
         self.provider = provider
-        if provider == "groq":
-            # Groq — gratuito, sin VPN, 100k tokens/día
-            # Registro en https://console.groq.com
-            self.client = AsyncOpenAI(
-                base_url="https://api.groq.com/openai/v1",
-                api_key=os.environ["GROQ_API_KEY"],
-            )
-            self.model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-            self._api_key = os.environ["GROQ_API_KEY"]
-        elif provider == "gemini":
-            # API nativa de Gemini con x-goog-api-key (soporta claves AQ.)
-            _gemini_key = os.environ["GEMINI_API_KEY"]
-            self.client = _GeminiClient(api_key=_gemini_key)
-            self.model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-            self._api_key = _gemini_key
-        elif provider == "mistral":
-            # Mistral La Plateforme — API compatible OpenAI, capa gratuita generosa
-            # Registro en https://console.mistral.ai
-            self.client = AsyncOpenAI(
-                base_url="https://api.mistral.ai/v1",
-                api_key=os.environ["MISTRAL_API_KEY"],
-            )
-            self.model = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
-            self._api_key = os.environ["MISTRAL_API_KEY"]
-        elif provider == "cerebras":
-            # Cerebras — inferencia ultrarrápida, API compatible OpenAI, capa gratuita
-            # Registro en https://cloud.cerebras.ai
-            self.client = AsyncOpenAI(
-                base_url="https://api.cerebras.ai/v1",
-                api_key=os.environ["CEREBRAS_API_KEY"],
-            )
-            self.model = os.environ.get("CEREBRAS_MODEL", "llama-3.3-70b")
-            self._api_key = os.environ["CEREBRAS_API_KEY"]
-        elif provider == "nvidia":
-            # NVIDIA NIM — API compatible con OpenAI
-            # Docs: https://build.nvidia.com/explore/discover
-            self.client = AsyncOpenAI(
-                base_url="https://integrate.api.nvidia.com/v1",
-                api_key=os.environ["NVIDIA_API_KEY"],
-            )
-            self.model = os.environ.get("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
-            self._api_key = os.environ["NVIDIA_API_KEY"]
-        else:
-            raise ValueError(f"Proveedor desconocido: '{provider}'. Opciones válidas: 'groq', 'gemini', 'mistral', 'cerebras', 'nvidia'.")
-        
+        self.client, self.model, self._api_key = _build_llm_client(provider)
+        self._watch_llm_auth()
+
         # Variables para tracking de tokens de la sesión
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+
+    def _watch_llm_auth(self) -> None:
+        """Clave rechazada en cualquier llamada al LLM (26/10): marca `llm_auth_failed` y lanza LLMAuthError.
+
+        LLMAuthError es un RuntimeError, que todas las capas (bucle con tools, coaching, rescates, sensores)
+        ya capturan; la CLI ve la marca, pide la clave nueva y repite la pregunta. Antes, un 401 de la capa de
+        coaching (openai.AuthenticationError) no lo capturaba nadie y cerraba la sesión.
+        """
+        self.llm_auth_failed = False
+        completions = self.client.chat.completions
+        create = completions.create
+
+        async def _create(*args, **kwargs):
+            try:
+                return await create(*args, **kwargs)
+            except LLMAuthError:
+                raise
+            except Exception as exc:
+                if not _is_llm_auth_error(exc):
+                    raise
+                self.llm_auth_failed = True
+                raise LLMAuthError(f"{self.provider}: el proveedor rechaza la clave ({exc})") from exc
+
+        completions.create = _create
 
     async def initialize(self) -> None:
         """Carga las herramientas disponibles del MCP y restaura el historial reciente."""

@@ -3,10 +3,11 @@
 Uso:
     python tools/run_bateria.py [--preguntas docs/bateria_p55_preguntas_base.txt]
                                 [--salida .tmp/bateria/<fecha>] [--modelo nvidia/...]
-                                [--username U] [--proveedor 4]
+                                [--username U] [--proveedor nvidia]
 
 - Usuario: --username o KAIROS_USERNAME del .env (nunca escrito en el código).
-- Proveedor: número del menú de arranque de Kairos (4 = NVIDIA). --modelo fija NVIDIA_MODEL solo para esta pasada.
+- Proveedor: KAIROS_PROVIDER para esta pasada (sin menú y sin tocar el modelo guardado en el perfil; 26/10).
+  --modelo fija NVIDIA_MODEL solo para esta pasada.
 - Envía las preguntas de una en una y mide desde el envío hasta que Kairos vuelve a pedir entrada.
 - Genera <salida>.log (crudo), <salida>.md (transcripción limpia) y <salida>.json (tiempos).
   Las salidas contienen datos reales del atleta: .tmp/ está en .gitignore.
@@ -64,6 +65,7 @@ def clean(block: str) -> str:
 def run(questions: list[str], username: str, provider: str, model: str | None) -> tuple[str, float, list[dict]]:
     env = os.environ.copy()
     env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "COLUMNS": "110", "TERM": "dumb"})
+    env["KAIROS_PROVIDER"] = provider
     if model:
         env["NVIDIA_MODEL"] = model
     python = ROOT / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
@@ -93,7 +95,7 @@ def run(questions: list[str], username: str, provider: str, model: str | None) -
         return False
 
     t_start = time.monotonic()
-    proc.stdin.write(f"{username}\n{provider}\n")
+    proc.stdin.write(f"{username}\n")
     proc.stdin.flush()
     wait_prompts(1, PER_QUESTION_LIMIT_S)
     startup_s = time.monotonic() - t_start
@@ -123,7 +125,7 @@ def main() -> int:
     ap.add_argument("--salida", default=str(ROOT / ".tmp/bateria" / datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")))
     ap.add_argument("--modelo", default=None, help="NVIDIA_MODEL para esta pasada (por defecto, el del .env)")
     ap.add_argument("--username", default=None)
-    ap.add_argument("--proveedor", default="4", help="opción del menú de proveedor de Kairos (4 = NVIDIA)")
+    ap.add_argument("--proveedor", default="nvidia", help="KAIROS_PROVIDER de esta pasada (nvidia, gemini, mistral, groq, cerebras)")
     args = ap.parse_args()
 
     username = args.username or load_env(ROOT / ".env").get("KAIROS_USERNAME") or os.environ.get("KAIROS_USERNAME")

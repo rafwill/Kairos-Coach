@@ -115,24 +115,36 @@ class TestSwitchProvider:
     def test_same_provider_keeps_tokens(self, out):
         agent = _Agent()
         with patch.object(m, "_select_provider_menu", return_value="nvidia"):
-            assert m._switch_provider(agent, "nvidia") == "nvidia"
+            assert asyncio.run(m._switch_provider(agent, "nvidia")) == "nvidia"
         agent.set_provider.assert_not_called()
         assert agent.total_prompt_tokens == 10
         assert "ya está activo" in out()
 
-    def test_new_provider_resets_tokens(self, out):
+    def test_new_provider_resets_tokens_and_is_saved_in_the_profile(self, monkeypatch, out):
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_real")
         agent = _Agent()
-        with patch.object(m, "_select_provider_menu", return_value="groq"), patch.object(m, "_check_env"):
-            assert m._switch_provider(agent, "nvidia") == "groq"
+        with patch.object(m, "_select_provider_menu", return_value="groq"), \
+             patch.object(m, "_save_provider_choice") as save, patch.object(m, "_ask_api_key", new=AsyncMock()) as ask:
+            assert asyncio.run(m._switch_provider(agent, "nvidia")) == "groq"
         agent.set_provider.assert_called_once_with("groq")
+        save.assert_called_once_with("groq")
+        ask.assert_not_awaited()
         assert (agent.total_prompt_tokens, agent.total_completion_tokens) == (0, 0)
         assert "Modelo cambiado con éxito" in out()
 
-    def test_exhausted_quota_is_reported(self, out):
+    def test_new_provider_without_key_asks_it(self, monkeypatch, out):
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+        with patch.object(m, "_select_provider_menu", return_value="mistral"), \
+             patch.object(m, "_save_provider_choice"), patch.object(m, "_ask_api_key", new=AsyncMock()) as ask:
+            asyncio.run(m._switch_provider(_Agent(), "nvidia"))
+        assert ask.await_args.args[0] == "mistral"
+
+    def test_exhausted_quota_is_reported(self, monkeypatch, out):
+        monkeypatch.setenv("GEMINI_API_KEY", "g")
         agent = _Agent()
         agent.get_daily_usage_info = lambda: {"quota_exhausted": True, "today_usage": 1000, "limit": 1000, "remaining": 0}
-        with patch.object(m, "_select_provider_menu", return_value="gemini"), patch.object(m, "_check_env"):
-            m._switch_provider(agent, "nvidia")
+        with patch.object(m, "_select_provider_menu", return_value="gemini"), patch.object(m, "_save_provider_choice"):
+            asyncio.run(m._switch_provider(agent, "nvidia"))
         assert "agotada" in out()
 
 
@@ -361,14 +373,17 @@ class TestStartupChecks:
             m._check_garmin_env()
         assert "GARMIN_EMAIL" in out()
 
-    def test_provider_menu_without_keys_exits(self, monkeypatch, out):
+    def test_provider_menu_without_keys_still_offers_every_model(self, monkeypatch, out):
+        # 26/10: el atleta elige el modelo y luego pega su clave; ya no hace falta tenerla antes.
         for var in ("GEMINI_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "NVIDIA_API_KEY"):
             monkeypatch.delenv(var, raising=False)
-        with pytest.raises(SystemExit):
-            m._select_provider_menu()
-        assert "No hay ninguna API key" in out()
+        with patch.object(m.Prompt, "ask", return_value="3"):
+            assert m._select_provider_menu() == "mistral"
+        text = out()
+        assert all(name in text for name in ("NVIDIA", "Gemini", "Mistral", "Groq", "Cerebras"))
+        assert "clave guardada" not in text
 
-    def test_provider_menu_lists_only_configured_keys(self, monkeypatch, out):
+    def test_provider_menu_marks_saved_keys_and_usage(self, monkeypatch, out):
         for var in ("GEMINI_API_KEY", "MISTRAL_API_KEY", "CEREBRAS_API_KEY"):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("GROQ_API_KEY", "gsk_real")
@@ -376,10 +391,10 @@ class TestStartupChecks:
         usage = {"gsk_real": 0, "nv_real": 1234}
         with patch("agent.storage.get_gemini_daily_usage", side_effect=lambda k: usage[k]), \
              patch("agent.storage.is_gemini_quota_exhausted", return_value=False), \
-             patch.object(m.Prompt, "ask", return_value="2"):
+             patch.object(m.Prompt, "ask", return_value="1"):
             assert m._select_provider_menu() == "nvidia"
         text = out()
-        assert "recomendado" in text and "1,234 tokens consumidos hoy" in text and "Gemini" not in text
+        assert "recomendado" in text and "1,234 tokens consumidos hoy" in text and "clave guardada" in text
 
     @pytest.mark.parametrize("status, exits", [
         ({"configured": False, "connected": False, "error": None}, True),
@@ -484,7 +499,7 @@ def _run_main(inputs, *, auth_raw='{"displayName": "x"}', is_new=False, kb="kb",
         patch.object(m, "_authenticate_or_register_user", return_value=("r@example.com", {}, is_new, "pw")),
         patch.object(m, "_ensure_garmin_credentials"),
         patch.object(m, "_check_garmin_env"),
-        patch.object(m, "_auto_select_provider", return_value="nvidia"),
+        patch.object(m, "_resolve_provider", AsyncMock(return_value="nvidia")),
         patch.object(m, "_check_env"),
         patch.object(m, "garmin_mcp_session", _fake_session),
         patch.object(m, "TrainerAgent", _MainAgent),
@@ -523,10 +538,30 @@ class TestMainLoop:
         assert "refrescó días recientes" in text and "Sesión finalizada" in text
 
     def test_modelo_switches_provider(self, monkeypatch, out):
-        with patch.object(m, "_switch_provider", return_value="groq") as switch:
+        with patch.object(m, "_switch_provider", AsyncMock(return_value="groq")) as switch:
             _run_main(["/modelo", "salir"], monkeypatch=monkeypatch, skip_status=True)
-        switch.assert_called_once()
+        switch.assert_awaited_once()
         assert "Resumen inicial omitido" in out()
+
+    def test_expired_key_is_asked_and_the_question_repeated(self, monkeypatch, out):
+        # 26/10: el proveedor rechaza la clave → se pide la nueva, se guarda y se repite la misma pregunta.
+        async def _chat_expired_once(agent, text):
+            agent.conversation_history += [text, "error"]
+            if not agent.calls:
+                agent.llm_auth_failed = True
+            agent.calls.append(text)
+            return "Respuesta de Kairos"
+
+        with patch.object(m, "_ask_api_key", new=AsyncMock()) as ask_key, \
+             patch.object(_MainAgent, "_chat", _chat_expired_once):
+            _MainAgent.calls = []
+            _run_main(["¿Cómo estoy?", "salir"], monkeypatch=monkeypatch, skip_status=True)
+        agent = _MainAgent.instances[0]
+        assert agent.calls == ["¿Cómo estoy?", "¿Cómo estoy?"]
+        assert ask_key.await_args.args[0] == "nvidia" and "rechazado tu clave" in ask_key.await_args.args[1]
+        agent.set_provider.assert_called_once_with("nvidia")
+        assert agent.conversation_history == ["¿Cómo estoy?", "error"]  # el turno fallido se quita
+        assert out().count("Respuesta de Kairos") == 1
 
     def test_ctrl_c_ends_the_session(self, monkeypatch, out):
         _run_main(KeyboardInterrupt(), monkeypatch=monkeypatch)

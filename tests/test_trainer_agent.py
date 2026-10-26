@@ -11,6 +11,7 @@ Cubre:
   - _GeminiCompletions._parse  (sin llamada real a la API)
 """
 
+import asyncio
 import json
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -694,6 +695,59 @@ class TestCoachingRulesSingleSource:
             assert heading in rules
         # El protocolo de diabetes va con el perfil, solo a quien lo necesita (26/10).
         assert "120–180 mg/dL" not in rules and "hipoglucemia" not in rules.lower()
+
+
+class TestLlmKey:
+    """Clave del LLM rechazada (26/10): se marca, se convierte en LLMAuthError y la CLI la pide de nuevo."""
+
+    class _Unauthorized(Exception):
+        status_code = 401
+
+    def _agent(self, monkeypatch, error):
+        from agent import trainer_agent as ta
+
+        monkeypatch.setenv("NVIDIA_API_KEY", "k")
+        agent = object.__new__(ta.TrainerAgent)
+        agent.set_provider("nvidia")
+        # El envoltorio guarda el create original al instalarse: se vuelve a instalar sobre un doble.
+        agent.client.chat.completions.create = AsyncMock(side_effect=error)
+        agent._watch_llm_auth()
+        return agent
+
+    def test_rejected_key_sets_the_flag_and_raises_a_runtime_error(self, monkeypatch):
+        from agent.trainer_agent import LLMAuthError
+
+        agent = self._agent(monkeypatch, self._Unauthorized("Error code: 401 - Unauthorized"))
+        with pytest.raises(LLMAuthError) as exc:
+            asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
+        assert isinstance(exc.value, RuntimeError) and agent.llm_auth_failed is True
+
+    def test_other_errors_pass_through_untouched(self, monkeypatch):
+        agent = self._agent(monkeypatch, Exception("403 Forbidden: Zscaler"))
+        with pytest.raises(Exception, match="Zscaler"):
+            asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
+        assert agent.llm_auth_failed is False
+
+    def test_coaching_layer_survives_a_rejected_key(self, monkeypatch):
+        # Antes, el 401 de la capa de coaching no lo capturaba nadie y cerraba la sesión.
+        agent = self._agent(monkeypatch, self._Unauthorized("401"))
+        agent.user_profile = {}
+        out = asyncio.run(agent._augment_with_llm_coaching_if_needed("q", "Datos deterministas", "daily", always=True))
+        assert out.startswith("Datos deterministas") and agent.llm_auth_failed is True
+
+    @pytest.mark.parametrize("error, status", [
+        (None, "ok"), (_Unauthorized("401"), "auth"), (Exception("API key not valid. API_KEY_INVALID"), "auth"),
+        # NVIDIA con clave mala, texto real del 26/10; un 403 del proxy no es la clave.
+        (Exception("Error code: 403 - {'status': 403, 'title': 'Forbidden', 'detail': 'Authorization failed'}"), "auth"),
+        (Exception("403 Forbidden: Zscaler"), "error"), (TimeoutError("lento"), "error"),
+    ])
+    def test_probe_classifies(self, monkeypatch, error, status):
+        from agent import trainer_agent as ta
+
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(side_effect=error)
+        monkeypatch.setattr(ta, "_build_llm_client", lambda p: (client, "m", "k"))
+        assert asyncio.run(ta.probe_llm_key("nvidia"))[0] == status
 
 
 class TestDiabetesProtocolInContext:

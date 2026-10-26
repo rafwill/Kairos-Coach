@@ -32,7 +32,7 @@ if sys.platform == "win32":
     except (AttributeError, ValueError):
         pass
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv, set_key
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -105,7 +105,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agent import diabetes as _diabetes
 from agent.mcp.client import garmin_mcp_session
-from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile, _session_intensity_label
+from agent.trainer_agent import (
+    TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile, _session_intensity_label, probe_llm_key,
+)
 from agent.storage import (
     activate_training_plan,
     check_supabase_connection,
@@ -1248,53 +1250,77 @@ def _check_garmin_env() -> None:
 
 
 # Valores placeholder que indican que la clave no está configurada
-_PLACEHOLDER_VALUES = {"", "tu_clave_mistral", "tu_clave_gemini", "gsk_...", "AIzaSy_tu_clave_de_gemini"}
+_PLACEHOLDER_VALUES = {"", "tu_clave_mistral", "tu_clave_gemini", "gsk_...", "AIzaSy_tu_clave_de_gemini", "nvapi-..."}
+
+
+_KEY_HINTS = {
+    "groq": "https://console.groq.com",
+    "gemini": "https://aistudio.google.com  → Get API key",
+    "mistral": "https://console.mistral.ai  → API Keys",
+    "cerebras": "https://cloud.cerebras.ai  → API Keys",
+    "nvidia": "https://build.nvidia.com/explore/discover",
+}
+_MENU_ORDER = ("nvidia", "gemini", "mistral", "groq", "cerebras")
+
+
+def _has_key(provider: str) -> bool:
+    value = os.environ.get(_PROVIDER_INFO[provider][0], "")
+    return bool(value) and value not in _PLACEHOLDER_VALUES
+
+
+def _save_api_key(env_var: str, value: str) -> None:
+    """Guarda la clave en el .env (la crea o la reemplaza) y en el entorno de esta sesión."""
+    path = find_dotenv(usecwd=True) or str(Path.cwd() / ".env")
+    set_key(path, env_var, value, quote_mode="never", encoding="utf-8")
+    os.environ[env_var] = value
+
+
+async def _ask_api_key(provider: str, reason: str) -> None:
+    """Pide la clave del proveedor, la prueba con una llamada mínima y la guarda en .env (26/10).
+
+    Si el proveedor la rechaza se vuelve a pedir; si no se puede comprobar (red, proxy), se guarda igualmente.
+    """
+    env_var, label, _ = _PROVIDER_INFO[provider]
+    console.print(Panel.fit(
+        f"{reason}\nConsigue la clave en {_KEY_HINTS[provider]}\n[dim]Se guarda en el .env de este ordenador.[/]",
+        title=f"[bold blue]Kairos Coach — Clave de {label}[/]",
+        border_style="blue",
+    ))
+    while True:
+        key = Prompt.ask(f"  Clave de {label}", password=True).strip()
+        if not key:
+            continue
+        os.environ[env_var] = key
+        status, detail = await probe_llm_key(provider)
+        if status == "auth":
+            console.print(f"  [red]✗[/] El proveedor rechaza esa clave: {detail}")
+            continue
+        if status == "error":
+            console.print(f"  [yellow]![/] No he podido comprobarla ({detail}); la guardo igualmente.")
+        _save_api_key(env_var, key)
+        console.print(f"  [green]✓[/] Clave de {label} guardada.")
+        return
 
 
 def _select_provider_menu() -> str:
-    """Muestra el menú de selección de proveedor LLM."""
+    """Menú de modelos: todos los proveedores, marcando los que ya tienen clave en este ordenador."""
     from agent.storage import is_gemini_quota_exhausted, get_gemini_daily_usage
 
-    # Proveedores con clave configurada.
-    candidates = [
-        ("gemini",   "GEMINI_API_KEY"),
-        ("mistral",  "MISTRAL_API_KEY"),
-        ("groq",     "GROQ_API_KEY"),
-        ("cerebras", "CEREBRAS_API_KEY"),
-        ("nvidia",   "NVIDIA_API_KEY"),
-    ]
-    available = []
-    for name, env_var in candidates:
-        val = os.environ.get(env_var, "")
-        if val and val not in _PLACEHOLDER_VALUES:
-            available.append((name, env_var))
-
-    if not available:
-        console.print(
-            "[bold red]Error:[/] No hay ninguna API key configurada en .env\n"
-            "Configura al menos una de: [bold]NVIDIA_API_KEY[/], [bold]GEMINI_API_KEY[/], "
-            "[bold]MISTRAL_API_KEY[/], [bold]GROQ_API_KEY[/], [bold]CEREBRAS_API_KEY[/]"
-        )
-        sys.exit(1)
-
-    # Mostrar menú de selección
     menu_lines = ["[bold]Elige el modelo de IA:[/]\n"]
-    for i, (name, env_var) in enumerate(available, 1):
-        _, label, note = _PROVIDER_INFO[name]
-        api_key = os.environ.get(env_var, "")
+    for i, name in enumerate(_MENU_ORDER, 1):
+        env_var, label, note = _PROVIDER_INFO[name]
         extra = ""
-        
-        # Consultar la base de datos de forma dinámica
-        usage = get_gemini_daily_usage(api_key) if api_key else 0
-        exhausted = is_gemini_quota_exhausted(api_key) if api_key else False
-        
-        if exhausted:
-            extra = " [dim red](cuota agotada hoy)[/dim red]"
-        elif usage > 0:
-            extra = f" [dim cyan]({usage:,} tokens consumidos hoy)[/dim cyan]"
-        elif i == 1:
-            extra = "  [bold]← recomendado[/bold]"
-            
+        if _has_key(name):
+            api_key = os.environ.get(env_var, "")
+            usage = get_gemini_daily_usage(api_key)
+            if is_gemini_quota_exhausted(api_key):
+                extra = " [dim red](cuota agotada hoy)[/dim red]"
+            elif usage > 0:
+                extra = f" [dim cyan]({usage:,} tokens consumidos hoy)[/dim cyan]"
+            else:
+                extra = " [dim green](clave guardada)[/dim green]"
+        if i == 1:
+            extra += "  [bold]← recomendado[/bold]"
         menu_lines.append(f"  [green]{i}[/green] · {label}  [dim]({note})[/dim]{extra}")
 
     console.print(Panel.fit(
@@ -1302,25 +1328,45 @@ def _select_provider_menu() -> str:
         title="[bold blue]Kairos Coach — Selección de modelo[/]",
         border_style="blue",
     ))
-    choices = [str(i) for i in range(1, len(available) + 1)]
+    choices = [str(i) for i in range(1, len(_MENU_ORDER) + 1)]
     choice = Prompt.ask("  Tu elección", choices=choices, default="1", case_sensitive=False)
-    return available[int(choice) - 1][0]
+    return _MENU_ORDER[int(choice) - 1]
 
 
-def _auto_select_provider() -> str:
-    """
-    Detecta el entorno de red (VPN corporativa con Zscaler o no; solo informativo)
-    y permite elegir el proveedor LLM entre los que tienen clave configurada.
+def _save_provider_choice(provider: str) -> None:
+    profile = _load_user_profile()
+    profile.setdefault("llm", {})["provider"] = provider
+    _save_user_profile(profile)
+
+
+async def _resolve_provider() -> str:
+    """Modelo del atleta (26/10): se elige una vez y se guarda en su perfil; la clave va en el .env.
+
+    - Primera vez (sin modelo en el perfil): menú, clave si falta, y se guarda la elección.
+    - Siguientes veces: el del perfil, sin menú; si este ordenador no tiene su clave, se pide.
+    - `KAIROS_PROVIDER` en el entorno manda sobre todo y no toca el perfil (batería y pruebas).
     """
     console.print("[dim]Detectando entorno de red...[/]")
     on_vpn = _detect_zscaler()
+    override = (os.environ.get("KAIROS_PROVIDER") or "").strip().lower()
+    first_time = False
+    if override in _PROVIDER_INFO:
+        provider = override
+    else:
+        provider = ((_load_user_profile().get("llm") or {}).get("provider") or "").strip().lower()
+        if provider not in _PROVIDER_INFO:
+            provider, first_time = _select_provider_menu(), True
+    if not _has_key(provider):
+        await _ask_api_key(provider, "Necesito la clave de este modelo para empezar." if first_time
+                           else "Este ordenador no tiene la clave de tu modelo.")
+    if first_time:
+        _save_provider_choice(provider)
 
-    provider = _select_provider_menu()
     _, label, note = _PROVIDER_INFO[provider]
     network_line = "🏢  Red corporativa [dim](Zscaler detectado)[/dim]" if on_vpn else "🌐  Sin VPN corporativa"
     console.print(Panel.fit(
         f"{network_line}\n"
-        f"[bold green]Proveedor seleccionado:[/] {label}\n"
+        f"[bold green]Modelo:[/] {label}  [dim](se cambia con /modelo)[/dim]\n"
         f"[dim]{note}[/dim]",
         title="[bold blue]Kairos Coach — Entorno detectado[/]",
         border_style="blue",
@@ -1346,8 +1392,11 @@ def _check_and_migrate_supabase() -> None:
         sys.exit(1)
 
 
-def _switch_provider(agent: TrainerAgent, provider: str) -> str:
-    """/modelo: cambia el proveedor del LLM y devuelve el activo (el mismo si se vuelve a elegir)."""
+async def _switch_provider(agent: TrainerAgent, provider: str) -> str:
+    """/modelo: cambia el proveedor del LLM y devuelve el activo (el mismo si se vuelve a elegir).
+
+    La nueva elección se guarda en el perfil del atleta y, si falta, se pide su clave (26/10).
+    """
     # Mostrar tokens usados para el proveedor que está a punto de desactivarse
     p_tokens = agent.total_prompt_tokens
     c_tokens = agent.total_completion_tokens
@@ -1367,7 +1416,9 @@ def _switch_provider(agent: TrainerAgent, provider: str) -> str:
 
     # Actualizar el proveedor y reiniciar los tokens de sesión para el nuevo tramo
     provider = new_provider
-    _check_env(provider)
+    if not _has_key(provider):
+        await _ask_api_key(provider, "Este ordenador no tiene la clave de ese modelo.")
+    _save_provider_choice(provider)
     agent.set_provider(provider)
     agent.total_prompt_tokens = 0
     agent.total_completion_tokens = 0
@@ -1502,8 +1553,7 @@ async def main() -> None:
     _ensure_garmin_credentials(credentials, app_password=app_password)
     _check_garmin_env()
 
-    provider = _auto_select_provider()
-    _check_env(provider)
+    provider = await _resolve_provider()
 
     _, label, note = _PROVIDER_INFO[provider]
     console.print(Panel.fit(
@@ -1518,7 +1568,10 @@ async def main() -> None:
 
         console.print("[dim]Cargando herramientas de Garmin...[/]")
         await agent.initialize()
-        console.print(f"[green]✓[/] {len(agent.tools_schema)} herramientas disponibles\n")
+        # Las de Garmin (servidor MCP) y las internas de Kairos (kairos_*, sin servidor).
+        n_internal = sum(1 for t in agent.tools_schema if str(((t or {}).get("function") or {}).get("name", "")).startswith("kairos_"))
+        console.print(f"[green]✓[/] {len(agent.tools_schema)} herramientas disponibles "
+                      f"({len(agent.tools_schema) - n_internal} de Garmin + {n_internal} de Kairos)\n")
 
         # ── Verificación de acceso a Garmin ───────────────────────────────
         # Detectar si la contraseña ha cambiado en Garmin Connect antes de continuar.
@@ -1685,7 +1738,7 @@ async def main() -> None:
             cmd = user_input.strip().lower()
 
             if cmd in {"/modelo", "/model"}:
-                provider = _switch_provider(agent, provider)
+                provider = await _switch_provider(agent, provider)
                 continue
 
             if _handle_cli_command(user_input, agent):
@@ -1697,6 +1750,13 @@ async def main() -> None:
             try:
                 with console.status("[bold green]Kairos Coach está consultando Garmin y analizando tus datos...[/]"):
                     response = await agent.chat(user_input)
+                if getattr(agent, "llm_auth_failed", False):
+                    # Clave caducada o revocada (26/10): se pide la nueva, se guarda en .env y se repite la pregunta.
+                    del agent.conversation_history[-2:]
+                    await _ask_api_key(provider, f"{_PROVIDER_INFO[provider][1]} ha rechazado tu clave (puede haber caducado).")
+                    agent.set_provider(provider)
+                    with console.status("[bold green]Kairos Coach está consultando Garmin y analizando tus datos...[/]"):
+                        response = await agent.chat(user_input)
                 console.print("\n[bold green]Kairos Coach[/]")
                 console.print(Markdown(_format_coach_markdown(response)))
                 # Checkpoint incremental del resumen para no bloquear el cierre.

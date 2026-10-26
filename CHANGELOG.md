@@ -4,6 +4,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Changed (modelo elegido por el atleta, clave en .env)
+- Petición del usuario (productizar Kairos): la primera vez, el atleta elige el modelo en un menú con los cinco proveedores (ya no solo los que tienen clave), Kairos le pide la clave, la prueba con una llamada de 1 token (`probe_llm_key`) y la guarda en `.env` (`set_key`). La elección va a su perfil (`llm.provider`, decisión del usuario: le sigue en cualquier ordenador). Las siguientes veces no hay menú; en otro ordenador sin la clave, solo se pide la clave. `/modelo` cambia y guarda la elección.
+- Clave caducada o revocada: cualquier llamada al LLM que el proveedor rechace marca `llm_auth_failed` y lanza `LLMAuthError` (un `RuntimeError`); la CLI pide la clave nueva, la guarda en `.env` y repite la pregunta. Antes un 401 en la capa de coaching (`openai.AuthenticationError`) no lo capturaba nadie y cerraba la sesión.
+- Comprobado en vivo: NVIDIA rechaza una clave mala con 403 "Authorization failed", no 401; se trata como clave rechazada (un 403 del proxy, no).
+- `KAIROS_PROVIDER` fija el proveedor sin menú ni perfil; `tools/run_bateria.py` lo usa (`--proveedor nvidia`) y ya no responde al menú.
+- El arranque desglosa las herramientas: "45 (42 de Garmin + 3 de Kairos)"; las 3 son `kairos_load_trends`, `kairos_correlate` y `kairos_weekly_sport_breakdown`, que se resuelven sin el servidor MCP. Tests: 766.
+
 ### Tested (perfiles de salud en vivo)
 - Kairos real con el perfil sustituido solo en memoria (sin escrituras en Supabase, memoria y base de conocimiento vaciadas) y 4 preguntas de coaching. Criterio fijado antes. Sano con periostitis: 0 menciones a la diabetes, periostitis en cada plan (cumple). DT2 + insulina: protocolo de hipoglucemia en cada sesión (cumple). DT2 + metformina: sin nota S16 ni carbohidratos preventivos, pero el LLM nombra la hipoglucemia para tranquilizar (criterio literal de 0 menciones no cumplido; aceptado por el usuario).
 - `prompts/diabetes/sin_insulina.md` ya no nombra la hipoglucemia (título, entrada y viñeta de nutrición): su título la cebaba (3 de 4 respuestas → 2 de 4). Test que lo vigila.

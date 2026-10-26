@@ -10,12 +10,14 @@ Cubre:
 """
 
 import asyncio
+import os
 from datetime import date, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from agent.main import (
-    _auto_select_provider,
+    _ask_api_key,
     _build_enriched_athlete_knowledge,
+    _resolve_provider,
     _ensure_running_threshold_pace,
     _ensure_garmin_credentials,
     _format_coach_markdown,
@@ -444,27 +446,82 @@ class TestEnsureGarminCredentials:
         upd_mock.assert_called_once()
 
 
-# ─── _auto_select_provider ──────────────────────────────────────────────────
+# ─── _resolve_provider: modelo del atleta en su perfil, clave en .env (26/10) ─
 
-class TestAutoSelectProvider:
-    def test_vpn_only_informs_and_menu_offers_configured_providers(self):
-        # La VPN corporativa solo se informa: desde el 23/10 no hay proveedor exclusivo de VPN.
-        with patch("agent.main._detect_zscaler", return_value=True), \
-             patch("agent.main._select_provider_menu", return_value="nvidia") as menu_mock, \
-             patch("agent.main.console.print"):
-            provider = _auto_select_provider()
-
-        assert provider == "nvidia"
-        menu_mock.assert_called_once_with()
-
-    def test_no_vpn_uses_same_menu(self):
+class TestResolveProvider:
+    def _run(self, monkeypatch, profile, *, keys=(), override=None):
+        for var in ("GEMINI_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "NVIDIA_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        for var in keys:
+            monkeypatch.setenv(var, "k-real")
+        if override:
+            monkeypatch.setenv("KAIROS_PROVIDER", override)
+        else:
+            monkeypatch.delenv("KAIROS_PROVIDER", raising=False)
         with patch("agent.main._detect_zscaler", return_value=False), \
-             patch("agent.main._select_provider_menu", return_value="nvidia") as menu_mock, \
+             patch("agent.main._load_user_profile", return_value=profile), \
+             patch("agent.main._save_user_profile") as save, \
+             patch("agent.main._select_provider_menu", return_value="gemini") as menu, \
+             patch("agent.main._ask_api_key", new=AsyncMock()) as ask_key, \
              patch("agent.main.console.print"):
-            provider = _auto_select_provider()
+            provider = asyncio.run(_resolve_provider())
+        return provider, menu, ask_key, save
 
+    def test_first_time_shows_menu_asks_key_and_saves_choice(self, monkeypatch):
+        profile = {}
+        provider, menu, ask_key, save = self._run(monkeypatch, profile)
+        assert provider == "gemini"
+        menu.assert_called_once()
+        assert ask_key.await_count == 1 and ask_key.await_args.args[0] == "gemini"
+        assert profile["llm"] == {"provider": "gemini"}
+        save.assert_called_once()
+
+    def test_next_times_use_the_profile_without_menu(self, monkeypatch):
+        provider, menu, ask_key, save = self._run(monkeypatch, {"llm": {"provider": "nvidia"}}, keys=["NVIDIA_API_KEY"])
         assert provider == "nvidia"
-        menu_mock.assert_called_once_with()
+        menu.assert_not_called()
+        ask_key.assert_not_awaited()
+        save.assert_not_called()
+
+    def test_other_computer_without_key_asks_only_the_key(self, monkeypatch):
+        provider, menu, ask_key, save = self._run(monkeypatch, {"llm": {"provider": "nvidia"}})
+        assert provider == "nvidia"
+        menu.assert_not_called()
+        assert ask_key.await_args.args[0] == "nvidia"
+        save.assert_not_called()
+
+    def test_kairos_provider_overrides_without_touching_the_profile(self, monkeypatch):
+        provider, menu, ask_key, save = self._run(monkeypatch, {"llm": {"provider": "gemini"}},
+                                                  keys=["NVIDIA_API_KEY"], override="nvidia")
+        assert provider == "nvidia"
+        menu.assert_not_called()
+        save.assert_not_called()
+
+
+class TestApiKey:
+    def test_rejected_key_is_asked_again_and_valid_one_saved(self, monkeypatch, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("OTRA=1\nNVIDIA_API_KEY=vieja\n", encoding="utf-8")
+        monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
+        probes = iter([("auth", "401 Unauthorized"), ("ok", "")])
+        with patch("agent.main.probe_llm_key", new=AsyncMock(side_effect=lambda p: next(probes))), \
+             patch("agent.main.Prompt.ask", side_effect=["mala", "buena"]), \
+             patch("agent.main.console.print"):
+            asyncio.run(_ask_api_key("nvidia", "Caducada"))
+        assert env_file.read_text(encoding="utf-8").splitlines() == ["OTRA=1", "NVIDIA_API_KEY=buena"]
+        assert os.environ["NVIDIA_API_KEY"] == "buena"
+        monkeypatch.delenv("NVIDIA_API_KEY")
+
+    def test_unverifiable_key_is_saved_anyway(self, monkeypatch, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("", encoding="utf-8")
+        monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
+        with patch("agent.main.probe_llm_key", new=AsyncMock(return_value=("error", "proxy"))), \
+             patch("agent.main.Prompt.ask", return_value="k"), \
+             patch("agent.main.console.print"):
+            asyncio.run(_ask_api_key("groq", "Primera vez"))
+        assert "GROQ_API_KEY=k" in env_file.read_text(encoding="utf-8")
+        monkeypatch.delenv("GROQ_API_KEY")
 
 
 # ─── Acceso con Supabase Auth (supabase/README.md) ─────────────────────────
