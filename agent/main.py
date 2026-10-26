@@ -103,6 +103,7 @@ except (ImportError, AttributeError, RuntimeError):
 # Añadir el directorio raíz al path para imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from agent import diabetes as _diabetes
 from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile, _session_intensity_label
 from agent.storage import (
@@ -378,7 +379,9 @@ def _build_initial_athlete_knowledge(profile: dict) -> str:
         f"- Tiempo objetivo: {g.get('target_time', '')}",
         "",
         "## Salud y limitaciones",
-        f"- Condiciones medicas relevantes: {injuries}",
+        f"- Patologias: {', '.join(h.get('pathologies') or []) or 'ninguna'}",
+        f"- Diabetes: {_diabetes.label(h) or 'no'}",
+        f"- Lesiones: {injuries}",
         f"- Notas: {h.get('notes', '')}",
         "",
         "## Reglas del coach",
@@ -652,15 +655,80 @@ def _ask_goals(profile: dict) -> None:
         console.print(f"  [red]✗[/] {err}")
 
 
+def _ask_diabetes_medication(h: dict) -> None:
+    """Medicación de la diabetes (26/10): números de la lista separados por coma y, si hace falta, otra a mano.
+
+    Se guarda en `health.diabetes_medication`; una lista vacía es "sin medicación (solo dieta)".
+    """
+    keys = list(_diabetes.MEDICATIONS)
+    current = _diabetes.medication(h) or []
+    console.print(f"  Has indicado [bold]{_diabetes.TYPES[_diabetes.detect_type(h)]}[/]. ¿Qué medicación tomas?")
+    for i, key in enumerate(keys, 1):
+        console.print(f"    {i}) {_diabetes.MEDICATIONS[key]}")
+    default = ",".join(str(keys.index(m) + 1) for m in current if m in keys)
+    while True:
+        raw = Prompt.ask("  Números separados por coma [dim](Enter si ninguna)[/]", default=default)
+        picks = [x.strip() for x in raw.split(",") if x.strip()]
+        if all(x.isdigit() and 1 <= int(x) <= len(keys) for x in picks):
+            break
+        console.print(f"  [red]✗[/] Usa números del 1 al {len(keys)}.")
+    meds = [keys[int(x) - 1] for x in dict.fromkeys(picks)]
+    other = Prompt.ask("  Otra medicación [dim](opcional)[/]",
+                       default=", ".join(m for m in current if m not in keys))
+    meds += [x.strip() for x in other.split(",") if x.strip()]
+    h["diabetes_medication"] = meds
+
+
+def _ensure_health_profile(profile: dict) -> dict:
+    """Perfiles anteriores al 26/10, una sola vez.
+
+    1. Patologías separadas de lesiones: lo que en "lesiones" menciona diabetes pasa a `pathologies`, sin
+       preguntar (otra enfermedad escrita allí se corrige con /perfil editar salud).
+    2. Si las patologías mencionan diabetes, se pregunta la medicación. Un atleta sin diabetes nunca la ve.
+    """
+    profile = profile or {}
+    h = profile.setdefault("health", {})
+    if "pathologies" not in h:
+        injuries = list(h.get("injuries") or [])
+        h["pathologies"] = [i for i in injuries if _diabetes.is_diabetes(i)]
+        h["injuries"] = [i for i in injuries if not _diabetes.is_diabetes(i)]
+        _save_user_profile(profile)
+        if h["pathologies"]:
+            console.print(f"[green]✓[/] Separadas patologías ({', '.join(h['pathologies'])}) y lesiones "
+                          f"({', '.join(h['injuries']) or 'ninguna'}) [dim](se cambia con /perfil editar salud)[/]")
+    if _diabetes.detect_type(h) is None or _diabetes.medication(h) is not None:
+        return profile
+    console.print(Panel.fit(
+        "[bold]Necesito tu medicación para la diabetes[/]\n"
+        "Con ella decido qué precauciones aplicar en planes, análisis y consejos.",
+        title="[bold blue]Kairos Coach — Salud[/]",
+        border_style="blue",
+    ))
+    _ask_diabetes_medication(h)
+    _save_user_profile(profile)
+    console.print(f"[green]✓[/] Guardado: [bold]{_diabetes.label(h)}[/] [dim](se cambia con /perfil editar salud)[/]")
+    return profile
+
+
 def _ask_health(profile: dict) -> None:
-    """Pregunta y guarda los campos de salud."""
+    """Pregunta y guarda la salud (26/10): patologías (con la medicación si hay diabetes), lesiones y notas.
+
+    Patologías y lesiones van por separado: sin patologías el atleta es sano aunque tenga una lesión.
+    """
     h = profile.setdefault("health", {})
     console.print("\n[bold]Salud y condiciones médicas:[/]")
 
-    current_injuries = ", ".join(h.get("injuries", []))
+    pathologies_str = Prompt.ask(
+        "  Enfermedades o patologías [dim](sep. con coma, ej: diabetes tipo 1, asma; Enter si ninguna)[/]",
+        default=", ".join(h.get("pathologies", [])),
+    )
+    h["pathologies"] = [i.strip() for i in pathologies_str.split(",") if i.strip()]
+    if _diabetes.detect_type({"pathologies": h["pathologies"]}):
+        _ask_diabetes_medication(h)
+
     injuries_str = Prompt.ask(
-        "  Lesiones o enfermedades [dim](sep. con coma, ej: DT1, tendinitis)[/]",
-        default=current_injuries,
+        "  Lesiones [dim](sep. con coma, ej: periostitis, tendinitis; Enter si ninguna)[/]",
+        default=", ".join(h.get("injuries", [])),
     )
     h["injuries"] = [i.strip() for i in injuries_str.split(",") if i.strip()]
 
@@ -669,6 +737,12 @@ def _ask_health(profile: dict) -> None:
         default=h.get("notes", ""),
     )
     h["notes"] = notes.strip()
+
+    # La diabetes también puede salir en las notas; sin diabetes, fuera la medicación que hubiera.
+    if not _diabetes.detect_type(h):
+        h.pop("diabetes_medication", None)
+    elif _diabetes.medication(h) is None:
+        _ask_diabetes_medication(h)
 
 
 def _run_first_time_setup() -> None:
@@ -724,6 +798,10 @@ def _show_profile() -> None:
     perf = profile.get("performance", {}) if isinstance(profile.get("performance"), dict) else {}
     threshold_pace = perf.get("running_threshold_pace") or "—"
     lines.append(f"[bold]Umbral running:[/]  {threshold_pace} min/km")
+    pathologies = h.get("pathologies", [])
+    lines.append(f"[bold]Patologías:[/]      {', '.join(pathologies) if pathologies else 'ninguna'}")
+    if _diabetes.label(h):
+        lines.append(f"[bold]Diabetes:[/]        {_diabetes.label(h)}")
     injuries = h.get("injuries", [])
     lines.append(f"[bold]Lesiones:[/]        {', '.join(injuries) if injuries else '—'}")
     if h.get("notes"):
@@ -1049,7 +1127,7 @@ def _show_help() -> None:
         "[bold]Guía rápida de indicadores Garmin:[/]\n"
         "  [bold]Body Battery[/bold]       90-100 recuperado \u00b7 70-89 bien \u00b7 40-69 moderado \u00b7 <40 descansa\n"
         "  [bold]Training Readiness[/bold] >70 entrena fuerte \u00b7 40-70 suave \u00b7 <40 recuperación activa\n"
-        "  [bold]HRV[/bold]               Caída >20% = fatiga, estrés o mal control glucémico (DT1)\n"
+        "  [bold]HRV[/bold]               Caída >20% = fatiga, estrés o, con diabetes, mal control glucémico\n"
         "  [bold]Training Status[/bold]   Productive=en forma \u00b7 Peaking=pico \u00b7 Overreaching=alarma",
         title="[bold blue]Kairos Coach — Ayuda[/]",
         border_style="blue",
@@ -1478,6 +1556,8 @@ async def main() -> None:
         if is_new_user or is_first:
             _run_first_time_setup()
             agent.user_profile = _load_user_profile()
+        # Perfiles anteriores (26/10): patologías separadas de lesiones y medicación si hay diabetes.
+        agent.user_profile = _ensure_health_profile(agent.user_profile)
 
         # Inicializar/enriquecer base de conocimiento para onboarding de usuario nuevo.
         current_kb = (load_athlete_knowledge() or "").strip()

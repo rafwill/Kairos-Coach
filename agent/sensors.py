@@ -526,7 +526,8 @@ GLUCOSE_NOTE = (
 
 
 def has_insulin_diabetes(health_texts: list[str]) -> bool:
-    """Diabetes tratada con insulina en el perfil (mismos marcadores que prompts/coaching_rules.md)."""
+    """Diabetes tratada con insulina en el texto libre del perfil (respaldo de agent/diabetes.py mientras el
+    atleta no confirma el campo `health.diabetes`)."""
     return any(_INSULIN_DIABETES.search(str(t or "")) for t in health_texts)
 
 

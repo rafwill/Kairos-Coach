@@ -20,6 +20,7 @@ from openai import AsyncOpenAI
 from mcp import ClientSession
 
 from agent import sensors as _sensors
+from agent import diabetes as _diabetes
 from agent.sensors import strip_simulated_user_turn as _strip_simulated_user_turn
 from agent.mcp.client import (
     list_available_tools,
@@ -6927,7 +6928,8 @@ def _build_goal_plan_fallback(profile: dict) -> str:
     race_date = goals.get("target_race_date") or "fecha por confirmar"
     target_time = goals.get("target_time") or "tiempo por definir"
     weekly_hours = goals.get("weekly_training_hours") or "8-10"
-    injuries = ", ".join(health.get("injuries", [])) if health.get("injuries") else "ninguna relevante"
+    conditions = [*(health.get("pathologies") or []), *(health.get("injuries") or [])]
+    injuries = ", ".join(conditions) if conditions else "ninguna relevante"
     constraints = _resolve_training_constraints(goals if isinstance(goals, dict) else {}, health if isinstance(health, dict) else {}, "")
     available = constraints.get("available_days") or [1, 2, 3, 4, 5, 6, 7]
     unavailable = constraints.get("unavailable_days") or []
@@ -11746,7 +11748,11 @@ class TrainerAgent:
         }
 
     def _profile_context_block(self) -> str:
-        """Bloque "Perfil del usuario" (datos personales, objetivo y salud) para cualquier prompt."""
+        """Bloque "Perfil del usuario" (datos personales, objetivo y salud) para cualquier prompt.
+
+        Patologías y lesiones por separado (26/10). Si las patologías mencionan diabetes, detrás va su protocolo
+        (prompts/diabetes/), según la medicación; sin patologías, el atleta es sano (aunque tenga lesiones) y se dice.
+        """
         p = self.user_profile.get("personal", {})
         g = self.user_profile.get("goals", {})
         h = self.user_profile.get("health", {})
@@ -11768,10 +11774,18 @@ class TrainerAgent:
             else:
                 lines.append(f"- Fecha del evento: {g['target_race_date']}")
         if g.get("target_time"):   lines.append(f"- Tiempo objetivo: {g['target_time']}")
+        pathologies = h.get("pathologies") or []
+        diabetes = _diabetes.label(h)
+        if pathologies:            lines.append(f"- Patologías: {', '.join(pathologies)}")
+        elif lines and not diabetes:
+            lines.append("- Patologías: ninguna declarada (atleta sano)")
+        if diabetes:               lines.append(f"- Diabetes: {diabetes}")
         injuries = h.get("injuries", [])
-        if injuries:               lines.append(f"- Lesiones/condiciones: {', '.join(injuries)}")
+        if injuries:               lines.append(f"- Lesiones: {', '.join(injuries)}")
         if h.get("notes"):         lines.append(f"- Notas de salud: {h['notes']}")
-        return ("\n\n## Perfil del usuario\n" + "\n".join(lines) + "\n") if lines else ""
+        protocol = {"insulina": "diabetes/insulina", "sin_insulina": "diabetes/sin_insulina"}.get(_diabetes.protocol(h) or "")
+        protocol_block = ("\n\n" + _render_prompt(protocol) + "\n") if protocol else ""
+        return (("\n\n## Perfil del usuario\n" + "\n".join(lines) + "\n") if lines else "") + protocol_block
 
     def _load_and_anchors_context_block(self) -> str:
         """Bloques "Estado de carga actual" y "Umbrales" desde el perfil (sin llamadas a Garmin).
@@ -11975,8 +11989,8 @@ class TrainerAgent:
                                           today=date.today())
 
     def _has_insulin_diabetes(self) -> bool:
-        health = (self.user_profile or {}).get("health") or {}
-        return _sensors.has_insulin_diabetes([*(health.get("injuries") or []), health.get("notes") or ""])
+        """Diabetes con riesgo de hipoglucemia (DT1, insulina, sulfonilureas o glinidas): nota glucémica S16."""
+        return _diabetes.protocol((self.user_profile or {}).get("health")) == "insulina"
 
     async def _apply_output_sensors(
         self, text: str, context_messages: list, kind: str, decision: str | None = None

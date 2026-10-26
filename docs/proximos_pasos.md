@@ -24,6 +24,7 @@ Se reescribe al final de cada sesión (la anterior se pierde: el detalle está e
    - cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7);
    - **posible falso positivo de S10** (24/10, 09:18): marcó como fuera de zona 105–124 y 159–179 lpm, que son justo la Z1 y la Z5 de bici. Parece que tomó una línea de ciclismo como de carrera (detección del deporte en `_range_sport`). Reproducirlo con la respuesta completa antes de tocar el sensor;
    - **S10 con la marca de progresivo detrás del rango** (arreglado el 26/10 en el ordenador 2): repasar en casa las baterías guardadas (las 891 respuestas) con el sensor nuevo y confirmar que solo desaparecen falsos positivos de este tipo;
+   - **S10 en el juez con tablas partidas**: el juez lee la transcripción pintada a 110 columnas y una celda larga se parte en varias líneas; batería 20261026_100523, pregunta 9: "progresivo" quedó en la línea anterior a "Z2→Z3 (135→157 lpm)" y el juez dio S10, mientras que en vivo (texto sin partir) no saltó. Decidir si el juez reconstruye las celdas o si se acepta como ruido conocido. No confundir con el acierto de la batería 20261026_095716 (12 km continuos "Z3 Tempo–Z4 Subumbral (146–168 lpm)", error real del LLM que el reintento no corrigió);
    - si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS) y **S27** ("mañana" con el día que no toca) saltan con preguntas reales; S27 solo ve el error cuando el LLM escribe el día o la fecha, no un "mañana" a secas.
 2. **Ordenador 2 (ECI)**:
    - `git pull` y entrar una vez en Kairos con el email y la contraseña (Supabase Auth). Hasta entonces, la versión antigua de allí no ve ningún dato;
@@ -32,12 +33,7 @@ Se reescribe al final de cada sesión (la anterior se pierde: el detalle está e
 
 ### B. Chat y LLM
 
-3. **Kairos para atletas con DT1, DT2 o sin diabetes** (decisión del usuario, 25/10). Kairos tiene que servir a los tres casos:
-   - **Sin diabetes:** si al crear el perfil el atleta dice que no tiene diabetes, no se le vuelve a preguntar, y los planes, el análisis y el coaching se hacen sin ese parámetro (ni nota glucémica ni menciones a la glucemia).
-   - **Con diabetes** (como el usuario, DT1): Kairos mantiene su conocimiento sobre diabetes y deporte.
-   - **Otra patología:** se deja al LLM, con lo que el atleta haya escrito en su perfil.
-   - Hoy: la diabetes sale de un campo de texto libre ("Lesiones o enfermedades", `_ask_health`), no de una pregunta propia; el protocolo de diabetes con insulina de `prompts/coaching_rules.md` va en todas las llamadas al LLM aunque el atleta no la tenga (el texto dice "si el perfil incluye DT1…" y decide el LLM); no hay protocolo para DT2 sin insulina (menos riesgo de hipoglucemia, salvo con algunos fármacos); `/ayuda` menciona la DT1 a todos. Lo que ya va por perfil: la nota glucémica S16 (`has_insulin_diabetes`).
-   - A decidir: campo estructurado en el perfil (p. ej. `health.diabetes` = no / DT1 / DT2 / otra, con o sin insulina), pregunta única en la configuración inicial y en `/perfil editar salud`, y cargar el protocolo de diabetes en el prompt solo cuando aplique (separado de `coaching_rules.md`).
+3. **Atleta sano en vivo** (hecho el 26/10: patologías y lesiones separadas, diabetes con su medicación, protocolo solo si aplica). Comprobar con un usuario sin patologías (o un perfil de prueba) que el coaching no habla de glucemia, y con DT2 + metformina que no salen avisos de hipoglucemia. La batería solo cubre el perfil del usuario (DT1).
 4. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
 5. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
 
@@ -113,3 +109,16 @@ Formato de `docs/Harness.md` §7: **señal** (qué falló y dónde), **lección*
 - Señal: batería del 26/10 (ordenador 2), pregunta 9, 24/25: "3×2000 m Z3–Z4 (146–168 lpm, progresivo de Z3 a Z4)" marcado como fuera de zona.
 - Lección: un sensor sobre texto libre no puede fijar el orden en que el LLM escribe las cosas; la marca y el rango van en la misma frase, pero en cualquier orden. El límite es la frase (o el paréntesis), no la posición.
 - Evidencia: la misma batería, 25/25 con el sensor nuevo; tests nuevos para la marca detrás, la marca en otra frase (sigue fallando) y zonas que no cuadran (sigue fallando). Detalle en CHANGELOG.
+
+### 26/10/2026 — Atleta sano, diabético o con otra patología
+
+- Señal: el protocolo de diabetes con insulina iba en todas las llamadas al LLM, `/ayuda` hablaba de DT1 a todos, no había nada para DT2 y "DT 1" estaba guardado como lesión (el plan bajaba la dificultad por "lesión activa").
+- Lección: lo que depende del atleta va en el contexto solo si aplica, no como regla condicional que decide el LLM. El riesgo de hipoglucemia lo marca la medicación, no el tipo de diabetes. Una patología y una lesión son cosas distintas: sin patologías el atleta es sano aunque esté lesionado.
+- Evidencia: protocolo según patologías y medicación (`agent/diabetes.py`, `prompts/diabetes/`); formulario y migración de perfiles; 750 tests. Detalle en CHANGELOG.
+
+
+Al inicio de kairos teniamos selección de modelo. El objetivo es productivizar kairos, con lo cual, lo que vamos a provocar es que cuando un atleta meta su correo por primera vez sea el quien indique el modelo a utilizar. Se pedirá la key correspondiente y la guardaremos en el fichero .env.
+De esta manera, cuando vuelva a entrar posteriormente ya no se le mostrará el menu de selección de modelo, sino que se utilizará automáticamente el modelo previamente elegido. Como la key puede expirar cuando caduque, se pedirá de nuevo y se actualizará en el fichero .env.
+
+
+45 herramientas disponibles??

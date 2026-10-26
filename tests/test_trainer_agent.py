@@ -595,6 +595,19 @@ class TestOutputSensors:
         agent.client.chat.completions.create.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_no_glucose_note_without_hypoglycemia_risk(self, monkeypatch):
+        from agent import sensors
+
+        session = "- Parte principal: rodaje suave 40 min en Z2 (135–145 lpm)."
+        agent = self._agent(monkeypatch, [])
+        # Sin diabetes o DT2 con medicación sin riesgo de hipoglucemia: sin nota (26/10).
+        for health in ({"injuries": ["asma"]}, {"injuries": ["DT2"], "diabetes_medication": ["metformina"]}):
+            agent.user_profile = {"health": health}
+            assert not (await agent._apply_output_sensors(session, [], "coaching")).endswith(sensors.GLUCOSE_NOTE)
+        agent.user_profile = {"health": {"injuries": ["DT2"], "diabetes_medication": ["sulfonilureas"]}}
+        assert (await agent._apply_output_sensors(session, [], "coaching")).endswith(sensors.GLUCOSE_NOTE)
+
+    @pytest.mark.asyncio
     async def test_decision_sensor_retries_when_today_is_soft(self, monkeypatch):
         agent = self._agent(monkeypatch, ["- Rodaje suave Z2 (135–145 lpm)."])
         out = await agent._apply_output_sensors("- Principal: 4x4 min en Z4 (158–168 lpm).", [], "coaching", decision="easy")
@@ -676,8 +689,54 @@ class TestCoachingRulesSingleSource:
         assert "{{REGLAS_DE_COACHING}}" not in prompt
         assert prompt.count(rules) == 1
         # Reglas de entrenador que viven solo en coaching_rules.md
-        for heading in ("Protocolo de diabetes con insulina", "## Intensidades", "## Estado de hoy", "# Límites éticos"):
+        for heading in ("## Diabetes", "## Intensidades", "## Estado de hoy", "# Límites éticos"):
             assert heading in rules
+        # El protocolo de diabetes va con el perfil, solo a quien lo necesita (26/10).
+        assert "120–180 mg/dL" not in rules and "hipoglucemia" not in rules.lower()
+
+
+class TestDiabetesProtocolInContext:
+    """Atleta sano, con otra patología, con DT1 o con DT2 (26/10): protocolo según patologías y medicación."""
+
+    def _block(self, health):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"personal": {"name": "Ana"}, "health": health}
+        return agent._profile_context_block()
+
+    def test_healthy_athlete_with_an_injury_is_still_healthy(self):
+        block = self._block({"pathologies": [], "injuries": ["periostitis"], "notes": ""})
+        assert "- Patologías: ninguna declarada (atleta sano)" in block and "- Lesiones: periostitis" in block
+        assert "Protocolo de diabetes" not in block and "gluc" not in block.lower() and "- Diabetes:" not in block
+
+    def test_other_pathology_is_left_to_the_llm(self):
+        block = self._block({"pathologies": ["asma"], "injuries": []})
+        assert "- Patologías: asma" in block
+        assert "Protocolo de diabetes" not in block and "atleta sano" not in block
+
+    def test_diabetes_and_injury_together(self):
+        block = self._block({"pathologies": ["DT1"], "diabetes_medication": ["bomba_insulina"], "injuries": ["periostitis"]})
+        assert "- Patologías: DT1" in block and "- Lesiones: periostitis" in block
+        assert "Protocolo de diabetes con riesgo de hipoglucemia" in block
+
+    def test_old_profile_with_diabetes_in_injuries_is_not_healthy(self):
+        block = self._block({"injuries": ["DT1"]})
+        assert "atleta sano" not in block and "Protocolo de diabetes con riesgo de hipoglucemia" in block
+
+    def test_dt1_gets_hypoglycemia_protocol_with_its_medication(self):
+        block = self._block({"injuries": ["DT1"], "diabetes_medication": ["insulina_basal", "insulina_rapida"]})
+        assert "- Diabetes: Diabetes tipo 1 · Insulina lenta (basal), Insulina rápida (bolos)" in block
+        assert "Protocolo de diabetes con riesgo de hipoglucemia" in block and "120–180 mg/dL" in block
+
+    def test_dt2_with_metformin_gets_its_own_protocol(self):
+        block = self._block({"injuries": ["diabetes tipo 2"], "diabetes_medication": ["metformina"]})
+        assert "- Diabetes: Diabetes tipo 2 · Metformina" in block
+        assert "Protocolo de diabetes sin riesgo de hipoglucemia" in block and "120–180 mg/dL" not in block
+
+    def test_dt2_with_insulin_gets_hypoglycemia_protocol(self):
+        block = self._block({"injuries": ["DT2"], "diabetes_medication": ["metformina", "insulina_basal"]})
+        assert "Protocolo de diabetes con riesgo de hipoglucemia" in block
 
 
 class TestSystemPromptDateFormatRules:

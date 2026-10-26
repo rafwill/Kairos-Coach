@@ -152,6 +152,7 @@ class TestProfileScreens:
             m._show_profile()
         text = out()
         assert "Rafa" in text and "02/07/2027" in text and "4:00 min/km" in text and "DT1" in text and "insulina" in text
+        assert "Diabetes tipo 1 · medicación sin indicar" in text
 
     def test_ask_goals_retries_invalid_values(self, out):
         future = (date.today() + timedelta(days=60)).isoformat()
@@ -170,11 +171,60 @@ class TestProfileScreens:
             m._ask_goals(profile)
         assert profile["goals"] == {"primary": "running"} and "name" not in profile["personal"]
 
-    def test_ask_health(self):
-        profile = {}
-        with patch.object(m.Prompt, "ask", side_effect=["DT1, tendinitis ,", " sin notas "]):
+    def test_ask_health_healthy_athlete_with_an_injury(self):
+        # Formulario: patologías, lesiones, notas. Sin patologías no hay más preguntas (aunque haya lesión).
+        profile = {"health": {"pathologies": ["DT1"], "diabetes_medication": ["insulina_basal"]}}
+        with patch.object(m.Prompt, "ask", side_effect=["", "periostitis", ""]) as ask:
             m._ask_health(profile)
-        assert profile["health"] == {"injuries": ["DT1", "tendinitis"], "notes": "sin notas"}
+        assert profile["health"] == {"pathologies": [], "injuries": ["periostitis"], "notes": ""}
+        assert ask.call_count == 3
+
+    def test_ask_health_other_pathology_gets_no_more_questions(self):
+        profile = {}
+        with patch.object(m.Prompt, "ask", side_effect=["asma ,", "tendinitis", " sin notas "]):
+            m._ask_health(profile)
+        assert profile["health"] == {"pathologies": ["asma"], "injuries": ["tendinitis"], "notes": "sin notas"}
+
+    def test_ask_health_diabetes_asks_medication_right_after_pathologies(self, out):
+        profile = {}
+        answers = ["Diabetes tipo II", "4, 7, 4", "Ozempic", "periostitis", ""]
+        with patch.object(m.Prompt, "ask", side_effect=answers):
+            m._ask_health(profile)
+        assert profile["health"] == {"pathologies": ["Diabetes tipo II"], "diabetes_medication": ["metformina", "isglt2", "Ozempic"],
+                                     "injuries": ["periostitis"], "notes": ""}
+        assert "Has indicado Diabetes tipo 2" in out()
+
+    def test_ask_health_diabetes_only_in_notes_asks_medication_at_the_end(self):
+        profile = {}
+        with patch.object(m.Prompt, "ask", side_effect=["", "", "DT1 desde 2010", "1", ""]):
+            m._ask_health(profile)
+        assert profile["health"]["diabetes_medication"] == ["insulina_basal"]
+
+    def test_medication_retries_invalid_numbers_and_allows_none(self, out):
+        h = {"injuries": ["DT2"]}
+        with patch.object(m.Prompt, "ask", side_effect=["4, x", "12", "", ""]):
+            m._ask_diabetes_medication(h)
+        assert h["diabetes_medication"] == [] and out().count("✗") == 2
+
+    def test_ensure_health_splits_old_profile_and_asks_medication_once(self, out):
+        profile = {"health": {"injuries": ["DT 1", "periostitis"]}}
+        with patch.object(m, "_save_user_profile") as save, patch.object(m.Prompt, "ask", side_effect=["1,2", ""]):
+            m._ensure_health_profile(profile)
+            m._ensure_health_profile(profile)
+        h = profile["health"]
+        assert h["pathologies"] == ["DT 1"] and h["injuries"] == ["periostitis"]
+        assert h["diabetes_medication"] == ["insulina_basal", "insulina_rapida"]
+        assert save.call_count == 2  # separación y medicación, una vez cada una
+        assert "Diabetes tipo 1 · Insulina lenta (basal), Insulina rápida (bolos)" in out()
+
+    def test_ensure_health_never_asks_without_diabetes(self):
+        for health in ({}, {"injuries": ["periostitis"]}, {"pathologies": ["asma"], "injuries": []}):
+            profile = {"health": dict(health)}
+            with patch.object(m, "_save_user_profile"), patch.object(m.Prompt, "ask") as ask:
+                m._ensure_health_profile(profile)
+            ask.assert_not_called()
+            assert "pathologies" in profile["health"]
+        assert profile["health"]["pathologies"] == ["asma"]
 
     def test_first_time_setup_marks_profile(self, out):
         profile = {"personal": {"name": "Rafa"}}
@@ -451,6 +501,7 @@ def _run_main(inputs, *, auth_raw='{"displayName": "x"}', is_new=False, kb="kb",
         patch.object(m.Prompt, "ask", side_effect=inputs),
         # El contador de "Consultando Garmin…" espera 1 s por vuelta: en los tests, 0 s.
         patch.object(m.asyncio, "sleep", lambda _s, _real=asyncio.sleep: _real(0)),
+        patch.object(m, "_ensure_health_profile", side_effect=lambda p: p),
     ]
     with contextlib.ExitStack() as stack:
         mocks = [stack.enter_context(p) for p in patches]
