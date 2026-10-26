@@ -32,7 +32,7 @@ if sys.platform == "win32":
     except (AttributeError, ValueError):
         pass
 
-from dotenv import find_dotenv, load_dotenv, set_key
+from dotenv import find_dotenv, load_dotenv, set_key, unset_key
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -1217,16 +1217,39 @@ def _check_garmin_env() -> None:
 _PLACEHOLDER_VALUES = {"", "tu_clave", "nvapi-...", "sk-..."}
 
 
-def _has_key(config: dict) -> bool:
-    value = os.environ.get(_ia_provider.key_env_var(config["provider"]), "")
+_KEY_COMMENT = "# Proveedor de IA de PROVIDER_API_KEY:"
+
+
+def _has_key() -> bool:
+    value = os.environ.get(_ia_provider.KEY_VAR, "")
     return bool(value) and value not in _PLACEHOLDER_VALUES
 
 
-def _save_api_key(env_var: str, value: str) -> None:
-    """Guarda la clave en el .env (la crea o la reemplaza) y en el entorno de esta sesión."""
-    path = find_dotenv(usecwd=True) or str(Path.cwd() / ".env")
-    set_key(path, env_var, value, quote_mode="never", encoding="utf-8")
-    os.environ[env_var] = value
+def _env_path() -> str:
+    return find_dotenv(usecwd=True) or str(Path.cwd() / ".env")
+
+
+def _save_api_key(config: dict, value: str) -> None:
+    """Guarda la clave en PROVIDER_API_KEY del .env, con un comentario encima que dice de qué proveedor es (26/10)."""
+    path = _env_path()
+    set_key(path, _ia_provider.KEY_VAR, value, quote_mode="never", encoding="utf-8")
+    lines = [ln for ln in Path(path).read_text(encoding="utf-8").splitlines() if not ln.startswith(_KEY_COMMENT)]
+    at = next(i for i, ln in enumerate(lines) if ln.startswith(f"{_ia_provider.KEY_VAR}="))
+    lines.insert(at, f"{_KEY_COMMENT} {_ia_provider.label(config)}")
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ[_ia_provider.KEY_VAR] = value
+
+
+def _migrate_legacy_key(config: dict) -> None:
+    """.env de antes del 26/10 (NVIDIA_API_KEY…): la clave pasa a PROVIDER_API_KEY sin volver a pedirla."""
+    legacy = _ia_provider.legacy_key_env_var(config["provider"])
+    value = os.environ.get(legacy, "")
+    if _has_key() or not value or value in _PLACEHOLDER_VALUES:
+        return
+    _save_api_key(config, value)
+    unset_key(_env_path(), legacy, encoding="utf-8")
+    os.environ.pop(legacy, None)
+    console.print(f"[green]✓[/] Clave trasladada de {legacy} a {_ia_provider.KEY_VAR} en el .env.")
 
 
 async def _ask_api_key(config: dict, reason: str) -> None:
@@ -1234,7 +1257,7 @@ async def _ask_api_key(config: dict, reason: str) -> None:
 
     Si el proveedor la rechaza se vuelve a pedir; si no se puede comprobar (red, proxy, URL), se guarda igualmente.
     """
-    env_var = _ia_provider.key_env_var(config["provider"])
+    env_var = _ia_provider.KEY_VAR
     k = _ia_provider.known(config["provider"])
     where = f"Consigue la clave en {_ia_provider.KNOWN[k][3]}\n" if k else ""
     console.print(Panel.fit(
@@ -1253,7 +1276,7 @@ async def _ask_api_key(config: dict, reason: str) -> None:
             continue
         if status == "error":
             console.print(f"  [yellow]![/] No he podido comprobarla ({detail}); la guardo igualmente.")
-        _save_api_key(env_var, key)
+        _save_api_key(config, key)
         console.print("  [green]✓[/] Clave guardada.")
         return
 
@@ -1307,7 +1330,9 @@ async def _ensure_ia_provider() -> dict:
     first_time = not _ia_provider.is_valid(config)
     if first_time:
         config = _ask_ia_provider()
-    if not _has_key(config):
+    else:
+        _migrate_legacy_key(config)
+    if not _has_key():
         await _ask_api_key(config, "Necesito tu clave para empezar." if first_time
                            else "Este ordenador no tiene la clave de tu proveedor de IA.")
     if first_time:
@@ -1346,8 +1371,9 @@ async def _switch_provider(agent: TrainerAgent, config: dict) -> dict:
     _debug_console(f"\n[bold dimgray][debug] Tokens de esta sesión con {_ia_provider.label(config)}: "
                    f"{agent.total_prompt_tokens + agent.total_completion_tokens:,}[/]")
     new_config = _ask_ia_provider(config)
+    # Una sola clave en el .env: con otro proveedor, la suya; con el mismo, solo si se pide.
     same_provider = new_config["provider"] == config["provider"]
-    if not _has_key(new_config) or (same_provider and Confirm.ask("  ¿Cambiar también la clave?", default=False)):
+    if not same_provider or not _has_key() or Confirm.ask("  ¿Cambiar también la clave?", default=False):
         await _ask_api_key(new_config, "Clave de tu proveedor de IA.")
     save_ia_provider(new_config["provider"], new_config["base_url"], new_config["model"])
     agent.set_provider(new_config)

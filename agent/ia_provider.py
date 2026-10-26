@@ -4,7 +4,7 @@ agent/ia_provider.py — el proveedor de IA del atleta (26/10).
 Cada atleta dice cuál es su proveedor; Kairos no ofrece un menú cerrado. Si lo conoce (KNOWN), rellena la URL
 de su API compatible con OpenAI y propone un modelo; si no, el atleta da la URL y el modelo. La configuración
 (proveedor, URL, modelo) y el consumo diario de tokens van en la tabla `ia_provider`; la clave, siempre en el
-.env del ordenador, en `<PROVEEDOR>_API_KEY`.
+.env del ordenador, en `PROVIDER_API_KEY` (con un comentario que dice de qué proveedor es).
 """
 
 from __future__ import annotations
@@ -43,8 +43,13 @@ def known(name: str) -> str | None:
     return s if s in KNOWN else None
 
 
-def key_env_var(provider: str) -> str:
-    """Variable del .env con la clave del proveedor (NVIDIA_API_KEY, MI_PROVEEDOR_API_KEY…)."""
+# Variable del .env con la clave, la misma para cualquier proveedor (decisión del usuario, 26/10); un comentario
+# encima dice de qué proveedor es.
+KEY_VAR = "PROVIDER_API_KEY"
+
+
+def legacy_key_env_var(provider: str) -> str:
+    """Variable antigua (antes del 26/10) con la clave de ese proveedor: NVIDIA_API_KEY… Solo para trasladarla."""
     return f"{slug(provider).upper()}_API_KEY"
 
 

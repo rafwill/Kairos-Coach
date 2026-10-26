@@ -705,7 +705,7 @@ class TestLlmKey:
     def _agent(self, monkeypatch, error):
         from agent import trainer_agent as ta
 
-        monkeypatch.setenv("NVIDIA_API_KEY", "k")
+        monkeypatch.setenv("PROVIDER_API_KEY", "k")
         agent = object.__new__(ta.TrainerAgent)
         agent.set_provider(NVIDIA)
         # El envoltorio guarda el create original al instalarse: se vuelve a instalar sobre un doble.
@@ -751,7 +751,7 @@ class TestLlmKey:
     def test_client_uses_the_athlete_config_and_key(self, monkeypatch):
         from agent import trainer_agent as ta
 
-        monkeypatch.setenv("MI_PROVEEDOR_API_KEY", "clave")
+        monkeypatch.setenv("PROVIDER_API_KEY", "clave")
         monkeypatch.delenv("KAIROS_MODEL", raising=False)
         config = {"provider": "Mi Proveedor", "base_url": "https://api.ejemplo.com/v1", "model": "modelo-x"}
         client, model, key = ta._build_llm_client(config)

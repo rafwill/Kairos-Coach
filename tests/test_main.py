@@ -484,9 +484,10 @@ class TestAskIaProvider:
 
 class TestEnsureIaProvider:
     def _run(self, monkeypatch, stored, *, key=None, asked=None):
+        monkeypatch.delenv("PROVIDER_API_KEY", raising=False)
         monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
         if key:
-            monkeypatch.setenv("NVIDIA_API_KEY", key)
+            monkeypatch.setenv("PROVIDER_API_KEY", key)
         with patch("agent.main._detect_zscaler", return_value=False), \
              patch("agent.main.get_ia_provider", return_value=stored), \
              patch("agent.main.save_ia_provider") as save, \
@@ -524,18 +525,19 @@ class TestEnsureIaProvider:
 class TestApiKey:
     def test_rejected_key_is_asked_again_and_valid_one_saved(self, monkeypatch, tmp_path):
         env_file = tmp_path / ".env"
-        env_file.write_text("OTRA=1\nNVIDIA_API_KEY=vieja\n", encoding="utf-8")
+        env_file.write_text("OTRA=1\nPROVIDER_API_KEY=vieja\n", encoding="utf-8")
         monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
         probes = iter([("auth", "401 Unauthorized"), ("ok", "")])
         with patch("agent.main.probe_llm_key", new=AsyncMock(side_effect=lambda c: next(probes))), \
              patch("agent.main.Prompt.ask", side_effect=["mala", "buena"]), \
              patch("agent.main.console.print"):
             asyncio.run(_ask_api_key(NVIDIA, "Caducada"))
-        assert env_file.read_text(encoding="utf-8").splitlines() == ["OTRA=1", "NVIDIA_API_KEY=buena"]
-        assert os.environ["NVIDIA_API_KEY"] == "buena"
-        monkeypatch.delenv("NVIDIA_API_KEY")
+        assert env_file.read_text(encoding="utf-8").splitlines() == [
+            "OTRA=1", "# Proveedor de IA de PROVIDER_API_KEY: NVIDIA NIM (nvidia/nemotron-x)", "PROVIDER_API_KEY=buena"]
+        assert os.environ["PROVIDER_API_KEY"] == "buena"
+        monkeypatch.delenv("PROVIDER_API_KEY")
 
-    def test_unknown_provider_key_goes_to_its_own_variable(self, monkeypatch, tmp_path):
+    def test_any_provider_uses_provider_api_key_with_a_comment(self, monkeypatch, tmp_path):
         env_file = tmp_path / ".env"
         env_file.write_text("", encoding="utf-8")
         monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
@@ -544,8 +546,26 @@ class TestApiKey:
              patch("agent.main.Prompt.ask", return_value="k"), \
              patch("agent.main.console.print"):
             asyncio.run(_ask_api_key(config, "Primera vez"))
-        assert "MI_PROVEEDOR_API_KEY=k" in env_file.read_text(encoding="utf-8")
-        monkeypatch.delenv("MI_PROVEEDOR_API_KEY")
+        text = env_file.read_text(encoding="utf-8")
+        assert "# Proveedor de IA de PROVIDER_API_KEY: Mi Proveedor (m)\nPROVIDER_API_KEY=k" in text
+        monkeypatch.delenv("PROVIDER_API_KEY")
+
+    def test_legacy_key_is_moved_once_without_asking(self, monkeypatch, tmp_path):
+        from agent.main import _migrate_legacy_key
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("OTRA=1\nNVIDIA_API_KEY=nvapi-real\n", encoding="utf-8")
+        monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
+        monkeypatch.delenv("PROVIDER_API_KEY", raising=False)
+        monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-real")
+        with patch("agent.main.console.print"):
+            _migrate_legacy_key(NVIDIA)
+            _migrate_legacy_key(NVIDIA)
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+        assert lines == ["OTRA=1", "# Proveedor de IA de PROVIDER_API_KEY: NVIDIA NIM (nvidia/nemotron-x)",
+                         "PROVIDER_API_KEY=nvapi-real"]
+        assert os.environ["PROVIDER_API_KEY"] == "nvapi-real" and "NVIDIA_API_KEY" not in os.environ
+        monkeypatch.delenv("PROVIDER_API_KEY")
 
 
 # ─── Acceso con Supabase Auth (supabase/README.md) ─────────────────────────

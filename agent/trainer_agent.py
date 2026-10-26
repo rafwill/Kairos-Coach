@@ -8233,10 +8233,12 @@ def _is_llm_auth_error(exc: BaseException) -> bool:
 def _build_llm_client(config: dict) -> tuple[Any, str, str]:
     """Cliente, modelo y clave del proveedor del atleta (26/10): cualquier API compatible con OpenAI.
 
-    `config` = fila de ia_provider (provider, base_url, model); la clave sale del .env (`<PROVEEDOR>_API_KEY`).
+    `config` = fila de ia_provider (provider, base_url, model); la clave sale del .env (`PROVIDER_API_KEY`; si un
+    .env aún tiene la variable antigua, `NVIDIA_API_KEY`…, se usa esa hasta que la CLI la traslade).
     `KAIROS_MODEL` cambia el modelo solo para esta ejecución (batería con --modelo).
     """
-    api_key = os.environ[_ia_provider.key_env_var(config["provider"])]
+    api_key = (os.environ.get(_ia_provider.KEY_VAR)
+               or os.environ[_ia_provider.legacy_key_env_var(config["provider"])])
     client = AsyncOpenAI(base_url=config["base_url"], api_key=api_key)
     return client, os.environ.get("KAIROS_MODEL") or config["model"], api_key
 

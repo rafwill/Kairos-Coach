@@ -116,8 +116,9 @@ GROQ = {"provider": "groq", "base_url": "https://api.groq.com/openai/v1", "model
 
 
 class TestSwitchProvider:
-    def test_other_provider_without_key_asks_it_and_saves(self, monkeypatch, out):
-        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    def test_other_provider_always_asks_its_key_and_saves(self, monkeypatch, out):
+        # Una sola clave en el .env: la del proveedor anterior no vale para el nuevo.
+        monkeypatch.setenv("PROVIDER_API_KEY", "nvapi-real")
         agent = _Agent()
         with patch.object(m, "_ask_ia_provider", return_value=GROQ), patch.object(m, "save_ia_provider") as save, \
              patch.object(m, "_ask_api_key", new=AsyncMock()) as ask_key:
@@ -128,7 +129,7 @@ class TestSwitchProvider:
         assert "Proveedor de IA guardado" in out()
 
     def test_same_provider_new_model_keeps_the_key_unless_asked(self, monkeypatch, out):
-        monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-real")
+        monkeypatch.setenv("PROVIDER_API_KEY", "nvapi-real")
         new = dict(NVIDIA, model="otro-modelo")
         with patch.object(m, "_ask_ia_provider", return_value=new), patch.object(m, "save_ia_provider"), \
              patch.object(m.Confirm, "ask", return_value=False), \
