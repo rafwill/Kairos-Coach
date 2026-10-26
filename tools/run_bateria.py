@@ -63,7 +63,8 @@ def clean(block: str) -> str:
 
 def run(questions: list[str], username: str, model: str | None) -> tuple[str, float, list[dict]]:
     env = os.environ.copy()
-    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "COLUMNS": "110", "TERM": "dumb"})
+    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "COLUMNS": "110", "TERM": "dumb",
+                "KAIROS_SESSION_MEMORY": "false"})  # ni lee ni escribe la memoria del atleta
     if model:
         env["KAIROS_MODEL"] = model
     python = ROOT / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")

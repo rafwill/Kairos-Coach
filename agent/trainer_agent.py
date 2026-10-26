@@ -95,6 +95,8 @@ def _save_history_entry(role: str, content: str) -> None:
     Si Supabase falla, se pierde esa entrada, no la respuesta: el 26/10 un "JWT expired" aquí cerró Kairos
     con la respuesta ya generada.
     """
+    if not _session_memory_enabled():
+        return
     try:
         _storage.save_history_entry(role, content)
     except Exception as exc:  # noqa: BLE001 — cualquier fallo de red o de Supabase
@@ -173,6 +175,14 @@ def _is_mcp_read_only_enabled() -> bool:
 def _is_deterministic_router_enabled() -> bool:
     """Activa/desactiva el router determinista para intenciones críticas."""
     raw = str(os.environ.get("KAIROS_DETERMINISTIC_ROUTER", "true")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _session_memory_enabled() -> bool:
+    """Memoria entre sesiones (historial y resumen del día en `session_context`). La apaga solo la batería
+    (`KAIROS_SESSION_MEMORY=false`, 26/10): sus preguntas llenaban la memoria del atleta y el LLM las recibía
+    como temas suyos; además, sin leerla, cada pasada no depende de la anterior."""
+    raw = str(os.environ.get("KAIROS_SESSION_MEMORY", "true")).strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
@@ -10100,6 +10110,9 @@ class TrainerAgent:
     def _restore_previous_session(self) -> None:
         """De la sesión anterior solo se recuperan las preguntas del usuario (temas), no las respuestas:
         con ellas en el contexto el LLM repetía cifras viejas o erróneas sin volver a consultar las tools."""
+        if not _session_memory_enabled():
+            self.previous_session_questions = ()
+            return
         ctx = _load_session_context()
         self.previous_session_questions = tuple(
             str(entry.get("content") or "").strip()
@@ -11648,7 +11661,7 @@ class TrainerAgent:
 
         # Incluir resúmenes de sesiones anteriores para memoria a largo plazo
         memory_context = ""
-        summaries = _load_session_summaries()
+        summaries = _load_session_summaries() if _session_memory_enabled() else []
         if summaries:
             recent = summaries[-3:]  # últimas 3 sesiones
             _MAX_SUMMARY = 350  # caracteres máximos por resumen
@@ -13054,7 +13067,7 @@ class TrainerAgent:
     def save_session_summary_checkpoint(self) -> None:
         """Persiste un checkpoint diario del resumen de sesión (upsert por fecha)."""
         summary = self.generate_session_summary_checkpoint()
-        if not summary:
+        if not summary or not _session_memory_enabled():
             return
         try:
             _storage.persist_session_summary_daily(summary)

@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Fixed (la batería ya no toca la memoria del atleta)
+- Al comprobar la memoria entre sesiones en el ordenador 2 (funciona: resumen del día e historial en `session_context`), los resúmenes del 23 al 26/10 resultaron ser solo preguntas de batería; el LLM las habría recibido como temas del atleta. `tools/run_bateria.py` arranca Kairos con `KAIROS_SESSION_MEMORY=false`: no guarda historial ni resumen del día y no lee los anteriores, así que cada pasada tampoco depende de la anterior. La memoria del atleta se vació en Supabase (50 entradas de historial y 10 resúmenes, todo de baterías; prueba, aplicación y lectura de vuelta).
+
 ### Tests (inicio de sesión)
 - Ramas de error de `_authenticate_or_register_user`: email vacío o sin @, sesión recuperada con contraseña de Garmin cifrada con otra `ENCRYPTION_KEY`, alta rechazada, contraseñas que no coinciden, alta fallida, alta sin confirmación por correo, error que no es de contraseña y fallo al crear el usuario de Kairos. También `/menu`. `agent/main.py` pasa del 90 % al 94 %. Sin test: los `except: pass` del ajuste UTF-8 de la consola de Windows (habría que recargar el módulo con `ctypes` roto para comprobar que no hace nada).
 

@@ -1108,6 +1108,26 @@ class TestPreviousSessionContext:
         agent, _ = self._agent([])
         assert [m["role"] for m in agent._build_messages("hola")] == ["system", "user"]
 
+    def test_battery_neither_reads_nor_writes_the_athlete_memory(self, monkeypatch):
+        # 26/10: las preguntas de la batería llenaban la memoria del atleta y el LLM las recibía como suyas.
+        import agent.trainer_agent as ta
+        monkeypatch.setenv("KAIROS_SESSION_MEMORY", "false")
+        load, save, persist = MagicMock(), MagicMock(), MagicMock()
+        monkeypatch.setattr(ta, "_load_session_context", load)
+        monkeypatch.setattr(ta._storage, "save_history_entry", save)
+        monkeypatch.setattr(ta._storage, "persist_session_summary_daily", persist)
+        agent, _ = self._agent([])
+        agent.conversation_history = [{"role": "user", "content": "¿Dime los TSS de mis 20 últimas actividades?"}]
+
+        agent._restore_previous_session()
+        ta._save_history_entry("user", "¿Dime los TSS?")
+        agent.save_session_summary_checkpoint()
+
+        assert agent.previous_session_questions == ()
+        load.assert_not_called()
+        save.assert_not_called()
+        persist.assert_not_called()
+
 
 # ─── Base de conocimiento del atleta (RAG) ──────────────────────────────────
 
