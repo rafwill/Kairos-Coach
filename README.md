@@ -40,9 +40,15 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1   # Windows
 
 El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`agent` y `garmin_mcp` importables desde cualquier carpeta), copia `.env.example` a `.env` y genera `ENCRYPTION_KEY`. Después:
 
-1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` La clave del proveedor de IA no hace falta escribirla: Kairos la pide la primera vez y la guarda en `.env`.
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en el SQL Editor de Supabase (New query → pegar → Run). Crea todas las tablas en un proyecto nuevo y, en uno ya existente, añade solo lo que falte sin tocar los datos.
-3. Seguridad: cuentas de Supabase Auth y políticas por usuario (`supabase/rls.sql`). Qué son, cómo activarlas y cómo comprobarlas (`make check-rls`): [`supabase/README.md`](supabase/README.md).
+1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`. La clave del proveedor de IA no hace falta escribirla: Kairos la pide la primera vez y la guarda en `.env`.
+2. En Supabase, **Authentication → Sign In / Providers → Email**: proveedor de email activado y **"Confirm email" activado** (hace seguro el vínculo de cada cuenta con sus datos).
+3. En el SQL Editor de Supabase (New query → pegar → Run), en este orden:
+   1. [`supabase/schema.sql`](supabase/schema.sql): tablas, índices y funciones. En un proyecto ya existente añade solo lo que falte sin tocar los datos.
+   2. [`supabase/rls.sql`](supabase/rls.sql): activa la seguridad por fila y las políticas, para que cada usuario vea solo sus filas. **Sin este paso las tablas quedan abiertas** a cualquiera con la clave `anon`.
+4. Comprueba la seguridad: `make check-rls` (en Windows sin `make`: `.venv\Scripts\python.exe tools\check_rls.py`). Sin sesión, las 11 tablas deben salir `cerrada`.
+5. Primer acceso: arranca Kairos (ver Uso), escribe tu email y la contraseña de Garmin Connect, acepta crear la cuenta, abre el enlace del correo de confirmación y vuelve a entrar. Después, `check_rls` con tu sesión debe ver tus datos.
+
+Qué protege cada política y cómo se migra un proyecto antiguo con usuarios sin cuenta de Auth: [`supabase/README.md`](supabase/README.md).
 
 ## Uso
 

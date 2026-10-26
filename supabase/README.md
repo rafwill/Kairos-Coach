@@ -7,7 +7,7 @@ Ficheros de esta carpeta:
 | Fichero | Qué es | Cuándo se ejecuta |
 | --- | --- | --- |
 | `schema.sql` | Tablas, índices, el vínculo con las cuentas y las funciones que usan las políticas | Al crear el proyecto y cada vez que cambie el esquema (es idempotente) |
-| `rls.sql` | Activa la seguridad por fila y crea las políticas | Una vez, en la fase 2 (también idempotente) |
+| `rls.sql` | Activa la seguridad por fila y crea las políticas | Justo después de `schema.sql` en un proyecto nuevo; en uno existente, en la fase 2 (también idempotente) |
 | `README.md` | Este documento | — |
 
 Los dos `.sql` se ejecutan en **Supabase Dashboard → SQL Editor → New query → pegar → Run**.
@@ -59,7 +59,9 @@ Kairos ──(email + contraseña)──> Supabase Auth ──> token de sesión
 
 ## 4. Puesta en marcha
 
-Hay dos fases para no dejar a nadie fuera: primero el código nuevo, que funciona con RLS activado o no; después se activan las políticas.
+**Instalación desde cero (proyecto nuevo, sin usuarios):** requisito previo de abajo, `schema.sql`, `rls.sql` seguido (no hay nadie que vincular), `make check-rls` y primer acceso (crear la cuenta, enlace del correo, volver a entrar). Pasos completos en la sección Instalación del [README](../README.md).
+
+**Proyecto existente con usuarios de antes de Supabase Auth:** dos fases para no dejar a nadie fuera: primero el código nuevo, que funciona con RLS activado o no; después se activan las políticas.
 
 **Requisito previo (ya comprobado el 24/10/2026):** en **Authentication → Sign In / Providers → Email**, el proveedor de email activado y **"Confirm email" activado**. Es lo que hace seguro el vínculo por email. Kairos lo puede consultar con `GET /auth/v1/settings` (`mailer_autoconfirm` debe ser `false`).
 
