@@ -10,20 +10,19 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 4578226:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 26/10/2026** (ordenador 2). Sin cambios a medias. 778 tests; batería 25/25.
+**Sesión del 26/10/2026, noche** (ordenador 1). Todo subido a GitHub, sin cambios a medias. 784 tests; batería 25/25.
 
-- Hecho hoy: patologías y lesiones separadas con protocolo de diabetes según medicación; proveedor de IA del atleta (tabla `ia_provider`, clave en `PROVIDER_API_KEY`); `.env.example` limpio; metatooling por grupos de tools, siempre activo (sin variable); el "cuelgue" de las 14:15 era el portátil suspendido, y lo que de verdad fallaba (token de Supabase caducado al despertar, que cerraba Kairos) está arreglado; tests de las ramas de error del inicio de sesión (`agent/main.py` del 90 % al 94 %); memoria entre sesiones comprobada en este ordenador (resumen del día e historial en `session_context`, sin caracteres rotos); la batería ya no la lee ni la escribe (`KAIROS_SESSION_MEMORY=false`) y la memoria del atleta se vació (toda era de baterías); S28 nuevo (día de la semana con su fecha), S11 sin falso positivo con "Supraumbral" y batería pintada a 400 columnas (tablas sin partir para el juez); comando `/perfil umbral fc <lpm>` para la FC umbral tras un test; la bici sin potencia del 07/08 no era un fallo (el 93 de TP estaba metido a mano; su hrTSS es 62, Kairos 65.9).
-- Supabase ya tiene la tabla `ia_provider` (RLS comprobado) y el perfil del usuario está migrado (patologías y lesiones separadas, medicación de la diabetes, proveedor de IA `nvidia`).
-- Al empezar en casa: `git pull`, `pip install -r requirements.txt` (`google-genai` ya no hace falta; se puede desinstalar) y entrar una vez en Kairos. No preguntará nada: la clave `NVIDIA_API_KEY` del `.env` pasa sola a `PROVIDER_API_KEY`. Después, el repaso de los sensores con las baterías guardadas allí y el caso de S10 en bici (punto 1).
-- **Siguiente paso: la limpieza del proyecto (Pendiente D, puntos 6 a 9), siguiendo su recomendación**: primero la documentación y lo menor (D1 y D4), después el código que sobra (D2) y los duplicados (D3).
-- **Aparcado hasta ~09/11/2026** (decisión del usuario): todos los pendientes se verifican con el uso diario de Kairos en las próximas semanas. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Lo único que no espera al uso es el repaso en casa del punto 1 (891 respuestas y el caso de S10 en bici) y la limpieza del proyecto (D, puntos 6 a 9), que se puede hacer cuando se quiera.
+- Hecho: traídos los 22 commits del ordenador 2 (`pip install -r requirements.txt` y la clave ya migrada a `PROVIDER_API_KEY`); repaso de sensores con las 941 respuestas de casa, con tres falsos positivos corregidos (S10 con "tirada" y con el deporte detrás del rango; S28 con "(lunes a domingo)") y el caso de S10 en bici del 24/10 cerrado (ya no se reproduce); guías nuevas G13 (calendario para el LLM) y G14 (diferencia de HRV ya calculada), probadas en vivo sin avisos en las respuestas finales.
+- En el ordenador 2, al empezar: `git pull`. No hay dependencias ni variables nuevas.
+- **Siguiente paso: la limpieza del proyecto (Pendiente D, puntos 6 a 9)**: primero la documentación y lo menor (D1 y D4), después el código que sobra (D2) y los duplicados (D3).
+- **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
 ## Pendiente
 
 ### A. Puesta en producción
 
 1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`.** Usar Kairos unos días con preguntas reales y revisar juntos cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7). En concreto:
-   - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales.
+   - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales, y si con las guías G13 (calendario) y G14 (HRV calculada) del 26/10 bajan los saltos de S25, S27 y S28.
 
 ### B. Chat y LLM
 
