@@ -277,6 +277,14 @@ class TestRelativeDayS27:
     def test_without_date_nothing_is_judged(self):
         assert sensors.find_wrong_relative_day("Mañana lunes 26/10", None) == []
 
+    def test_pain_score_is_not_a_date(self):
+        # 26/10 en vivo: "te duele desde ayer (4/10)" daba S27 con la fecha 04/10.
+        for text in ("El sóleo te duele desde ayer (4/10) al bajar escaleras.",
+                     "Molestia de hoy: 3/10.", "RPE de hoy 7/10."):
+            assert sensors.find_wrong_relative_day(text, self.SAT) == [], text
+        # Sin contexto de dolor o escala, sigue siendo una fecha.
+        assert sensors.find_wrong_relative_day("Ayer (4/10) hiciste series.", self.SAT)
+
     def test_live_retry_includes_it(self):
         found = sensors.findings_to_retry("Mañana lunes 26/10: rodaje.", [], None, None, today=self.SAT)
         assert [f.sensor for f in found] == ["S27"]

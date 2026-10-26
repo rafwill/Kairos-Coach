@@ -815,7 +815,7 @@ def _show_profile() -> None:
     console.print(
         "[dim]Editar: "
         "[bold]/perfil editar objetivo[/bold] — nombre, deporte, evento, tiempo objetivo • "
-        "[bold]/perfil editar salud[/bold] — lesiones y notas[/dim]"
+        "[bold]/perfil editar salud[/bold] — patologías, lesiones y notas[/dim]"
     )
 
 
@@ -1157,7 +1157,7 @@ def _show_menu() -> None:
     table.add_row("Ver", "/carga meses", "Ver vista mensual de carga/fatiga")
 
     table.add_row("Editar", "/perfil editar objetivo", "Editar deporte, carrera y tiempo objetivo")
-    table.add_row("Editar", "/perfil editar salud", "Editar lesiones y notas de salud")
+    table.add_row("Editar", "/perfil editar salud", "Editar patologías, lesiones (también las nuevas) y notas de salud")
     table.add_row("Editar", "/perfil editar", "Editar perfil completo")
     table.add_row("Editar", "/perfil umbral <mm:ss>", "Actualizar umbral de running (ej. 4:15)")
     table.add_row("Editar", "/perfil fc <reposo> <max>", "Actualizar FC reposo/máxima (ej. 48 186)")

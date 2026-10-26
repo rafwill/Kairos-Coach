@@ -3517,7 +3517,7 @@ def _build_config_options_markdown() -> str:
             "",
             "Editar perfil:",
             "- `/perfil editar objetivo`: deporte, carrera y tiempo objetivo.",
-            "- `/perfil editar salud`: lesiones y notas.",
+            "- `/perfil editar salud`: patologías (y medicación si hay diabetes), lesiones y notas.",
             "- `/perfil editar`: edición completa.",
             "- `/perfil umbral <mm:ss>`: ritmo umbral running (ej: `/perfil umbral 4:15`).",
             "- `/perfil fc <reposo> <max>`: FC reposo/máxima (ej: `/perfil fc 48 190`).",

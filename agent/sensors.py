@@ -454,6 +454,18 @@ _RELATIVE_DAY = re.compile(
 )
 
 
+# Una puntuación de 0 a 10 ("te duele desde ayer (4/10)", 26/10) parece una fecha de octubre: con una palabra
+# de dolor o de escala antes, en la misma línea, no es fecha.
+_SCORE_CONTEXT = re.compile(r"(?i)dol[oi]r|duele|molesti|rpe|escala|sensaci[oó]n|puntu")
+
+
+def _is_score(text: str, m: re.Match, dd: str, mm: str, yy: str | None) -> bool:
+    if yy or mm != "10" or int(dd) > 10:
+        return False
+    line = text[: m.start()].rsplit("\n", 1)[-1][-80:]
+    return bool(_SCORE_CONTEXT.search(line))
+
+
 def _nearest_date(day: int, month: int, today: date) -> date | None:
     """DD/MM sin año: el año que deja la fecha más cerca de hoy."""
     candidates = []
@@ -477,6 +489,8 @@ def find_wrong_relative_day(text: str, today: date | None) -> list[Finding]:
     seen: set[str] = set()
     for m in _RELATIVE_DAY.finditer(text):
         word, weekday, dd, mm, yy = m.group(1).lower(), m.group(2), m.group(3), m.group(4), m.group(5)
+        if dd and _is_score(text, m, dd, mm, yy):
+            dd = None
         if not weekday and not dd:
             continue
         expected = today + timedelta(days=_RELATIVE_OFFSETS[word])

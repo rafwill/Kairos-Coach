@@ -689,7 +689,8 @@ class TestCoachingRulesSingleSource:
         assert "{{REGLAS_DE_COACHING}}" not in prompt
         assert prompt.count(rules) == 1
         # Reglas de entrenador que viven solo en coaching_rules.md
-        for heading in ("## Diabetes", "## Intensidades", "## Estado de hoy", "# Límites éticos"):
+        for heading in ("## Diabetes", "## Lesiones, sobrecargas y molestias a lo largo de la temporada",
+                        "## Intensidades", "## Estado de hoy", "# Límites éticos"):
             assert heading in rules
         # El protocolo de diabetes va con el perfil, solo a quien lo necesita (26/10).
         assert "120–180 mg/dL" not in rules and "hipoglucemia" not in rules.lower()
