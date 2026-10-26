@@ -134,7 +134,7 @@ El reintento solo cuesta latencia cuando hay un fallo. Cada sensor registra cuá
 
 - **Fallo que se repite → control nuevo.** Si un fallo aparece en dos baterías, se añade o se corrige una guía (si el LLM no tenía el dato o la regla) o un sensor (si la tenía y no la cumplió).
 - **Proponer–Probar–Componer a mano.** Cada cambio de guía o de sensor se prueba con una batería antes y otra después, con los criterios fijados antes de mirar. Un sensor nuevo se pasa primero sobre transcripciones ya guardadas en `.tmp/bateria/` y debe dar 0 falsos positivos antes de conectarlo a Kairos.
-- **Biblioteca de experiencia.** Cada cambio adoptado deja una entrada en `docs/proximos_pasos.md` con **señal** (qué falló y dónde), **lección** (qué regla general se saca) y **evidencia** (baterías antes y después).
+- **Biblioteca de experiencia.** Cada cambio adoptado deja en su entrada del `CHANGELOG.md` la **señal** (qué falló y dónde), la **lección** (qué regla general se saca) y la **evidencia** (baterías antes y después). Las entradas del 23 al 26/10 están en git: `git show f2f5867:docs/proximos_pasos.md`.
 - **Guía ≠ rúbrica.** Los prompts describen el trabajo de entrenador; nunca copian el texto del juez ni mencionan la batería.
 - **Sin hooks genéricos.** El `HookManager` (cinco eventos en unos 12 puntos de `chat()`, sin ningún suscriptor) se quitó el 23/10: los sensores de §6 se llaman de forma explícita, que se lee y se prueba mejor. Sus avisos de error pasaron a `_log_chat_error` (`log.warning` con la etapa), que antes no dejaban rastro.
 
