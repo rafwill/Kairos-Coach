@@ -36,7 +36,7 @@ TSS por deporte (`_estimate_session_tss`):
 | Trail normal | `trail:tp_zones` (hrTSS de TP: TSS/h por tramo de FC/umbral TP, sin FC de reposo) | MAPE 1.6 %, 25/25 dentro de ±10 % |
 | Trail rápido (< 6:00/km) | `trail:fast_rtss` (pipeline de running) | n=1 (+14 %) |
 | Bici con potencia | `cycling:power_ftp` (NP = `normPower` / FTP) | MAPE 1.6 %, 17/17 |
-| Bici sin potencia | `cycling:tp_zones` | 5 de 7 mejor que antes |
+| Bici sin potencia | `cycling:tp_zones` (umbral de carrera: TP no tiene FC umbral de bici) | 5 de 7 mejor que antes; gravel 03/04 y 07/08: +7 % y +6 % frente al hrTSS de TP (65 y 62) |
 | Caminar / senderismo | `walk_hike:metabolico` (ACSM + Minetti; intermedio entre rTSS y hrTSS de TP, por decisión del usuario), con tope `walk_hike:tp_hr_cap` | ×1.37 frente a TP (TP mezcla rTSS y hrTSS a mano) |
 | Fuerza | `strength:modelo_B` (LTHR) | ≈ 1.00 |
 | Elíptica / remo | `gym_cardio:*` (solo por tipo o por palabra completa en el nombre) | ≈ 1.1 ("Other" en TP) |
@@ -82,7 +82,6 @@ Anclajes por fecha (perfil `performance`):
 
 - Trail rápido: vigilar con más sesiones (16/08: Kairos 128.0 frente a TP 112.4 rTSS).
 - Series cortas de running (6x500, 6x1000, 4x400, 8x500) en +11 % a +20 % frente a TP; 23966766696 (13/08, 8x45" cuestas) ×1.20. Plantear hipótesis antes de tocar umbrales (p. ej. relación FC-velocidad con retraso fisiológico).
-- Bici sin potencia > 2 h: 07/08 Kairos 65.9 frente a TP 93 (la tabla no tiene datos de bici por encima del 85 %).
 - Si cambia la FC umbral (test), registrarla el mismo día que en TP con `/perfil umbral fc <lpm>` (`hr_threshold_bpm` y entrada de hoy en `hr_threshold_tp_history`). El ritmo umbral, con `/perfil umbral <mm:ss>`.
 - Revalidación periódica con un export nuevo de TP (prueba sin escribir, criterio fijado antes, solo filas esperadas).
 
@@ -90,6 +89,7 @@ Anclajes por fecha (perfil `performance`):
 
 - Maratón de Madrid 22663819817 (26/04, 3.4 h): Kairos 230.1 rTSS frente a TP 299.3 (−23 %), decidido dejarlo así. NGP/ritmo medio en TP 1.100 frente a 1.006 en las otras 96 sesiones: anomalía de TP en esa sesión.
 - Caminatas: no cuadran con TP por diseño (modelo intermedio).
+- Bici 07/08 (23889452312): el export de TP trae 93, metido a mano por estimación; su hrTSS de TP es 62 (Kairos 65.9). En una revalidación, usar 62 o excluirla.
 - Hiking con n bajo; short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real; `_parse_hr_zones_list` no lee el formato real de zonas de Garmin (solo afecta a respaldos).
 
 ## Historia

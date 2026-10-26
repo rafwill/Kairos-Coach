@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Investigado (bici sin potencia: no era un fallo del modelo)
+- Pendiente "bici sin potencia > 2 h, 07/08: Kairos 65.9 frente a TP 93". Al mirar la sesión (23889452312, gravel) dura 96 min, no más de 2 h (FC media 111, máx. 145). Su gemela del 03/04 (22396245237, 99 min, FC media 112) daba Kairos 69.7. Verificada la fuente en TP (protocolo de outliers): el 93 se metió a mano por estimación (salida sin pedales de potencia); el hrTSS de TP es 62 (Kairos +6 %) y el del 03/04, 65 (+7 %). Referencia mal transcrita → se corrige la referencia, no el código. n = 2: sin calibrar.
+- TP no tiene FC umbral de bici (solo de carrera), así que el hrTSS de bici usa la de carrera, como ya hacía Kairos. Las zonas de bici de Garmin (10 lpm por debajo de las de carrera) ya están en el perfil y solo se usan para los rangos de FC del texto (S10).
+- Lección: antes de investigar un outlier, mirar en TP si el TSS es calculado o puesto a mano.
+
 ### Added (FC umbral cargada a mano: `/perfil umbral fc <lpm>`)
 - En Garmin la FC umbral la detecta el reloj tras un test y no se cambia desde la web; Kairos la traía de Garmin una sola vez y no había forma de cambiarla, ni tampoco el umbral de TP (había que editar el perfil a mano). Decisión del usuario: un solo número tras el test, el mismo que se pone en TrainingPeaks. `/perfil umbral fc <lpm>` actualiza `hr_threshold_bpm` (hrTSS de fuerza, elíptica y remo; contexto del LLM) y añade la entrada de hoy a `hr_threshold_tp_history` (hrTSS de trail y bici sin potencia). Rige desde hoy (el TSS guardado no cambia, como con `/perfil umbral <mm:ss>`); las zonas siguen siendo las del reloj. Rango 120–230 lpm. En `/menu`, `/ayuda`, el README y el prompt de sistema (decía que la FC umbral se cambiaba con `/perfil umbral`, que solo cambia el ritmo).
 
