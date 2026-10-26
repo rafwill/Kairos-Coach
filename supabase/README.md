@@ -114,7 +114,7 @@ alter table app_user              disable row level security;
 alter table user_profile          disable row level security;
 alter table session_context       disable row level security;
 alter table athlete_knowledge     disable row level security;
-alter table gemini_usage          disable row level security;
+alter table ia_provider           disable row level security;
 alter table training_plan         disable row level security;
 alter table training_plan_session disable row level security;
 alter table training_plan_version disable row level security;

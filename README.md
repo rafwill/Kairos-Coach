@@ -11,7 +11,7 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 - **Planes de entrenamiento:** motor determinista multisemana (base → build → peak → taper) que parte del volumen real de las últimas 4 semanas, nunca sube más de un 10 % por semana y guarda cada versión.
 - **Coaching con contexto:** perfil, condiciones de salud (protocolo de diabetes tipo 1 con insulina), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
-- **Cinco proveedores de LLM:** NVIDIA NIM, Gemini, Groq, Mistral y Cerebras; se cambia en caliente con `/modelo`.
+- **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`.
 
 ## Estado de la carga (2026-10-21)
 
@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1   # Windows
 
 El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`agent` y `garmin_mcp` importables desde cualquier carpeta), copia `.env.example` a `.env` y genera `ENCRYPTION_KEY`. Después:
 
-1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` y al menos una API key de LLM (`NVIDIA_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY` o `CEREBRAS_API_KEY`). Cada proveedor admite su `*_MODEL`; ver `.env.example`.
+1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` La clave del proveedor de IA no hace falta escribirla: Kairos la pide la primera vez y la guarda en `.env`.
 2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en el SQL Editor de Supabase (New query → pegar → Run). Crea todas las tablas en un proyecto nuevo y, en uno ya existente, añade solo lo que falte sin tocar los datos.
 3. Seguridad: cuentas de Supabase Auth y políticas por usuario (`supabase/rls.sql`). Qué son, cómo activarlas y cómo comprobarlas (`make check-rls`): [`supabase/README.md`](supabase/README.md).
 
@@ -51,7 +51,7 @@ El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`a
 .venv/bin/python -m agent.main             # Unix/macOS
 ```
 
-Kairos pide el usuario, muestra los proveedores con clave configurada y arranca su servidor MCP propio (`garmin_mcp/`, solo lectura) como subproceso. Los tokens de Garmin se reutilizan entre arranques en `~/.garminconnect/kairos/`.
+Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y arranca su servidor MCP propio (`garmin_mcp/`, solo lectura) como subproceso. Los tokens de Garmin se reutilizan entre arranques en `~/.garminconnect/kairos/`.
 
 | Comando | Qué hace |
 | --- | --- |
@@ -61,7 +61,7 @@ Kairos pide el usuario, muestra los proveedores con clave configurada y arranca 
 | `/perfil fc <reposo> <max>` | FC de reposo y máxima |
 | `/plan listar` · `/plan ver <id>` · `/plan activar <id>` · `/plan crear` | Planes de entrenamiento |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |
-| `/modelo` | Tokens usados y cambio de proveedor/modelo |
+| `/proveedor` | Cambiar de proveedor de IA, modelo o clave |
 | `salir` | Cerrar la sesión |
 
 Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué sesión me recomiendas para esta semana?"*, *"Créame un plan para mi media maratón"*.
@@ -72,7 +72,7 @@ Con `make` disponible: `make setup` y `make serve`. Los comandos de pruebas y di
 
 ```
 agent/
-  main.py                CLI: login, proveedor LLM, comandos y chat
+  main.py                CLI: login, proveedor de IA, comandos y chat
   trainer_agent.py       agente: rutas deterministas, coaching LLM, planes, carga
   load_metrics.py        TSS por deporte y PMC (CTL/ATL/TSB)
   running_tss.py         pipeline físico de running (NGP con pendiente, rTSS)

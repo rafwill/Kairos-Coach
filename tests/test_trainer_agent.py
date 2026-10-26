@@ -7,8 +7,6 @@ Cubre:
   - _normalize_date_args
   - _strip_garmin_object
   - _compact_tool_result / _compact_personal_records
-  - _clean_schema_for_gemini
-  - _GeminiCompletions._parse  (sin llamada real a la API)
 """
 
 import asyncio
@@ -46,7 +44,6 @@ from agent.trainer_agent import (
     _build_recovery_fallback_snapshot,
     _compute_daily_plan_adjustment,
     _compute_plan_execution_feedback,
-    _clean_schema_for_gemini,
     _compact_personal_records,
     _compact_tool_result,
     _extract_activities_list,
@@ -58,7 +55,6 @@ from agent.trainer_agent import (
     _extract_iso_date_from_text,
     _extract_iso_date_range_from_text,
     _generate_structured_plan_payload,
-    _GeminiCompletions,
     _get_active_training_plan,
     _get_planned_session_for_date,
     _has_goal_in_profile,
@@ -697,6 +693,9 @@ class TestCoachingRulesSingleSource:
         assert "120–180 mg/dL" not in rules and "hipoglucemia" not in rules.lower()
 
 
+NVIDIA = {"provider": "nvidia", "base_url": "https://integrate.api.nvidia.com/v1", "model": "m"}
+
+
 class TestLlmKey:
     """Clave del LLM rechazada (26/10): se marca, se convierte en LLMAuthError y la CLI la pide de nuevo."""
 
@@ -708,7 +707,7 @@ class TestLlmKey:
 
         monkeypatch.setenv("NVIDIA_API_KEY", "k")
         agent = object.__new__(ta.TrainerAgent)
-        agent.set_provider("nvidia")
+        agent.set_provider(NVIDIA)
         # El envoltorio guarda el create original al instalarse: se vuelve a instalar sobre un doble.
         agent.client.chat.completions.create = AsyncMock(side_effect=error)
         agent._watch_llm_auth()
@@ -746,8 +745,25 @@ class TestLlmKey:
 
         client = MagicMock()
         client.chat.completions.create = AsyncMock(side_effect=error)
-        monkeypatch.setattr(ta, "_build_llm_client", lambda p: (client, "m", "k"))
-        assert asyncio.run(ta.probe_llm_key("nvidia"))[0] == status
+        monkeypatch.setattr(ta, "_build_llm_client", lambda c: (client, "m", "k"))
+        assert asyncio.run(ta.probe_llm_key(NVIDIA))[0] == status
+
+    def test_client_uses_the_athlete_config_and_key(self, monkeypatch):
+        from agent import trainer_agent as ta
+
+        monkeypatch.setenv("MI_PROVEEDOR_API_KEY", "clave")
+        monkeypatch.delenv("KAIROS_MODEL", raising=False)
+        config = {"provider": "Mi Proveedor", "base_url": "https://api.ejemplo.com/v1", "model": "modelo-x"}
+        client, model, key = ta._build_llm_client(config)
+        assert (str(client.base_url), model, key) == ("https://api.ejemplo.com/v1/", "modelo-x", "clave")
+        monkeypatch.setenv("KAIROS_MODEL", "otro")  # batería con --modelo
+        assert ta._build_llm_client(config)[1] == "otro"
+
+    def test_set_provider_without_config_fails_clearly(self):
+        from agent import trainer_agent as ta
+
+        with pytest.raises(ValueError, match="proveedor de IA"):
+            object.__new__(ta.TrainerAgent).set_provider({})
 
 
 class TestDiabetesProtocolInContext:
@@ -1258,147 +1274,6 @@ class TestPersonalRecordsMarkdown:
     def test_detect_personal_records_sport_intent_from_followup_context(self):
         history = [{"role": "assistant", "content": "Estos son tus mejores registros personales en ciclismo."}]
         assert _detect_personal_records_sport_intent("En que distancias son esas marcas?", history) == "cycling"
-
-
-# ─── _clean_schema_for_gemini ─────────────────────────────────────────────────
-
-class TestCleanSchemaForGemini:
-    def test_removes_exclusive_minimum(self):
-        schema = {"type": "integer", "exclusiveMinimum": 0, "description": "Activity ID"}
-        result = _clean_schema_for_gemini(schema)
-        assert "exclusiveMinimum" not in result
-        assert result["type"]        == "integer"
-        assert result["description"] == "Activity ID"
-
-    def test_removes_additional_properties(self):
-        schema = {"type": "object", "additionalProperties": False, "properties": {"x": {"type": "string"}}}
-        result = _clean_schema_for_gemini(schema)
-        assert "additionalProperties" not in result
-        assert "properties" in result
-
-    def test_keeps_required(self):
-        schema = {"type": "object", "required": ["date"], "properties": {}}
-        result = _clean_schema_for_gemini(schema)
-        assert result["required"] == ["date"]
-
-    def test_keeps_enum(self):
-        schema = {"type": "string", "enum": ["running", "cycling"]}
-        result = _clean_schema_for_gemini(schema)
-        assert result["enum"] == ["running", "cycling"]
-
-    def test_recursive_properties_cleaned(self):
-        schema = {
-            "type": "object",
-            "properties": {
-                "activityId": {"type": "number", "exclusiveMinimum": 0}
-            }
-        }
-        result = _clean_schema_for_gemini(schema)
-        assert "exclusiveMinimum" not in result["properties"]["activityId"]
-        assert result["properties"]["activityId"]["type"] == "number"
-
-    def test_nested_items_cleaned(self):
-        schema = {
-            "type": "array",
-            "items": {"type": "number", "exclusiveMinimum": 0, "description": "value"}
-        }
-        result = _clean_schema_for_gemini(schema)
-        assert "exclusiveMinimum" not in result["items"]
-        assert result["items"]["type"] == "number"
-
-    def test_empty_schema(self):
-        assert _clean_schema_for_gemini({}) == {}
-
-
-# ─── _GeminiCompletions._parse ────────────────────────────────────────────────
-
-class TestGeminiCompletionsParse:
-    """
-    Tests de la capa de parsing sin llamadas reales a la API.
-    _parse() solo accede a response.candidates[0].content.parts
-    y a response.usage_metadata — ambos se mockean con MagicMock.
-    """
-
-    def _make_gemini(self) -> _GeminiCompletions:
-        """Instancia _GeminiCompletions omitiendo __init__ (que requiere google-genai)."""
-        gc = object.__new__(_GeminiCompletions)
-        gc._api_key = "fake-key"
-        return gc
-
-    def _make_response(self, parts, usage_metadata=None):
-        content   = MagicMock()
-        content.parts = parts
-        candidate = MagicMock()
-        candidate.content = content
-        response  = MagicMock()
-        response.candidates    = [candidate]
-        response.usage_metadata = usage_metadata
-        return response
-
-    # --- respuesta de texto ---
-
-    def test_text_response_sets_content(self):
-        part = MagicMock(spec=["text", "function_call"])
-        part.text           = "Hola, soy tu entrenador."
-        part.function_call  = None
-        response = self._make_response([part])
-
-        result = self._make_gemini()._parse(response)
-
-        msg = result.choices[0].message
-        assert msg.content    == "Hola, soy tu entrenador."
-        assert msg.tool_calls is None
-
-    def test_multi_text_parts_concatenated(self):
-        p1 = MagicMock(spec=["text", "function_call"]); p1.text = "Parte 1 "; p1.function_call = None
-        p2 = MagicMock(spec=["text", "function_call"]); p2.text = "Parte 2";  p2.function_call = None
-        response = self._make_response([p1, p2])
-
-        result = self._make_gemini()._parse(response)
-        assert result.choices[0].message.content == "Parte 1 Parte 2"
-
-    # --- respuesta con function call ---
-
-    def test_function_call_sets_tool_calls(self):
-        fn_call      = MagicMock()
-        fn_call.name = "get_daily_steps"
-        fn_call.args = {"date": "2026-06-17"}
-
-        part               = MagicMock()
-        part.function_call = fn_call
-
-        with patch("agent.trainer_agent.update_gemini_daily_usage"):
-            response = self._make_response([part])
-            result   = self._make_gemini()._parse(response)
-
-        msg = result.choices[0].message
-        assert msg.tool_calls is not None
-        assert msg.tool_calls[0].function.name == "get_daily_steps"
-        args = json.loads(msg.tool_calls[0].function.arguments)
-        assert args["date"] == "2026-06-17"
-
-    def test_function_call_id_generated(self):
-        fn_call      = MagicMock()
-        fn_call.name = "get_body_battery"
-        fn_call.args = {}
-        part               = MagicMock()
-        part.function_call = fn_call
-
-        with patch("agent.trainer_agent.update_gemini_daily_usage"):
-            result = self._make_gemini()._parse(self._make_response([part]))
-
-        assert result.choices[0].message.tool_calls[0].id.startswith("gcall_")
-
-    # --- sin usage_metadata ---
-
-    def test_usage_none_when_no_metadata(self):
-        part = MagicMock(spec=["text", "function_call"])
-        part.text          = "ok"
-        part.function_call = None
-        response = self._make_response([part], usage_metadata=None)
-
-        result = self._make_gemini()._parse(response)
-        assert result.usage is None
 
 
 # ─── _normalize_get_activity_args ───────────────────────────────────────────
@@ -5396,7 +5271,7 @@ class TestMcpFactualDeterministicRoute:
             out = await TrainerAgent.chat(agent, "Que tipo de sesion me recomiendas esta semana?")
 
         assert "403/Forbidden" in out
-        assert "Cambiar de modelo con `/modelo`" in out
+        assert "Cambiar de proveedor o de modelo con `/proveedor`" in out
 
     @pytest.mark.asyncio
     async def test_build_current_week_tss_markdown_includes_type_breakdown_for_queried_week(self, monkeypatch):

@@ -75,7 +75,7 @@ async def _compute(username: str, start: str) -> dict:
         return raw
 
     async with garmin_mcp_session() as session:
-        agent = ta.TrainerAgent(mcp_session=session, provider="nvidia")
+        agent = ta.TrainerAgent(mcp_session=session)
         agent.user_profile = ta._load_user_profile()
         with patch.object(ta, "call_tool", side_effect=_throttled_call_tool), \
              patch.object(ta._storage, "upsert_load_metrics_series", side_effect=lambda r: series.extend(r)), \

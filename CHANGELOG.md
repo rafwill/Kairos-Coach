@@ -4,6 +4,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Changed (proveedor de IA del atleta; fuera los 5 proveedores de prueba)
+- Cambio de foco del usuario: los 5 proveedores (NVIDIA, Gemini, Groq, Mistral, Cerebras) eran para probar Kairos cambiando de modelo; ahora cada atleta usa su propio proveedor. Sustituye al menú de la entrada "modelo elegido por el atleta" de este mismo día.
+- La primera vez Kairos pregunta "¿Cuál es tu proveedor de IA?" (texto libre, sin menú). Si lo conoce (`agent/ia_provider.py`: NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, Cerebras, OpenRouter, DeepSeek) rellena la URL y propone un modelo; si no, pide la URL de su API compatible con OpenAI y el modelo. Después, la clave: se prueba con 1 token y se guarda en `.env` como `<PROVEEDOR>_API_KEY`.
+- Tabla `ia_provider` (sustituye a `gemini_usage`, que se elimina): proveedor, URL, modelo y consumo diario de tokens (90 días) por atleta, con RLS. La clave nunca va a la base de datos. Si la tabla falta, Kairos dice que hay que aplicar `schema.sql` y `rls.sql`.
+- `/modelo` pasa a `/proveedor` (mismas preguntas; con el mismo proveedor, la clave solo se cambia si se pide).
+- Fuera: menú de modelos, `_PROVIDER_INFO`, `_check_env`, cliente nativo de Gemini (`google-genai`; Gemini va por su API compatible con OpenAI), límites diarios por proveedor y avisos de cuota. Se mantiene la renovación de la clave caducada (`LLMAuthError`). `KAIROS_PROVIDER` desaparece; `KAIROS_MODEL` cambia el modelo en una ejecución (batería `--modelo`).
+
 ### Changed (modelo elegido por el atleta, clave en .env)
 - Petición del usuario (productizar Kairos): la primera vez, el atleta elige el modelo en un menú con los cinco proveedores (ya no solo los que tienen clave), Kairos le pide la clave, la prueba con una llamada de 1 token (`probe_llm_key`) y la guarda en `.env` (`set_key`). La elección va a su perfil (`llm.provider`, decisión del usuario: le sigue en cualquier ordenador). Las siguientes veces no hay menú; en otro ordenador sin la clave, solo se pide la clave. `/modelo` cambia y guarda la elección.
 - Clave caducada o revocada: cualquier llamada al LLM que el proveedor rechace marca `llm_auth_failed` y lanza `LLMAuthError` (un `RuntimeError`); la CLI pide la clave nueva, la guarda en `.env` y repite la pregunta. Antes un 401 en la capa de coaching (`openai.AuthenticationError`) no lo capturaba nadie y cerraba la sesión.

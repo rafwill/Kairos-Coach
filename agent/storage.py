@@ -7,10 +7,9 @@ Este módulo usa Supabase como fuente de verdad para:
 - user_profile
 - session_context
 - athlete_knowledge
-- gemini_usage
+- ia_provider
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -770,88 +769,47 @@ def activate_training_plan(plan_id: str, change_reason: str = "activated") -> di
     return plan_row or {}
 
 
-def _key_hash(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
+_IA_TOKENS_DAYS = 90  # días de consumo que se conservan en ia_provider.daily_tokens
 
 
-def get_gemini_daily_usage(api_key: str) -> int:
-    if not api_key:
-        return 0
+def get_ia_provider() -> dict | None:
+    """Proveedor de IA del atleta (26/10): {provider, base_url, model, daily_tokens}; None si aún no lo ha dado."""
     uid = _require_active_user_id()
     sb = _require_supabase()
-    kh = _key_hash(api_key)
-    today = date.today().isoformat()
-    res = (
-        sb.table("gemini_usage")
-        .select("tokens")
-        .eq("app_user_id", uid)
-        .eq("key_hash", kh)
-        .eq("usage_date", today)
-        .limit(1)
-        .execute()
-    )
-    if not res.data:
-        return 0
-    return int(res.data[0].get("tokens", 0) or 0)
+    try:
+        res = sb.table("ia_provider").select("provider, base_url, model, daily_tokens").eq("app_user_id", uid).limit(1).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "ia_provider"):
+            raise RuntimeError("Falta la tabla ia_provider en Supabase: ejecuta supabase/schema.sql y supabase/rls.sql.") from exc
+        raise
+    return res.data[0] if res.data else None
 
 
-def update_gemini_daily_usage(api_key: str, tokens: int) -> int:
-    if not api_key or tokens <= 0:
-        return get_gemini_daily_usage(api_key)
+def save_ia_provider(provider: str, base_url: str, model: str) -> None:
+    """Guarda (o cambia) el proveedor de IA del atleta; el consumo acumulado se conserva."""
     uid = _require_active_user_id()
     sb = _require_supabase()
-    kh = _key_hash(api_key)
-    today = date.today().isoformat()
-    new_total = get_gemini_daily_usage(api_key) + tokens
-    sb.table("gemini_usage").upsert(
-        {
-            "app_user_id": uid,
-            "key_hash": kh,
-            "usage_date": today,
-            "tokens": new_total,
-        }
-    ).execute()
-    return new_total
-
-
-def mark_gemini_quota_exhausted(api_key: str) -> None:
-    if not api_key:
-        return
-    uid = _require_active_user_id()
-    sb = _require_supabase()
-    kh = _key_hash(api_key)
-    today = date.today().isoformat()
-    tokens = max(get_gemini_daily_usage(api_key), 1_000_000)
-    sb.table("gemini_usage").upsert(
-        {
-            "app_user_id": uid,
-            "key_hash": kh,
-            "usage_date": today,
-            "tokens": tokens,
-            "quota_exhausted": True,
-        }
+    sb.table("ia_provider").upsert(
+        {"app_user_id": uid, "provider": provider, "base_url": base_url, "model": model}
     ).execute()
 
 
-def is_gemini_quota_exhausted(api_key: str) -> bool:
-    if not api_key:
-        return False
-    uid = _require_active_user_id()
-    sb = _require_supabase()
-    kh = _key_hash(api_key)
+def add_ia_tokens(tokens: int) -> int:
+    """Suma tokens al consumo de hoy (ia_provider.daily_tokens, fecha ISO → tokens) y devuelve el total del día.
+
+    Sin fila de proveedor no hay dónde apuntar: devuelve 0. Se conservan los últimos _IA_TOKENS_DAYS días.
+    """
+    row = get_ia_provider()
+    if not row or tokens <= 0:
+        return int(((row or {}).get("daily_tokens") or {}).get(date.today().isoformat(), 0) or 0)
     today = date.today().isoformat()
-    res = (
-        sb.table("gemini_usage")
-        .select("quota_exhausted")
-        .eq("app_user_id", uid)
-        .eq("key_hash", kh)
-        .eq("usage_date", today)
-        .limit(1)
-        .execute()
-    )
-    if not res.data:
-        return False
-    return bool(res.data[0].get("quota_exhausted", False))
+    daily = {k: int(v or 0) for k, v in (row.get("daily_tokens") or {}).items()}
+    daily[today] = daily.get(today, 0) + int(tokens)
+    daily = dict(sorted(daily.items())[-_IA_TOKENS_DAYS:])
+    _require_supabase().table("ia_provider").update({"daily_tokens": daily}).eq(
+        "app_user_id", _require_active_user_id()
+    ).execute()
+    return daily[today]
 
 
 def check_supabase_connection() -> dict:

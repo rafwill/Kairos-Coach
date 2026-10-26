@@ -37,7 +37,7 @@ El servidor no importa nada de `agent/` (lo comprueba `test_server_package_does_
 | `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y caché de `load_metrics`. |
 | `session_context` | Historial reciente de conversación y resúmenes de sesión. |
 | `athlete_knowledge` | Base de conocimiento textual del atleta (RAG ligero). |
-| `gemini_usage` | Consumo diario de tokens y estado de cuota. |
+| `ia_provider` | Proveedor de IA del atleta (proveedor, URL compatible con OpenAI, modelo) y consumo diario de tokens. La clave no: va en `.env`. |
 | `training_plan`, `training_plan_session`, `training_plan_version` | Planes, sesiones (`structured_workout`) y snapshots de cada versión. |
 | `activity_tss` | Un TSS por actividad, calculado una vez: `tss`, `model`, anclajes usados y `native_load` (carga de Garmin, informativa). |
 | `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente canónica de todas las pantallas. |
@@ -49,7 +49,7 @@ Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve p
 
 ```
 main.py → run_agent()
-  ├─ login con Supabase Auth (sesión guardada o email + contraseña) y selección de proveedor LLM
+  ├─ login con Supabase Auth (sesión guardada o email + contraseña) y proveedor de IA del atleta (se pregunta la primera vez)
   ├─ MCP propio: python -m garmin_mcp (mismo Python que Kairos)
   │     tokens de Garmin reutilizados en ~/.garminconnect/kairos/<hash del email>
   ├─ TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
@@ -157,5 +157,4 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 - Contraseña de Garmin: cifrada con Fernet (`ENCRYPTION_KEY` del `.env`); `_sanitize_credentials_for_storage` impide guardarla en claro.
 - Solo lectura en Garmin: el MCP propio no expone escrituras y, además, `MCP_READ_ONLY` (activado por defecto) filtra las tools de escritura en `TrainerAgent.initialize()` y las bloquea en el bucle de tool-calls.
 - Tokens de Garmin en `~/.garminconnect/kairos/` (fuera del repo).
-- El identificador de cuota de Gemini usa SHA-256 de la clave.
 - Datos reales del atleta (exports de TP, payloads de Garmin, salidas de la batería) solo en rutas ignoradas por git: `_archivo/`, `fixtures/real_payloads/`, `.tmp/`.

@@ -761,3 +761,46 @@ def test_get_load_metrics_row_returns_day_or_none(monkeypatch):
     row = storage.get_load_metrics_row("2026-10-19")
     assert row["ctl"] == 58.25 and row["atl"] == 40.5
     assert storage.get_load_metrics_row("2026-10-18") is None
+
+
+# ─── ia_provider: proveedor de IA del atleta y consumo diario (26/10) ───────
+
+def test_add_ia_tokens_accumulates_today_and_keeps_90_days(monkeypatch):
+    from datetime import date, timedelta
+
+    today = date.today()
+    old = {(today - timedelta(days=i)).isoformat(): 1 for i in range(1, 95)}
+    fake_sb = _DummySupabase()
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake_sb)
+    monkeypatch.setattr(storage, "get_ia_provider", lambda: {"provider": "nvidia", "daily_tokens": {**old, today.isoformat(): 50}})
+
+    assert storage.add_ia_tokens(25) == 75
+    saved = fake_sb.last_update["daily_tokens"]
+    assert saved[today.isoformat()] == 75 and len(saved) == 90
+    assert min(saved) == (today - timedelta(days=89)).isoformat()
+
+
+def test_add_ia_tokens_without_provider_writes_nothing(monkeypatch):
+    fake_sb = _DummySupabase()
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake_sb)
+    monkeypatch.setattr(storage, "get_ia_provider", lambda: None)
+    assert storage.add_ia_tokens(25) == 0
+    assert fake_sb.last_update is None
+
+
+def test_get_ia_provider_explains_a_missing_table(monkeypatch):
+    import pytest
+
+    class _MissingTable(_DummyTable):
+        def execute(self):
+            raise Exception({"code": "PGRST205", "message": "Could not find the table 'public.ia_provider' in the schema cache"})
+
+    class _Sb(_DummySupabase):
+        def table(self, name):
+            return _MissingTable(self, name)
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_require_supabase", lambda: _Sb())
+    with pytest.raises(RuntimeError, match="schema.sql"):
+        storage.get_ia_provider()

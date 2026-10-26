@@ -19,7 +19,7 @@ alter table app_user              enable row level security;
 alter table user_profile          enable row level security;
 alter table session_context       enable row level security;
 alter table athlete_knowledge     enable row level security;
-alter table gemini_usage          enable row level security;
+alter table ia_provider           enable row level security;
 alter table training_plan         enable row level security;
 alter table training_plan_session enable row level security;
 alter table training_plan_version enable row level security;
@@ -67,8 +67,8 @@ create policy kairos_own_rows on athlete_knowledge for all to authenticated
     using (app_user_id = (select kairos_app_user_id()))
     with check (app_user_id = (select kairos_app_user_id()));
 
-drop policy if exists kairos_own_rows on gemini_usage;
-create policy kairos_own_rows on gemini_usage for all to authenticated
+drop policy if exists kairos_own_rows on ia_provider;
+create policy kairos_own_rows on ia_provider for all to authenticated
     using (app_user_id = (select kairos_app_user_id()))
     with check (app_user_id = (select kairos_app_user_id()));
 

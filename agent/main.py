@@ -104,6 +104,7 @@ except (ImportError, AttributeError, RuntimeError):
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agent import diabetes as _diabetes
+from agent import ia_provider as _ia_provider
 from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import (
     TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile, _session_intensity_label, probe_llm_key,
@@ -116,6 +117,7 @@ from agent.storage import (
     decrypt_password,
     encrypt_password,
     get_active_user,
+    get_ia_provider,
     get_training_plan,
     is_zscaler_network as _detect_zscaler,
     list_training_plans,
@@ -123,6 +125,7 @@ from agent.storage import (
     load_athlete_knowledge,
     restore_session,
     save_athlete_knowledge,
+    save_ia_provider,
     sign_in,
     sign_up,
     update_login_password,
@@ -1142,7 +1145,7 @@ def _show_menu() -> None:
         "[bold]Atajos principales[/]\n"
         "  [bold cyan]/menu[/bold cyan]  [dim](este menú)[/] · "
         "[bold cyan]/perfil[/bold cyan] · [bold cyan]/plan listar[/bold cyan] · "
-        "[bold cyan]/carga[/bold cyan] · [bold cyan]/modelo[/bold cyan] · [bold cyan]salir[/bold cyan]",
+        "[bold cyan]/carga[/bold cyan] · [bold cyan]/proveedor[/bold cyan] · [bold cyan]salir[/bold cyan]",
         title="[bold blue]Kairos Coach — Menú[/]",
         border_style="blue",
     ))
@@ -1167,7 +1170,7 @@ def _show_menu() -> None:
     table.add_row("Plan", "/plan crear", "Crear plan base y activarlo")
     table.add_row("Plan", "/plan activar <id>", "Activar plan por ID")
 
-    table.add_row("Sistema", "/modelo", "Cambiar proveedor/modelo de IA")
+    table.add_row("Sistema", "/proveedor", "Cambiar de proveedor de IA, modelo o clave")
     table.add_row("Sistema", "/ayuda", "Mostrar ayuda extendida")
     table.add_row("Sistema", "salir", "Cerrar sesión")
 
@@ -1201,45 +1204,6 @@ def _format_coach_markdown(response: str) -> str:
 console = Console()
 
 
-def _model_label(name: str, model_env: str, default_model: str) -> str:
-    """Etiqueta del menú con el modelo efectivo (el de .env o el defecto de TrainerAgent)."""
-    return f"{name} ({os.environ.get(model_env) or default_model})"
-
-
-_PROVIDER_INFO = {
-    "groq":     ("GROQ_API_KEY",     _model_label("Groq", "GROQ_MODEL", "llama-3.3-70b-versatile"),            "100k tokens/día"),
-    "gemini":   ("GEMINI_API_KEY",   _model_label("Google Gemini", "GEMINI_MODEL", "gemini-2.0-flash"),         "~1M tokens/día gratis"),
-    "mistral":  ("MISTRAL_API_KEY",  _model_label("Mistral", "MISTRAL_MODEL", "mistral-small-latest"),          "capa gratuita · console.mistral.ai"),
-    "cerebras": ("CEREBRAS_API_KEY", _model_label("Cerebras", "CEREBRAS_MODEL", "llama-3.3-70b"),               "ultrarrápido · gratis · cloud.cerebras.ai"),
-    "nvidia":   ("NVIDIA_API_KEY",   _model_label("NVIDIA NIM", "NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"), "API compatible OpenAI · build.nvidia.com"),
-}
-
-
-def _check_env(provider: str) -> None:
-    """Verifica que las variables obligatorias del proveedor LLM estén definidas."""
-    missing = []
-    env_var, label, _ = _PROVIDER_INFO[provider]
-
-    # Validar token solo si el proveedor lo requiere
-    if env_var and not os.environ.get(env_var):
-        missing.append(env_var)
-        
-    if missing:
-        hints = {
-            "GROQ_API_KEY":     "https://console.groq.com",
-            "GEMINI_API_KEY":   "https://aistudio.google.com  → Get API key",
-            "MISTRAL_API_KEY": "https://console.mistral.ai  → API Keys",
-            "CEREBRAS_API_KEY": "https://cloud.cerebras.ai  → API Keys",
-            "NVIDIA_API_KEY":   "https://build.nvidia.com/explore/discover",
-        }
-        for m in missing:
-            if m in hints:
-                console.print(f"[bold red]Error:[/] Falta [bold]{m}[/] — obtén tu clave gratuita en {hints[m]}")
-            else:
-                console.print(f"[bold red]Error:[/] Falta la variable [bold]{m}[/] en el archivo .env")
-        sys.exit(1)
-
-
 def _check_garmin_env() -> None:
     """Verifica que haya credenciales Garmin cargadas para el usuario activo."""
     missing = [v for v in ("GARMIN_EMAIL", "GARMIN_PASSWORD") if not os.environ.get(v)]
@@ -1249,22 +1213,12 @@ def _check_garmin_env() -> None:
         sys.exit(1)
 
 
-# Valores placeholder que indican que la clave no está configurada
-_PLACEHOLDER_VALUES = {"", "tu_clave_mistral", "tu_clave_gemini", "gsk_...", "AIzaSy_tu_clave_de_gemini", "nvapi-..."}
+# Valores de ejemplo de .env.example: no son una clave.
+_PLACEHOLDER_VALUES = {"", "tu_clave", "nvapi-...", "sk-..."}
 
 
-_KEY_HINTS = {
-    "groq": "https://console.groq.com",
-    "gemini": "https://aistudio.google.com  → Get API key",
-    "mistral": "https://console.mistral.ai  → API Keys",
-    "cerebras": "https://cloud.cerebras.ai  → API Keys",
-    "nvidia": "https://build.nvidia.com/explore/discover",
-}
-_MENU_ORDER = ("nvidia", "gemini", "mistral", "groq", "cerebras")
-
-
-def _has_key(provider: str) -> bool:
-    value = os.environ.get(_PROVIDER_INFO[provider][0], "")
+def _has_key(config: dict) -> bool:
+    value = os.environ.get(_ia_provider.key_env_var(config["provider"]), "")
     return bool(value) and value not in _PLACEHOLDER_VALUES
 
 
@@ -1275,103 +1229,98 @@ def _save_api_key(env_var: str, value: str) -> None:
     os.environ[env_var] = value
 
 
-async def _ask_api_key(provider: str, reason: str) -> None:
+async def _ask_api_key(config: dict, reason: str) -> None:
     """Pide la clave del proveedor, la prueba con una llamada mínima y la guarda en .env (26/10).
 
-    Si el proveedor la rechaza se vuelve a pedir; si no se puede comprobar (red, proxy), se guarda igualmente.
+    Si el proveedor la rechaza se vuelve a pedir; si no se puede comprobar (red, proxy, URL), se guarda igualmente.
     """
-    env_var, label, _ = _PROVIDER_INFO[provider]
+    env_var = _ia_provider.key_env_var(config["provider"])
+    k = _ia_provider.known(config["provider"])
+    where = f"Consigue la clave en {_ia_provider.KNOWN[k][3]}\n" if k else ""
     console.print(Panel.fit(
-        f"{reason}\nConsigue la clave en {_KEY_HINTS[provider]}\n[dim]Se guarda en el .env de este ordenador.[/]",
-        title=f"[bold blue]Kairos Coach — Clave de {label}[/]",
+        f"{reason}\n{where}[dim]Se guarda en el .env de este ordenador ({env_var}), nunca en la base de datos.[/]",
+        title=f"[bold blue]Kairos Coach — Clave de {_ia_provider.label(config)}[/]",
         border_style="blue",
     ))
     while True:
-        key = Prompt.ask(f"  Clave de {label}", password=True).strip()
+        key = Prompt.ask("  Clave (API key)", password=True).strip()
         if not key:
             continue
         os.environ[env_var] = key
-        status, detail = await probe_llm_key(provider)
+        status, detail = await probe_llm_key(config)
         if status == "auth":
             console.print(f"  [red]✗[/] El proveedor rechaza esa clave: {detail}")
             continue
         if status == "error":
             console.print(f"  [yellow]![/] No he podido comprobarla ({detail}); la guardo igualmente.")
         _save_api_key(env_var, key)
-        console.print(f"  [green]✓[/] Clave de {label} guardada.")
+        console.print("  [green]✓[/] Clave guardada.")
         return
 
 
-def _select_provider_menu() -> str:
-    """Menú de modelos: todos los proveedores, marcando los que ya tienen clave en este ordenador."""
-    from agent.storage import is_gemini_quota_exhausted, get_gemini_daily_usage
+def _ask_ia_provider(current: dict | None = None) -> dict:
+    """Pregunta el proveedor de IA del atleta (26/10), sin menú: el nombre y, si Kairos no lo conoce, la URL.
 
-    menu_lines = ["[bold]Elige el modelo de IA:[/]\n"]
-    for i, name in enumerate(_MENU_ORDER, 1):
-        env_var, label, note = _PROVIDER_INFO[name]
-        extra = ""
-        if _has_key(name):
-            api_key = os.environ.get(env_var, "")
-            usage = get_gemini_daily_usage(api_key)
-            if is_gemini_quota_exhausted(api_key):
-                extra = " [dim red](cuota agotada hoy)[/dim red]"
-            elif usage > 0:
-                extra = f" [dim cyan]({usage:,} tokens consumidos hoy)[/dim cyan]"
-            else:
-                extra = " [dim green](clave guardada)[/dim green]"
-        if i == 1:
-            extra += "  [bold]← recomendado[/bold]"
-        menu_lines.append(f"  [green]{i}[/green] · {label}  [dim]({note})[/dim]{extra}")
-
+    Con un proveedor conocido se rellena la URL y se propone un modelo; con otro, se piden la URL de su API
+    compatible con OpenAI y el modelo. Devuelve {provider, base_url, model}.
+    """
+    current = current or {}
     console.print(Panel.fit(
-        "\n".join(menu_lines),
-        title="[bold blue]Kairos Coach — Selección de modelo[/]",
+        "[bold]¿Cuál es tu proveedor de IA?[/]\n"
+        "Kairos usa tu propia cuenta: cualquier proveedor con API compatible con OpenAI\n"
+        "(p. ej. NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro).",
+        title="[bold blue]Kairos Coach — Proveedor de IA[/]",
         border_style="blue",
     ))
-    choices = [str(i) for i in range(1, len(_MENU_ORDER) + 1)]
-    choice = Prompt.ask("  Tu elección", choices=choices, default="1", case_sensitive=False)
-    return _MENU_ORDER[int(choice) - 1]
+    while True:
+        name = Prompt.ask("  Proveedor", default=str(current.get("provider") or "")).strip()
+        if name:
+            break
+    k = _ia_provider.known(name)
+    if k:
+        provider, base_url, default_model = k, _ia_provider.KNOWN[k][1], _ia_provider.KNOWN[k][2]
+    else:
+        provider = name
+        while True:
+            base_url = Prompt.ask("  URL de su API compatible con OpenAI [dim](ej: https://api.ejemplo.com/v1)[/]",
+                                  default=str(current.get("base_url") or "")).strip()
+            if base_url.startswith(("http://", "https://")):
+                break
+            console.print("  [red]✗[/] Tiene que empezar por http:// o https://")
+        default_model = ""
+    if current.get("provider") == provider and current.get("model"):
+        default_model = str(current["model"])
+    while True:
+        model = Prompt.ask("  Modelo", default=default_model).strip()
+        if model:
+            return {"provider": provider, "base_url": base_url, "model": model}
 
 
-def _save_provider_choice(provider: str) -> None:
-    profile = _load_user_profile()
-    profile.setdefault("llm", {})["provider"] = provider
-    _save_user_profile(profile)
+async def _ensure_ia_provider() -> dict:
+    """Proveedor de IA del atleta (26/10): se pregunta la primera vez y queda en ia_provider; la clave, en .env.
 
-
-async def _resolve_provider() -> str:
-    """Modelo del atleta (26/10): se elige una vez y se guarda en su perfil; la clave va en el .env.
-
-    - Primera vez (sin modelo en el perfil): menú, clave si falta, y se guarda la elección.
-    - Siguientes veces: el del perfil, sin menú; si este ordenador no tiene su clave, se pide.
-    - `KAIROS_PROVIDER` en el entorno manda sobre todo y no toca el perfil (batería y pruebas).
+    Siguientes veces, sin preguntas; si este ordenador no tiene la clave, solo se pide la clave.
     """
     console.print("[dim]Detectando entorno de red...[/]")
     on_vpn = _detect_zscaler()
-    override = (os.environ.get("KAIROS_PROVIDER") or "").strip().lower()
-    first_time = False
-    if override in _PROVIDER_INFO:
-        provider = override
-    else:
-        provider = ((_load_user_profile().get("llm") or {}).get("provider") or "").strip().lower()
-        if provider not in _PROVIDER_INFO:
-            provider, first_time = _select_provider_menu(), True
-    if not _has_key(provider):
-        await _ask_api_key(provider, "Necesito la clave de este modelo para empezar." if first_time
-                           else "Este ordenador no tiene la clave de tu modelo.")
+    config = get_ia_provider()
+    first_time = not _ia_provider.is_valid(config)
     if first_time:
-        _save_provider_choice(provider)
+        config = _ask_ia_provider()
+    if not _has_key(config):
+        await _ask_api_key(config, "Necesito tu clave para empezar." if first_time
+                           else "Este ordenador no tiene la clave de tu proveedor de IA.")
+    if first_time:
+        save_ia_provider(config["provider"], config["base_url"], config["model"])
 
-    _, label, note = _PROVIDER_INFO[provider]
     network_line = "🏢  Red corporativa [dim](Zscaler detectado)[/dim]" if on_vpn else "🌐  Sin VPN corporativa"
     console.print(Panel.fit(
         f"{network_line}\n"
-        f"[bold green]Modelo:[/] {label}  [dim](se cambia con /modelo)[/dim]\n"
-        f"[dim]{note}[/dim]",
+        f"[bold green]IA:[/] {_ia_provider.label(config)}  [dim](se cambia con /proveedor)[/dim]",
         title="[bold blue]Kairos Coach — Entorno detectado[/]",
         border_style="blue",
     ))
-    return provider
+    return config
 
 
 def _check_and_migrate_supabase() -> None:
@@ -1392,62 +1341,22 @@ def _check_and_migrate_supabase() -> None:
         sys.exit(1)
 
 
-async def _switch_provider(agent: TrainerAgent, provider: str) -> str:
-    """/modelo: cambia el proveedor del LLM y devuelve el activo (el mismo si se vuelve a elegir).
-
-    La nueva elección se guarda en el perfil del atleta y, si falta, se pide su clave (26/10).
-    """
-    # Mostrar tokens usados para el proveedor que está a punto de desactivarse
-    p_tokens = agent.total_prompt_tokens
-    c_tokens = agent.total_completion_tokens
-    t_tokens = p_tokens + c_tokens
-    old_provider_name = provider.capitalize()
-    _debug_console(f"\n[bold dimgray][debug] Cambiando de modelo. Tokens gastados con {old_provider_name} en esta sesión:[/]")
-    _debug_console(f"[dim dimgray]        - Prompt/Entrada:    {p_tokens:,}[/]")
-    _debug_console(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
-    _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
-
-    # Seleccionar nuevo proveedor
-    new_provider = _select_provider_menu()
-
-    if new_provider == provider:
-        console.print(f"[yellow]El modelo {old_provider_name} ya está activo.[/]")
-        return provider
-
-    # Actualizar el proveedor y reiniciar los tokens de sesión para el nuevo tramo
-    provider = new_provider
-    if not _has_key(provider):
-        await _ask_api_key(provider, "Este ordenador no tiene la clave de ese modelo.")
-    _save_provider_choice(provider)
-    agent.set_provider(provider)
-    agent.total_prompt_tokens = 0
-    agent.total_completion_tokens = 0
-
-    new_provider_name = provider.capitalize()
-    _, label, note = _PROVIDER_INFO[provider]
+async def _switch_provider(agent: TrainerAgent, config: dict) -> dict:
+    """/proveedor: cambia de proveedor de IA, modelo o clave con las mismas preguntas que la primera vez (26/10)."""
+    _debug_console(f"\n[bold dimgray][debug] Tokens de esta sesión con {_ia_provider.label(config)}: "
+                   f"{agent.total_prompt_tokens + agent.total_completion_tokens:,}[/]")
+    new_config = _ask_ia_provider(config)
+    same_provider = new_config["provider"] == config["provider"]
+    if not _has_key(new_config) or (same_provider and Confirm.ask("  ¿Cambiar también la clave?", default=False)):
+        await _ask_api_key(new_config, "Clave de tu proveedor de IA.")
+    save_ia_provider(new_config["provider"], new_config["base_url"], new_config["model"])
+    agent.set_provider(new_config)
     console.print(Panel.fit(
-        f"[bold green]Modelo cambiado con éxito[/]\n"
-        f"Nuevo proveedor: {label}\n"
-        f"[dim]{note}[/dim]",
-        title="[bold blue]Kairos Coach — Cambio de modelo[/]",
+        f"[bold green]Proveedor de IA guardado[/]\n{_ia_provider.label(new_config)}",
+        title="[bold blue]Kairos Coach — Proveedor de IA[/]",
         border_style="green",
     ))
-
-    # Mostrar info de cuota para el nuevo proveedor
-    daily_info = agent.get_daily_usage_info()
-    if daily_info.get("quota_exhausted", False):
-        console.print(
-            f"[bold red][Aviso][/] La API Key de {new_provider_name} está marcada hoy como agotada por límite de cuota.\n"
-            f"[dim dimgray]        - Consumo registrado: {daily_info['today_usage']:,} / {daily_info['limit']:,} tokens hoy.\n"
-            f"        - Tokens disponibles hoy: 0[/]"
-        )
-    else:
-        _debug_console(
-            f"[dim dimgray][debug] Acumulado diario de {new_provider_name}: "
-            f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
-            f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
-        )
-    return provider
+    return new_config
 
 
 def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
@@ -1553,12 +1462,11 @@ async def main() -> None:
     _ensure_garmin_credentials(credentials, app_password=app_password)
     _check_garmin_env()
 
-    provider = await _resolve_provider()
+    provider = await _ensure_ia_provider()
 
-    _, label, note = _PROVIDER_INFO[provider]
     console.print(Panel.fit(
         f"[bold green]Kairos Coach[/] — Tu entrenador personal con IA\n"
-        f"[dim]{label} · {note}[/dim]\n"
+        f"[dim]{_ia_provider.label(provider)}[/dim]\n"
         "[dim]Conectando con Garmin Connect...[/]",
         border_style="green",
     ))
@@ -1708,20 +1616,7 @@ async def main() -> None:
 
         _debug_console("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
         
-        daily_info = agent.get_daily_usage_info()
-        provider_name = provider.capitalize()
-        if daily_info.get("quota_exhausted", False):
-            console.print(
-                f"[bold red][Aviso][/] La API Key de {provider_name} está marcada hoy como agotada por límite de cuota.\n"
-                f"[dim dimgray]        - Consumo registrado: {daily_info['today_usage']:,} / {daily_info['limit']:,} tokens hoy.\n"
-                f"        - Tokens disponibles hoy: 0[/]"
-            )
-        else:
-            _debug_console(
-                f"[dim dimgray][debug] Acumulado diario de {provider_name}: "
-                f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
-                f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
-            )
+        _debug_console(f"[dim dimgray][debug] Tokens consumidos hoy con tu proveedor de IA: {agent.today_ia_tokens():,}[/]")
 
         console.print(Rule("[dim]Escribe tu pregunta · usa [bold]/menu[/bold] para ver opciones · [bold]salir[/bold] para terminar[/]"))
 
@@ -1737,7 +1632,7 @@ async def main() -> None:
             # Comandos especiales
             cmd = user_input.strip().lower()
 
-            if cmd in {"/modelo", "/model"}:
+            if cmd in {"/proveedor", "/provider"}:
                 provider = await _switch_provider(agent, provider)
                 continue
 
@@ -1753,7 +1648,7 @@ async def main() -> None:
                 if getattr(agent, "llm_auth_failed", False):
                     # Clave caducada o revocada (26/10): se pide la nueva, se guarda en .env y se repite la pregunta.
                     del agent.conversation_history[-2:]
-                    await _ask_api_key(provider, f"{_PROVIDER_INFO[provider][1]} ha rechazado tu clave (puede haber caducado).")
+                    await _ask_api_key(provider, f"{_ia_provider.label(provider)} ha rechazado tu clave (puede haber caducado).")
                     agent.set_provider(provider)
                     with console.status("[bold green]Kairos Coach está consultando Garmin y analizando tus datos...[/]"):
                         response = await agent.chat(user_input)
@@ -1783,20 +1678,7 @@ async def main() -> None:
         _debug_console(f"[dim dimgray]        - Completion/Salida: {c_tokens:,}[/]")
         _debug_console(f"[dim dimgray]        - Total acumulado:   {t_tokens:,}[/]")
         
-        daily_info = agent.get_daily_usage_info()
-        provider_name = provider.capitalize()
-        if daily_info.get("quota_exhausted", False):
-            console.print(
-                f"[bold red][Aviso][/] La API Key de {provider_name} ha marcado hoy el límite de cuota agotada.\n"
-                f"[dim dimgray]        - Consumo global hoy: {daily_info['today_usage']:,} / {daily_info['limit']:,} tokens.\n"
-                f"        - Tokens gratuitos hoy: 0[/]"
-            )
-        else:
-            _debug_console(
-                f"[dim dimgray][debug] Acumulado diario de {provider_name} global: "
-                f"{daily_info['today_usage']:,} / {daily_info['limit']:,} tokens gastados hoy. "
-                f"Te quedan {daily_info['remaining']:,} tokens hoy.[/]"
-            )
+        _debug_console(f"[dim dimgray][debug] Tokens consumidos hoy con tu proveedor de IA: {agent.today_ia_tokens():,}[/]")
 
     console.print("\n[dim]Sesión finalizada. ¡Hasta el próximo entrenamiento![/]")
 

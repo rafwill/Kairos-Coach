@@ -24,7 +24,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(ROOT / ".env", encoding="utf-8")
 
 TABLES = (
-    "app_user", "user_profile", "session_context", "athlete_knowledge", "gemini_usage",
+    "app_user", "user_profile", "session_context", "athlete_knowledge", "ia_provider",
     "training_plan", "training_plan_session", "training_plan_version",
     "load_metrics_daily", "activity_tss", "wellness_daily",
 )

@@ -31,8 +31,8 @@ class _Agent:
         self.total_completion_tokens = 5
         self.set_provider = MagicMock()
 
-    def get_daily_usage_info(self):
-        return {"quota_exhausted": False, "today_usage": 100, "limit": 1000, "remaining": 900}
+    def today_ia_tokens(self):
+        return 100
 
 
 # ─── Despacho de comandos ────────────────────────────────────────────────────
@@ -111,41 +111,30 @@ class TestHandleCliCommand:
 
 # ─── /modelo ─────────────────────────────────────────────────────────────────
 
+NVIDIA = {"provider": "nvidia", "base_url": "https://integrate.api.nvidia.com/v1", "model": "nvidia/nemotron-x"}
+GROQ = {"provider": "groq", "base_url": "https://api.groq.com/openai/v1", "model": "llama-3.3-70b-versatile"}
+
+
 class TestSwitchProvider:
-    def test_same_provider_keeps_tokens(self, out):
+    def test_other_provider_without_key_asks_it_and_saves(self, monkeypatch, out):
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
         agent = _Agent()
-        with patch.object(m, "_select_provider_menu", return_value="nvidia"):
-            assert asyncio.run(m._switch_provider(agent, "nvidia")) == "nvidia"
-        agent.set_provider.assert_not_called()
-        assert agent.total_prompt_tokens == 10
-        assert "ya está activo" in out()
+        with patch.object(m, "_ask_ia_provider", return_value=GROQ), patch.object(m, "save_ia_provider") as save, \
+             patch.object(m, "_ask_api_key", new=AsyncMock()) as ask_key:
+            assert asyncio.run(m._switch_provider(agent, NVIDIA)) == GROQ
+        assert ask_key.await_args.args[0] == GROQ
+        save.assert_called_once_with("groq", GROQ["base_url"], GROQ["model"])
+        agent.set_provider.assert_called_once_with(GROQ)
+        assert "Proveedor de IA guardado" in out()
 
-    def test_new_provider_resets_tokens_and_is_saved_in_the_profile(self, monkeypatch, out):
-        monkeypatch.setenv("GROQ_API_KEY", "gsk_real")
-        agent = _Agent()
-        with patch.object(m, "_select_provider_menu", return_value="groq"), \
-             patch.object(m, "_save_provider_choice") as save, patch.object(m, "_ask_api_key", new=AsyncMock()) as ask:
-            assert asyncio.run(m._switch_provider(agent, "nvidia")) == "groq"
-        agent.set_provider.assert_called_once_with("groq")
-        save.assert_called_once_with("groq")
-        ask.assert_not_awaited()
-        assert (agent.total_prompt_tokens, agent.total_completion_tokens) == (0, 0)
-        assert "Modelo cambiado con éxito" in out()
-
-    def test_new_provider_without_key_asks_it(self, monkeypatch, out):
-        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-        with patch.object(m, "_select_provider_menu", return_value="mistral"), \
-             patch.object(m, "_save_provider_choice"), patch.object(m, "_ask_api_key", new=AsyncMock()) as ask:
-            asyncio.run(m._switch_provider(_Agent(), "nvidia"))
-        assert ask.await_args.args[0] == "mistral"
-
-    def test_exhausted_quota_is_reported(self, monkeypatch, out):
-        monkeypatch.setenv("GEMINI_API_KEY", "g")
-        agent = _Agent()
-        agent.get_daily_usage_info = lambda: {"quota_exhausted": True, "today_usage": 1000, "limit": 1000, "remaining": 0}
-        with patch.object(m, "_select_provider_menu", return_value="gemini"), patch.object(m, "_save_provider_choice"):
-            asyncio.run(m._switch_provider(agent, "nvidia"))
-        assert "agotada" in out()
+    def test_same_provider_new_model_keeps_the_key_unless_asked(self, monkeypatch, out):
+        monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-real")
+        new = dict(NVIDIA, model="otro-modelo")
+        with patch.object(m, "_ask_ia_provider", return_value=new), patch.object(m, "save_ia_provider"), \
+             patch.object(m.Confirm, "ask", return_value=False), \
+             patch.object(m, "_ask_api_key", new=AsyncMock()) as ask_key:
+            assert asyncio.run(m._switch_provider(_Agent(), NVIDIA))["model"] == "otro-modelo"
+        ask_key.assert_not_awaited()
 
 
 # ─── Perfil y configuración inicial ─────────────────────────────────────────
@@ -356,45 +345,12 @@ class TestLoadTrend:
 # ─── Arranque: entorno, proveedor, Supabase, Garmin, logging ────────────────
 
 class TestStartupChecks:
-    def test_check_env_exits_without_key(self, monkeypatch, out):
-        monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
-        with pytest.raises(SystemExit):
-            m._check_env("nvidia")
-        assert "NVIDIA_API_KEY" in out()
-
-    def test_check_env_passes_with_key(self, monkeypatch):
-        monkeypatch.setenv("NVIDIA_API_KEY", "k")
-        m._check_env("nvidia")
-
     def test_check_garmin_env(self, monkeypatch, out):
         monkeypatch.delenv("GARMIN_EMAIL", raising=False)
         monkeypatch.setenv("GARMIN_PASSWORD", "x")
         with pytest.raises(SystemExit):
             m._check_garmin_env()
         assert "GARMIN_EMAIL" in out()
-
-    def test_provider_menu_without_keys_still_offers_every_model(self, monkeypatch, out):
-        # 26/10: el atleta elige el modelo y luego pega su clave; ya no hace falta tenerla antes.
-        for var in ("GEMINI_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY", "NVIDIA_API_KEY"):
-            monkeypatch.delenv(var, raising=False)
-        with patch.object(m.Prompt, "ask", return_value="3"):
-            assert m._select_provider_menu() == "mistral"
-        text = out()
-        assert all(name in text for name in ("NVIDIA", "Gemini", "Mistral", "Groq", "Cerebras"))
-        assert "clave guardada" not in text
-
-    def test_provider_menu_marks_saved_keys_and_usage(self, monkeypatch, out):
-        for var in ("GEMINI_API_KEY", "MISTRAL_API_KEY", "CEREBRAS_API_KEY"):
-            monkeypatch.delenv(var, raising=False)
-        monkeypatch.setenv("GROQ_API_KEY", "gsk_real")
-        monkeypatch.setenv("NVIDIA_API_KEY", "nv_real")
-        usage = {"gsk_real": 0, "nv_real": 1234}
-        with patch("agent.storage.get_gemini_daily_usage", side_effect=lambda k: usage[k]), \
-             patch("agent.storage.is_gemini_quota_exhausted", return_value=False), \
-             patch.object(m.Prompt, "ask", return_value="1"):
-            assert m._select_provider_menu() == "nvidia"
-        text = out()
-        assert "recomendado" in text and "1,234 tokens consumidos hoy" in text and "clave guardada" in text
 
     @pytest.mark.parametrize("status, exits", [
         ({"configured": False, "connected": False, "error": None}, True),
@@ -499,8 +455,8 @@ def _run_main(inputs, *, auth_raw='{"displayName": "x"}', is_new=False, kb="kb",
         patch.object(m, "_authenticate_or_register_user", return_value=("r@example.com", {}, is_new, "pw")),
         patch.object(m, "_ensure_garmin_credentials"),
         patch.object(m, "_check_garmin_env"),
-        patch.object(m, "_resolve_provider", AsyncMock(return_value="nvidia")),
-        patch.object(m, "_check_env"),
+        patch.object(m, "_ensure_ia_provider", AsyncMock(return_value=NVIDIA)),
+        patch.object(m, "_detect_zscaler", return_value=False),
         patch.object(m, "garmin_mcp_session", _fake_session),
         patch.object(m, "TrainerAgent", _MainAgent),
         patch("agent.mcp.client.call_tool", AsyncMock(return_value=auth_raw)),
@@ -538,8 +494,8 @@ class TestMainLoop:
         assert "refrescó días recientes" in text and "Sesión finalizada" in text
 
     def test_modelo_switches_provider(self, monkeypatch, out):
-        with patch.object(m, "_switch_provider", AsyncMock(return_value="groq")) as switch:
-            _run_main(["/modelo", "salir"], monkeypatch=monkeypatch, skip_status=True)
+        with patch.object(m, "_switch_provider", AsyncMock(return_value=GROQ)) as switch:
+            _run_main(["/proveedor", "salir"], monkeypatch=monkeypatch, skip_status=True)
         switch.assert_awaited_once()
         assert "Resumen inicial omitido" in out()
 
@@ -558,8 +514,8 @@ class TestMainLoop:
             _run_main(["¿Cómo estoy?", "salir"], monkeypatch=monkeypatch, skip_status=True)
         agent = _MainAgent.instances[0]
         assert agent.calls == ["¿Cómo estoy?", "¿Cómo estoy?"]
-        assert ask_key.await_args.args[0] == "nvidia" and "rechazado tu clave" in ask_key.await_args.args[1]
-        agent.set_provider.assert_called_once_with("nvidia")
+        assert ask_key.await_args.args[0] == NVIDIA and "rechazado tu clave" in ask_key.await_args.args[1]
+        agent.set_provider.assert_called_once_with(NVIDIA)
         assert agent.conversation_history == ["¿Cómo estoy?", "error"]  # el turno fallido se quita
         assert out().count("Respuesta de Kairos") == 1
 

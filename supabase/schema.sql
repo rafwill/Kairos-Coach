@@ -119,16 +119,19 @@ create table if not exists athlete_knowledge (
     updated_at  timestamptz not null default now()
 );
 
--- ─── gemini_usage ───────────────────────────────────────────────────────────
-create table if not exists gemini_usage (
-    app_user_id     text        not null references app_user(id) on delete cascade,
-    key_hash        text        not null,
-    usage_date      date        not null,
-    tokens          integer     not null default 0,
-    quota_exhausted boolean     not null default false,
-    updated_at      timestamptz not null default now(),
-    primary key (app_user_id, key_hash, usage_date)
+-- ─── ia_provider (26/10) ────────────────────────────────────────────────────
+-- Proveedor de IA de cada atleta: el que él diga (URL compatible con OpenAI y modelo) y su consumo diario de
+-- tokens (fecha ISO → tokens, últimos 90 días). La clave NUNCA va aquí: está en el .env de cada ordenador.
+-- Sustituye a gemini_usage (consumo por clave de los 5 proveedores de prueba), que se elimina.
+create table if not exists ia_provider (
+    app_user_id  text        primary key references app_user(id) on delete cascade,
+    provider     text        not null,
+    base_url     text        not null,
+    model        text        not null,
+    daily_tokens jsonb       not null default '{}'::jsonb,
+    updated_at   timestamptz not null default now()
 );
+drop table if exists gemini_usage;
 
 -- ─── training_plan (fuente de verdad de planes) ────────────────────────────
 create table if not exists training_plan (
@@ -277,9 +280,9 @@ create trigger trg_app_user_updated_at
     before update on app_user
     for each row execute function _set_updated_at();
 
-drop trigger if exists trg_gemini_usage_updated_at on gemini_usage;
-create trigger trg_gemini_usage_updated_at
-    before update on gemini_usage
+drop trigger if exists trg_ia_provider_updated_at on ia_provider;
+create trigger trg_ia_provider_updated_at
+    before update on ia_provider
     for each row execute function _set_updated_at();
 
 drop trigger if exists trg_training_plan_updated_at on training_plan;

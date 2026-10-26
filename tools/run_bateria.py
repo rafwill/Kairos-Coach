@@ -3,11 +3,10 @@
 Uso:
     python tools/run_bateria.py [--preguntas docs/bateria_p55_preguntas_base.txt]
                                 [--salida .tmp/bateria/<fecha>] [--modelo nvidia/...]
-                                [--username U] [--proveedor nvidia]
+                                [--username U]
 
 - Usuario: --username o KAIROS_USERNAME del .env (nunca escrito en el código).
-- Proveedor: KAIROS_PROVIDER para esta pasada (sin menú y sin tocar el modelo guardado en el perfil; 26/10).
-  --modelo fija NVIDIA_MODEL solo para esta pasada.
+- IA: la del atleta (tabla ia_provider; 26/10). --modelo cambia el modelo solo para esta pasada (KAIROS_MODEL).
 - Envía las preguntas de una en una y mide desde el envío hasta que Kairos vuelve a pedir entrada.
 - Genera <salida>.log (crudo), <salida>.md (transcripción limpia) y <salida>.json (tiempos).
   Las salidas contienen datos reales del atleta: .tmp/ está en .gitignore.
@@ -62,12 +61,11 @@ def clean(block: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out).strip())
 
 
-def run(questions: list[str], username: str, provider: str, model: str | None) -> tuple[str, float, list[dict]]:
+def run(questions: list[str], username: str, model: str | None) -> tuple[str, float, list[dict]]:
     env = os.environ.copy()
     env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1", "COLUMNS": "110", "TERM": "dumb"})
-    env["KAIROS_PROVIDER"] = provider
     if model:
-        env["NVIDIA_MODEL"] = model
+        env["KAIROS_MODEL"] = model
     python = ROOT / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
     proc = subprocess.Popen([str(python if python.exists() else sys.executable), "-u", "-m", "agent.main"], cwd=str(ROOT),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -123,9 +121,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--preguntas", default=str(ROOT / "docs/bateria_p55_preguntas_base.txt"))
     ap.add_argument("--salida", default=str(ROOT / ".tmp/bateria" / datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")))
-    ap.add_argument("--modelo", default=None, help="NVIDIA_MODEL para esta pasada (por defecto, el del .env)")
+    ap.add_argument("--modelo", default=None, help="modelo para esta pasada (por defecto, el del proveedor de IA del atleta)")
     ap.add_argument("--username", default=None)
-    ap.add_argument("--proveedor", default="nvidia", help="KAIROS_PROVIDER de esta pasada (nvidia, gemini, mistral, groq, cerebras)")
     args = ap.parse_args()
 
     username = args.username or load_env(ROOT / ".env").get("KAIROS_USERNAME") or os.environ.get("KAIROS_USERNAME")
@@ -135,10 +132,10 @@ def main() -> int:
     base = Path(args.salida)
     base.parent.mkdir(parents=True, exist_ok=True)
 
-    raw, startup_s, timings = run(questions, username, args.proveedor, args.modelo)
+    raw, startup_s, timings = run(questions, username, args.modelo)
     base.with_suffix(".log").write_text(raw, encoding="utf-8")
     answers = raw.split(PROMPT)[1:]
-    label = args.modelo or "modelo del .env"
+    label = args.modelo or "modelo del atleta (ia_provider)"
     md = [f"# Batería Kairos — {label} ({len(questions)} preguntas)\n"]
     for i, q in enumerate(questions):
         ans = clean(answers[i]) if i < len(answers) else "(sin respuesta)"

@@ -21,6 +21,7 @@ from mcp import ClientSession
 
 from agent import sensors as _sensors
 from agent import diabetes as _diabetes
+from agent import ia_provider as _ia_provider
 from agent.sensors import strip_simulated_user_turn as _strip_simulated_user_turn
 from agent.mcp.client import (
     list_available_tools,
@@ -105,19 +106,12 @@ def _strip_previous_reply(summary: str) -> str:
     return re.sub(r"\s*Última respuesta:.*\Z", "", summary, flags=re.DOTALL).strip()
 
 
-def get_gemini_daily_usage(api_key: str) -> int:
-    """Obtiene los tokens consumidos hoy para una API key específica."""
-    return _storage.get_gemini_daily_usage(api_key)
-
-
-def update_gemini_daily_usage(api_key: str, tokens: int) -> int:
-    """Actualiza y devuelve los tokens acumulados hoy para una API key específica."""
-    return _storage.update_gemini_daily_usage(api_key, tokens)
-
-
-def mark_gemini_quota_exhausted(api_key: str) -> None:
-    """Marca la API key específica como agotada por cuota para el día de hoy."""
-    _storage.mark_gemini_quota_exhausted(api_key)
+def _add_ia_tokens(tokens: int) -> None:
+    """Suma el consumo de una llamada al LLM en ia_provider (26/10). Un fallo al apuntarlo nunca corta el chat."""
+    try:
+        _storage.add_ia_tokens(tokens)
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+        log.debug("No se pudo apuntar el consumo de tokens: %s", exc)
 
 
 # Herramientas esenciales para el agente entrenador
@@ -3529,7 +3523,7 @@ def _build_config_options_markdown() -> str:
             "Sistema:",
             "- `/menu`: abrir menú resumido.",
             "- `/ayuda`: ver ayuda completa y ejemplos.",
-            "- `/modelo`: cambiar proveedor/modelo.",
+            "- `/proveedor`: cambiar de proveedor de IA, modelo o clave.",
             "- `salir`: cerrar sesión.",
             "",
             "## ✅ Recomendación",
@@ -8218,267 +8212,6 @@ def _normalize_trend_date_range(tool_name: str, arguments: dict) -> dict:
     return args
 
 
-# ─── Cliente Gemini (SDK oficial google-genai, soporta claves AQ.) ────────────
-
-def _get_field(obj, key):
-    """Accede a un campo tanto si obj es dict como si es objeto."""
-    if isinstance(obj, dict):
-        return obj.get(key)
-    return getattr(obj, key, None)
-
-
-class _GFnCall:
-    __slots__ = ("name", "arguments")
-
-    def __init__(self, name: str, arguments: str):
-        self.name = name
-        self.arguments = arguments
-
-
-class _GToolCall:
-    __slots__ = ("id", "function", "type")
-
-    def __init__(self, call_id: str, fn: _GFnCall):
-        self.id = call_id
-        self.function = fn
-        self.type = "function"
-
-
-class _GMessage:
-    __slots__ = ("role", "content", "tool_calls")
-
-    def __init__(self, role: str, content, tool_calls=None):
-        self.role = role
-        self.content = content
-        self.tool_calls = tool_calls
-
-
-class _GChoice:
-    __slots__ = ("message", "finish_reason")
-
-    def __init__(self, message: _GMessage, finish_reason: str):
-        self.message = message
-        self.finish_reason = finish_reason
-
-
-class _GUsage:
-    __slots__ = ("prompt_tokens", "completion_tokens", "total_tokens")
-
-    def __init__(self, prompt_tokens: int, completion_tokens: int, total_tokens: int):
-        self.prompt_tokens = prompt_tokens
-        self.completion_tokens = completion_tokens
-        self.total_tokens = total_tokens
-
-
-class _GResponse:
-    __slots__ = ("choices", "usage")
-
-    def __init__(self, choices, usage=None):
-        self.choices = choices
-        self.usage = usage
-
-
-_GEMINI_SCHEMA_ALLOWED = {"type", "description", "properties", "required", "enum", "items", "nullable", "format"}
-
-
-def _clean_schema_for_gemini(schema: dict) -> dict:
-    """Limpia recursivamente un JSON Schema para que sea compatible con Gemini SDK.
-    El SDK solo acepta: type, description, properties, required, enum, items, nullable, format.
-    Todo lo demás (exclusiveMinimum, additionalProperties, $schema, etc.) causa ValidationError.
-    """
-    clean: dict = {}
-    for k, v in schema.items():
-        if k not in _GEMINI_SCHEMA_ALLOWED:
-            continue
-        if k == "properties" and isinstance(v, dict):
-            clean[k] = {pk: _clean_schema_for_gemini(pv) if isinstance(pv, dict) else pv
-                        for pk, pv in v.items()}
-        elif k == "items" and isinstance(v, dict):
-            clean[k] = _clean_schema_for_gemini(v)
-        else:
-            clean[k] = v
-    return clean
-
-
-class _GeminiCompletions:
-    def __init__(self, api_key: str):
-        from google import genai as _g
-        from google.genai import types as _t
-        self._T = _t
-        self._api_key = api_key
-        self._client = _g.Client(api_key=api_key)
-
-    async def create(self, *, model, messages, tools=None, tool_choice=None, **_kw):
-        T = self._T
-        system_instruction = None
-        contents = []
-        id_to_name: dict[str, str] = {}
-
-        for msg in messages:
-            role = _get_field(msg, "role")
-            content_text = _get_field(msg, "content") or ""
-
-            if role == "system":
-                system_instruction = content_text
-
-            elif role == "user":
-                contents.append(T.Content(
-                    role="user",
-                    parts=[T.Part(text=content_text)]
-                ))
-
-            elif role == "tool":
-                tc_id = _get_field(msg, "tool_call_id") or ""
-                fn_name = id_to_name.get(tc_id, "unknown_tool")
-                contents.append(T.Content(
-                    role="user",
-                    parts=[T.Part(function_response=T.FunctionResponse(
-                        name=fn_name,
-                        response={"output": content_text},
-                    ))]
-                ))
-
-            elif role in ("assistant", "model"):
-                tcs = _get_field(msg, "tool_calls")
-                if tcs:
-                    parts = []
-                    for tc in tcs:
-                        if isinstance(tc, dict):
-                            tc_id = tc.get("id", "")
-                            fn_d = tc.get("function", {})
-                            fn_name = fn_d.get("name", "") if isinstance(fn_d, dict) else getattr(fn_d, "name", "")
-                            fn_args_raw = fn_d.get("arguments", "{}") if isinstance(fn_d, dict) else getattr(fn_d, "arguments", "{}")
-                        else:
-                            tc_id = getattr(tc, "id", "")
-                            fn_obj = getattr(tc, "function", None)
-                            fn_name = getattr(fn_obj, "name", "") if fn_obj else ""
-                            fn_args_raw = getattr(fn_obj, "arguments", "{}") if fn_obj else "{}"
-                        try:
-                            fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else (fn_args_raw or {})
-                        except (json.JSONDecodeError, TypeError):
-                            fn_args = {}
-                        id_to_name[tc_id] = fn_name
-                        parts.append(T.Part(function_call=T.FunctionCall(
-                            name=fn_name,
-                            args=fn_args or {},
-                        )))
-                    contents.append(T.Content(role="model", parts=parts))
-                elif content_text:
-                    contents.append(T.Content(
-                        role="model",
-                        parts=[T.Part(text=content_text)]
-                    ))
-
-        cfg_kwargs: dict = {}
-        if system_instruction:
-            cfg_kwargs["system_instruction"] = system_instruction
-        if tools:
-            fn_decls = []
-            for t in tools:
-                fn = t["function"] if isinstance(t, dict) else t
-                params = fn.get("parameters") or {"type": "object", "properties": {}}
-                params = _clean_schema_for_gemini(params)
-                fn_decls.append(T.FunctionDeclaration(
-                    name=fn["name"],
-                    description=fn.get("description", ""),
-                    parameters=params,
-                ))
-            cfg_kwargs["tools"] = [T.Tool(function_declarations=fn_decls)]
-            cfg_kwargs["tool_config"] = T.ToolConfig(
-                function_calling_config=T.FunctionCallingConfig(mode="AUTO")
-            )
-
-        attempts = 8
-        delay = 2.0
-        for attempt in range(attempts):
-            try:
-                response = await self._client.aio.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=T.GenerateContentConfig(**cfg_kwargs) if cfg_kwargs else None,
-                )
-                break
-            except Exception as e:
-                err_msg = str(e)
-                
-                # Detectar limite de cuota de la cuenta/API key (RESOURCE_EXHAUSTED / quota exceeded)
-                is_quota_exhausted = "RESOURCE_EXHAUSTED" in err_msg or (
-                    "quota" in err_msg.lower() and "rate" not in err_msg.lower()
-                )
-                if is_quota_exhausted:
-                    # Guardar que la clave se ha quedado sin cuota hoy para mostrarlo coherentemente al inicio
-                    mark_gemini_quota_exhausted(self._api_key)
-                    raise Exception(
-                        f"La API Key de Gemini ha agotado tu cuota diaria o mensual gratuita (429 RESOURCE_EXHAUSTED).\n"
-                        f"Detalle de Google: '{err_msg}'.\n"
-                        f"Por favor, revisa tus límites en Google AI Studio (https://aistudio.google.com) o genera otra clave gratuita."
-                    ) from e
-                
-                # 503 (Unavailable) o 429 (Rate limit por RPM) son comunes; reintentar con backoff
-                is_transient = "503" in err_msg or "429" in err_msg or "UNAVAILABLE" in err_msg
-                if is_transient and attempt < attempts - 1:
-                    current_delay = delay
-                    if "Please retry in" in err_msg:
-                        try:
-                            # Intentar extraer los segundos para esperar exactamente lo que pide
-                            parts = err_msg.split("Please retry in")
-                            sec_str = parts[1].strip().split("s")[0].strip()
-                            current_delay = float(sec_str) + 1.0
-                        except (IndexError, ValueError):
-                            pass
-                    log.debug(f"Gemini ocupado ({e}). Reintentando en {current_delay:.1f}s...")
-                    await asyncio.sleep(current_delay)
-                    delay *= 2
-                else:
-                    raise
-
-        return self._parse(response)
-
-    def _parse(self, response) -> _GResponse:
-        candidate = response.candidates[0]
-        parts = candidate.content.parts
-
-        fn_calls = [
-            p.function_call for p in parts
-            if getattr(p, "function_call", None) and getattr(p.function_call, "name", None)
-        ]
-        if fn_calls:
-            tool_calls = [
-                _GToolCall(
-                    call_id=f"gcall_{i}",
-                    fn=_GFnCall(
-                        name=fc.name,
-                        arguments=json.dumps(dict(fc.args) if fc.args else {}),
-                    ),
-                )
-                for i, fc in enumerate(fn_calls)
-            ]
-            msg = _GMessage(role="assistant", content=None, tool_calls=tool_calls)
-        else:
-            text = "".join(getattr(p, "text", "") or "" for p in parts)
-            msg = _GMessage(role="assistant", content=text, tool_calls=None)
-
-        usage = None
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            meta = response.usage_metadata
-            p_tokens = getattr(meta, "prompt_token_count", 0) or 0
-            c_tokens = getattr(meta, "candidates_token_count", 0) or 0
-            t_tokens = getattr(meta, "total_token_count", 0) or 0
-            usage = _GUsage(prompt_tokens=p_tokens, completion_tokens=c_tokens, total_tokens=t_tokens)
-
-        return _GResponse(choices=[_GChoice(message=msg, finish_reason="stop")], usage=usage)
-
-
-class _GeminiChat:
-    def __init__(self, api_key: str):
-        self.completions = _GeminiCompletions(api_key)
-
-
-class _GeminiClient:
-    def __init__(self, api_key: str):
-        self.chat = _GeminiChat(api_key)
-
-
 # ─── Proveedores de LLM y su clave ──────────────────────────────────────────
 
 class LLMAuthError(RuntimeError):
@@ -8497,34 +8230,24 @@ def _is_llm_auth_error(exc: BaseException) -> bool:
     return getattr(exc, "status_code", None) == 401 or bool(_LLM_AUTH_ERROR.search(str(exc)))
 
 
-# proveedor → (variable de la clave, URL de la API compatible con OpenAI, variable del modelo, modelo por defecto)
-_LLM_PROVIDERS = {
-    "groq": ("GROQ_API_KEY", "https://api.groq.com/openai/v1", "GROQ_MODEL", "llama-3.3-70b-versatile"),
-    "gemini": ("GEMINI_API_KEY", None, "GEMINI_MODEL", "gemini-2.0-flash"),  # API nativa (x-goog-api-key)
-    "mistral": ("MISTRAL_API_KEY", "https://api.mistral.ai/v1", "MISTRAL_MODEL", "mistral-small-latest"),
-    "cerebras": ("CEREBRAS_API_KEY", "https://api.cerebras.ai/v1", "CEREBRAS_MODEL", "llama-3.3-70b"),
-    "nvidia": ("NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1", "NVIDIA_MODEL",
-               "nvidia/nemotron-3.5-lightning-30b-a3b"),
-}
+def _build_llm_client(config: dict) -> tuple[Any, str, str]:
+    """Cliente, modelo y clave del proveedor del atleta (26/10): cualquier API compatible con OpenAI.
+
+    `config` = fila de ia_provider (provider, base_url, model); la clave sale del .env (`<PROVEEDOR>_API_KEY`).
+    `KAIROS_MODEL` cambia el modelo solo para esta ejecución (batería con --modelo).
+    """
+    api_key = os.environ[_ia_provider.key_env_var(config["provider"])]
+    client = AsyncOpenAI(base_url=config["base_url"], api_key=api_key)
+    return client, os.environ.get("KAIROS_MODEL") or config["model"], api_key
 
 
-def _build_llm_client(provider: str) -> tuple[Any, str, str]:
-    """Cliente, modelo y clave del proveedor, con la clave de os.environ (.env)."""
-    if provider not in _LLM_PROVIDERS:
-        raise ValueError(f"Proveedor desconocido: '{provider}'. Opciones válidas: {', '.join(_LLM_PROVIDERS)}.")
-    key_var, base_url, model_var, default_model = _LLM_PROVIDERS[provider]
-    api_key = os.environ[key_var]
-    client = _GeminiClient(api_key=api_key) if base_url is None else AsyncOpenAI(base_url=base_url, api_key=api_key)
-    return client, os.environ.get(model_var, default_model), api_key
-
-
-async def probe_llm_key(provider: str) -> tuple[str, str]:
+async def probe_llm_key(config: dict) -> tuple[str, str]:
     """Prueba la clave con una llamada mínima (1 token): ("ok", ""), ("auth", motivo) o ("error", motivo).
 
-    "error" es todo lo que no es la clave (red, proxy, modelo): no se puede saber si la clave vale.
+    "error" es todo lo que no es la clave (red, proxy, URL o modelo): no se puede saber si la clave vale.
     """
     try:
-        client, model, _ = _build_llm_client(provider)
+        client, model, _ = _build_llm_client(config)
         await asyncio.wait_for(
             client.chat.completions.create(model=model, messages=[{"role": "user", "content": "ok"}], max_tokens=1),
             timeout=30,
@@ -10254,9 +9977,10 @@ class TrainerAgent:
     # Preguntas del usuario en la sesión anterior (se rellena en initialize); tupla: no se comparte mutable.
     previous_session_questions: tuple[str, ...] = ()
 
-    def __init__(self, mcp_session: ClientSession, provider: str = "nvidia"):
+    def __init__(self, mcp_session: ClientSession, provider: dict | None = None):
         self.mcp_session = mcp_session
-        self.set_provider(provider)
+        # Proveedor de IA del atleta (fila de ia_provider); sin él, el de la base de datos.
+        self.set_provider(provider or _storage.get_ia_provider() or {})
         self.system_prompt = _load_system_prompt()
         self.user_profile = _load_user_profile()
         self.conversation_history: list[dict] = []
@@ -10276,10 +10000,13 @@ class TrainerAgent:
         self.total_completion_tokens = 0
         self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
 
-    def set_provider(self, provider: str) -> None:
-        """Configura o cambia el proveedor de LLM actual."""
-        self.provider = provider
-        self.client, self.model, self._api_key = _build_llm_client(provider)
+    def set_provider(self, config: dict) -> None:
+        """Configura o cambia el proveedor de IA (fila de ia_provider: provider, base_url, model)."""
+        if not _ia_provider.is_valid(config):
+            raise ValueError("Falta el proveedor de IA del atleta (provider, base_url y model): entra en Kairos para darlo.")
+        self.provider_config = dict(config)
+        self.provider = str(config["provider"])
+        self.client, self.model, self._api_key = _build_llm_client(config)
         self._watch_llm_auth()
 
         # Variables para tracking de tokens de la sesión
@@ -11760,29 +11487,14 @@ class TrainerAgent:
             "startup_48h": startup,
         }
 
-    def get_daily_usage_info(self) -> dict:
-        """Devuelve información sobre el uso diario de tokens del proveedor actual."""
-        api_key = getattr(self, "_api_key", "")
-        today_usage = get_gemini_daily_usage(api_key) if api_key else 0
-        is_exhausted = _storage.is_gemini_quota_exhausted(api_key) if api_key else False
-
-        # Límites diarios de tokens definidos por defecto o por estimación razonable
-        limits = {
-            "gemini": 1_000_000,
-            "groq": 100_000,
-            "mistral": 10_000_000,  # Capa gratuita muy generosa
-            "cerebras": 1_000_000,
-            "nvidia": 1_000_000      # Límite por defecto, NVIDIA usa rate limits
-        }
-        limit = limits.get(self.provider, 1_000_000)
-
-        return {
-            "today_usage":     today_usage,
-            "limit":           limit,
-            "remaining":       max(0, limit - today_usage),
-            "has_key":         bool(api_key),
-            "quota_exhausted": is_exhausted or (today_usage >= limit if limit else False),
-        }
+    def today_ia_tokens(self) -> int:
+        """Tokens consumidos hoy con el proveedor de IA del atleta (ia_provider); 0 si no se pueden leer."""
+        try:
+            row = _storage.get_ia_provider() or {}
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            log.debug("No se pudo leer el consumo de tokens: %s", exc)
+            return 0
+        return int((row.get("daily_tokens") or {}).get(date.today().isoformat(), 0) or 0)
 
     def _profile_context_block(self) -> str:
         """Bloque "Perfil del usuario" (datos personales, objetivo y salud) para cualquier prompt.
@@ -12074,8 +11786,7 @@ class TrainerAgent:
                 c_toks = getattr(response.usage, "completion_tokens", 0) or 0
                 self.total_prompt_tokens += p_toks
                 self.total_completion_tokens += c_toks
-                if getattr(self, "_api_key", None):
-                    update_gemini_daily_usage(self._api_key, p_toks + c_toks)
+                _add_ia_tokens(p_toks + c_toks)
             fixed = _strip_simulated_user_turn(str(response.choices[0].message.content or "").strip())
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, KeyError, IndexError) as exc:
             self._log_chat_error(stage=f"sensor_retry_{kind}", error=exc)
@@ -12170,8 +11881,7 @@ class TrainerAgent:
                 c_toks = getattr(u, "completion_tokens", 0) or 0
                 self.total_prompt_tokens += p_toks
                 self.total_completion_tokens += c_toks
-                if getattr(self, "_api_key", None):
-                    update_gemini_daily_usage(self._api_key, p_toks + c_toks)
+                _add_ia_tokens(p_toks + c_toks)
 
             coaching_text = _strip_simulated_user_turn(
                 str((coaching_response.choices[0].message.content or "")).strip()
@@ -12932,7 +12642,7 @@ class TrainerAgent:
                     "Prueba una de estas opciones:\n"
                     "- Reintentar la consulta\n"
                     "- Hacer una pregunta más concreta\n"
-                    "- Cambiar de modelo con `/modelo`"
+                    "- Cambiar de proveedor o de modelo con `/proveedor`"
                 )
                 return await self._finalize_chat_reply(user_message, timeout_msg, route="llm_timeout")
             except Exception as api_exc:
@@ -12942,31 +12652,20 @@ class TrainerAgent:
                     error=api_exc,
                     extra={"user_message": user_message},
                 )
-                
-                # Detectar si la clave ha agotado recursos o cuota y marcarlo en la BBDD
-                is_quota_exhausted = (
-                    "RESOURCE_EXHAUSTED" in err_str
-                    or "quota_exceeded" in err_str
-                    or "insufficient_quota" in err_str
-                    or "limit_exceeded" in err_str
-                    or ("quota" in err_str.lower() and "rate" not in err_str.lower())
-                )
-                if is_quota_exhausted and getattr(self, "_api_key", None):
-                    mark_gemini_quota_exhausted(self._api_key)
-                
+
                 if "413" in err_str or "tokens_limit_reached" in err_str or "Request body too large" in err_str:
                     msg = (
                         "La consulta es demasiado extensa para el modelo actual (límite de tokens del proveedor).\n\n"
                         "Prueba con una de estas opciones:\n"
                         "- Haz una pregunta más específica y acotada (ej: *¿Cómo estoy hoy?* en lugar de *analiza 8 semanas*)\n"
                         "- Divide el análisis en pasos: primero métricas de hoy, luego tendencias, luego plan\n"
-                        "- Si no estás en red corporativa, reinicia el agente o usa /modelo para cambiar a un modelo con contexto más grande (como Gemini)"
+                        "- Si no estás en red corporativa, reinicia el agente o usa /proveedor para cambiar a un modelo con contexto más grande"
                     )
                     return await self._finalize_chat_reply(user_message, msg, route="llm_request_too_large")
                 if "410" in err_str or "end of life" in err_str.lower() or "no longer available" in err_str.lower():
                     msg = (
                         f"El modelo `{self.model}` ha llegado a su fin de vida y ya no está disponible.\n\n"
-                        "Reinicia Kairos y elige otro modelo con `/modelo`, o actualiza `NVIDIA_MODEL` en tu `.env`."
+                        "Elige otro modelo con `/proveedor`."
                     )
                     return await self._finalize_chat_reply(user_message, msg, route="llm_model_eol")
                 if (
@@ -12978,7 +12677,7 @@ class TrainerAgent:
                     msg = (
                         "El proveedor del modelo rechazó la petición (403/Forbidden), probablemente por red corporativa o política del proxy.\n\n"
                         "Prueba una de estas opciones:\n"
-                        "- Cambiar de modelo con `/modelo` (por ejemplo, NVIDIA o Groq)\n"
+                        "- Cambiar de proveedor o de modelo con `/proveedor`\n"
                         "- Reintentar desde una red sin bloqueo del proveedor actual\n"
                         "- Hacer una consulta factual de ruta determinista mientras tanto"
                     )
@@ -12994,8 +12693,7 @@ class TrainerAgent:
                 self.total_completion_tokens += c_toks
                 total_step_tokens = p_toks + c_toks
                 log.debug(f"Tokens - Entrada: {p_toks} | Salida: {c_toks} | Total paso: {total_step_tokens}")
-                if getattr(self, "_api_key", None):
-                    update_gemini_daily_usage(self._api_key, total_step_tokens)
+                _add_ia_tokens(total_step_tokens)
 
             message = response.choices[0].message
 
@@ -13285,8 +12983,7 @@ class TrainerAgent:
                         c_toks = getattr(u, "completion_tokens", 0) or 0
                         self.total_prompt_tokens += p_toks
                         self.total_completion_tokens += c_toks
-                        if getattr(self, "_api_key", None):
-                            update_gemini_daily_usage(self._api_key, p_toks + c_toks)
+                        _add_ia_tokens(p_toks + c_toks)
                     rescue_text = str((rescue_response.choices[0].message.content or "")).strip()
                     rescue_text = await self._apply_output_sensors(rescue_text, rescue_messages, "rescue")
                     if rescue_text:
