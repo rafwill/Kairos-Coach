@@ -2,6 +2,12 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-26
+
+### Fixed (sensor S10: marca de progresivo detrás del rango)
+- `_progressive_range_ok` solo buscaba la marca de progresivo y el "de Zx a Zy" antes del rango. Batería del 26/10 (ordenador 2), pregunta 9: "3×2000 m Z3–Z4 (146–168 lpm, progresivo de Z3 a Z4)" daba S10 aunque el rango es justo Z3 + Z4 (24/25). Ahora también cuenta lo que va detrás del rango en su misma frase o paréntesis (hasta ")", ";", ". " o el salto de línea); si ahí hay marca y "de Zx a Zy", mandan esas zonas. Una marca en otra frase no vale.
+- Criterio fijado antes: pasa ese caso, los tests de S10 siguen en verde y en las respuestas guardadas solo desaparecen avisos que son falsos positivos de este tipo. En este ordenador solo hay la batería del 26/10 (la del 23/10 tiene las respuestas vacías): 25/25. El repaso de las baterías guardadas en el ordenador 1 queda pendiente. Tests: 729.
+
 ## 2026-10-25
 
 ### Added (sueño: una noche concreta y tendencias)

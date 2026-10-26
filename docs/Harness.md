@@ -91,7 +91,7 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 | --- | --- | --- | --- | --- | --- |
 | S8 | Turnos de usuario inventados | Computacional | Corrige (los recorta) | `strip_simulated_user_turn` (`agent/sensors.py`) | ✓ |
 | S9 | Plan generado válido (sesiones, duraciones, progresión) | Computacional | Bloquea el plan | `_validate_structured_plan` | ✓ |
-| S10 | Cada rango de FC cabe en una zona de Garmin (Z1–Z2 en rodaje suave; progresivos "de Zx a Zy") | Computacional | Reintenta | `find_hr_ranges_outside_zones` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
+| S10 | Cada rango de FC cabe en una zona de Garmin (Z1–Z2 en rodaje suave; progresivos "de Zx a Zy", con la marca antes del rango o detrás en su misma frase) | Computacional | Reintenta | `find_hr_ranges_outside_zones` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
 | S11 | Un ritmo citado como umbral es el vigente en la fecha | Computacional | Reintenta | `find_wrong_threshold_pace` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
 | S12 | No atribuye a la CTL el máximo habitual de la ATL | Computacional | Reintenta | `find_ctl_with_atl_max` (`agent/sensors.py`); juez y Kairos en vivo | ✓ |
 | S13 | Fechas DD/MM/AAAA, nunca ISO; tampoco el marcador "datos disponibles" sin valor (G4) | Computacional | Corrige | `find_iso_dates`, `find_empty_data_lines` (`agent/sensors.py`); juez (G3, G4) y Kairos en vivo (fechas: corrige; marcador vacío: reintenta) | ✓ |

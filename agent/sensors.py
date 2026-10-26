@@ -146,11 +146,17 @@ _PROGRESSIVE = re.compile(r"(?i)calent|vuelta a la calma|enfr|progresiv")
 _ZONE_SPAN = re.compile(r"(?i)\bZ([1-5])\s*(?:[–\-→]|\ba\b|hasta)\s*Z([1-5])\b")
 
 
-def _progressive_range_ok(before: str, lo: int, hi: int, zones: Zones) -> bool:
+def _progressive_range_ok(before: str, after: str, lo: int, hi: int, zones: Zones) -> bool:
     """Tramo progresivo (criterio del 23/10): misma línea, marcado como progresivo y con "de Zx a Zy";
-    la FC de inicio cae en la zona más baja nombrada y la de fin en la más alta."""
+    la FC de inicio cae en la zona más baja nombrada y la de fin en la más alta.
+
+    La marca puede ir detrás del rango, en su misma frase o paréntesis ("Z3–Z4 (146–168 lpm, progresivo de
+    Z3 a Z4)", 26/10); entonces manda el "de Zx a Zy" de detrás."""
+    tail = re.split(r"[)\n;]|\. ", after, maxsplit=1)[0]
     line = before.rsplit("\n", 1)[-1][-160:]
     spans = list(_ZONE_SPAN.finditer(line))
+    if _PROGRESSIVE.search(tail) and _ZONE_SPAN.search(tail):
+        spans, line = list(_ZONE_SPAN.finditer(tail)), tail
     if not _PROGRESSIVE.search(line) or not spans:
         return False
     za, zb = sorted((int(spans[-1].group(1)), int(spans[-1].group(2))))
@@ -228,7 +234,8 @@ def find_hr_ranges_outside_zones(coaching: str, zones: Zones, zones_cycling: Zon
         sport_zones = zones_cycling if zones_cycling and _range_sport(coaching, clause_start, clause) == "cycling" else zones
         fits = any(z_lo - TOL_BPM <= lo and hi <= z_hi + TOL_BPM for _, z_lo, z_hi in sport_zones)
         if not fits:
-            fits = _easy_range_ok(lo, hi, sport_zones) or _progressive_range_ok(coaching[: mr.start()], lo, hi, sport_zones)
+            fits = _easy_range_ok(lo, hi, sport_zones) or _progressive_range_ok(
+                coaching[: mr.start()], coaching[mr.end(): mr.end() + 80], lo, hi, sport_zones)
         if not fits:
             out.append(Finding(
                 "S10",

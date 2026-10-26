@@ -23,6 +23,7 @@ Se reescribe al final de cada sesión (la anterior se pierde: el detalle está e
 1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`** (punto 6 de la lista previa a producción; los puntos 1 a 5 se cerraron entre el 24 y el 25/10). Usar Kairos unos días con preguntas reales y revisar juntos:
    - cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7);
    - **posible falso positivo de S10** (24/10, 09:18): marcó como fuera de zona 105–124 y 159–179 lpm, que son justo la Z1 y la Z5 de bici. Parece que tomó una línea de ciclismo como de carrera (detección del deporte en `_range_sport`). Reproducirlo con la respuesta completa antes de tocar el sensor;
+   - **S10 con la marca de progresivo detrás del rango** (arreglado el 26/10 en el ordenador 2): repasar en casa las baterías guardadas (las 891 respuestas) con el sensor nuevo y confirmar que solo desaparecen falsos positivos de este tipo;
    - si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS) y **S27** ("mañana" con el día que no toca) saltan con preguntas reales; S27 solo ve el error cuando el LLM escribe el día o la fecha, no un "mañana" a secas.
 2. **Ordenador 2 (ECI)**:
    - `git pull` y entrar una vez en Kairos con el email y la contraseña (Supabase Auth). Hasta entonces, la versión antigua de allí no ve ningún dato;
@@ -106,3 +107,9 @@ Formato de `docs/Harness.md` §7: **señal** (qué falló y dónde), **lección*
 - Señal: "¿cómo dormí el martes?" y "¿cómo he dormido últimamente?" iban al LLM libre, que pide los días a Garmin, suma y compara él (donde salen las cifras mal leídas y los días equivocados).
 - Lección: buscar un dato (una noche) es determinista; interpretar una tendencia es del LLM, pero con las medias y diferencias ya calculadas (ruta mixta). Una tabla con dos periodos iguales no es un fallo hasta comprobarlo en la fuente: las dos últimas semanas daban lo mismo de verdad.
 - Evidencia: rutas `sleep_night` y `sleep_trend`; cifras contra Garmin directo; una noche en 2–3 s, tendencia en 22 s con la lectura; batería 25/25.
+
+### 26/10/2026 — S10: la marca de progresivo puede ir detrás del rango
+
+- Señal: batería del 26/10 (ordenador 2), pregunta 9, 24/25: "3×2000 m Z3–Z4 (146–168 lpm, progresivo de Z3 a Z4)" marcado como fuera de zona.
+- Lección: un sensor sobre texto libre no puede fijar el orden en que el LLM escribe las cosas; la marca y el rango van en la misma frase, pero en cualquier orden. El límite es la frase (o el paréntesis), no la posición.
+- Evidencia: la misma batería, 25/25 con el sensor nuevo; tests nuevos para la marca detrás, la marca en otra frase (sigue fallando) y zonas que no cuadran (sigue fallando). Detalle en CHANGELOG.

@@ -34,6 +34,21 @@ class TestHrRanges:
         text = "- Calentamiento progresivo de Z1 a Z2, 115→145 lpm."
         assert sensors.find_hr_ranges_outside_zones(text, ZONES) == []
 
+    def test_progressive_mark_after_the_range_passes(self):
+        # Batería del 26/10, pregunta 9: la marca va dentro del paréntesis, detrás del rango.
+        text = "| Mié 28 | Calidad | Principal: 3×2000 m Z3–Z4 (146–168 lpm, progresivo de Z3 a Z4) / RPE 6–7 |"
+        assert sensors.find_hr_ranges_outside_zones(text, ZONES) == []
+
+    def test_progressive_mark_in_a_later_sentence_does_not_count(self):
+        text = "- Series Z4–Z5 (160–175 lpm). Enfriamiento progresivo de Z2 a Z1."
+        assert _ids(sensors.find_hr_ranges_outside_zones(text, ZONES)) == ["S10"]
+        text = "- Series Z4–Z5 (160–175 lpm); vuelta progresiva de Z4 a Z5."
+        assert _ids(sensors.find_hr_ranges_outside_zones(text, ZONES)) == ["S10"]
+
+    def test_progressive_mark_after_with_wrong_zones_fails(self):
+        text = "- Bloque (146–168 lpm, progresivo de Z2 a Z3)."
+        assert _ids(sensors.find_hr_ranges_outside_zones(text, ZONES)) == ["S10"]
+
     def test_high_zones_span_fails(self):
         assert _ids(sensors.find_hr_ranges_outside_zones("- Series Z4–Z5 (160–175 lpm).", ZONES)) == ["S10"]
 
