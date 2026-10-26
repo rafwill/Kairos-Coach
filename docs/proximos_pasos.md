@@ -1,6 +1,6 @@
 # Próximos pasos — Kairos Coach
 
-Última revisión: 25/10/2026.
+Última revisión: 26/10/2026.
 
 Este fichero tiene dos partes: **lo que queda pendiente** y la **biblioteca de experiencia** (una entrada por cada cambio adoptado, según `docs/Harness.md` §7). Lo que se termina se borra de aquí: el detalle queda en `CHANGELOG.md` y en git. El estado vigente del cálculo de carga y las limitaciones aceptadas están en `CLAUDE.md`.
 
@@ -10,11 +10,11 @@ La bitácora anterior (investigación del TSS frente a TrainingPeaks y sesiones 
 
 Se reescribe al final de cada sesión (la anterior se pierde: el detalle está en git y en el CHANGELOG).
 
-**Sesión del 25/10/2026** (ordenador 1). Todo subido a GitHub (último commit `5ca8f84`, CI en verde), sin cambios a medias.
+**Sesión del 26/10/2026** (ordenador 2). Todo subido a GitHub (código hasta `4f72186` y este commit de documentación), sin cambios a medias. 751 tests.
 
-- Hecho: puntos 1 a 5 de la lista previa a producción (Supabase Auth + RLS; llamadas a Garmin en paralelo; rutas de periodo y de sueño; sensores S25–S27; cobertura de la CLI al 89 %), sueño de una noche concreta y tendencia de sueño, y esta reorganización del fichero.
-- Al empezar en el ordenador 2: hacer primero el punto 2 de Pendiente (`git pull`, entrar una vez en Kairos con Supabase Auth, `make hooks`, comprobar `ENCRYPTION_KEY`) y lanzar la batería (`tools/run_bateria.py` + `tools/juez_bateria.py`) para confirmar que allí sale 25/25.
-- Siguiente paso propuesto: el punto 3 (Kairos para DT1, DT2 o sin diabetes), empezando por decidir el campo del perfil y la pregunta de la configuración inicial. El punto 1 (uso real y revisión de `[SENSOR]`) sigue en marcha mientras se usa Kairos.
+- Hecho: puesta al día del ordenador 2 (`.venv`, pre-commit, `NVIDIA_MODEL`, Supabase Auth; batería 25/25 con el juez nuevo); S10 con la marca de progresivo detrás del rango; perfil de salud (patologías y lesiones separadas, diabetes con su medicación, protocolo solo si aplica, atleta sano sin preguntas); reglas de lesiones a lo largo de la temporada; S27 sin confundir "4/10" de dolor con una fecha.
+- Al empezar en casa: `git pull`, entrar una vez en Kairos (el perfil ya está migrado en Supabase, no preguntará nada) y repasar con S10 nuevo las baterías guardadas allí (punto 1).
+- Siguiente paso propuesto: las notas del usuario del final de este fichero (modelo elegido por atleta en la primera entrada; "45 herramientas") y el punto 3 (atleta sano y DT2 en vivo).
 
 ## Pendiente
 
@@ -25,11 +25,9 @@ Se reescribe al final de cada sesión (la anterior se pierde: el detalle está e
    - **posible falso positivo de S10** (24/10, 09:18): marcó como fuera de zona 105–124 y 159–179 lpm, que son justo la Z1 y la Z5 de bici. Parece que tomó una línea de ciclismo como de carrera (detección del deporte en `_range_sport`). Reproducirlo con la respuesta completa antes de tocar el sensor;
    - **S10 con la marca de progresivo detrás del rango** (arreglado el 26/10 en el ordenador 2): repasar en casa las baterías guardadas (las 891 respuestas) con el sensor nuevo y confirmar que solo desaparecen falsos positivos de este tipo;
    - **S10 en el juez con tablas partidas**: el juez lee la transcripción pintada a 110 columnas y una celda larga se parte en varias líneas; batería 20261026_100523, pregunta 9: "progresivo" quedó en la línea anterior a "Z2→Z3 (135→157 lpm)" y el juez dio S10, mientras que en vivo (texto sin partir) no saltó. Decidir si el juez reconstruye las celdas o si se acepta como ruido conocido. No confundir con el acierto de la batería 20261026_095716 (12 km continuos "Z3 Tempo–Z4 Subumbral (146–168 lpm)", error real del LLM que el reintento no corrigió);
-   - si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS) y **S27** ("mañana" con el día que no toca) saltan con preguntas reales; S27 solo ve el error cuando el LLM escribe el día o la fecha, no un "mañana" a secas.
-2. **Ordenador 2 (ECI)**:
-   - `git pull` y entrar una vez en Kairos con el email y la contraseña (Supabase Auth). Hasta entonces, la versión antigua de allí no ve ningún dato;
-   - activar el pre-commit con `make hooks` (necesita `requirements-dev.txt`; si se instaló con `SkipDev`, el hook falla por falta de ruff o pytest);
-   - comprobar que su `.env` tiene `ENCRYPTION_KEY` (para la batería y el juez) y que la memoria entre sesiones funciona allí.
+   - si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS) y **S27** ("mañana" con el día que no toca) saltan con preguntas reales; S27 solo ve el error cuando el LLM escribe el día o la fecha, no un "mañana" a secas;
+   - **día de la semana que no cuadra con su fecha** (26/10, prueba de lesiones): el LLM escribió "el domingo (20/10)" y el 20/10/2026 fue lunes. Ningún sensor lo ve: S27 solo comprueba fechas junto a hoy/ayer/mañana. Posible sensor nuevo (cualquier "día de la semana + DD/MM" del texto, con el año resuelto como en S27), con el criterio de siempre: 0 falsos positivos en las baterías guardadas y cada aviso revisado a mano.
+2. **Ordenador 2 (ECI)**: hecho el 26/10 (pull, Supabase Auth, `.venv` y pre-commit, `ENCRYPTION_KEY`, batería). Queda comprobar que la memoria entre sesiones funciona allí.
 
 ### B. Chat y LLM
 
