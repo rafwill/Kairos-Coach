@@ -733,7 +733,9 @@ class TestDiabetesProtocolInContext:
     def test_dt2_with_metformin_gets_its_own_protocol(self):
         block = self._block({"injuries": ["diabetes tipo 2"], "diabetes_medication": ["metformina"]})
         assert "- Diabetes: Diabetes tipo 2 · Metformina" in block
-        assert "Protocolo de diabetes sin riesgo de hipoglucemia" in block and "120–180 mg/dL" not in block
+        assert "Protocolo de diabetes con dieta o fármacos" in block and "120–180 mg/dL" not in block
+        # Ni siquiera nombra la hipoglucemia: el LLM la repetía para tranquilizar (prueba en vivo del 26/10).
+        assert "hipoglu" not in block.lower()
 
     def test_dt2_with_insulin_gets_hypoglycemia_protocol(self):
         block = self._block({"injuries": ["DT2"], "diabetes_medication": ["metformina", "insulina_basal"]})

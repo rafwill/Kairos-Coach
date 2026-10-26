@@ -14,7 +14,7 @@ Se reescribe al final de cada sesión (la anterior se pierde: el detalle está e
 
 - Hecho: puesta al día del ordenador 2 (`.venv`, pre-commit, `NVIDIA_MODEL`, Supabase Auth; batería 25/25 con el juez nuevo); S10 con la marca de progresivo detrás del rango; perfil de salud (patologías y lesiones separadas, diabetes con su medicación, protocolo solo si aplica, atleta sano sin preguntas); reglas de lesiones a lo largo de la temporada; S27 sin confundir "4/10" de dolor con una fecha.
 - Al empezar en casa: `git pull`, entrar una vez en Kairos (el perfil ya está migrado en Supabase, no preguntará nada) y repasar con S10 nuevo las baterías guardadas allí (punto 1).
-- Siguiente paso propuesto: las notas del usuario del final de este fichero (modelo elegido por atleta en la primera entrada; "45 herramientas") y el punto 3 (atleta sano y DT2 en vivo).
+- Siguiente paso propuesto: las notas del usuario del final de este fichero (modelo elegido por atleta en la primera entrada; "45 herramientas"). El atleta sano y DT2 en vivo quedó comprobado el 26/10.
 
 ## Pendiente
 
@@ -31,7 +31,6 @@ Se reescribe al final de cada sesión (la anterior se pierde: el detalle está e
 
 ### B. Chat y LLM
 
-3. **Atleta sano en vivo** (hecho el 26/10: patologías y lesiones separadas, diabetes con su medicación, protocolo solo si aplica). Comprobar con un usuario sin patologías (o un perfil de prueba) que el coaching no habla de glucemia, y con DT2 + metformina que no salen avisos de hipoglucemia. La batería solo cubre el perfil del usuario (DT1).
 4. **Límite de tools y metatooling** (nota del usuario). El servidor expone 42 tools. Estudiar si algún proveedor o modelo limita el número de tools por petición (del orden de 20) y si conviene agruparlas o que el LLM las pida por búsqueda (metatooling).
 5. **Cobertura restante de `agent/main.py`** (89 %). Quedan sin tests las ramas de error del inicio de sesión y el ajuste de la consola de Windows. Prioridad baja.
 
@@ -112,7 +111,8 @@ Formato de `docs/Harness.md` §7: **señal** (qué falló y dónde), **lección*
 
 - Señal: el protocolo de diabetes con insulina iba en todas las llamadas al LLM, `/ayuda` hablaba de DT1 a todos, no había nada para DT2 y "DT 1" estaba guardado como lesión (el plan bajaba la dificultad por "lesión activa").
 - Lección: lo que depende del atleta va en el contexto solo si aplica, no como regla condicional que decide el LLM. El riesgo de hipoglucemia lo marca la medicación, no el tipo de diabetes. Una patología y una lesión son cosas distintas: sin patologías el atleta es sano aunque esté lesionado.
-- Evidencia: protocolo según patologías y medicación (`agent/diabetes.py`, `prompts/diabetes/`); formulario y migración de perfiles; 750 tests. Detalle en CHANGELOG.
+- Evidencia: protocolo según patologías y medicación (`agent/diabetes.py`, `prompts/diabetes/`); formulario y migración de perfiles; 750 tests. En vivo (perfil sustituido solo en memoria, 4 preguntas de coaching): sano con periostitis, 0 menciones a la diabetes y la periostitis en todos los planes; DT2 con insulina, protocolo completo; DT2 con metformina, sin nota S16 ni carbohidratos preventivos. Detalle en CHANGELOG.
+- Lección añadida: el título de un protocolo también ceba al LLM ("sin riesgo de hipoglucemia" hacía que lo repitiera en 3 de 4 respuestas). Aun quitándolo, el LLM nombra la hipoglucemia por su cuenta para tranquilizar (2 de 4): un prompt no borra lo que el modelo sabe. Aceptado por el usuario (26/10): no son avisos ni limitan el entrenamiento; no se añade sensor.
 
 
 Al inicio de kairos teniamos selección de modelo. El objetivo es productivizar kairos, con lo cual, lo que vamos a provocar es que cuando un atleta meta su correo por primera vez sea el quien indique el modelo a utilizar. Se pedirá la key correspondiente y la guardaremos en el fichero .env.

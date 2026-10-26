@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-26
 
+### Tested (perfiles de salud en vivo)
+- Kairos real con el perfil sustituido solo en memoria (sin escrituras en Supabase, memoria y base de conocimiento vaciadas) y 4 preguntas de coaching. Criterio fijado antes. Sano con periostitis: 0 menciones a la diabetes, periostitis en cada plan (cumple). DT2 + insulina: protocolo de hipoglucemia en cada sesión (cumple). DT2 + metformina: sin nota S16 ni carbohidratos preventivos, pero el LLM nombra la hipoglucemia para tranquilizar (criterio literal de 0 menciones no cumplido; aceptado por el usuario).
+- `prompts/diabetes/sin_insulina.md` ya no nombra la hipoglucemia (título, entrada y viñeta de nutrición): su título la cebaba (3 de 4 respuestas → 2 de 4). Test que lo vigila.
+
 ### Added (lesiones a lo largo de la temporada)
 - `coaching_rules.md`, sección "Lesiones, sobrecargas y molestias a lo largo de la temporada" (sustituye a "Otras lesiones"), por petición del usuario: una lesión del perfil condiciona cada consejo y plan, y antes de subir carga se pregunta cómo va; una molestia nueva contada en el chat se toma en serio aunque no esté en el perfil (preguntar lo justo, cruzar con la carga y la recuperación, decidir con criterio de dolor, rehacer los próximos días y pedir que se apunte con `/perfil editar salud`); señales de alarma; vuelta progresiva por escalones (≤ 3/10 que no empeore al día siguiente); sugerir quitarla del perfil cuando se supera; prevención si se repite. `/ayuda` y `/perfil` explican que ahí van las lesiones nuevas.
 - En vivo ("me duele el sóleo desde ayer, 4/10…" y "ya no me duele"): pregunta por la evolución, relaciona la molestia con la tirada larga reciente, cambia la semana a bici/elíptica con escalones de vuelta, pide apuntarla en el perfil y, al decir que ya no duele, exige un test de carga antes de volver.
