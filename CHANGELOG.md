@@ -4,12 +4,19 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Changed (historial de GitHub reescrito, decisión del usuario)
+- Señal: mensajes de commit y documentos públicos identificaban uno de los dos ordenadores desde los que se trabaja (y su VPN, su red y su `.env`). Inventario previo: repositorio público, sin forks, issues ni pull requests; identidades de commit personales; 80 commits afectados, del 23/10 al 27/10.
+- Qué se hizo: copia completa (mirror y bundle), `git filter-repo` solo sobre el tramo `048fe2c..main` (los commits anteriores y las etiquetas conservan su código y su firma) sustituyendo esas expresiones en contenido y mensajes; los dos ordenadores pasan a llamarse "ordenador 1" y "ordenador 2". Los 80 commits, firmados de nuevo con la clave GPG personal, con autores, committers y fechas originales. Comprobado: 0 apariciones en contenido, mensajes y texto completo del historial de `main`; mismo árbol; push con `--force-with-lease`.
+- Las citas a commits del tramo en los documentos (`git show …`) apuntan a los códigos nuevos.
+- Queda fuera de nuestro alcance: GitHub mantiene los commits viejos accesibles por enlace directo hasta que los purga, y la actividad pública reciente muestra los mensajes de los pushes; para eso, GitHub Support (eliminación de datos sensibles). El ordenador 1 tiene que alinearse con `git fetch` y `git reset --hard origin/main` antes de hacer nada (ver `docs/proximos_pasos.md`).
+- Lección: las notas de sesión que se suben a un repositorio público no deben decir desde dónde se trabaja; se usan "ordenador 1" y "ordenador 2".
+
 ### Removed ("API pública" de load_metrics, decisión del usuario)
 - Qué era: al final de `agent/load_metrics.py`, un bloque `# Public API (stable surface for reuse in other projects)` con 39 funciones de una línea (174 líneas), cada una con el nombre de una interna sin el guion bajo (`estimate_session_tss` → `_estimate_session_tss`, `percentile`, `resolve_sport_model_cfg`, `compute_load_fatigue_metrics`…), el alias `SPORT_MODEL_DEFAULTS` y un `__all__` de 46 nombres.
 - Por qué existía: el 02/09/2026 el cálculo de carga salió de `trainer_agent.py` a un módulo propio (`b67bc2c`, "extraer módulo reusable de load metrics": "para importarlo desde otros proyectos sin depender del chat ni del almacenamiento") y 13 minutos después se añadió esta capa con nombres estables (`6243776`, "fase 2 de load metrics").
 - Por qué se quita: nada la usaba. Dentro del repositorio solo `estimate_session_tss`, en dos tests (pasan a `_estimate_session_tss`); fuera, ningún proyecto de `C:\Github` importa `load_metrics`. No tenía tests propios y ya se había desfasado (hoy cambió la firma de `estimate_walk_hike_tss` sin que nada lo notara), duplicaba cada nombre y escondió 20 funciones muertas a la primera búsqueda.
 - Se queda: el módulo sigue sin depender del chat ni de la base de datos; `__all__` lista lo que se usa de verdad desde fuera (`TSS_FORMULA_VERSION`, `PMC_ATL_TAU_DAYS`, `PMC_CTL_TAU_DAYS`, `form_zone`, `resolve_load_status`, `pmc_rows`, `load_fatigue_from_series`).
-- Para recuperarla: `git show 00853f8:agent/load_metrics.py` (último commit que la tiene; el bloque está al final del fichero). Si otro proyecto necesita el cálculo de carga, mejor un paquete con sus propios tests, diseñado a partir de ese uso real.
+- Para recuperarla: `git show 39c58d0:agent/load_metrics.py` (último commit que la tiene; el bloque está al final del fichero). Si otro proyecto necesita el cálculo de carga, mejor un paquete con sus propios tests, diseñado a partir de ese uso real.
 - Tests: 769.
 
 ### Changed (duplicados pequeños y prompt, pendiente 7)
@@ -81,7 +88,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Lección: un error que se repite se ataca con una guía (darle el dato ya calculado), no solo con un sensor (`docs/Harness.md` §7); el sensor se queda como red.
 
 ### Fixed (repaso de sensores con las baterías de casa)
-- Sensores de antes (`87e7717`) frente a los actuales sobre las 941 respuestas guardadas en casa, con las mismas llamadas que el juez y, aparte, S10–S12 sobre las 166 respuestas libres del LLM (las que en vivo también pasan por los sensores). Criterio fijado antes: solo pueden desaparecer falsos positivos y cada aviso nuevo se revisa a mano.
+- Sensores de antes (`4ccbf75`) frente a los actuales sobre las 941 respuestas guardadas en casa, con las mismas llamadas que el juez y, aparte, S10–S12 sobre las 166 respuestas libres del LLM (las que en vivo también pasan por los sensores). Criterio fijado antes: solo pueden desaparecer falsos positivos y cada aviso nuevo se revisa a mano.
 - Tres falsos positivos corregidos:
   - S10, "tirada" no contaba como carrera: "Tirada larga progresiva Z1→Z2 (115→145 lpm)" heredaba "bici" de la fila de encima (dos respuestas). `_RUNNING_LINE` incluye "tirada(s)" y "rodajes".
   - S10, el deporte escrito detrás del rango, dentro de su paréntesis: "(115→145 lpm running)" con una viñeta de cycling encima. Ese tramo cuenta para decidir el deporte.

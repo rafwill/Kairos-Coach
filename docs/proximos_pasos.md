@@ -4,17 +4,19 @@
 
 Solo lo que falta y lo descartado. Lo terminado se borra: el detalle está en `CHANGELOG.md` y en git. El estado vigente del cálculo de carga y las limitaciones aceptadas están en `CLAUDE.md`.
 
-Bitácoras anteriores en git: hasta el 25/10, `git show 4578226:docs/proximos_pasos.md`; biblioteca de experiencia del 23 al 26/10 (señal, lección y evidencia de cada cambio), `git show f2f5867:docs/proximos_pasos.md`.
+Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pasos.md`; biblioteca de experiencia del 23 al 26/10 (señal, lección y evidencia de cada cambio), `git show 6aff019:docs/proximos_pasos.md`.
 
 ## Dónde lo dejamos
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 767 tests; batería 25/25.
+**Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 769 tests; batería 25/25.
 
-- En el ordenador 1, al empezar: `git pull`. No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
-- **Siguiente paso:** decidir el punto 6 ("ordenador 2" en GitHub). La revisión del 27/10 está terminada.
-- **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Los envoltorios (punto 6), cuando se toque `trainer_agent.py` por otro motivo.
+- **Ojo, historial de GitHub reescrito el 27/10** (80 commits desde el 23/10; ver CHANGELOG). En el ordenador 1, antes de hacer nada y sobre todo antes de cualquier `git push`: comprobar que no hay cambios sin subir (`git status`) y alinearlo con `git fetch origin` y `git reset --hard origin/main`. Un `git pull` normal intentaría mezclar el historial viejo con el nuevo, y un push desde allí lo devolvería a GitHub.
+- Hecho hoy: limpieza del proyecto (D1–D4), revisión del proyecto (código sobrante, una sola fuente para la serie de carga, tendencia de HRV con días fallidos, dependencias con tope y Python 3.12+, duplicados, "API pública" de `load_metrics` fuera) y reescritura del historial. Detalle en CHANGELOG.
+- No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
+- **Queda fuera de nuestro alcance:** GitHub conserva los commits viejos accesibles por su enlace directo hasta que los purga, y la actividad pública reciente muestra los mensajes de los pushes. Para eliminarlos, pedir a GitHub Support que purgue las vistas en caché y los commits sin referencia del repositorio `rafwill/Kairos-Coach` (procedimiento de eliminación de datos sensibles).
+- **Siguiente paso:** nada pendiente de la revisión del 27/10. **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
 ## Pendiente
 
@@ -34,10 +36,6 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 3. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
 4. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
 5. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
-
-### D. Pendiente de decidir
-
-6. **Quitar "ordenador 2" de todas las referencias que existan en github.** Revisar commits, issues, pull requests y cualquier otro lugar donde aparezca y asegurarse de eliminarlo.
 
 ## Descartado
 
