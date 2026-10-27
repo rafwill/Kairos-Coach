@@ -12,9 +12,17 @@ Se reescribe al final de cada sesión.
 
 **Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 769 tests; batería 25/25.
 
-- **Ojo, historial de GitHub reescrito el 27/10** (80 commits desde el 23/10; ver CHANGELOG). En el ordenador 1, antes de hacer nada y sobre todo antes de cualquier `git push`: comprobar que no hay cambios sin subir (`git status`) y alinearlo con `git fetch origin` y `git reset --hard origin/main`. Un `git pull` normal intentaría mezclar el historial viejo con el nuevo, y un push desde allí lo devolvería a GitHub.
+**En el ordenador 1, al empezar (en este orden).** El historial de GitHub se reescribió el 27/10 (80 commits desde el 23/10; ver CHANGELOG): un `git pull` normal mezclaría el historial viejo con el nuevo y un `git push` desde allí lo devolvería a GitHub. Hasta el paso 3, ese ordenador tiene la versión vieja de este fichero: estos pasos se leen aquí o en GitHub.
+
+1. `git status`: tiene que decir que no hay nada que confirmar. Si hay cambios o commits sin subir, parar y guardarlos aparte (copiar los ficheros) antes de seguir: el paso 3 los borra.
+2. `git fetch origin`.
+3. `git reset --hard origin/main`.
+4. Comprobar: `git log --oneline -1` muestra este commit o uno posterior y `git status` dice "up to date with 'origin/main'".
+5. Opcional, para que no queden en local los commits viejos: `git reflog expire --expire=now --all` y `git gc --prune=now`.
+6. `.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt`: hay topes de versión nuevos (`garminconnect<0.4`, `supabase<3`, `openai>=3,<4`). Python tiene que ser 3.12 o superior.
+7. Entrar una vez en Kairos para comprobar que arranca. La clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
+
 - Hecho hoy: limpieza del proyecto (D1–D4), revisión del proyecto (código sobrante, una sola fuente para la serie de carga, tendencia de HRV con días fallidos, dependencias con tope y Python 3.12+, duplicados, "API pública" de `load_metrics` fuera) y reescritura del historial. Detalle en CHANGELOG.
-- No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
 - **Queda fuera de nuestro alcance:** GitHub conserva los commits viejos accesibles por su enlace directo hasta que los purga, y la actividad pública reciente muestra los mensajes de los pushes. Para eliminarlos, pedir a GitHub Support que purgue las vistas en caché y los commits sin referencia del repositorio `rafwill/Kairos-Coach` (procedimiento de eliminación de datos sensibles).
 - **Siguiente paso:** nada pendiente de la revisión del 27/10. **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
