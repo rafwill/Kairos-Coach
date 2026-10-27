@@ -1,6 +1,6 @@
 ﻿# Próximos pasos — Kairos Coach
 
-Última revisión: 26/10/2026.
+Última revisión: 27/10/2026.
 
 Solo lo que falta y lo descartado. Lo terminado se borra: el detalle está en `CHANGELOG.md` y en git. El estado vigente del cálculo de carga y las limitaciones aceptadas están en `CLAUDE.md`.
 
@@ -10,12 +10,12 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 4578226:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 26/10/2026, noche** (ordenador 1). Todo subido a GitHub, sin cambios a medias. 784 tests; batería 25/25.
+**Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 767 tests; batería 25/25.
 
-- Hecho: traídos los 22 commits del ordenador 2 (`pip install -r requirements.txt` y la clave ya migrada a `PROVIDER_API_KEY`); repaso de sensores con las 941 respuestas de casa, con tres falsos positivos corregidos (S10 con "tirada" y con el deporte detrás del rango; S28 con "(lunes a domingo)") y el caso de S10 en bici del 24/10 cerrado (ya no se reproduce); guías nuevas G13 (calendario para el LLM) y G14 (diferencia de HRV ya calculada), probadas en vivo sin avisos en las respuestas finales.
-- En el ordenador 2, al empezar: `git pull`. No hay dependencias ni variables nuevas.
-- **Siguiente paso: la limpieza del proyecto (Pendiente D, puntos 6 a 9)**: primero la documentación y lo menor (D1 y D4), después el código que sobra (D2) y los duplicados (D3).
-- **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
+- Hecho: la limpieza del proyecto (D1, D2, D3a, D3b y D4): documentación corregida; fuera el modo de contingencia del MCP, el bloqueo de tools de escritura, los interruptores sin uso y la compatibilidad con datos viejos (unas 440 líneas en `agent/`); perfil de Supabase sin `mcp_adapter_cache` (3,2 MB) ni `running_session_inference`; una sola copia de las funciones duplicadas en `load_metrics.py`, con `_parse_hr_zones_list` leyendo ya el formato real de Garmin (sin recálculo: ninguna actividad guardada pasa por esos respaldos). Detalle en CHANGELOG.
+- En el ordenador 1, al empezar: `git pull`. No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
+- **Siguiente paso: el tiempo máximo de las llamadas a Garmin (punto 3)**, que hoy colgó la batería 57 min.
+- **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 4 a 6 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Los envoltorios (7c), cuando se toque `trainer_agent.py` por otro motivo.
 
 ## Pendiente
 
@@ -28,13 +28,15 @@ Se reescribe al final de cada sesión.
 
 2. **Metatooling, siguientes pasos** (grupos de tools hechos el 26/10: −22 % de tokens por llamada, mismas respuestas). Si hace falta más: (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
 
+3. **Tiempo máximo en las llamadas a Garmin fuera del bucle con tools.** En la batería del 27/10 la ruta determinista de "TSS de mis 20 últimas actividades de ciclismo" esperó 57 min a `get_activities_by_date` hasta un corte de red (`ConnectionResetError` 10054); el bucle con tools tiene 8 s por tool, pero las rutas deterministas, el arranque y el cálculo de carga llaman a `call_tool` sin límite. Ver dónde ponerlo (en `call_tool` o en el servidor, con la sesión HTTP de `garminconnect`) sin cortar llamadas largas legítimas.
+
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
 
-3. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
-4. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
-5. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
+4. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
+5. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
+6. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
 
 ### D. Limpieza del proyecto (revisión del 26/10)
 
@@ -42,9 +44,9 @@ Revisión completa de código y documentación del 26/10: incoherencias, código
 
 **Recomendación (por aquí se sigue):**
 
-1. **Dejar para otro momento:** los envoltorios (6c), porque tocan mucho para ganar poco.
+1. **Dejar para otro momento:** los envoltorios (7c), porque tocan mucho para ganar poco.
 
-6. **D3. Código duplicado entre `trainer_agent.py` y `load_metrics.py`**
+7. **D3. Código duplicado entre `trainer_agent.py` y `load_metrics.py`**
 
    | # | Qué | Riesgo |
    | --- | --- | --- |
