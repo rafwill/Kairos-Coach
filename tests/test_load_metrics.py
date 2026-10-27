@@ -28,7 +28,6 @@ from agent.load_metrics import (
     _classify_running_session_with_confidence,
     _classify_strength_session_with_confidence,
     _classify_walk_hike_session_with_confidence,
-    estimate_session_tss,
 )
 import agent.load_metrics as lm
 
@@ -1952,7 +1951,7 @@ def test_trail_missing_duration_uses_zone_duration_before_native_tss():
         "maxHR": 176.0,
     }
 
-    tss, label = estimate_session_tss(
+    tss, label = _estimate_session_tss(
         activity,
         ftp=None,
         running_threshold_pace_sec_per_km=330.0,
@@ -1975,7 +1974,7 @@ def test_trail_missing_duration_uses_details_time_axis_before_native_tss():
         "trainingStressScore": 250.0,
     }
 
-    tss, label = estimate_session_tss(
+    tss, label = _estimate_session_tss(
         activity,
         ftp=None,
         running_threshold_pace_sec_per_km=330.0,

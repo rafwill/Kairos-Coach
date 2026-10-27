@@ -13,7 +13,7 @@ Se reescribe al final de cada sesión.
 **Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 767 tests; batería 25/25.
 
 - En el ordenador 1, al empezar: `git pull`. No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
-- **Siguiente paso:** decidir los puntos 6 ("API pública" de `load_metrics`) y 7 ("ordenador 2" en GitHub). La revisión del 27/10 está terminada.
+- **Siguiente paso:** decidir el punto 6 ("ordenador 2" en GitHub). La revisión del 27/10 está terminada.
 - **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Los envoltorios (punto 6), cuando se toque `trainer_agent.py` por otro motivo.
 
 ## Pendiente
@@ -37,9 +37,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ### D. Pendiente de decidir
 
-6. **"API pública" de `load_metrics`:** unas 30 funciones de una línea "para reutilizar en otros proyectos" que no usa nadie del repositorio. Quitarla (se recupera de git) o mantenerla.
-
-7. **Quitar "ordenador 2" de todas las referencias que existan en github.** Revisar commits, issues, pull requests y cualquier otro lugar donde aparezca y asegurarse de eliminarlo.
+6. **Quitar "ordenador 2" de todas las referencias que existan en github.** Revisar commits, issues, pull requests y cualquier otro lugar donde aparezca y asegurarse de eliminarlo.
 
 ## Descartado
 

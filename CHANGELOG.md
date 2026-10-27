@@ -4,6 +4,14 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Removed ("API pública" de load_metrics, decisión del usuario)
+- Qué era: al final de `agent/load_metrics.py`, un bloque `# Public API (stable surface for reuse in other projects)` con 39 funciones de una línea (174 líneas), cada una con el nombre de una interna sin el guion bajo (`estimate_session_tss` → `_estimate_session_tss`, `percentile`, `resolve_sport_model_cfg`, `compute_load_fatigue_metrics`…), el alias `SPORT_MODEL_DEFAULTS` y un `__all__` de 46 nombres.
+- Por qué existía: el 02/09/2026 el cálculo de carga salió de `trainer_agent.py` a un módulo propio (`b67bc2c`, "extraer módulo reusable de load metrics": "para importarlo desde otros proyectos sin depender del chat ni del almacenamiento") y 13 minutos después se añadió esta capa con nombres estables (`6243776`, "fase 2 de load metrics").
+- Por qué se quita: nada la usaba. Dentro del repositorio solo `estimate_session_tss`, en dos tests (pasan a `_estimate_session_tss`); fuera, ningún proyecto de `C:\Github` importa `load_metrics`. No tenía tests propios y ya se había desfasado (hoy cambió la firma de `estimate_walk_hike_tss` sin que nada lo notara), duplicaba cada nombre y escondió 20 funciones muertas a la primera búsqueda.
+- Se queda: el módulo sigue sin depender del chat ni de la base de datos; `__all__` lista lo que se usa de verdad desde fuera (`TSS_FORMULA_VERSION`, `PMC_ATL_TAU_DAYS`, `PMC_CTL_TAU_DAYS`, `form_zone`, `resolve_load_status`, `pmc_rows`, `load_fatigue_from_series`).
+- Para recuperarla: `git show 00853f8:agent/load_metrics.py` (último commit que la tiene; el bloque está al final del fichero). Si otro proyecto necesita el cálculo de carga, mejor un paquete con sus propios tests, diseñado a partir de ese uso real.
+- Tests: 769.
+
 ### Changed (duplicados pequeños y prompt, pendiente 7)
 - `_moving_average` estaba en `load_metrics` y en `running_tss`: queda la de `running_tss`, que `load_metrics` importa. Fuera el `try/except` del import de `running_tss` (solo usa la biblioteca estándar; no puede fallar) y su comprobación de `None`.
 - Cuatro funciones internas "número dentro de un rango o None" (velocidades de marcha, FC umbral, FC de reposo) pasan a `_float_in_range`, y tres "primera clave numérica" a `_first_float_of` (en `load_metrics`). En `trainer_agent`, las dos `_key_candidates` idénticas a una de módulo y las dos `_first` a `_first_value`. Comprobado antes que las variables que leían las internas no se reasignan después.
