@@ -110,7 +110,7 @@ Los números los calcula Python; el LLM solo interpreta. Por orden de preferenci
 
 | ID | Comprueba | Tipo | Cuándo | Dónde | Estado |
 | --- | --- | --- | --- | --- | --- |
-| S18 | Suite de tests sin red (585) | Computacional | Cada push (CI) y antes de commitear | `tests/`, `.github/workflows/tests.yml` | ✓ |
+| S18 | Suite de tests sin red | Computacional | Cada push (CI) y antes de commitear | `tests/`, `.github/workflows/tests.yml` | ✓ |
 | S19 | Batería de 25 preguntas contra datos reales y juez con rúbrica fija | Computacional | Tras cambios en rutas, prompts o modelo | `tools/run_bateria.py`, `tools/juez_bateria.py` (§8) | ✓ |
 | S20 | Guía de estilo MCP sobre `tools/list` | Computacional | CI (test) y al cambiar tools | `tools/lint_mcp.py`, `test_all_tools_follow_mcp_style_guide` | ✓ |
 | S21 | Cada tool llama a `garminconnect` con su firma real; healthcheck en vivo de las 42 | Computacional | CI (test) y bajo demanda | `test_every_tool_calls_garminconnect_with_its_real_signature`, `tools/healthcheck_mcp.py` | ✓ |

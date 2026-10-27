@@ -1,6 +1,6 @@
 # Arquitectura de Kairos Coach
 
-Referencia técnica de cómo funciona Kairos por dentro. El estado vigente del cálculo de carga (modelos por deporte, anclajes, validación frente a TrainingPeaks y pendientes) está en `CLAUDE.md`; el harness de runtime (hooks, router, rutas deterministas) en `docs/Harness.md`.
+Referencia técnica de cómo funciona Kairos por dentro. El estado vigente del cálculo de carga (modelos por deporte, anclajes, validación frente a TrainingPeaks y pendientes) está en `CLAUDE.md`; las guías y los sensores que rodean al LLM (router, rutas deterministas, sensores sobre su texto) en `docs/Harness.md`.
 
 ## Capas
 
@@ -115,7 +115,7 @@ Una sola regla para todo Kairos (`load_metrics.form_zone` y `resolve_load_status
 1. **Rutas deterministas** (sin LLM): estado del plan, TSS y actividades de una semana, kilómetros y actividad más larga de un periodo (`period_activities`), sueño de una noche (`sleep_night`), TSS de las últimas N actividades por deporte, umbrales, récords personales, objetivo, detalle de una actividad por fecha, configuración.
 2. **Rutas mixtas** (estado de hoy, "¿qué me toca?", "¿puedo entrenar fuerte mañana?", sesión de la semana, tendencia de sueño): bloque factual determinista y después la capa de coaching del LLM, limitada a esos datos, con el horizonte que pide el usuario (`_coaching_horizon`). Si el LLM falla, se dice explícitamente y queda solo el bloque factual.
 3. **Planificación:** motor determinista multisemana (`_generate_structured_plan_payload`) con el volumen real de las últimas 4 semanas (`_build_plan_load_context`), fases base → build → peak → taper, ninguna semana más de un 10 % sobre lo sostenido y validación antes de guardar.
-4. **Resto:** LLM con tool-calling sobre el MCP (hasta 15 iteraciones, resultados compactados).
+4. **Resto:** LLM con tool-calling sobre el MCP (hasta 15 iteraciones, resultados compactados). Metatooling (`agent/tool_groups.py`): el LLM recibe solo los grupos de tools que pide la pregunta, decididos por reglas sin LLM (sin regla, todas), más las `kairos_*` y `kairos_pedir_herramientas`, con la que pide otro grupo si le falta.
 
 El contexto del LLM (`_build_system_prompt`) incluye el perfil, el estado de carga actual, los umbrales con zonas en lpm y el plan activo de hoy y los dos días siguientes.
 

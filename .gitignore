@@ -21,8 +21,8 @@ build/
 .vscode/
 
 # Runtime local (no versionar)
-agent.log
-garmin_mcp.log
+agent.log*
+garmin_mcp.log*
 .coverage
 
 # Real payload captures for offline forensic replay (sensitive/user data)

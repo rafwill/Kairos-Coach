@@ -32,7 +32,7 @@ if sys.platform == "win32":
     except (AttributeError, ValueError):
         pass
 
-from dotenv import find_dotenv, load_dotenv, set_key, unset_key
+from dotenv import find_dotenv, load_dotenv, set_key
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -1204,7 +1204,7 @@ def _show_menu() -> None:
 
     table.add_row("Sistema", "/proveedor", "Cambiar de proveedor de IA, modelo o clave")
     table.add_row("Sistema", "/ayuda", "Mostrar ayuda extendida")
-    table.add_row("Sistema", "salir", "Cerrar sesión")
+    table.add_row("Sistema", "salir", "Salir de Kairos (la sesión queda guardada)")
 
     console.print(table)
     console.print("[dim]Tip: si no recuerdas un comando, escribe /menu.[/]")
@@ -1270,18 +1270,6 @@ def _save_api_key(config: dict, value: str) -> None:
     lines.insert(at, f"{_KEY_COMMENT} {_ia_provider.label(config)}")
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.environ[_ia_provider.KEY_VAR] = value
-
-
-def _migrate_legacy_key(config: dict) -> None:
-    """.env de antes del 26/10 (NVIDIA_API_KEY…): la clave pasa a PROVIDER_API_KEY sin volver a pedirla."""
-    legacy = _ia_provider.legacy_key_env_var(config["provider"])
-    value = os.environ.get(legacy, "")
-    if _has_key() or not value or value in _PLACEHOLDER_VALUES:
-        return
-    _save_api_key(config, value)
-    unset_key(_env_path(), legacy, encoding="utf-8")
-    os.environ.pop(legacy, None)
-    console.print(f"[green]✓[/] Clave trasladada de {legacy} a {_ia_provider.KEY_VAR} en el .env.")
 
 
 async def _ask_api_key(config: dict, reason: str) -> None:
@@ -1362,8 +1350,6 @@ async def _ensure_ia_provider() -> dict:
     first_time = not _ia_provider.is_valid(config)
     if first_time:
         config = _ask_ia_provider()
-    else:
-        _migrate_legacy_key(config)
     if not _has_key():
         await _ask_api_key(config, "Necesito tu clave para empezar." if first_time
                            else "Este ordenador no tiene la clave de tu proveedor de IA.")

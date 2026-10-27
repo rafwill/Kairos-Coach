@@ -38,30 +38,15 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ### D. Limpieza del proyecto (revisión del 26/10)
 
-Revisión completa de código y documentación: incoherencias, código que sobra y duplicados. Nada cambiado aún. Cada bloque, su commit.
+Revisión completa de código y documentación del 26/10: incoherencias, código que sobra y duplicados. D1 (documentación) y D4 (menores) hechos el 27/10. Cada bloque, su commit.
 
-**Recomendación (por aquí se empieza la próxima sesión):**
+**Recomendación (por aquí se sigue):**
 
-1. **Arreglar ya, porque es sencillo y seguro:** la documentación (6, D1) y lo menor (9, D4, salvo el traslado de la clave). Cambiar también lo que dicen el menú y `salir`, para que no prometan cerrar la sesión (6c).
-2. **Quitar con tests y una batería antes y después:** el código que sobra (7, D2), unas 300–400 líneas. Borrar la caché `mcp_adapter_cache` del perfil es un cambio de datos en Supabase: prueba previa, aplicación y lectura de vuelta, como la memoria.
-3. **Unificar en `load_metrics.py`:** los duplicados 8a y 8b. Las zonas (8a) primero, comprobando qué versión es la correcta.
-4. **Dejar para otro momento:** los envoltorios (8c), porque tocan mucho para ganar poco.
-5. **Al volver a casa:** el traslado de la clave (último punto de D4). Basta con haber entrado una vez en Kairos allí para que la clave quede trasladada.
+1. **Quitar con tests y una batería antes y después:** el código que sobra (6, D2), unas 300–400 líneas. Borrar la caché `mcp_adapter_cache` del perfil es un cambio de datos en Supabase: prueba previa, aplicación y lectura de vuelta, como la memoria.
+2. **Unificar en `load_metrics.py`:** los duplicados 7a y 7b. Las zonas (7a) primero, comprobando qué versión es la correcta.
+3. **Dejar para otro momento:** los envoltorios (7c), porque tocan mucho para ganar poco.
 
-6. **D1. Documentación que dice algo falso** (arreglar ya)
-
-   | # | Dónde | Problema |
-   | --- | --- | --- |
-   | a | README, "Qué hace" | "Protocolo de diabetes tipo 1 con insulina": hoy es DT1 o DT2 según la medicación, con lesiones aparte. |
-   | b | README, "Estructura" | Faltan `agent/diabetes.py`, `ia_provider.py`, `tool_groups.py`, `tools/check_rls.py` y `prompts/diabetes/`; `supabase/` solo nombra `schema.sql` (faltan `rls.sql` y su README). |
-   | c | README y menú (`agent/main.py`), `salir` | Dicen "Cerrar sesión", pero salir deja la sesión guardada (`storage.sign_out` existe y nadie la llama). Corregir el texto ("Salir de Kairos; la sesión queda guardada") o añadir un cierre de sesión real. |
-   | d | README, `docs/Harness.md` (S18) | Recuentos de tests viejos ("623 passed (23/10)", "(585)"; hoy 778). Quitar el número. |
-   | e | README, tabla de documentos | Dice que los pendientes están en `CLAUDE.md`; están aquí. |
-   | f | `CLAUDE.md`, "## Pendiente" | Repite los puntos 3, 4 y 5 de este fichero. Dejar aquí la lista y en `CLAUDE.md` solo el recordatorio de `/perfil umbral fc`. |
-   | g | `docs/arquitectura.md` | La primera línea habla de "hooks" (se quitaron el 23/10); "Cada mensaje del chat" no menciona el metatooling (`agent/tool_groups.py`). |
-   | h | README, Requisitos; CI | Recomienda Python 3.12 y la CI prueba solo 3.12; los dos ordenadores usan 3.14. Añadir 3.14 a la matriz de la CI. |
-
-7. **D2. Código que sobra** (≈ 300–400 líneas; con tests y batería antes y después)
+6. **D2. Código que sobra** (≈ 300–400 líneas; con tests y batería antes y después)
 
    | # | Qué | Por qué sobra |
    | --- | --- | --- |
@@ -72,18 +57,13 @@ Revisión completa de código y documentación: incoherencias, código que sobra
    | e | Compatibilidad con datos que ya no existen | Planes con `hr_pct` (no hay ningún plan guardado), `_strip_previous_reply` (memoria vaciada el 26/10), inserción de sesiones de plan sin `structured_workout` (`schema.sql` ya la crea). |
    | f | Sin uso | `load_metrics._extract_splits_list`, `contracts.get_contract_registry`, `sensors.has_insulin_diabetes` (sustituida por `agent/diabetes.py`), `_TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM`; `ALL_ESSENTIAL_TOOLS` solo en tests. |
 
-8. **D3. Código duplicado entre `trainer_agent.py` y `load_metrics.py`**
+7. **D3. Código duplicado entre `trainer_agent.py` y `load_metrics.py`**
 
    | # | Qué | Riesgo |
    | --- | --- | --- |
    | a | `_parse_hr_zones_list` y `_find_hr_zones_in_json`, con versiones **distintas** en cada módulo | Alto: la misma entrada puede dar zonas distintas. Primero comprobar cuál es la correcta (`CLAUDE.md`: `_parse_hr_zones_list` no lee el formato real de Garmin). |
    | b | `_is_trail_activity` y otras 6 de clasificación de deporte, y `_percentile`, copiadas idénticas | Medio: un cambio en una copia no llega a la otra. Dejar las de `load_metrics.py`. |
    | c | 37 envoltorios de una línea en `trainer_agent.py` que solo llaman a `load_metrics` | Bajo (estético); los tests los usan para sustituir funciones. Dejar para otro momento. |
-
-9. **D4. Menores**
-   - `.gitignore` solo ignora `agent.log`: al rotar, `agent.log.1`… saldrían como ficheros nuevos. Cambiar a `agent.log*` (y `garmin_mcp.log*`).
-   - Encabezado viejo `# ─── /modelo` en `tests/test_main_cli.py`.
-   - Cuando el ordenador 1 haya entrado una vez en Kairos (la clave ya trasladada), quitar el traslado de `NVIDIA_API_KEY` a `PROVIDER_API_KEY` (`main._migrate_legacy_key`, `ia_provider.legacy_key_env_var`, y el respaldo en `trainer_agent._build_llm_client`).
 
 ## Descartado
 

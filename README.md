@@ -9,7 +9,7 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 - **Briefing al arrancar:** Body Battery, HRV, sueño, entrenamientos de las últimas 48 h, estado de carga por zonas de Forma (Joe Friel, relativas a tu CTL) y plan del día.
 - **Carga como TrainingPeaks:** un TSS por actividad con el método de su deporte, guardado una vez; PMC 42/7. Validado contra el export de TP del atleta (tabla abajo).
 - **Planes de entrenamiento:** motor determinista multisemana (base → build → peak → taper) que parte del volumen real de las últimas 4 semanas, nunca sube más de un 10 % por semana y guarda cada versión.
-- **Coaching con contexto:** perfil, condiciones de salud (protocolo de diabetes tipo 1 con insulina), objetivo, umbrales con zonas en lpm y plan activo.
+- **Coaching con contexto:** perfil, salud (protocolo de diabetes con o sin insulina según la medicación; lesiones aparte), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
 - **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`.
 
@@ -25,11 +25,11 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 | Caminar / senderismo | modelo metabólico (ACSM + Minetti) con tope en el hrTSS de TP | no cuadra por diseño |
 | Fuerza / elíptica / remo | hrTSS anclado al umbral de FC | ≈ 1.0 – 1.1 |
 
-La carga nativa de Garmin nunca se usa como TSS: solo se muestra como "Carga Garmin". Detalle del modelo, anclajes y pendientes en [`CLAUDE.md`](CLAUDE.md).
+La carga nativa de Garmin nunca se usa como TSS: solo se muestra como "Carga Garmin". Detalle del modelo y anclajes en [`CLAUDE.md`](CLAUDE.md); pendientes en [`docs/proximos_pasos.md`](docs/proximos_pasos.md).
 
 ## Instalación
 
-Requisitos: Python 3.11+ (recomendado 3.12), cuenta de Garmin Connect, un proyecto de Supabase y al menos una API key de LLM.
+Requisitos: Python 3.11+ (la CI prueba 3.12 y 3.14), cuenta de Garmin Connect, un proyecto de Supabase y al menos una API key de LLM.
 
 ```powershell
 git clone https://github.com/rafwill/Kairos-Coach.git
@@ -69,7 +69,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/plan listar` · `/plan ver <id>` · `/plan activar <id>` · `/plan crear` | Planes de entrenamiento |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |
 | `/proveedor` | Cambiar de proveedor de IA, modelo o clave |
-| `salir` | Cerrar la sesión |
+| `salir` | Salir de Kairos (la sesión queda guardada para la próxima vez) |
 
 Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué sesión me recomiendas para esta semana?"*, *"Créame un plan para mi media maratón"*.
 
@@ -85,6 +85,9 @@ agent/
   running_tss.py         pipeline físico de running (NGP con pendiente, rTSS)
   storage.py             persistencia multiusuario en Supabase
   sensors.py             sensores sobre el texto del LLM (zonas, ritmo umbral, fechas…), compartidos con el juez
+  diabetes.py            qué protocolo de diabetes recibe el LLM (con o sin insulina), según el perfil
+  ia_provider.py         proveedores de IA conocidos (URL y modelo propuesto) y variable de la clave
+  tool_groups.py         metatooling: qué grupos de tools recibe el LLM según la pregunta
   mcp/
     client.py            cliente MCP: arranca el servidor, sesión stdio y llamadas a tools
     contracts.py         contratos de argumentos, normalización y caché de las tools
@@ -92,8 +95,8 @@ garmin_mcp/              servidor MCP de Garmin Connect (42 tools, solo lectura)
   README.md              arranque, configuración y catálogo de las 42 tools
   server.py              definición de las tools; arranque: python -m garmin_mcp
 prompts/                 todo el texto que recibe el LLM: system prompt, reglas de entrenador y
-                         plantillas por familia (system/, coaching/, rescue/, activity_analysis/)
-supabase/                schema.sql (esquema completo e idempotente)
+                         plantillas por familia (system/, coaching/, rescue/, activity_analysis/, diabetes/)
+supabase/                schema.sql (esquema completo e idempotente), rls.sql (seguridad por fila) y README.md
 tests/                   suite de pytest (sin red: Garmin, Supabase y LLM mockeados)
 tools/
   rebuild_tss_baseline.py   corrección del histórico de TSS (prueba; --apply escribe)
@@ -102,6 +105,7 @@ tools/
   lint_mcp.py, mcp_lint/    guía de estilo MCP de apiaddicts sobre las tools del servidor (Spectral)
   healthcheck_mcp.py        healthcheck en vivo: llama a todas las tools contra Garmin y dice cuáles fallan
   gen_mcp_docs.py           regenera el catálogo de tools de garmin_mcp/README.md
+  check_rls.py              comprueba que la seguridad por fila de Supabase cierra cada tabla
 docs/                    arquitectura, harness, bitácora y preguntas de la batería
 ```
 
@@ -122,7 +126,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | Batería de preguntas | — | `.venv\Scripts\python.exe tools\run_bateria.py --salida .tmp\bateria\hoy` | Tras cambios en rutas, prompts o modelo |
 | Juez de la batería | — | `.venv\Scripts\python.exe tools\juez_bateria.py .tmp\bateria\hoy.md` | Justo después de la batería |
 
-- **Tests:** 623 passed (23/10/2026). No necesitan red. Los pasan el pre-commit y la CI.
+- **Tests:** no necesitan red. Los pasan el pre-commit y la CI.
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
 - **`healthcheck_mcp`:** llama a las 42 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
 - **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`; no lee ni escribe la memoria del atleta); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
@@ -132,12 +136,12 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 
 | Documento | Contenido |
 | --- | --- |
-| [`CLAUDE.md`](CLAUDE.md) | Estado vigente del cálculo de carga, reglas de método, datos y pendientes (hoja de ruta) |
+| [`CLAUDE.md`](CLAUDE.md) | Estado vigente del cálculo de carga, reglas de método, datos y limitaciones aceptadas |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Capas, tablas de Supabase, flujos de arranque, cálculo y chat, MCP y seguridad |
 | [`docs/Harness.md`](docs/Harness.md) | Guías y sensores que rodean al LLM (qué existe, dónde vive y su estado) y rúbrica de la batería |
 | [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Pendientes y descartados |
 | [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración, problemas frecuentes (429/403, certificados) y catálogo de las 42 tools (generado) |
-| [`CHANGELOG.md`](CHANGELOG.md) | Cambios (los pendientes, en `CLAUDE.md`) |
+| [`CHANGELOG.md`](CHANGELOG.md) | Cambios (los pendientes, en `docs/proximos_pasos.md`) |
 
 ## Privacidad
 

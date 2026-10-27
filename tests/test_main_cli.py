@@ -121,7 +121,7 @@ class TestHandleCliCommand:
         assert m._handle_cli_command("", _Agent()) is False
 
 
-# ─── /modelo ─────────────────────────────────────────────────────────────────
+# ─── /proveedor ──────────────────────────────────────────────────────────────
 
 NVIDIA = {"provider": "nvidia", "base_url": "https://integrate.api.nvidia.com/v1", "model": "nvidia/nemotron-x"}
 GROQ = {"provider": "groq", "base_url": "https://api.groq.com/openai/v1", "model": "llama-3.3-70b-versatile"}

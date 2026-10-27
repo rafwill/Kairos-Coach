@@ -507,7 +507,6 @@ class TestAskIaProvider:
 class TestEnsureIaProvider:
     def _run(self, monkeypatch, stored, *, key=None, asked=None):
         monkeypatch.delenv("PROVIDER_API_KEY", raising=False)
-        monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
         if key:
             monkeypatch.setenv("PROVIDER_API_KEY", key)
         with patch("agent.main._detect_zscaler", return_value=False), \
@@ -570,23 +569,6 @@ class TestApiKey:
             asyncio.run(_ask_api_key(config, "Primera vez"))
         text = env_file.read_text(encoding="utf-8")
         assert "# Proveedor de IA de PROVIDER_API_KEY: Mi Proveedor (m)\nPROVIDER_API_KEY=k" in text
-        monkeypatch.delenv("PROVIDER_API_KEY")
-
-    def test_legacy_key_is_moved_once_without_asking(self, monkeypatch, tmp_path):
-        from agent.main import _migrate_legacy_key
-
-        env_file = tmp_path / ".env"
-        env_file.write_text("OTRA=1\nNVIDIA_API_KEY=nvapi-real\n", encoding="utf-8")
-        monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
-        monkeypatch.delenv("PROVIDER_API_KEY", raising=False)
-        monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-real")
-        with patch("agent.main.console.print"):
-            _migrate_legacy_key(NVIDIA)
-            _migrate_legacy_key(NVIDIA)
-        lines = env_file.read_text(encoding="utf-8").splitlines()
-        assert lines == ["OTRA=1", "# Proveedor de IA de PROVIDER_API_KEY: NVIDIA NIM (nvidia/nemotron-x)",
-                         "PROVIDER_API_KEY=nvapi-real"]
-        assert os.environ["PROVIDER_API_KEY"] == "nvapi-real" and "NVIDIA_API_KEY" not in os.environ
         monkeypatch.delenv("PROVIDER_API_KEY")
 
 

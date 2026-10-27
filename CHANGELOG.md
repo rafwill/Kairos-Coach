@@ -2,6 +2,18 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-27
+
+### Changed (limpieza: documentación y menores, D1 y D4)
+- README: protocolo de diabetes con o sin insulina según la medicación y lesiones aparte (decía "tipo 1 con insulina"); en "Estructura", `agent/diabetes.py`, `ia_provider.py`, `tool_groups.py`, `tools/check_rls.py`, `prompts/diabetes/` y `supabase/rls.sql` con su README; los pendientes están en `docs/proximos_pasos.md`, no en `CLAUDE.md`.
+- `salir` decía "Cerrar sesión" (README, menú y ayuda), pero la sesión queda guardada: ahora "Salir de Kairos (la sesión queda guardada)". Sin cierre de sesión real.
+- Sin recuentos de tests en README y `docs/Harness.md` (S18): se quedaban viejos.
+- `docs/arquitectura.md`: sin "hooks" (quitados el 23/10) y con el metatooling en "Cada mensaje del chat".
+- `CLAUDE.md`, "Pendiente": solo el recordatorio de `/perfil umbral fc`; la lista vive en `docs/proximos_pasos.md`.
+- CI con Python 3.12 y 3.14 (los dos ordenadores usan 3.14).
+- `.gitignore`: `agent.log*` y `garmin_mcp.log*`, para los ficheros rotados.
+- Fuera el traslado de `NVIDIA_API_KEY` a `PROVIDER_API_KEY` (`main._migrate_legacy_key`, `ia_provider.legacy_key_env_var` y el respaldo en `_build_llm_client`): los dos ordenadores tienen ya solo `PROVIDER_API_KEY`. Tests: 783 (fuera el del traslado).
+
 ## 2026-10-26
 
 ### Changed (guías contra los errores de días y de HRV)

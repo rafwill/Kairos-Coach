@@ -48,11 +48,6 @@ def known(name: str) -> str | None:
 KEY_VAR = "PROVIDER_API_KEY"
 
 
-def legacy_key_env_var(provider: str) -> str:
-    """Variable antigua (antes del 26/10) con la clave de ese proveedor: NVIDIA_API_KEY… Solo para trasladarla."""
-    return f"{slug(provider).upper()}_API_KEY"
-
-
 def label(config: dict) -> str:
     """"NVIDIA NIM (nvidia/nemotron-…)" para mostrar; un proveedor desconocido, con el nombre que dio el atleta."""
     provider = str(config.get("provider") or "")
