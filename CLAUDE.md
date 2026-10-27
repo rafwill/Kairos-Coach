@@ -23,7 +23,7 @@ Cuantificar cada sesión con TSS (TSS/hrTSS/rTSS) como lo haría TrainingPeaks, 
 
 PMC (`agent/trainer_agent.py` `compute_and_persist_load_metrics`, `agent/load_metrics.py`):
 
-- CTL 42 / ATL 7 para todos los deportes (`PMC_CTL_TAU_DAYS`, `PMC_ATL_TAU_DAYS`; config del PMC de TP del usuario). No se leen de `load_metrics.model` del perfil.
+- CTL 42 / ATL 7 para todos los deportes (`PMC_CTL_TAU_DAYS`, `PMC_ATL_TAU_DAYS`; config del PMC de TP del usuario). Nada del PMC se lee del perfil: del perfil solo sale `load_metrics.formula_version`.
 - `ATL_t = ATL_{t-1} + (TSS_t − ATL_{t-1})/7`, ídem CTL con 42. **TSB_t = CTL_{t-1} − ATL_{t-1}** (convención de TP).
 - Semilla = fila de la víspera en `load_metrics_daily`; la línea base arranca en 0 el 2026-02-22.
 - Estado de carga: zonas de Forma de Friel relativas al CTL (TSB/CTL: Riesgo alto < −30 %, Óptimo −30 a −10 %, Zona gris −10 a +5 %, Fresco +5 a +20 %, Transición > +20 %), regla única en `load_metrics.form_zone` / `resolve_load_status` (decisión del usuario, 22/10). Los percentiles personales solo informan; no hay suelos de TSB por deporte.
@@ -71,7 +71,7 @@ Anclajes por fecha (perfil `performance`):
 ## Datos y herramientas
 
 - `activity_tss` (en `supabase/schema.sql`, el único fichero de esquema, idempotente): una fila por actividad con `tss`, `model`, `tss_source`, `native_load`, anclajes usados (`hr_rest_used`, `lthr_used`, `threshold_pace_used`, `ftp_used`, `walk_threshold_used`).
-- `load_metrics_daily`: serie diaria TSS/ATL/CTL/TSB (fuente canónica de las pantallas).
+- `load_metrics_daily`: serie diaria TSS/ATL/CTL/TSB, fuente única (pantallas, contexto del LLM, motor de planes, tools `kairos_*`): se lee con `_load_metrics_series` / `_load_metrics_view` y el estado se deriva con `load_metrics.load_fatigue_from_series`. La serie la calcula `load_metrics.pmc_rows`. Sin serie no hay estado de carga (no se recalcula en vivo ni hay copia en el perfil, desde el 27/10).
 - Línea base: desde 2026-02-22. El TSS guardado nunca se recalcula; solo se calculan actividades nuevas. Correcciones puntuales = recálculo en prueba + escritura de las filas afectadas + serie desde la primera fecha afectada.
 - `tools/rebuild_tss_baseline.py --username U --start ISO [--apply]`: ruta de producción con escrituras interceptadas; sin `--apply` es la prueba.
 - TP de referencia: `_archivo/datos_tp/workouts.csv` (export TP 01/02–21/10/2026; `_archivo/` es local y está en `.gitignore`). El export omite algunas sesiones (7 de fuerza de agosto) y la columna IF no sirve para validar (TSS de running ≈ 1.06–1.14 × h·IF²·100).

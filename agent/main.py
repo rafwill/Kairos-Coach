@@ -107,7 +107,8 @@ from agent import diabetes as _diabetes
 from agent import ia_provider as _ia_provider
 from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import (
-    TrainerAgent, _TSS_FORMULA_VERSION, _load_user_profile, _save_user_profile, _session_intensity_label, probe_llm_key,
+    TrainerAgent, _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile,
+    _session_intensity_label, probe_llm_key,
 )
 from agent.storage import (
     activate_training_plan,
@@ -1091,8 +1092,7 @@ def _show_load_trend_cli(agent: "TrainerAgent", cmd: str = "/carga") -> None:
     parts = cmd.strip().lower().split()
     mode = "months" if len(parts) > 1 and parts[1] in {"meses", "mensual", "months", "month"} else "weeks"
 
-    load_metrics = (agent.user_profile or {}).get("load_metrics") or {}
-    series = load_metrics.get("series") or []
+    series = _load_metrics_view(agent.user_profile).get("series") or []
 
     if not series:
         console.print(Panel.fit(
@@ -1646,8 +1646,8 @@ async def main() -> None:
                     + (f" ({load_reason})" if load_reason else "")
                     + ".[/]"
                 )
-            lm = (agent.user_profile or {}).get("load_metrics") or {}
-            last = lm.get("last") or {}
+            lm = _load_metrics_view(agent.user_profile)
+            last = lm.get("latest") or {}
             if last.get("atl") or last.get("ctl"):
                 console.print(
                     f"[green]✓[/] Carga/fatiga: "

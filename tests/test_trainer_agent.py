@@ -1980,10 +1980,11 @@ class TestStartupProactive:
         assert all("start_date" in args and "end_date" in args for args in bb_calls)
         # get_activities_by_date debe haberse llamado con start_date y end_date
         hist_calls = [args for name, args in captured_calls if name == "get_activities_by_date"]
-        assert len(hist_calls) >= 2
-        assert all("start_date" in args and "end_date" in args for args in hist_calls)
-        # Una llamada debe ser el rango corto de 48h para entrenamientos recientes.
-        assert any(args.get("page_size") == 100 for args in hist_calls)
+        assert hist_calls and all("start_date" in args and "end_date" in args for args in hist_calls)
+        # Solo el rango corto de 48h para entrenamientos recientes: sin serie en load_metrics_daily no se
+        # recalcula el TSS en vivo (27/10: antes pedía 56 días de actividades y daba un segundo TSS).
+        assert all(args.get("page_size") == 100 for args in hist_calls)
+        assert snapshot["load_fatigue"] == {}
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_refreshes_today_wellness_from_mcp(self):
@@ -3776,15 +3777,11 @@ class TestWeekTssDeterministicRoute:
         from agent.trainer_agent import TrainerAgent
 
         agent = object.__new__(TrainerAgent)
-        agent.user_profile = {
-            "load_metrics": {
-                "series": [
-                    {"date": "2026-08-01", "atl": 50.0, "ctl": 60.0, "tsb": 10.0},
-                    {"date": "2026-08-14", "atl": 56.0, "ctl": 63.0, "tsb": 7.0},
-                ],
-                "ranges": {"tsb_low": -10.0, "tsb_high": 5.0, "atl_high": 74.5},
-            }
-        }
+        agent.user_profile = {}
+        series = [
+            {"date": "2026-08-01", "tss": 40.0, "atl": 50.0, "ctl": 60.0, "tsb": 10.0},
+            {"date": "2026-08-14", "tss": 60.0, "atl": 56.0, "ctl": 63.0, "tsb": 7.0},
+        ]
         agent.conversation_history = []
         agent.tools_schema = []
         agent.mcp_session = MagicMock()
@@ -3794,7 +3791,7 @@ class TestWeekTssDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM no debe ejecutarse en load_trend"))
 
-        with patch("agent.trainer_agent._save_history_entry"), patch("agent.trainer_agent._save_user_profile"):
+        with patch("agent.trainer_agent._save_history_entry"), patch("agent.trainer_agent._save_user_profile"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
             out = await TrainerAgent.chat(
                 agent,
                 "Muéstrame la tendencia de los últimos 14 días de ATL, CTL y TSB, y dime si voy hacia fatiga o disponibilidad",
@@ -4013,7 +4010,7 @@ class TestGoalStatusDeterministicRoute:
                 return _Date.fromisoformat(value)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {501: {"activity_id": 501, "start_date": "2026-08-15", "tss": 82.49, "method": "TSS"}})
 
         profile = {
@@ -4095,7 +4092,7 @@ class TestGoalStatusDeterministicRoute:
                 return cls(2026, 8, 18)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         profile = {
             "load_metrics": {
@@ -4172,7 +4169,7 @@ class TestGoalStatusDeterministicRoute:
                 return _Date.fromisoformat(value)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {502: {"activity_id": 502, "start_date": "2026-08-17", "tss": 79.4, "method": "TSS"}})
 
         profile = {
@@ -4226,7 +4223,7 @@ class TestGoalStatusDeterministicRoute:
                 return _Date.fromisoformat(value)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {})
 
         profile = {"load_metrics": {"series": [{"date": "2026-08-17", "tss": 0.0}, {"date": "2026-08-18", "tss": 0.0}]}}
@@ -4264,7 +4261,7 @@ class TestGoalStatusDeterministicRoute:
                 return cls(2026, 8, 21)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         # Semana previa (10-14/08): 100.0 total
         # Semana actual (17-21/08): 176.9 total -> +76.9% y spike >20%
@@ -4312,7 +4309,7 @@ class TestGoalStatusDeterministicRoute:
                 return cls(2026, 9, 20)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         profile = {
             "load_metrics": {
@@ -4373,7 +4370,7 @@ class TestGoalStatusDeterministicRoute:
                 return cls(2026, 9, 1)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {503: {"activity_id": 503, "start_date": "2026-08-30", "tss": 220.4, "method": "hrTSS"}, 504: {"activity_id": 504, "start_date": "2026-09-01", "tss": 20.0, "method": "TSS"}})
 
         profile = {
@@ -4455,7 +4452,7 @@ class TestGoalStatusDeterministicRoute:
                 return _Date.fromisoformat(value)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=14: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {505: {"activity_id": 505, "start_date": "2026-08-17", "tss": 45.0, "method": "hrTSS"}})
 
         profile = {
@@ -5077,14 +5074,8 @@ class TestMcpFactualDeterministicRoute:
         from agent.trainer_agent import TrainerAgent
 
         agent = object.__new__(TrainerAgent)
-        agent.user_profile = {
-            "sports": ["running"],
-            "load_metrics": {
-                "series": [
-                    {"date": "2026-08-20", "tss": 55.0, "atl": 56.5, "ctl": 63.2, "tsb": 6.8}
-                ]
-            },
-        }
+        agent.user_profile = {"sports": ["running"]}
+        series = [{"date": "2026-08-20", "tss": 55.0, "atl": 56.5, "ctl": 63.2, "tsb": 6.8}]
         agent.conversation_history = []
         agent.tools_schema = []
         agent.mcp_session = MagicMock()
@@ -5094,7 +5085,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entry"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
             out = await TrainerAgent.chat(
                 agent,
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada",
@@ -5282,7 +5273,7 @@ class TestMcpFactualDeterministicRoute:
                 return cls(2026, 9, 1)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         profile = {
             "load_metrics": {
@@ -5331,7 +5322,7 @@ class TestMcpFactualDeterministicRoute:
                 return cls(2026, 8, 2)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(
             ta._storage,
             "get_activity_tss_map",
@@ -5372,7 +5363,7 @@ class TestMcpFactualDeterministicRoute:
                 return cls(2026, 9, 1)
 
         monkeypatch.setattr(ta, "date", _FakeDate)
-        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: [])
+        monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {506: {"activity_id": 506, "start_date": "2026-08-31", "tss": 40.4, "method": "TSS"}})
 
         profile = {
@@ -5571,8 +5562,8 @@ class TestMcpFactualDeterministicRoute:
                 return {"trend": [{"date": target_iso, "trainingLoad": 250.0}]}
             return {}
 
-        profile = {"load_metrics": {"series": [{"date": target_iso, "tss": 62.3}]}}
-        with patch("agent.trainer_agent.call_tool", _fake_call_tool), patch(
+        profile = {}
+        with patch("agent.trainer_agent._load_metrics_series", return_value=[{"date": target_iso, "tss": 62.3}]),                 patch("agent.trainer_agent.call_tool", _fake_call_tool), patch(
             "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
         ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value={}):
             out = await ta._build_mcp_factual_query_markdown(

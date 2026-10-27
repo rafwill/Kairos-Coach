@@ -3903,25 +3903,10 @@ def _resolve_sport_model_cfg(profile: dict | None) -> dict:
     p = profile or {}
     sport_raw = str((p.get("goals") or {}).get("primary") or "running").strip().lower()
     base = dict(_SPORT_MODEL_DEFAULTS.get(sport_raw) or _SPORT_MODEL_DEFAULTS["running"])
-    # Constantes del PMC de TrainingPeaks (CTL 42, ATL 7) para todos los deportes; no se leen del
-    # modelo guardado en el perfil porque Kairos lo reescribe solo y fijaba valores antiguos.
+    # Constantes del PMC de TrainingPeaks (CTL 42, ATL 7) para todos los deportes. Nada se lee del perfil
+    # (27/10: el `model` que guardaba Kairos solo traía las constantes y fijaba valores antiguos).
     base["atl_tau_days"] = PMC_ATL_TAU_DAYS
     base["ctl_tau_days"] = PMC_CTL_TAU_DAYS
-
-    saved_model = (p.get("load_metrics") or {}).get("model") or {}
-    for key in (
-        "tsb_low_pct",
-        "tsb_high_pct",
-        "atl_high_pct",
-        "weekly_target_pct",
-        "weekly_high_pct",
-    ):
-        if key in saved_model:
-            try:
-                base[key] = float(saved_model[key])
-            except (TypeError, ValueError):
-                pass
-
     return base
 
 
@@ -4070,80 +4055,45 @@ def resolve_load_status(series: list[dict], weekly_spike_alert: bool = False) ->
     }
 
 
-def _compute_load_fatigue_metrics(
-    activities: list[dict],
-    trend_payload: Any,
-    profile: dict | None = None,
-    days_window: int = 56,
-    reference_day: date | None = None,
-) -> dict | None:
-    today = reference_day or date.today()
-    start_day = today - timedelta(days=max(14, days_window - 1))
-    running_threshold_pace = _resolve_running_threshold_pace_sec_per_km(profile)
-    hr_rest_bpm, hr_max_bpm = _resolve_hr_profile_values(profile)
-
-    # La carga nativa de Garmin (trend_payload) no es TSS: no se usa. Se mantiene el parámetro por compatibilidad.
-    tss_by_day: dict[str, float] = {}
-
-    for act in list(activities or []):
-        if not isinstance(act, dict):
-            continue
-        d_iso = _to_iso_date(act.get("startTimeLocal") or act.get("startTimeGMT") or act.get("date") or act.get("calendarDate"))
-        if not d_iso:
-            continue
-        try:
-            d_obj = date.fromisoformat(d_iso)
-        except ValueError:
-            continue
-        if d_obj < start_day or d_obj > today:
-            continue
-        tss, _ = _estimate_session_tss(
-            act,
-            running_threshold_pace_sec_per_km=running_threshold_pace,
-            hr_rest_bpm=hr_rest_bpm,
-            hr_max_bpm=hr_max_bpm,
-            hr_zones_raw=(act.get("_hr_zones_raw") or act.get("hr_zones_raw") or act.get("hrZonesRaw")),
-        )
-        if tss > 0:
-            tss_by_day[d_iso] = tss_by_day.get(d_iso, 0.0) + tss
-
-    if not tss_by_day:
-        return None
-
-    model_cfg = _resolve_sport_model_cfg(profile)
-    tau_atl = int(round(float(model_cfg.get("atl_tau_days") or 7)))
-    tau_ctl = int(round(float(model_cfg.get("ctl_tau_days") or 42)))
-    tau_atl = max(3, min(tau_atl, 14))
-    tau_ctl = max(21, min(tau_ctl, 90))
-
-    sport_raw = str(((profile or {}).get("goals") or {}).get("primary") or "running").strip().lower()
-
-    # Arranque en 0 al inicio de la ventana: el "last" guardado es del final de la serie, no de la víspera.
-    atl_prev = 0.0
-    ctl_prev = 0.0
-
-    alpha_atl = 1.0 / float(tau_atl)
-    alpha_ctl = 1.0 / float(tau_ctl)
-
-    series: list[dict] = []
-    day_cursor = start_day
-    while day_cursor <= today:
-        d_iso = day_cursor.isoformat()
+def pmc_rows(
+    tss_by_day: dict[str, float],
+    start: date,
+    end: date,
+    atl_prev: float = 0.0,
+    ctl_prev: float = 0.0,
+    count_by_day: dict[str, int] | None = None,
+) -> list[dict]:
+    """Serie del PMC día a día como TrainingPeaks: ATL con 7 días, CTL con 42 y Forma = CTL de ayer − ATL de
+    ayer. `atl_prev`/`ctl_prev` son los de la víspera de `start` (la semilla)."""
+    alpha_atl = 1.0 / float(PMC_ATL_TAU_DAYS)
+    alpha_ctl = 1.0 / float(PMC_CTL_TAU_DAYS)
+    rows: list[dict] = []
+    day = start
+    while day <= end:
+        d_iso = day.isoformat()
         tss = max(0.0, float(tss_by_day.get(d_iso, 0.0)))
         atl = atl_prev + (tss - atl_prev) * alpha_atl
         ctl = ctl_prev + (tss - ctl_prev) * alpha_ctl
         tsb = ctl_prev - atl_prev  # TP: Forma = CTL de ayer − ATL de ayer
-        row = {
+        rows.append({
             "date": d_iso,
-            "tss": round(tss, 1),
-            "atl": round(atl, 1),
-            "ctl": round(ctl, 1),
-            "tsb": round(tsb, 1),
-        }
-        series.append(row)
+            "tss": round(tss, 2),
+            "atl": round(atl, 2),
+            "ctl": round(ctl, 2),
+            "tsb": round(tsb, 2),
+            "activities_count": (count_by_day or {}).get(d_iso, 0),
+        })
         atl_prev = atl
         ctl_prev = ctl
-        day_cursor += timedelta(days=1)
+        day += timedelta(days=1)
+    return rows
+
+
+def load_fatigue_from_series(series: list[dict], model_cfg: dict, today: date | None = None) -> dict | None:
+    """Estado de carga (latest, ranges, weekly, zona de Forma, avisos) a partir de la serie ya calculada
+    (`load_metrics_daily` o `pmc_rows`). No recalcula TSS ni ATL/CTL/TSB: los toma de la serie."""
+    if not series:
+        return None
 
     latest = series[-1]
     last_28 = series[-28:] if len(series) >= 28 else series[:]
@@ -4153,35 +4103,21 @@ def _compute_load_fatigue_metrics(
 
     weekly_tss_values: list[float] = []
     for idx in range(0, len(last_42), 7):
-        chunk = last_42[idx : idx + 7]
+        chunk = last_42[idx:idx + 7]
         if chunk:
             weekly_tss_values.append(round(sum(float(x["tss"]) for x in chunk), 1))
-    weekly_spike = _compute_weekly_spike_signal(series, reference_day=today, threshold_ratio=0.20)
+    weekly_spike = _compute_weekly_spike_signal(series, reference_day=today or date.today(), threshold_ratio=0.20)
     current_week_tss = float(weekly_spike.get("current_tss") or 0.0)
 
-    tsb_low = round(_percentile(tsb_values, float(model_cfg.get("tsb_low_pct") or 0.20), default=-10.0), 1)
+    tsb_low  = round(_percentile(tsb_values, float(model_cfg.get("tsb_low_pct") or 0.20), default=-10.0), 1)
     tsb_high = round(_percentile(tsb_values, float(model_cfg.get("tsb_high_pct") or 0.80), default=5.0), 1)
-    atl_high = round(
-        _percentile(atl_values, float(model_cfg.get("atl_high_pct") or 0.80), default=max(50.0, float(latest["atl"]))),
-        1,
-    )
-    weekly_target = round(
-        _percentile(weekly_tss_values, float(model_cfg.get("weekly_target_pct") or 0.55), default=current_week_tss),
-        1,
-    )
-    weekly_high = round(
-        _percentile(
-            weekly_tss_values,
-            float(model_cfg.get("weekly_high_pct") or 0.85),
-            default=max(current_week_tss, weekly_target * 1.15),
-        ),
-        1,
-    )
+    atl_high = round(_percentile(atl_values, float(model_cfg.get("atl_high_pct") or 0.80), default=max(50.0, float(latest["atl"]))), 1)
+    weekly_target = round(_percentile(weekly_tss_values, float(model_cfg.get("weekly_target_pct") or 0.55), default=current_week_tss), 1)
+    weekly_high   = round(_percentile(weekly_tss_values, float(model_cfg.get("weekly_high_pct") or 0.85), default=max(current_week_tss, weekly_target * 1.15)), 1)
 
     days_with_load = sum(1 for x in series if float(x.get("tss") or 0.0) > 0)
-    min_days_for_reliable_ranges = 21
-    warming_up = days_with_load < min_days_for_reliable_ranges
-    warming_up_days_remaining = max(0, min_days_for_reliable_ranges - days_with_load)
+    _MIN_DAYS = 21
+    warming_up = days_with_load < _MIN_DAYS
 
     weekly_spike_alert = bool(weekly_spike.get("spike_alert"))
     resolved = resolve_load_status(series, weekly_spike_alert=weekly_spike_alert)
@@ -4192,12 +4128,9 @@ def _compute_load_fatigue_metrics(
     return {
         "model": {
             "name": "tp-inspired-ewma",
-            "sport": sport_raw,
-            "atl_tau_days": tau_atl,
-            "ctl_tau_days": tau_ctl,
-            "tsb_low_pct": model_cfg.get("tsb_low_pct") or 0.20,
-            "tsb_high_pct": model_cfg.get("tsb_high_pct") or 0.80,
-            "atl_high_pct": model_cfg.get("atl_high_pct") or 0.80,
+            "sport": str((model_cfg.get("_sport") or "running")),
+            "atl_tau_days": int(model_cfg.get("atl_tau_days") or 7),
+            "ctl_tau_days": int(model_cfg.get("ctl_tau_days") or 42),
         },
         "latest": latest,
         "series": series[-120:],
@@ -4211,19 +4144,13 @@ def _compute_load_fatigue_metrics(
             "high_tss": weekly_high,
         },
         # Rangos personales (percentiles de 28 días): solo informativos, no deciden el estado.
-        "ranges": {
-            "tsb_low": tsb_low,
-            "tsb_high": tsb_high,
-            "atl_high": atl_high,
-        },
+        "ranges": {"tsb_low": tsb_low, "tsb_high": tsb_high, "atl_high": atl_high},
         "warming_up": warming_up,
-        "warming_up_days_remaining": warming_up_days_remaining,
+        "warming_up_days_remaining": max(0, _MIN_DAYS - days_with_load),
         "days_with_load": days_with_load,
         "flags": {
-            "fatigue_high": status == "fatigue_high",
-            "sustained_overload": resolved["week_in_load"],
-            "abs_overload": resolved["zone"]["key"] == "high_risk",
-            "available_for_quality": status == "ready",
+            "fatigue_high": status == "fatigue_high", "sustained_overload": resolved["week_in_load"],
+            "abs_overload": resolved["zone"]["key"] == "high_risk", "available_for_quality": status == "ready",
             "warming_up": warming_up,
             "weekly_spike_alert": weekly_spike_alert,
         },
@@ -4490,22 +4417,6 @@ def compute_weekly_spike_signal(
     return _compute_weekly_spike_signal(series, reference_day, threshold_ratio)
 
 
-def compute_load_fatigue_metrics(
-    activities: list[dict],
-    trend_payload: Any,
-    profile: dict | None = None,
-    days_window: int = 56,
-    reference_day: date | None = None,
-) -> dict | None:
-    return _compute_load_fatigue_metrics(
-        activities,
-        trend_payload,
-        profile,
-        days_window,
-        reference_day,
-    )
-
-
 __all__ = [
     "TSS_FORMULA_VERSION",
     "RUNNING_TSS_FALLBACK_HR_GUARDRAIL_RATIO",
@@ -4549,5 +4460,6 @@ __all__ = [
     "percentile",
     "resolve_sport_model_cfg",
     "compute_weekly_spike_signal",
-    "compute_load_fatigue_metrics",
+    "load_fatigue_from_series",
+    "pmc_rows",
 ]

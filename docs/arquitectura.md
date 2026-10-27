@@ -34,13 +34,13 @@ El servidor no importa nada de `agent/` (lo comprueba `test_server_package_does_
 | Tabla | Contenido |
 | --- | --- |
 | `app_user` | Usuario de la aplicación, vinculado a su cuenta de Supabase Auth (`auth_user_id`), y credenciales auxiliares (contraseña de Garmin cifrada con Fernet). `password_hash` (PBKDF2) solo en cuentas anteriores al 24/10 sin migrar. |
-| `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y caché de `load_metrics`. |
+| `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y `load_metrics.formula_version` (con qué versión de la fórmula se calculó la serie). |
 | `session_context` | Historial reciente de conversación y resúmenes de sesión (memoria entre sesiones; la batería no la lee ni la escribe). |
 | `athlete_knowledge` | Base de conocimiento textual del atleta (RAG ligero). |
 | `ia_provider` | Proveedor de IA del atleta (proveedor, URL compatible con OpenAI, modelo) y consumo diario de tokens. La clave no: va en `.env`. |
 | `training_plan`, `training_plan_session`, `training_plan_version` | Planes, sesiones (`structured_workout`) y snapshots de cada versión. |
 | `activity_tss` | Un TSS por actividad, calculado una vez: `tss`, `model`, anclajes usados y `native_load` (carga de Garmin, informativa). |
-| `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente canónica de todas las pantallas. |
+| `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente única de todas las pantallas, del contexto del LLM y del motor de planes (`_load_metrics_series` / `_load_metrics_view`; el estado de carga se deriva con `load_metrics.load_fatigue_from_series`). Sin serie no hay estado de carga: no se recalcula en vivo. |
 | `wellness_daily` | Body Battery y HRV por día, con `pulled_at` para no consultar Garmin de más. |
 
 Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve para instalar desde cero y para poner al día un proyecto existente).
@@ -83,8 +83,8 @@ compute_and_persist_load_metrics()
   │     └─ upsert en activity_tss
   ├─ 2. PMC con CTL 42 / ATL 7 para todos los deportes
   ├─ 3. Semilla: fila de la víspera en load_metrics_daily (0 al reconstruir la línea base)
-  ├─ 4. Día a día:  atl = atl_prev + (tss − atl_prev)/7 · ctl = ctl_prev + (tss − ctl_prev)/42 · tsb = ctl_prev − atl_prev
-  └─ 5. upsert en load_metrics_daily y caché en el perfil
+  ├─ 4. Día a día (load_metrics.pmc_rows):  atl = atl_prev + (tss − atl_prev)/7 · ctl = ctl_prev + (tss − ctl_prev)/42 · tsb = ctl_prev − atl_prev
+  └─ 5. upsert en load_metrics_daily y formula_version en el perfil
 ```
 
 - Running: `running:pipeline_fisico` (`agent/running_tss.py`: NGP con pendiente Minetti, rTSS, detectores de tempo y series cortas). Sin detalle de la actividad, respaldo `running:tp_like_adjusted` por agregados.

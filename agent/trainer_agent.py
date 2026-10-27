@@ -41,7 +41,6 @@ from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _is_trail_activity,
     _is_trail_hike_walk_activity,
     _parse_hr_zones_list,
-    _percentile,
     _try_parse_json,
 )
 
@@ -1697,22 +1696,6 @@ def _resolve_sport_model_cfg(profile: dict | None) -> dict:
     return _load_metrics._resolve_sport_model_cfg(profile)
 
 
-def _compute_load_fatigue_metrics(
-    activities: list[dict],
-    trend_payload: Any,
-    profile: dict | None = None,
-    days_window: int = 56,
-) -> dict | None:
-    """Calcula TSS/CTL/ATL/TSB y reglas de actuación con rangos por deporte."""
-    return _load_metrics._compute_load_fatigue_metrics(
-        activities=activities,
-        trend_payload=trend_payload,
-        profile=profile,
-        days_window=days_window,
-        reference_day=date.today(),
-    )
-
-
 def _compute_weekly_spike_signal(
     series: list[dict],
     reference_day: date | None = None,
@@ -2493,8 +2476,8 @@ def _build_load_trend_markdown(profile: dict, user_message: str) -> str:
     m_semanas = re.search(r"(\d{1,3})\s*semanas?", text)
     m_dias = re.search(r"(\d{1,3})\s*d[ií]as", text)
 
-    load_metrics = (profile or {}).get("load_metrics") or {}
-    series = load_metrics.get("series") or _storage.get_load_metrics_series(days=120) or []
+    load_metrics = _load_metrics_view(profile)
+    series = load_metrics.get("series") or []
     if not series:
         return "\n".join([
             "## 🧭 Resumen",
@@ -2940,8 +2923,8 @@ def _calendar_block(today: date | None = None) -> str:
 
 def _build_today_load_status_markdown(profile: dict) -> str:
     """Construye estado determinista de hoy con TSS/ATL/CTL/TSB y regla aplicada."""
-    load_metrics = (profile or {}).get("load_metrics") or {}
-    series = load_metrics.get("series") or _storage.get_load_metrics_series(days=120) or []
+    load_metrics = _load_metrics_view(profile)
+    series = load_metrics.get("series") or []
 
     if not series:
         return "\n".join([
@@ -2958,8 +2941,7 @@ def _build_today_load_status_markdown(profile: dict) -> str:
             "- Si quieres, comparo semana actual vs anterior y detector de spike >20%.",
         ])
 
-    model_cfg = _resolve_sport_model_cfg(profile or {})
-    load_fatigue = _build_load_fatigue_dict_from_series(series, model_cfg) or {}
+    load_fatigue = load_metrics
 
     latest = (load_fatigue.get("latest") or series[-1] or {})
     latest_date = str(latest.get("date") or "")
@@ -3993,7 +3975,7 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
     """
     # Prioriza datos frescos de DB-first para evitar respuestas con snapshots desactualizados.
     # Usamos una ventana amplia para poder comparar semana actual vs previa.
-    series = _storage.get_load_metrics_series(days=120) or ((profile or {}).get("load_metrics") or {}).get("series") or []
+    series = _load_metrics_series()
     if not series:
         return (
             "## 🧭 Resumen\n"
@@ -5187,7 +5169,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
 
     tss_day: float | None = None
     tss_source = "no disponible"
-    series = ((profile or {}).get("load_metrics") or {}).get("series") or []
+    series = _load_metrics_series()
     for row in series:
         if str(row.get("date") or "") == target_iso:
             try:
@@ -9193,7 +9175,7 @@ def _kairos_load_trends(profile: dict, metric: str, weeks_back: int = 8) -> str:
     metric = str(metric or "tsb").strip().lower()
     if metric not in valid:
         return json.dumps({"error": f"Métrica '{metric}' no válida. Opciones: {sorted(valid)}"}, ensure_ascii=False)
-    series = (profile.get("load_metrics") or {}).get("series") or []
+    series = _load_metrics_series()
     if not series:
         return json.dumps({"error": "Sin datos históricos de carga/fatiga. Ejecuta una sesión para que el sistema los calcule.", "n": 0}, ensure_ascii=False)
     weeks_back = max(1, min(int(weeks_back), 52))
@@ -9232,7 +9214,7 @@ def _kairos_correlate(profile: dict, metric_a: str, metric_b: str, weeks_back: i
         return json.dumps({"error": f"Métrica B '{metric_b}' no válida."}, ensure_ascii=False)
     if metric_a == metric_b:
         return json.dumps({"error": "Las dos métricas deben ser distintas."}, ensure_ascii=False)
-    series = (profile.get("load_metrics") or {}).get("series") or []
+    series = _load_metrics_series()
     if not series:
         return json.dumps({"error": "Sin datos históricos de carga/fatiga.", "n": 0}, ensure_ascii=False)
     weeks_back = max(2, min(int(weeks_back), 52))
@@ -9472,80 +9454,24 @@ async def _fetch_activities_for_load_calc(
     return result
 
 
-def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) -> dict | None:
-    """Construye el dict de carga/fatiga completo a partir de una serie ya calculada.
+def _load_metrics_series(days: int = 120) -> list[dict]:
+    """Serie diaria de `load_metrics_daily`, la única fuente de la carga (27/10: antes 11 sitios leían una copia
+    guardada en el perfil, que podía quedarse vieja). Sin sesión o sin base de datos, lista vacía."""
+    try:
+        return _storage.get_load_metrics_series(days=days) or []
+    except (RuntimeError, ValueError, TypeError, OSError) as exc:
+        log.debug("load_metrics_daily no disponible: %s", exc)
+        return []
 
-    Equivale al bloque final de _compute_load_fatigue_metrics pero reutiliza
-    la serie persistida en DB en lugar de recalcularla.
-    """
+
+def _load_metrics_view(profile: dict | None, series: list[dict] | None = None) -> dict:
+    """Carga actual (latest, ranges, weekly, series…) calculada desde `load_metrics_daily`; {} sin serie."""
+    series = _load_metrics_series() if series is None else series
     if not series:
-        return None
-
-    latest = series[-1]
-    last_28 = series[-28:] if len(series) >= 28 else series[:]
-    last_42 = series[-42:] if len(series) >= 42 else series[:]
-    atl_values = [float(x["atl"]) for x in last_28]
-    tsb_values = [float(x["tsb"]) for x in last_28]
-
-    weekly_tss_values: list[float] = []
-    for idx in range(0, len(last_42), 7):
-        chunk = last_42[idx:idx + 7]
-        if chunk:
-            weekly_tss_values.append(round(sum(float(x["tss"]) for x in chunk), 1))
-    _today_s = date.today()
-    weekly_spike = _compute_weekly_spike_signal(series, reference_day=_today_s, threshold_ratio=0.20)
-    current_week_tss = float(weekly_spike.get("current_tss") or 0.0)
-
-    tsb_low  = round(_percentile(tsb_values, float(model_cfg.get("tsb_low_pct") or 0.20), default=-10.0), 1)
-    tsb_high = round(_percentile(tsb_values, float(model_cfg.get("tsb_high_pct") or 0.80), default=5.0), 1)
-    atl_high = round(_percentile(atl_values, float(model_cfg.get("atl_high_pct") or 0.80), default=max(50.0, float(latest["atl"]))), 1)
-    weekly_target = round(_percentile(weekly_tss_values, float(model_cfg.get("weekly_target_pct") or 0.55), default=current_week_tss), 1)
-    weekly_high   = round(_percentile(weekly_tss_values, float(model_cfg.get("weekly_high_pct") or 0.85), default=max(current_week_tss, weekly_target * 1.15)), 1)
-
-    days_with_load = sum(1 for x in series if float(x.get("tss") or 0.0) > 0)
-    _MIN_DAYS = 21
-    warming_up = days_with_load < _MIN_DAYS
-
-    weekly_spike_alert = bool(weekly_spike.get("spike_alert"))
-    resolved = _load_metrics.resolve_load_status(series, weekly_spike_alert=weekly_spike_alert)
-    status = resolved["status"]
-    action = resolved["action"]
-    recommendation = resolved["recommendation"]
-
-    return {
-        "model": {
-            "name": "tp-inspired-ewma",
-            "sport": str((model_cfg.get("_sport") or "running")),
-            "atl_tau_days": int(model_cfg.get("atl_tau_days") or 7),
-            "ctl_tau_days": int(model_cfg.get("ctl_tau_days") or 42),
-        },
-        "latest": latest,
-        "series": series[-120:],
-        "weekly": {
-            "current_tss": current_week_tss,
-            "previous_tss": float(weekly_spike.get("previous_tss") or 0.0),
-            "spike_delta_pct": weekly_spike.get("delta_pct"),
-            "spike_threshold_pct": float(weekly_spike.get("threshold_pct") or 20.0),
-            "spike_alert": weekly_spike_alert,
-            "target_tss": weekly_target,
-            "high_tss": weekly_high,
-        },
-        # Rangos personales (percentiles de 28 días): solo informativos, no deciden el estado.
-        "ranges": {"tsb_low": tsb_low, "tsb_high": tsb_high, "atl_high": atl_high},
-        "warming_up": warming_up,
-        "warming_up_days_remaining": max(0, _MIN_DAYS - days_with_load),
-        "days_with_load": days_with_load,
-        "flags": {
-            "fatigue_high": status == "fatigue_high", "sustained_overload": resolved["week_in_load"],
-            "abs_overload": resolved["zone"]["key"] == "high_risk", "available_for_quality": status == "ready",
-            "warming_up": warming_up,
-            "weekly_spike_alert": weekly_spike_alert,
-        },
-        "zone": resolved["zone"],
-        "status": status,
-        "action": action,
-        "recommendation": recommendation,
-    }
+        return {}
+    model_cfg = _resolve_sport_model_cfg(profile)
+    model_cfg["_sport"] = str(((profile or {}).get("goals") or {}).get("primary") or "running").strip().lower()
+    return _load_metrics.load_fatigue_from_series(series, model_cfg) or {}
 
 
 def _build_mcp_transparency_markdown(events: list[dict]) -> str:
@@ -10434,13 +10360,6 @@ class TrainerAgent:
                     exc,
                 )
 
-        # 6. Configuración de tau por deporte
-        model_cfg = _resolve_sport_model_cfg(self.user_profile)
-        tau_atl   = max(3,  min(int(round(float(model_cfg.get("atl_tau_days") or 7))), 14))
-        tau_ctl   = max(21, min(int(round(float(model_cfg.get("ctl_tau_days") or 42))), 90))
-        alpha_atl = 1.0 / float(tau_atl)
-        alpha_ctl = 1.0 / float(tau_ctl)
-
         # 7. Semilla: ATL/CTL de la víspera del rango en DB (0 al reconstruir la línea base)
         atl_prev = 0.0
         ctl_prev = 0.0
@@ -10463,26 +10382,10 @@ class TrainerAgent:
                     log.info("compute_load: semilla ATL=%.1f CTL=%.1f desde %s", atl_prev, ctl_prev, row["date"])
                     break
 
-        # 8. EWMA día a día para el rango nuevo
-        new_rows: list[dict] = []
-        day_cursor = _date.fromisoformat(fetch_from)
-        while day_cursor <= today:
-            d_iso = day_cursor.isoformat()
-            tss   = max(0.0, float(tss_by_day.get(d_iso, 0.0)))
-            atl   = atl_prev + (tss - atl_prev) * alpha_atl
-            ctl   = ctl_prev + (tss - ctl_prev) * alpha_ctl
-            tsb   = ctl_prev - atl_prev  # TP: Forma = CTL de ayer − ATL de ayer
-            new_rows.append({
-                "date": d_iso,
-                "tss":  round(tss, 2),
-                "atl":  round(atl, 2),
-                "ctl":  round(ctl, 2),
-                "tsb":  round(tsb, 2),
-                "activities_count": count_by_day.get(d_iso, 0),
-            })
-            atl_prev = atl
-            ctl_prev = ctl
-            day_cursor += timedelta(days=1)
+        # 8. PMC día a día para el rango nuevo (CTL 42 / ATL 7, Forma con los valores de ayer, como TP)
+        new_rows = _load_metrics.pmc_rows(
+            tss_by_day, _date.fromisoformat(fetch_from), today, atl_prev, ctl_prev, count_by_day,
+        )
 
         # 9. Persistir en DB
         _storage.upsert_load_metrics_series(new_rows)
@@ -10507,11 +10410,9 @@ class TrainerAgent:
     async def _build_plan_load_context(self) -> dict:
         """Estado real del atleta para el motor de planes: carga actual y volumen de las últimas semanas."""
         context: dict[str, Any] = {}
-        lm = (self.user_profile or {}).get("load_metrics") or {}
-        series = lm.get("series") or []
+        series = _load_metrics_series()
         if series:
-            model_cfg = _resolve_sport_model_cfg(self.user_profile)
-            load = _build_load_fatigue_dict_from_series(series, model_cfg) or {}
+            load = _load_metrics_view(self.user_profile, series)
             latest = load.get("latest") or {}
             for key in ("ctl", "atl", "tsb"):
                 if latest.get(key) is not None:
@@ -10544,29 +10445,15 @@ class TrainerAgent:
         return context
 
     def _apply_series_to_profile(self, series: list[dict], today) -> None:
-        """Actualiza self.user_profile["load_metrics"] con la serie dada y la guarda."""
-        if not isinstance(self.user_profile, dict):
+        """Marca en el perfil la versión de la fórmula con la que se calculó la serie (dispara el recálculo si
+        cambia). La serie vive solo en load_metrics_daily (27/10: antes se copiaba aquí con sus derivados)."""
+        if not isinstance(self.user_profile, dict) or not series:
             return
-        model_cfg = _resolve_sport_model_cfg(self.user_profile)
-        model_cfg["_sport"] = str(
-            ((self.user_profile.get("goals") or {}).get("primary") or "running")
-        ).strip().lower()
-        load_fatigue = _build_load_fatigue_dict_from_series(series, model_cfg)
-        if not load_fatigue:
-            return
-        self.user_profile["load_metrics"] = {
-            "model":           load_fatigue.get("model") or {},
-            "last":            {**(load_fatigue.get("latest") or {}), "date": today.isoformat()},
-            "ranges":          load_fatigue.get("ranges") or {},
-            "weekly":          load_fatigue.get("weekly") or {},
-            "series":          load_fatigue.get("series") or [],
-            "formula_version": _TSS_FORMULA_VERSION,
-            "updated_at":      datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
-        }
+        self.user_profile["load_metrics"] = {"formula_version": _TSS_FORMULA_VERSION}
         try:
             _save_user_profile(self.user_profile)
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            log.debug("No se pudo persistir cache de load_metrics: %s", exc)
+            log.debug("No se pudo guardar formula_version en el perfil: %s", exc)
 
     async def collect_startup_snapshot_48h(self, prefetch_today: dict | None = None) -> dict:
         """Recoge un snapshot operativo de 48h para briefing de arranque."""
@@ -10824,23 +10711,13 @@ class TrainerAgent:
             if isinstance(feedback, dict):
                 plan_execution_feedback = feedback
 
-        load_window_days = 56
-        _load_debug: str = "sin datos canónicos en DB"
+        # Carga: solo la serie de load_metrics_daily. Sin ella no hay estado de carga (27/10: antes se recalculaba
+        # el TSS en vivo, sin el detalle de las actividades, o se usaba una copia del perfil que podía ser vieja).
+        _load_debug: str = "sin serie en load_metrics_daily"
         load_fatigue = None
-
-        # 1) Prioridad absoluta: serie persistida en DB (fuente canónica).
-        try:
-            canonical_series = _storage.get_load_metrics_series(days=120)
-        except (RuntimeError, ValueError, TypeError, OSError) as _db_exc:
-            canonical_series = []
-            _load_debug = f"error leyendo DB canónica: {_db_exc}"
-
+        canonical_series = _load_metrics_series()
         if canonical_series:
-            model_cfg = _resolve_sport_model_cfg(getattr(self, "user_profile", {}))
-            model_cfg["_sport"] = str(
-                ((self.user_profile.get("goals") or {}).get("primary") or "running")
-            ).strip().lower()
-            load_fatigue = _build_load_fatigue_dict_from_series(canonical_series, model_cfg)
+            load_fatigue = _load_metrics_view(getattr(self, "user_profile", {}), canonical_series) or None
             if load_fatigue:
                 _load_debug = f"usando serie canónica de DB ({len(canonical_series)} días)"
                 try:
@@ -10870,79 +10747,6 @@ class TrainerAgent:
                 except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _week_exc:
                     log.debug("collect_startup: no se pudo calcular current_tss_effective: %s", _week_exc)
 
-        # 2) Fallback legacy: recálculo en vivo sólo si no hay serie canónica.
-        if load_fatigue is None:
-            # ── Actividades históricas por rango de fechas para el modelo TSS/ATL/CTL ──
-            # El modelo EWMA necesita TODOS los entrenamientos del período de cálculo,
-            # independientemente del número total. Un atleta que doble sesiones tendría
-            # 2 actividades/día → limit=N actividades no garantiza cobertura temporal.
-            # Usamos get_activities_by_date con el mismo rango que days_window.
-            load_start_iso = (date.today() - timedelta(days=load_window_days)).isoformat()
-            activities_for_load: list[dict] = []
-            try:
-                hist_raw = await _tool_json(
-                    "get_activities_by_date",
-                    {
-                        "start_date": load_start_iso,
-                        "end_date": today_iso,
-                        "page": 0,
-                        "page_size": 200,
-                    },
-                )
-                if isinstance(hist_raw, dict):
-                    page_acts = _extract_activities_list(hist_raw.get("activities") or hist_raw)
-                    activities_for_load.extend(page_acts)
-                elif isinstance(hist_raw, list):
-                    activities_for_load.extend(_extract_activities_list(hist_raw))
-                elif isinstance(hist_raw, str):
-                    # get_activities_by_date devolvió cadena — intentar parseo manual
-                    try:
-                        parsed = json.loads(hist_raw)
-                        if isinstance(parsed, list):
-                            activities_for_load.extend(_extract_activities_list(parsed))
-                        elif isinstance(parsed, dict):
-                            activities_for_load.extend(_extract_activities_list(parsed.get("activities") or parsed))
-                    except json.JSONDecodeError:
-                        pass
-            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
-                _load_debug = f"excepcion get_activities_by_date: {_e}"
-                log.warning("collect_startup: get_activities_by_date falló: %s", _e)
-
-            # Fallback: si get_activities_by_date no retornó actividades, intentar get_activities con mayor límite
-            if not activities_for_load:
-                _load_debug = "get_activities_by_date sin datos — usando fallback get_activities(100)"
-                log.info("collect_startup: get_activities_by_date sin datos, fallback a get_activities(100)")
-                try:
-                    fallback_raw = await _tool_json("get_activities", {"start": "0", "limit": "100"})
-                    activities_for_load = _extract_activities_list(fallback_raw)
-                    if activities_for_load:
-                        log.info("collect_startup: fallback ok — %d actividades obtenidas", len(activities_for_load))
-                        _load_debug = f"fallback ok: {len(activities_for_load)} actividades via get_activities"
-                    else:
-                        _load_debug = "sin actividades en fallback — usuario nuevo o sin datos en Garmin"
-                        log.info("collect_startup: fallback también vacío — usuario nuevo o sin datos")
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e2:
-                    _load_debug = f"fallback también falló: {_e2}"
-                    log.warning("collect_startup: fallback get_activities falló: %s", _e2)
-                    activities_for_load = list(activities_recent)
-            else:
-                log.info("collect_startup: %d actividades obtenidas via get_activities_by_date", len(activities_for_load))
-
-            load_trend = await _tool_json(
-                "get_training_load_trend",
-                {
-                    "start_date": (date.today() - timedelta(days=56)).isoformat(),
-                    "end_date": today_iso,
-                },
-            )
-
-            load_fatigue = _compute_load_fatigue_metrics(
-                activities=activities_for_load,
-                trend_payload=load_trend,
-                profile=getattr(self, "user_profile", {}) if hasattr(self, "user_profile") else {},
-                days_window=load_window_days,
-            )
-
         body_summary = (
             f"hoy={_format_body_battery_day(body_today, today_iso)} · "
             f"ayer={_format_body_battery_day(body_yday, yesterday_iso)}"
@@ -10955,42 +10759,6 @@ class TrainerAgent:
             f"hoy={_format_sleep_day(sleep_today, today_iso)} · "
             f"ayer={_format_sleep_day(sleep_yday, yesterday_iso)}"
         )
-
-        # 3) Fallback final: usar caché de perfil si tampoco hubo serie canónica
-        # ni recálculo en vivo exitoso.
-        if load_fatigue is None:
-            cached_lm = (getattr(self, "user_profile", None) or {}).get("load_metrics") or {}
-            cached_series = cached_lm.get("series") or []
-            if cached_series:
-                model_cfg = _resolve_sport_model_cfg(getattr(self, "user_profile", {}))
-                model_cfg["_sport"] = str(
-                    ((self.user_profile.get("goals") or {}).get("primary") or "running")
-                ).strip().lower()
-                load_fatigue = _build_load_fatigue_dict_from_series(cached_series, model_cfg)
-                if load_fatigue:
-                    _load_debug = "usando caché de perfil (fallback)"
-                    log.info("collect_startup: cargadas métricas cacheadas (%d días)", len(cached_series))
-
-        if isinstance(getattr(self, "user_profile", None), dict) and load_fatigue:
-            existing_formula_v = int(
-                ((self.user_profile.get("load_metrics") or {}).get("formula_version") or 0)
-            ) if isinstance(self.user_profile, dict) else 0
-            self.user_profile["load_metrics"] = {
-                "model": load_fatigue.get("model") or {},
-                "last": {
-                    **(load_fatigue.get("latest") or {}),
-                    "date": (load_fatigue.get("latest") or {}).get("date") or today_iso,
-                },
-                "ranges": load_fatigue.get("ranges") or {},
-                "weekly": load_fatigue.get("weekly") or {},
-                "series": load_fatigue.get("series") or [],
-                "formula_version": existing_formula_v or _TSS_FORMULA_VERSION,
-                "updated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
-            }
-            try:
-                _save_user_profile(self.user_profile)
-            except (RuntimeError, ValueError, TypeError, OSError) as exc:
-                log.debug("No se pudo persistir load_metrics en startup: %s", exc)
 
         return {
             "window_hours": 48,
@@ -11092,10 +10860,9 @@ class TrainerAgent:
 
     def _build_load_and_anchors_context_block(self) -> str:
         out = ""
-        lm = (self.user_profile or {}).get("load_metrics") or {}
-        series = lm.get("series") or []
+        series = _load_metrics_series()
         if series:
-            load = _build_load_fatigue_dict_from_series(series, _resolve_sport_model_cfg(self.user_profile)) or {}
+            load = _load_metrics_view(self.user_profile, series)
             latest = load.get("latest") or {}
             ranges = load.get("ranges") or {}
             weekly = load.get("weekly") or {}
@@ -11848,7 +11615,7 @@ class TrainerAgent:
                     log.debug("pre_fetch recent activities falló: %s", _e)
 
                 if not user_date:
-                    _series = (self.user_profile.get("load_metrics") or {}).get("series") or []
+                    _series = _load_metrics_series()
                     for _row in reversed(_series):
                         if float(_row.get("tss") or 0) > 0 or int(_row.get("activities_count") or 0) > 0:
                             user_date = str(_row.get("date") or "")

@@ -340,7 +340,8 @@ class TestPlanScreens:
 
 class TestLoadTrend:
     def test_without_series(self, out):
-        m._show_load_trend_cli(_Agent())
+        with patch("agent.trainer_agent._load_metrics_series", return_value=[]):
+            m._show_load_trend_cli(_Agent())
         assert "Aún no hay datos de carga" in out()
 
     @pytest.mark.parametrize("cmd", ["/carga", "/carga meses"])
@@ -349,8 +350,9 @@ class TestLoadTrend:
         series = [{"date": (start + timedelta(days=i)).isoformat(), "tss": 50.0, "atl": 40.0 + i % 7,
                    "ctl": 45.0, "tsb": 2.0} for i in range(101)]
         agent = _Agent()
-        agent.user_profile = {"load_metrics": {"series": series}}
-        m._show_load_trend_cli(agent, cmd)
+        # La serie sale de load_metrics_daily (27/10: antes de una copia en el perfil).
+        with patch("agent.trainer_agent._load_metrics_series", return_value=series):
+            m._show_load_trend_cli(agent, cmd)
         text = out()
         assert "CTL" in text and "ATL" in text
 
@@ -456,14 +458,15 @@ async def _fake_session():
 
 def _run_main(inputs, *, auth_raw='{"displayName": "x"}', is_new=False, kb="kb", skip_status=False, monkeypatch=None):
     _MainAgent.instances.clear()
-    profile = {"load_metrics": {"last": {"ctl": 60.4, "atl": 42.1, "tsb": 18.3}, "series": [{}] * 120,
-                                "formula_version": 1}}
+    profile = {"load_metrics": {"formula_version": 1}}
+    load_view = {"latest": {"ctl": 60.4, "atl": 42.1, "tsb": 18.3}, "series": [{}] * 120}
     if skip_status:
         monkeypatch.setenv("KAIROS_SKIP_STARTUP_STATUS", "1")
     else:
         monkeypatch.delenv("KAIROS_SKIP_STARTUP_STATUS", raising=False)
     patches = [
         patch.object(m, "_configure_logging", return_value=(logging.getLogger("test"), False)),
+        patch.object(m, "_load_metrics_view", return_value=load_view),
         patch.object(m, "_check_and_migrate_supabase"),
         patch.object(m, "_authenticate_or_register_user", return_value=("r@example.com", {}, is_new, "pw")),
         patch.object(m, "_ensure_garmin_credentials"),

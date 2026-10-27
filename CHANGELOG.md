@@ -4,6 +4,15 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Changed (una sola fuente para la serie de carga, E8)
+- Señal: la revisión del 27/10 encontró una copia de 120 días de la serie en el perfil (`perfil.load_metrics.series`, con `last`, `ranges`, `weekly` y `model`) que leían 11 sitios en lugar de `load_metrics_daily`: `/carga`, el estado de hoy, el TSS de la semana (como respaldo), las preguntas de datos, las tools `kairos_load_trends` y `kairos_correlate`, el contexto del motor de planes y del LLM, el chat y el arranque. Además, sin serie en la base de datos el arranque recalculaba el TSS en vivo (`_compute_load_fatigue_metrics`, sin el detalle de las actividades: un segundo TSS) y, si fallaba, usaba la copia del perfil.
+- Ahora todo lee `load_metrics_daily` con `_load_metrics_series` / `_load_metrics_view`, y el estado de carga se deriva con `load_metrics.load_fatigue_from_series` (trasladada desde `trainer_agent`). Sin serie no hay estado de carga. El perfil guarda solo `load_metrics.formula_version`.
+- El bucle día a día del PMC sale de `compute_and_persist_load_metrics` a `load_metrics.pmc_rows` (misma aritmética, CTL 42 / ATL 7, Forma con los valores de ayer). Fuera `_compute_load_fatigue_metrics`: sus tests usan ahora `pmc_rows` y `load_fatigue_from_series`, así que la regla del TSB de TP se prueba sobre el código que calcula la serie de verdad.
+- `_resolve_sport_model_cfg` ya no lee el `model` del perfil: lo escribía Kairos solo con las constantes y nunca traía percentiles (comprobado en Supabase).
+- Un test (`/carga` sin serie) consultaba Supabase de verdad; ahora con su parche. Comprobado con una URL de Supabase inválida: ningún test sale a la red.
+- Lección: una copia "por rapidez" de un dato canónico acaba con lectores propios; mejor una función de lectura única desde el principio.
+- Evidencia: tests 767; batería 25/25 antes y después, con las 21 respuestas deterministas idénticas y el bloque de datos de las 4 de coaching igual (cambia solo la redacción del LLM); arranque de la batería de 66 s a 23 s. Datos: la primera ejecución del código nuevo dejó `perfil.load_metrics` en `{"formula_version": 34}` (comprobado después: el resto del perfil intacto, 121 días en `load_metrics_daily`).
+
 ### Fixed (revisión del proyecto tras la limpieza, paso 1: sin cambio de TSS)
 - El cálculo de carga pedía `get_activity_splits` a Garmin por cada trail nuevo y lo pasaba a `_estimate_trail_tss_high_precision`, que no lo usaba (lee el ritmo normalizado nativo). Fuera la llamada y el argumento `splits_raw` de toda la cadena: una llamada menos a Garmin por trail, mismo TSS.
 - La ruta determinista de la FC umbral, sin umbral en el perfil, guardaba la del reloj solo en `hr_threshold_bpm`, sin la entrada de `hr_threshold_tp_history` que pone `/perfil umbral fc`: el hrTSS de trail y bici seguía sin referencia de TP. Ahora solo lee: muestra la del reloj y propone `/perfil umbral fc <lpm>` (decisión de método de `CLAUDE.md`: un solo número, cargado a mano, el mismo que en TP). Unidades en lpm (decía "bpm").

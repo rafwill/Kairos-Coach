@@ -15,7 +15,6 @@ from agent.trainer_agent import (
     _classify_strength_session_with_confidence,
     _classify_walk_hike_session_with_confidence,
     _estimate_session_tss,
-    _compute_load_fatigue_metrics,
     _resolve_sport_model_cfg,
     _infer_tss_model_tag,
     _infer_tss_source_tag,
@@ -29,6 +28,24 @@ from agent.load_metrics import (
 )
 from agent.load_metrics import _classify_running_session_with_confidence, estimate_session_tss
 import agent.load_metrics as lm
+
+
+def _compute_load_fatigue_metrics(activities, trend_payload=None, profile=None, days_window=56, reference_day=None):
+    """PMC de producción sobre actividades sintéticas (27/10): la serie sale de `pmc_rows` (el bucle de
+    compute_and_persist_load_metrics) y el estado, de `load_fatigue_from_series` (lo que ven las pantallas).
+    El TSS de cada actividad es su campo trainingLoad; `trend_payload` se ignora (la carga de Garmin no es TSS)."""
+    today = reference_day or date.today()
+    start = today - timedelta(days=max(14, days_window - 1))
+    tss_by_day: dict[str, float] = {}
+    for act in activities or []:
+        d_iso = str(act.get("startTimeLocal") or "")[:10]
+        if d_iso and start.isoformat() <= d_iso <= today.isoformat():
+            tss_by_day[d_iso] = tss_by_day.get(d_iso, 0.0) + float(act.get("trainingLoad") or 0.0)
+    if not any(v > 0 for v in tss_by_day.values()):
+        return None
+    cfg = lm._resolve_sport_model_cfg(profile)
+    cfg["_sport"] = str(((profile or {}).get("goals") or {}).get("primary") or "running").strip().lower()
+    return lm.load_fatigue_from_series(lm.pmc_rows(tss_by_day, start, today), cfg, today=today)
 
 
 @pytest.fixture
@@ -138,6 +155,7 @@ class TestSessionTssEstimation:
                 trend_payload={"load": []},
                 profile={},
                 days_window=28,
+                reference_day=today,
             )
 
         assert out is not None
@@ -158,15 +176,15 @@ class TestSessionTssEstimation:
         running_cfg = _resolve_sport_model_cfg({"goals": {"primary": "running"}})
         assert cfg["atl_tau_days"] == running_cfg["atl_tau_days"]
 
-    def test_resolve_sport_model_cfg_ignores_taus_saved_in_profile_model(self):
-        # load_metrics.model lo reescribe Kairos; no debe fijar constantes antiguas (p. ej. ATL 8).
+    def test_resolve_sport_model_cfg_ignores_model_saved_in_profile(self):
+        # Un `model` viejo en el perfil no fija constantes ni percentiles (p. ej. ATL 8).
         profile = {
             "goals": {"primary": "trail running"},
             "load_metrics": {"model": {"atl_tau_days": 8, "ctl_tau_days": 45, "tsb_low_pct": 0.3}},
         }
         cfg = _resolve_sport_model_cfg(profile)
         assert (cfg["ctl_tau_days"], cfg["atl_tau_days"]) == (42, 7)
-        assert cfg["tsb_low_pct"] == 0.3
+        assert cfg["tsb_low_pct"] == _resolve_sport_model_cfg({"goals": {"primary": "trail running"}})["tsb_low_pct"]
 
     def test_compute_load_fatigue_metrics_trail_uses_sport_tau(self, pmc_tss_from_fixture):
         today = date.today()
