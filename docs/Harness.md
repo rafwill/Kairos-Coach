@@ -154,11 +154,4 @@ Genera `<transcripción>.juez.md/.json` y sale con 1 si algo suspende. Primera p
 
 ## 9. Siguientes pasos
 
-En este orden, cada uno con su batería antes y después:
-
-1. ~~**G2 coherente con G1**~~ (hecho el 23/10: `prompts/coaching_rules.md`; batería 25/25).
-2. ~~**`agent/sensors.py`**~~ (hecho el 23/10): S8, S10–S13 y G3–G5 en un módulo sin dependencias de `agent/`, que importan el juez y `trainer_agent`. Mismo veredicto en 175/175 preguntas de las siete baterías del 23/10 y 0 diferencias frente al juez anterior en 350 casos (reales y con errores inyectados); solo cambia G4, que ya no marca "sin datos disponibles".
-3. ~~**Autocorrección en vivo (§6)**~~ (hecho el 23/10, junto con la retirada del `HookManager`; resultado de la batería en el CHANGELOG).
-4. ~~**S14, S15 y S16**~~ (hecho el 23/10). Antes de conectarlos, sobre las 40 respuestas con coaching de las baterías del día: 6 avisos, los 6 falsos positivos del sensor (un umbral condicional, un "+46 %" cortado, ml de hidratación, cadencia y un reparto semanal con calidad otro día); corregidos, 0. Resultado de la batería en el CHANGELOG.
-5. ~~**G12 y motor de planes en zonas de Garmin**~~ (hecho el 23/10; resultado en el CHANGELOG).
-6. ~~**S23 y S24**~~ (hecho el 23/10). Ruff no tiene línea base propia: en lugar de marcar con `noqa` los avisos actuales, el lint obligatorio son las familias que detectan fallos reales y hoy están a cero (F, E9); E, W, B, I, UP, SIM, DTZ y RUF quedan como informe.
+Los pendientes del harness (revisión de las líneas `[SENSOR]` con el uso real, metatooling) están en `docs/proximos_pasos.md`; lo hecho, con su señal, lección y evidencia, en `CHANGELOG.md`.
