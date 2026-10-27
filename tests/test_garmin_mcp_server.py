@@ -100,6 +100,30 @@ def test_hrv_trend_reads_values_from_hrv_summary(monkeypatch):
     assert out["trend"][1] == {"date": "2026-09-02", "hrv": None, "weekly_avg": None, "status": None}
 
 
+def test_hrv_trend_says_which_days_failed(monkeypatch):
+    # 27/10: los días que fallaban se descartaban sin rastro (una tendencia con un 429 salía con huecos).
+    class _Flaky:
+        def get_hrv_data(self, day: str):
+            if day == "2026-09-02":
+                raise RuntimeError("429 Too Many Requests")
+            return {"hrvSummary": {"lastNightAvg": 50, "weeklyAvg": 55, "status": "BALANCED"}}
+
+    monkeypatch.setattr(server, "_garmin_client", lambda: _Flaky())
+    out = server._hrv_trend({"start_date": "2026-09-01", "end_date": "2026-09-03"})
+    assert out["failed_days"] == ["2026-09-02"]
+    assert [row["date"] for row in out["trend"]] == ["2026-09-01", "2026-09-03"]
+
+
+def test_hrv_trend_raises_when_every_day_fails(monkeypatch):
+    class _Down:
+        def get_hrv_data(self, day: str):
+            raise RuntimeError("Garmin caído")
+
+    monkeypatch.setattr(server, "_garmin_client", lambda: _Down())
+    with pytest.raises(RuntimeError, match="Garmin caído"):
+        server._hrv_trend({"start_date": "2026-09-01", "end_date": "2026-09-02"})
+
+
 def test_vo2max_trend_returns_every_estimate_in_one_range_call(monkeypatch):
     # Antes: un get_max_metrics cada 7 días (muchas muestras en días sin estimación) con el payload entero.
     calls = []

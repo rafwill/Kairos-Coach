@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Fixed (tendencia de HRV con días que fallan, E9)
+- `get_hrv_trend` (servidor MCP) pide la HRV día a día y descartaba sin rastro los días que fallaban: con un 429 a mitad, la tendencia salía con huecos y sin aviso. Ahora cada fallo queda en `garmin_mcp.log`, la respuesta trae `failed_days` y, si fallan todos, el error llega a Kairos, que avisa de que Garmin no respondió. Tests: 769.
+- Descartado el "tiempo máximo en las llamadas a Garmin" (pendiente 3): la pregunta que esperó 57 min en la batería de la mañana coincidió con el portátil en espera moderna (registro System: Kernel-Power 506 a las 10:42, red cortada por política a las 10:52:54, 507 a las 11:49:15). Al despertar, la conexión estaba rota (`ConnectionResetError`) y el reintento funcionó. `garminconnect` ya pone 15 s a cada petición y reintenta 3 veces.
+- Lección (la del 26/10, otra vez): antes de buscar un bloqueo, mirar si el equipo estaba despierto. Se apuntó un pendiente sin hacerlo.
+
 ### Changed (una sola fuente para la serie de carga, E8)
 - Señal: la revisión del 27/10 encontró una copia de 120 días de la serie en el perfil (`perfil.load_metrics.series`, con `last`, `ranges`, `weekly` y `model`) que leían 11 sitios en lugar de `load_metrics_daily`: `/carga`, el estado de hoy, el TSS de la semana (como respaldo), las preguntas de datos, las tools `kairos_load_trends` y `kairos_correlate`, el contexto del motor de planes y del LLM, el chat y el arranque. Además, sin serie en la base de datos el arranque recalculaba el TSS en vivo (`_compute_load_fatigue_metrics`, sin el detalle de las actividades: un segundo TSS) y, si fallaba, usaba la copia del perfil.
 - Ahora todo lee `load_metrics_daily` con `_load_metrics_series` / `_load_metrics_view`, y el estado de carga se deriva con `load_metrics.load_fatigue_from_series` (trasladada desde `trainer_agent`). Sin serie no hay estado de carga. El perfil guarda solo `load_metrics.formula_version`.

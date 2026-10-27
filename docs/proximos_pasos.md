@@ -13,8 +13,8 @@ Se reescribe al final de cada sesión.
 **Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 767 tests; batería 25/25.
 
 - En el ordenador 1, al empezar: `git pull`. No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
-- **Siguiente paso: la revisión del 27/10 (bloque E), en el orden acordado:** el punto 3 con E9 (tiempo máximo en las llamadas a Garmin), luego E10 (dependencias), y E11 cuando se toquen esos ficheros.
-- **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 4 a 6 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Los envoltorios (punto 7), cuando se toque `trainer_agent.py` por otro motivo.
+- **Siguiente paso: la revisión del 27/10 (bloque E):** el punto 7 (dependencias), y el 8 cuando se toquen esos ficheros.
+- **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Los envoltorios (punto 6), cuando se toque `trainer_agent.py` por otro motivo.
 
 ## Pendiente
 
@@ -27,29 +27,27 @@ Se reescribe al final de cada sesión.
 
 2. **Metatooling, siguientes pasos** (grupos de tools hechos el 26/10: −22 % de tokens por llamada, mismas respuestas). Si hace falta más: (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
 
-3. **Tiempo máximo en las llamadas a Garmin fuera del bucle con tools.** En la batería del 27/10 la ruta determinista de "TSS de mis 20 últimas actividades de ciclismo" esperó 57 min a `get_activities_by_date` hasta un corte de red (`ConnectionResetError` 10054); el bucle con tools tiene 8 s por tool, pero las rutas deterministas, el arranque y el cálculo de carga llaman a `call_tool` sin límite. Ver dónde ponerlo (en `call_tool` o en el servidor, con la sesión HTTP de `garminconnect`) sin cortar llamadas largas legítimas.
-
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
 
-4. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
-5. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
-6. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
+3. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
+4. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
+5. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
 
 ### D. Limpieza del proyecto
 
-7. **Envoltorios de `trainer_agent.py`:** quedan 16 funciones de una línea que solo llaman a `load_metrics` (las otras 20 no las usaba nadie y se quitaron el 27/10). Los tests las usan para sustituir funciones: dejarlo para cuando se toque `trainer_agent.py` por otro motivo. Va con la decisión sobre la "API pública" de `load_metrics` (E11).
+6. **Envoltorios de `trainer_agent.py`:** quedan 16 funciones de una línea que solo llaman a `load_metrics` (las otras 20 no las usaba nadie y se quitaron el 27/10). Los tests las usan para sustituir funciones: dejarlo para cuando se toque `trainer_agent.py` por otro motivo. Va con la decisión sobre la "API pública" de `load_metrics` (punto 8).
 
 ### E. Revisión del proyecto del 27/10 (el paso 1, hecho, está en el CHANGELOG)
 
-9. **Con el punto 3:** `_hrv_trend` del servidor (`garmin_mcp/server.py`) descarta sin rastro los días que fallan; una tendencia con un 429 sale con huecos sin aviso.
-10. **Dependencias:** `garminconnect`, `supabase` y `openai` sin tope superior (una instalación nueva puede traer una versión que rompa); `openai>=1.30` muy por debajo de la instalada (3.37); el README dice Python 3.11+ y la CI no prueba la 3.11.
-11. **Cuando se toquen esos ficheros:** duplicados pequeños (`_moving_average` en `load_metrics` y `running_tss`; cuatro `_coerce` de velocidad casi iguales; parejas internas `_first_float`, `_key_candidates`, `_first`; "completar con `activity_tss` los días a cero", repetido en `trainer_agent.py`); la frase de tools de escritura de `prompts/system_prompt.md` (con batería); y decidir si se mantiene la "API pública" de `load_metrics` (unas 30 funciones de una línea "para reutilizar en otros proyectos" que no usa nadie).
+7. **Dependencias:** `garminconnect`, `supabase` y `openai` sin tope superior (una instalación nueva puede traer una versión que rompa); `openai>=1.30` muy por debajo de la instalada (3.37); el README dice Python 3.11+ y la CI no prueba la 3.11.
+8. **Cuando se toquen esos ficheros:** duplicados pequeños (`_moving_average` en `load_metrics` y `running_tss`; cuatro `_coerce` de velocidad casi iguales; parejas internas `_first_float`, `_key_candidates`, `_first`; "completar con `activity_tss` los días a cero", repetido en `trainer_agent.py`); la frase de tools de escritura de `prompts/system_prompt.md` (con batería); y decidir si se mantiene la "API pública" de `load_metrics` (unas 30 funciones de una línea "para reutilizar en otros proyectos" que no usa nadie).
 
 ## Descartado
 
 - Quitar a Copilot de los contributors de GitHub: exigiría reescribir el historial; decidido no hacerlo (23/10).
 - Capturar el RPE de fuerza después de la sesión: el TSS de fuerza sale de la FC (modelo B) y ya cuadra con TP (≈ 1,00); decidido quitarlo (25/10).
 - Sensor que impida nombrar la hipoglucemia a un atleta con DT2 y metformina: el LLM la menciona para tranquilizar, no como aviso, y no limita el entrenamiento; aceptado sin sensor (26/10).
+- Tiempo máximo en las llamadas a Garmin fuera del bucle con tools: el cuelgue de 57 min de la batería del 27/10 fue el portátil en espera moderna (Kernel-Power 506/507), no Kairos; `garminconnect` ya limita cada petición a 15 s con 3 reintentos (27/10).
 - Menú con los 5 proveedores de prueba (NVIDIA, Gemini, Groq, Mistral, Cerebras): sustituido por el proveedor de IA que diga cada atleta (26/10).

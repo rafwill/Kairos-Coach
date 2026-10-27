@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import logging
 import re
 import shutil
 import threading
@@ -25,6 +26,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 mcp = FastMCP("kairos-garmin-mcp", instructions="Kairos local Garmin MCP server")
+log = logging.getLogger(__name__)
 
 _client: Garmin | None = None
 _client_identity: tuple[str, str] | None = None
@@ -353,10 +355,17 @@ def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
     end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
 
     trend: list[dict[str, Any]] = []
+    # Un día que falla no tumba la tendencia, pero se dice cuál (27/10: antes se descartaba sin rastro y una
+    # tendencia con un 429 a mitad salía con huecos sin aviso). Si fallan todos, el error sube a Kairos.
+    failed_days: list[str] = []
+    last_error: Exception | None = None
     for day in _iso_date_iter(start, end):
         try:
             payload = _invoke_with_auth_retry("get_hrv_data", day)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — cualquier fallo de Garmin en un día
+            log.warning("get_hrv_trend: %s sin datos (%s: %s)", day, type(exc).__name__, exc)
+            failed_days.append(day)
+            last_error = exc
             continue
 
         # Garmin devuelve los valores del día dentro de hrvSummary (la raíz solo trae lecturas y
@@ -378,10 +387,13 @@ def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
             "status": summary.get("status"),
         })
 
+    if last_error is not None and not trend:
+        raise last_error
     return {
         "start_date": start,
         "end_date": end,
         "days_with_data": sum(1 for row in trend if row.get("hrv") not in (None, "")),
+        "failed_days": failed_days,
         "trend": trend,
     }
 
