@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Changed (limpieza: copias idénticas, D3b)
+- Las 6 funciones de clasificación de deporte (`_is_trail_activity`…), `_percentile` y `_find_hr_zones_in_json` tenían una copia idéntica en `trainer_agent.py` (comprobado con el AST: solo cambiaban anotaciones y docstrings). Queda la de `load_metrics.py`, con los docstrings, y `trainer_agent` la importa. Tests: 766.
+- `_parse_hr_zones_list` sigue con dos versiones: la de `load_metrics` no lee el formato real de Garmin (objetos JSON concatenados, comprobado con la actividad 24764615547) y unificarla cambiaría el camino del TSS en sus respaldos. Pendiente de decidir (D3a en `docs/proximos_pasos.md`).
+
 ### Removed (limpieza: código que sobra, D2)
 - Modo de contingencia del MCP (`KAIROS_MCP_ENABLE_FALLBACK`, caché en el perfil, ruta rápida local): apagado desde siempre porque la caché no caducaba. `contracts.py` se queda con los contratos y la normalización; la nota "Transparencia de datos" solo avisa de fallos de Garmin.
 - Bloqueo de tools de escritura (`MCP_READ_ONLY`, `_is_write_mcp_tool`, `_build_mcp_read_only_block_message`): el servidor propio solo tiene tools `get_*`, y una tool fuera del esquema ya no llega al servidor (guardia de tools inexistentes del 24/10). El test del bucle lo comprueba con una tool de escritura.

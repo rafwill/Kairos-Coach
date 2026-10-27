@@ -97,6 +97,7 @@ WALK_HIKE_THRESHOLD_SPEED_M_MIN_MAX = 145.0
 
 
 def _is_cycling_activity(act_type: Any) -> bool:
+    """True para cualquier variante de ciclismo (mountain bike, carretera, indoor, virtual, etc.)."""
     if isinstance(act_type, dict):
         act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
     t = str(act_type or "").lower()
@@ -104,6 +105,7 @@ def _is_cycling_activity(act_type: Any) -> bool:
 
 
 def _is_strength_activity(act_type: Any) -> bool:
+    """True para actividades de fuerza (pesas/functional strength/gym)."""
     if isinstance(act_type, dict):
         act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
     t = str(act_type or "").lower()
@@ -111,6 +113,7 @@ def _is_strength_activity(act_type: Any) -> bool:
 
 
 def _is_trail_hike_walk_activity(act_type: Any) -> bool:
+    """True para trail running, senderismo/hike y caminar/walking."""
     if isinstance(act_type, dict):
         act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
     t = str(act_type or "").lower()
@@ -118,6 +121,7 @@ def _is_trail_hike_walk_activity(act_type: Any) -> bool:
 
 
 def _is_trail_activity(act_type: Any) -> bool:
+    """True para trail running."""
     if isinstance(act_type, dict):
         act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
     t = str(act_type or "").lower()
@@ -125,6 +129,7 @@ def _is_trail_activity(act_type: Any) -> bool:
 
 
 def _is_hike_walk_activity(act_type: Any) -> bool:
+    """True para senderismo/hike y caminar/walking (excluye trail running)."""
     if _is_trail_activity(act_type):
         return False
     if isinstance(act_type, dict):
@@ -134,6 +139,7 @@ def _is_hike_walk_activity(act_type: Any) -> bool:
 
 
 def _is_running_non_trail_activity(act_type: Any) -> bool:
+    """True para running/carrera (excepto trail, hiking y walking)."""
     if _is_trail_hike_walk_activity(act_type):
         return False
     if isinstance(act_type, dict):
@@ -981,6 +987,11 @@ def _estimate_gym_cardio_tss(
 
 
 def _find_hr_zones_in_json(data: Any) -> list[dict] | None:
+    """Busca recursivamente datos de zonas de FC en cualquier nivel del JSON.
+
+    Detecta arrays con objetos que tengan secsInZone > 0 y zoneNumber.
+    Cubre el caso donde Garmin devuelve los datos en campos anidados.
+    """
     if isinstance(data, list):
         zone_like = [
             x
@@ -3846,6 +3857,7 @@ def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | 
 
 
 def _percentile(values: list[float], pct: float, default: float = 0.0) -> float:
+    """Calcula un percentil simple sin dependencias externas."""
     cleaned = sorted(float(v) for v in values if v is not None)
     if not cleaned:
         return float(default)

@@ -32,6 +32,16 @@ from agent.mcp.client import (
 )
 from agent import storage as _storage
 from agent import load_metrics as _load_metrics
+from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
+    _find_hr_zones_in_json,
+    _is_cycling_activity,
+    _is_hike_walk_activity,
+    _is_running_non_trail_activity,
+    _is_strength_activity,
+    _is_trail_activity,
+    _is_trail_hike_walk_activity,
+    _percentile,
+)
 
 log = logging.getLogger(__name__)
 
@@ -227,58 +237,6 @@ def _seconds_to_mmss_or_hhmmss(seconds: float) -> str:
         s = total % 60
         return f"{m:02d}:{s:02d}"
     return _seconds_to_hhmmss(total)
-
-
-def _is_cycling_activity(act_type) -> bool:
-    """True para cualquier variante de ciclismo (mountain bike, carretera, indoor, virtual, etc.)."""
-    if isinstance(act_type, dict):
-        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
-    t = str(act_type or "").lower()
-    return any(kw in t for kw in ("cycling", "biking", "bike", "virtual_ride", "bmx", "cicl"))
-
-
-def _is_strength_activity(act_type) -> bool:
-    """True para actividades de fuerza (pesas/functional strength/gym)."""
-    if isinstance(act_type, dict):
-        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
-    t = str(act_type or "").lower()
-    return any(kw in t for kw in ("strength", "fuerza", "weight", "gym", "functional_strength"))
-
-
-def _is_trail_hike_walk_activity(act_type) -> bool:
-    """True para trail running, senderismo/hike y caminar/walking."""
-    if isinstance(act_type, dict):
-        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
-    t = str(act_type or "").lower()
-    return any(kw in t for kw in ("trail", "hike", "hiking", "sender", "trek", "walk", "camin"))
-
-
-def _is_trail_activity(act_type) -> bool:
-    """True para trail running."""
-    if isinstance(act_type, dict):
-        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
-    t = str(act_type or "").lower()
-    return "trail" in t
-
-
-def _is_hike_walk_activity(act_type) -> bool:
-    """True para senderismo/hike y caminar/walking (excluye trail running)."""
-    if _is_trail_activity(act_type):
-        return False
-    if isinstance(act_type, dict):
-        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
-    t = str(act_type or "").lower()
-    return any(kw in t for kw in ("hike", "hiking", "sender", "trek", "walk", "camin"))
-
-
-def _is_running_non_trail_activity(act_type) -> bool:
-    """True para running/carrera (excepto trail, hiking y walking)."""
-    if _is_trail_hike_walk_activity(act_type):
-        return False
-    if isinstance(act_type, dict):
-        act_type = str(act_type.get("typeKey") or act_type.get("typeName") or "")
-    t = str(act_type or "").lower()
-    return any(kw in t for kw in ("running", "run", "corr"))
 
 
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
@@ -1908,16 +1866,6 @@ def _resolve_load_parameters_effective_date(profile: dict | None) -> date | None
     if not parsed:
         return None
     return max(parsed)
-
-
-def _percentile(values: list[float], pct: float, default: float = 0.0) -> float:
-    """Calcula un percentil simple sin dependencias externas."""
-    cleaned = sorted(float(v) for v in values if v is not None)
-    if not cleaned:
-        return float(default)
-    p = max(0.0, min(float(pct), 1.0))
-    idx = int(round((len(cleaned) - 1) * p))
-    return cleaned[idx]
 
 
 def _resolve_sport_model_cfg(profile: dict | None) -> dict:
@@ -8827,50 +8775,6 @@ async def _find_activity_id_by_name(mcp_session: ClientSession, name_hint: str) 
         if not has_more:
             break
         start = next_start_val if next_start_val > start else start + limit
-
-    return None
-
-
-def _find_hr_zones_in_json(data: Any) -> list[dict] | None:
-    """Busca recursivamente datos de zonas de FC en cualquier nivel del JSON.
-    
-    Detecta arrays con objetos que tengan secsInZone > 0 y zoneNumber.
-    Cubre el caso donde Garmin devuelve los datos en campos anidados.
-    """
-    if isinstance(data, list):
-        # Comprobar si esta lista ES la lista de zonas
-        zone_like = [
-            x for x in data
-            if isinstance(x, dict) and (
-                x.get("zoneNumber") is not None or x.get("zone_number") is not None
-            )
-        ]
-        if zone_like and len(zone_like) >= 3:
-            return zone_like
-        # Buscar en los elementos de la lista
-        for item in data:
-            result = _find_hr_zones_in_json(item)
-            if result:
-                return result
-
-    elif isinstance(data, dict):
-        # Revisar primero las claves más probables
-        for key in (
-            "heartRateTimeInZone", "heartRateZones", "hrTimeInZones",
-            "timeInHeartRateZones", "heartRateTimeInZones", "hrZones",
-            "zones", "hr_zones", "timeInZone", "timeInZones",
-        ):
-            val = data.get(key)
-            if isinstance(val, list) and len(val) >= 3:
-                result = _find_hr_zones_in_json(val)
-                if result:
-                    return result
-        # Búsqueda en profundidad en todos los valores
-        for val in data.values():
-            if isinstance(val, (dict, list)):
-                result = _find_hr_zones_in_json(val)
-                if result:
-                    return result
 
     return None
 

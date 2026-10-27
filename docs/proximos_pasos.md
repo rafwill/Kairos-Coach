@@ -38,19 +38,18 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ### D. Limpieza del proyecto (revisión del 26/10)
 
-Revisión completa de código y documentación del 26/10: incoherencias, código que sobra y duplicados. Hechos el 27/10: D1 (documentación), D4 (menores) y D2 (código que sobra, con su limpieza del perfil en Supabase). Cada bloque, su commit.
+Revisión completa de código y documentación del 26/10: incoherencias, código que sobra y duplicados. Hechos el 27/10: D1 (documentación), D4 (menores), D2 (código que sobra, con su limpieza del perfil en Supabase) y D3b (copias idénticas). Cada bloque, su commit.
 
 **Recomendación (por aquí se sigue):**
 
-1. **Unificar en `load_metrics.py`:** los duplicados 6a y 6b. Las zonas (6a) primero, comprobando qué versión es la correcta.
+1. **Zonas (6a):** decidir si el TSS pasa a leer las zonas de la actividad (ver la fila).
 2. **Dejar para otro momento:** los envoltorios (6c), porque tocan mucho para ganar poco.
 
 6. **D3. Código duplicado entre `trainer_agent.py` y `load_metrics.py`**
 
    | # | Qué | Riesgo |
    | --- | --- | --- |
-   | a | `_parse_hr_zones_list` y `_find_hr_zones_in_json`, con versiones **distintas** en cada módulo | Alto: la misma entrada puede dar zonas distintas. Primero comprobar cuál es la correcta (`CLAUDE.md`: `_parse_hr_zones_list` no lee el formato real de Garmin). |
-   | b | `_is_trail_activity` y otras 6 de clasificación de deporte, y `_percentile`, copiadas idénticas | Medio: un cambio en una copia no llega a la otra. Dejar las de `load_metrics.py`. |
+   | a | `_parse_hr_zones_list`, con versiones **distintas** en cada módulo (`_find_hr_zones_in_json` ya es una sola, la de `load_metrics`) | Alto. Comprobado el 27/10 con Garmin real (24764615547): `get_activity_hr_in_timezones` llega como objetos JSON concatenados; la de `trainer_agent` los lee (4 zonas) y la de `load_metrics` da `None`, así que el cálculo del TSS nunca usa esas zonas y va siempre por su otro respaldo. Unificar hacia la buena cambia ese camino: es un cambio de fórmula (hipótesis, criterio y prueba sin escribir). |
    | c | 36 envoltorios de una línea en `trainer_agent.py` que solo llaman a `load_metrics` | Bajo (estético); los tests los usan para sustituir funciones. Dejar para otro momento. |
 
 ## Descartado
