@@ -1546,10 +1546,7 @@ def _compute_normalized_walk_equivalent_speed_m_min(
     return fmean(p4) ** 0.25
 
 
-def _resolve_walk_threshold_speed_m_min(
-    activity: dict,
-    running_threshold_pace_sec_per_km: float | None,
-) -> float:
+def _resolve_walk_threshold_speed_m_min(activity: dict) -> float:
     summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
 
     def _coerce_speed_mps(raw: Any) -> float | None:
@@ -1745,7 +1742,6 @@ def _estimate_walk_hike_tss_metabolic(
     activity: dict,
     hours: float,
     activity_details_raw: str | None,
-    running_threshold_pace_sec_per_km: float | None,
 ) -> float | None:
     if hours <= 0 or not activity_details_raw:
         return None
@@ -1754,10 +1750,7 @@ def _estimate_walk_hike_tss_metabolic(
     if not obs:
         return None
 
-    threshold_speed_m_min = _resolve_walk_threshold_speed_m_min(
-        activity,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-    )
+    threshold_speed_m_min = _resolve_walk_threshold_speed_m_min(activity)
     if threshold_speed_m_min <= 0:
         return None
 
@@ -1771,11 +1764,7 @@ def _estimate_walk_hike_tss_metabolic(
     return max(0.0, tss)
 
 
-def _estimate_walk_hike_tss_from_aggregates(
-    activity: dict,
-    hours: float,
-    running_threshold_pace_sec_per_km: float | None,
-) -> float | None:
+def _estimate_walk_hike_tss_from_aggregates(activity: dict, hours: float) -> float | None:
     if hours <= 0:
         return None
 
@@ -1817,10 +1806,7 @@ def _estimate_walk_hike_tss_from_aggregates(
     if v_equiv_m_min <= 0:
         return None
 
-    threshold_speed_m_min = _resolve_walk_threshold_speed_m_min(
-        activity,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-    )
+    threshold_speed_m_min = _resolve_walk_threshold_speed_m_min(activity)
     if threshold_speed_m_min <= 0:
         return None
 
@@ -2150,9 +2136,6 @@ def _estimate_trail_tss_high_precision(
     activity: dict,
     hours: float,
     running_threshold_pace_sec_per_km: float | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-    splits_raw: str | None = None,
 ) -> float | None:
     if hours <= 0:
         return None
@@ -2895,12 +2878,7 @@ def _classify_walk_hike_session_with_confidence(activity: dict, hours: float) ->
 def _estimate_walk_hike_tss(
     activity: dict,
     hours: float,
-    hr_zones_raw: str | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
     activity_details_raw: str | None,
-    hr_threshold_bpm: float | None,
-    running_threshold_pace_sec_per_km: float | None = None,
 ) -> tuple[float | None, str | None]:
     if hours <= 0:
         return None, None
@@ -2909,16 +2887,11 @@ def _estimate_walk_hike_tss(
         activity,
         hours=hours,
         activity_details_raw=activity_details_raw,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
     )
     if tss_metabolic is not None:
         return max(0.0, float(tss_metabolic)), "TSS"
 
-    tss_aggregate = _estimate_walk_hike_tss_from_aggregates(
-        activity,
-        hours=hours,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-    )
+    tss_aggregate = _estimate_walk_hike_tss_from_aggregates(activity, hours=hours)
     if tss_aggregate is not None:
         return max(0.0, float(tss_aggregate)), "TSS"
 
@@ -3391,7 +3364,6 @@ def _estimate_session_tss(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
     hr_zones_raw: str | None = None,
-    splits_raw: str | None = None,
     activity_details_raw: str | None = None,
     use_trail_splits: bool = True,
     hr_threshold_bpm: float | None = None,
@@ -3526,9 +3498,6 @@ def _estimate_session_tss(
                         activity,
                         hours=hours,
                         running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-                        hr_rest_bpm=hr_rest_bpm,
-                        hr_max_bpm=hr_max_bpm,
-                        splits_raw=splits_raw,
                     )
                     if tss_trail_precise is not None:
                         _set_tss_resolution_meta(activity, model_tag="trail:high_precision_splits")
@@ -3621,9 +3590,6 @@ def _estimate_session_tss(
                             activity,
                             hours=hours,
                             running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-                            hr_rest_bpm=hr_rest_bpm,
-                            hr_max_bpm=hr_max_bpm,
-                            splits_raw=splits_raw,
                         )
                         if tss_trail_precise is not None:
                             _set_tss_resolution_meta(activity, model_tag="trail:high_precision_splits")
@@ -3666,12 +3632,7 @@ def _estimate_session_tss(
             tss_walk, lbl_walk = _estimate_walk_hike_tss(
                 activity,
                 hours=hours,
-                hr_zones_raw=hr_zones_raw,
-                hr_rest_bpm=hr_rest_bpm,
-                hr_max_bpm=hr_max_bpm,
                 activity_details_raw=details_payload,
-                hr_threshold_bpm=hr_threshold_bpm,
-                running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
             )
             if tss_walk is not None:
                 # Modelo intermedio entre rTSS y hrTSS de TP: nunca por encima del hrTSS de TP.
@@ -4385,23 +4346,9 @@ def estimate_strength_tss_from_rpe_minutes(activity: dict, hours: float) -> floa
 def estimate_walk_hike_tss(
     activity: dict,
     hours: float,
-    hr_zones_raw: str | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
     activity_details_raw: str | None = None,
-    hr_threshold_bpm: float | None = None,
-    running_threshold_pace_sec_per_km: float | None = None,
 ) -> tuple[float | None, str | None]:
-    return _estimate_walk_hike_tss(
-        activity,
-        hours,
-        hr_zones_raw,
-        hr_rest_bpm,
-        hr_max_bpm,
-        activity_details_raw,
-        hr_threshold_bpm,
-        running_threshold_pace_sec_per_km,
-    )
+    return _estimate_walk_hike_tss(activity, hours, activity_details_raw)
 
 
 def derive_walk_hike_threshold_speed_m_min_from_activities(
@@ -4496,7 +4443,6 @@ def estimate_session_tss(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
     hr_zones_raw: str | None = None,
-    splits_raw: str | None = None,
     activity_details_raw: str | None = None,
     use_trail_splits: bool = True,
     hr_threshold_bpm: float | None = None,
@@ -4509,7 +4455,6 @@ def estimate_session_tss(
         hr_rest_bpm=hr_rest_bpm,
         hr_max_bpm=hr_max_bpm,
         hr_zones_raw=hr_zones_raw,
-        splits_raw=splits_raw,
         activity_details_raw=activity_details_raw,
         use_trail_splits=use_trail_splits,
         hr_threshold_bpm=hr_threshold_bpm,

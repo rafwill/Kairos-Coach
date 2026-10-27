@@ -4,6 +4,14 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Fixed (revisión del proyecto tras la limpieza, paso 1: sin cambio de TSS)
+- El cálculo de carga pedía `get_activity_splits` a Garmin por cada trail nuevo y lo pasaba a `_estimate_trail_tss_high_precision`, que no lo usaba (lee el ritmo normalizado nativo). Fuera la llamada y el argumento `splits_raw` de toda la cadena: una llamada menos a Garmin por trail, mismo TSS.
+- La ruta determinista de la FC umbral, sin umbral en el perfil, guardaba la del reloj solo en `hr_threshold_bpm`, sin la entrada de `hr_threshold_tp_history` que pone `/perfil umbral fc`: el hrTSS de trail y bici seguía sin referencia de TP. Ahora solo lee: muestra la del reloj y propone `/perfil umbral fc <lpm>` (decisión de método de `CLAUDE.md`: un solo número, cargado a mano, el mismo que en TP). Unidades en lpm (decía "bpm").
+- Argumentos que la función recibía y no usaba: el ritmo umbral de carrera en toda la cadena de la marcha (`_estimate_walk_hike_tss` y sus dos modelos; el umbral de marcha es su propio anclaje), zonas y FC en `_estimate_walk_hike_tss`, `training_load_raw`/`ftp`/ritmo umbral en `_build_activity_analysis_block` (el análisis ya no pide el FTP para nada), `profile` en `_build_recent_tss_by_sport_markdown` y `_compute_effective_week_tss_from_series_and_activities`, `username` en `_handle_garmin_password_change` y dos de funciones internas.
+- 20 de los 36 envoltorios de `trainer_agent.py` no los llamaba nadie (ni los tests): fuera. Quedan 16.
+- `datetime.utcfromtimestamp` (obsoleto desde Python 3.12) pasa a `datetime.fromtimestamp(ts, tz=timezone.utc)`, mismo resultado.
+- Tests: 767.
+
 ### Changed (limpieza: funciones duplicadas, D3a y D3b)
 - Las 6 funciones de clasificación de deporte (`_is_trail_activity`…), `_percentile` y `_find_hr_zones_in_json` tenían una copia idéntica en `trainer_agent.py` (comprobado con el AST: solo cambiaban anotaciones y docstrings). Queda la de `load_metrics.py`, con los docstrings, y `trainer_agent` la importa. Tests: 766.
 - `_parse_hr_zones_list` tenía dos versiones distintas: la de `load_metrics`, la del cálculo del TSS, no leía el formato real de `get_activity_hr_in_timezones` (objetos JSON concatenados, comprobado con Garmin real en la actividad 24764615547: `None` frente a 4 zonas). Queda una sola, la buena, en `load_metrics` junto con `_try_parse_json`; `trainer_agent` importa las dos. Decisión del usuario: sin subir `TSS_FORMULA_VERSION` ni recalcular, porque ninguna de las 226 actividades de `activity_tss` pasa por los respaldos que usan zonas (todas salen por su modelo principal: `running:pipeline_fisico`, `trail:tp_zones`, `cycling:power_ftp`…). Solo cambia el respaldo de una actividad nueva sin detalle de Garmin: zonas reales en vez de FC media. Test con el formato real. Tests: 767.

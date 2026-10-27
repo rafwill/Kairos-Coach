@@ -4576,7 +4576,7 @@ class TestHrThresholdDeterministicRoute:
             out = await TrainerAgent.chat(agent, "puedes consultar a garmin connect cual es mi FC umbral?")
 
         assert out.startswith("## 🧭 Resumen")
-        assert "169 bpm" in out
+        assert "169 lpm" in out
 
     @pytest.mark.asyncio
     async def test_hr_threshold_route_does_not_update_load_effective_date_marker(self):
@@ -4608,9 +4608,11 @@ class TestHrThresholdDeterministicRoute:
         ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
             out = await TrainerAgent.chat(agent, "mi frecuencia cardiaca umbral")
 
-        assert "169 bpm" in out
+        assert "169 lpm" in out and "/perfil umbral fc 169" in out
         perf = (agent.user_profile.get("performance") or {})
         assert perf.get("performance_params_updated_at") == "2026-08-10"
+        # Solo lee: la FC del reloj no se guarda (se registra con /perfil umbral fc, que pone también la de TP).
+        assert "hr_threshold_bpm" not in perf and "hr_threshold_tp_history" not in perf
 
     @pytest.mark.asyncio
     async def test_hr_threshold_route_never_calls_lactate_threshold_tool(self):
@@ -4640,7 +4642,7 @@ class TestHrThresholdDeterministicRoute:
         ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
             out = await TrainerAgent.chat(agent, "cual es mi FC umbral?")
 
-        assert "169 bpm" in out
+        assert "169 lpm" in out
 
     @pytest.mark.asyncio
     async def test_chat_config_options_route_does_not_call_llm(self):
@@ -5892,7 +5894,7 @@ class TestRecentTssBySportRoute:
         with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored), \
              patch("agent.trainer_agent._estimate_session_tss") as estimate_mock:
-            out = await ta._build_recent_tss_by_sport_markdown(object(), {}, self.QUESTION)
+            out = await ta._build_recent_tss_by_sport_markdown(object(), self.QUESTION)
 
         estimate_mock.assert_not_called()
         assert "| Fecha | Deporte | Actividad | TSS | Carga Garmin |" in out
@@ -5922,7 +5924,7 @@ class TestRecentTssBySportRoute:
 
         with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
-            out = await ta._build_recent_tss_by_sport_markdown(object(), {}, "¿Dime los TSS de mis 20 ultimas actividades de Ciclismo?")
+            out = await ta._build_recent_tss_by_sport_markdown(object(), "¿Dime los TSS de mis 20 ultimas actividades de Ciclismo?")
 
         assert "| 28/07/2026 | ciclismo | Road. Un poquito de CDC | 102.4 | 257.0 |" in out
         assert "101.3" not in out

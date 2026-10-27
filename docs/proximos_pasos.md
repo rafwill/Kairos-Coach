@@ -13,7 +13,7 @@ Se reescribe al final de cada sesión.
 **Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 767 tests; batería 25/25.
 
 - En el ordenador 1, al empezar: `git pull`. No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
-- **Siguiente paso: el tiempo máximo de las llamadas a Garmin (punto 3)**, que hoy colgó la batería 57 min.
+- **Siguiente paso: la revisión del 27/10 (bloque E), en el orden acordado:** E8 (una sola fuente para la serie de carga), después el punto 3 con E9, luego E10, y E11 cuando se toquen esos ficheros.
 - **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 4 a 6 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Los envoltorios (punto 7), cuando se toque `trainer_agent.py` por otro motivo.
 
 ## Pendiente
@@ -39,7 +39,14 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ### D. Limpieza del proyecto
 
-7. **Envoltorios de `trainer_agent.py`:** 36 funciones de una línea que solo llaman a `load_metrics`. Riesgo bajo (estético), pero tocan mucho para ganar poco y los tests los usan para sustituir funciones: dejarlo para cuando se toque `trainer_agent.py` por otro motivo.
+7. **Envoltorios de `trainer_agent.py`:** quedan 16 funciones de una línea que solo llaman a `load_metrics` (las otras 20 no las usaba nadie y se quitaron el 27/10). Los tests las usan para sustituir funciones: dejarlo para cuando se toque `trainer_agent.py` por otro motivo. Va con la decisión sobre la "API pública" de `load_metrics` (E11).
+
+### E. Revisión del proyecto del 27/10 (el paso 1, hecho, está en el CHANGELOG)
+
+8. **Una sola fuente para la serie de carga** (con tests y batería antes y después). El perfil guarda una copia de 120 días (`perfil.load_metrics.series`) que leen al menos 6 rutas (p. ej. `trainer_agent.py` `_build_load_trend_*`, `main.py` en el arranque) en lugar de `load_metrics_daily`, la fuente canónica según `CLAUDE.md`. Además, si al arrancar no hay serie en la base de datos, `collect_startup_snapshot_48h` recalcula el TSS en vivo con `_compute_load_fatigue_metrics` (sin detalle de actividades: un segundo TSS) y, si falla, usa la copia del perfil. Propuesta: todo lee `load_metrics_daily`; fuera el recálculo en vivo y la copia (el perfil se queda con `formula_version` y los percentiles); una de las dos funciones que construyen el dict de carga (`_compute_load_fatigue_metrics` / `_build_load_fatigue_dict_from_series`).
+9. **Con el punto 3:** `_hrv_trend` del servidor (`garmin_mcp/server.py`) descarta sin rastro los días que fallan; una tendencia con un 429 sale con huecos sin aviso.
+10. **Dependencias:** `garminconnect`, `supabase` y `openai` sin tope superior (una instalación nueva puede traer una versión que rompa); `openai>=1.30` muy por debajo de la instalada (3.37); el README dice Python 3.11+ y la CI no prueba la 3.11.
+11. **Cuando se toquen esos ficheros:** duplicados pequeños (`_moving_average` en `load_metrics` y `running_tss`; cuatro `_coerce` de velocidad casi iguales; parejas internas `_first_float`, `_key_candidates`, `_first`; "completar con `activity_tss` los días a cero", repetido en `trainer_agent.py`); la frase de tools de escritura de `prompts/system_prompt.md` (con batería); y decidir si se mantiene la "API pública" de `load_metrics` (unas 30 funciones de una línea "para reutilizar en otros proyectos" que no usa nadie).
 
 ## Descartado
 

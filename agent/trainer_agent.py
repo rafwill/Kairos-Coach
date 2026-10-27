@@ -941,7 +941,7 @@ def _build_athlete_knowledge_context(query: str, chunks: list[dict[str, str]]) -
         lines.append(f"- Fuente: {source}\\n{trimmed}{ellipsis}")
     return "\n".join(lines)
 
-async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_message: str) -> str:
+async def _build_recent_tss_by_sport_markdown(mcp_session, user_message: str) -> str:
     """Devuelve el TSS guardado (activity_tss) de las últimas N actividades de uno o varios deportes."""
     sports, limit = _parse_recent_tss_sports_request(user_message)
     if not sports:
@@ -1557,43 +1557,9 @@ def _format_training_effect_fields(src: dict) -> str:
     return " · ".join(parts)
 
 
-def _to_iso_date(value: Any) -> str | None:
-    """Normaliza una fecha heterogénea a ISO (YYYY-MM-DD)."""
-    return _load_metrics.to_iso_date(value)
-
-
 def _extract_training_load_points(payload: Any) -> list[dict]:
     """Extrae puntos diarios de carga desde payloads de tendencia heterogéneos."""
     return _load_metrics.extract_training_load_points(payload)
-
-
-def _extract_activity_duration_hours(activity: dict) -> float:
-    return _load_metrics.extract_activity_duration_hours(activity)
-
-
-def _extract_activity_distance_km(activity: dict) -> float | None:
-    return _load_metrics.extract_activity_distance_km(activity)
-
-
-def _parse_pace_to_sec_per_km(raw: Any) -> float | None:
-    return _load_metrics.parse_pace_to_sec_per_km(raw)
-
-
-def _speed_ms_to_pace_sec_per_km(raw_speed: Any) -> float | None:
-    return _load_metrics.speed_ms_to_pace_sec_per_km(raw_speed)
-
-
-def _extract_avg_pace_sec_per_km(activity: dict) -> float | None:
-    return _load_metrics.extract_avg_pace_sec_per_km(activity)
-
-
-def _extract_running_effective_pace_sec_per_km(activity: dict) -> float | None:
-    return _load_metrics.extract_running_effective_pace_sec_per_km(activity)
-
-
-def _should_use_raw_hr_tss_for_fast_trail(activity: dict) -> bool:
-    """Activa la regla especial de trail rápido (< 6:00/km)."""
-    return _load_metrics.should_use_raw_hr_tss_for_fast_trail(activity)
 
 
 def _extract_training_load_tss(activity: dict) -> float | None:
@@ -1602,40 +1568,6 @@ def _extract_training_load_tss(activity: dict) -> float | None:
 
 def _extract_activity_native_load(activity: dict) -> float | None:
     return _load_metrics.extract_activity_native_load(activity)
-
-
-def _estimate_if_from_hr(
-    activity: dict,
-    cycling_formula: bool,
-    hr_rest_bpm: float | None = None,
-    hr_max_bpm: float | None = None,
-) -> float | None:
-    return _load_metrics.estimate_if_from_hr(
-        activity,
-        cycling_formula=cycling_formula,
-        hr_rest_bpm=hr_rest_bpm,
-        hr_max_bpm=hr_max_bpm,
-    )
-
-
-def _estimate_hr_tss_from_zones(
-    activity: dict,
-    hours: float,
-    hr_zones_raw: str | None = None,
-    hr_rest_bpm: float | None = None,
-    hr_max_bpm: float | None = None,
-    apply_cap: bool = True,
-    min_coverage_ratio: float = 0.0,
-) -> float | None:
-    return _load_metrics.estimate_hr_tss_from_zones(
-        activity,
-        hours=hours,
-        hr_zones_raw=hr_zones_raw,
-        hr_rest_bpm=hr_rest_bpm,
-        hr_max_bpm=hr_max_bpm,
-        apply_cap=apply_cap,
-        min_coverage_ratio=min_coverage_ratio,
-    )
 
 
 def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, float | None]:
@@ -1650,92 +1582,15 @@ def _extract_threshold_pace_sec_per_km(activity: dict, running_threshold_pace_se
     )
 
 
-def _estimate_if_from_rpe(activity: dict) -> float | None:
-    return _load_metrics.estimate_if_from_rpe(activity)
-
-
-def _extract_strength_rpe_10(activity: dict) -> float | None:
-    """Extrae RPE normalizado a escala 1-10 para sesiones de fuerza."""
-    return _load_metrics.extract_strength_rpe_10(activity)
-
-
-def _estimate_strength_if(activity: dict) -> float | None:
-    """Estima IF para gimnasio por tipo de trabajo, con soporte de override explícito."""
-    return _load_metrics.estimate_strength_if(activity)
-
-
-def _estimate_strength_tss_from_rpe_minutes(activity: dict, hours: float) -> float | None:
-    """Fallback de gimnasio: TSS por minuto en función de RPE (escala 1-10)."""
-    return _load_metrics.estimate_strength_tss_from_rpe_minutes(activity, hours)
-
-
-def _estimate_walk_hike_tss(
-    activity: dict,
-    hours: float,
-    hr_zones_raw: str | None,
-    hr_rest_bpm: float | None,
-    hr_max_bpm: float | None,
-    activity_details_raw: str | None = None,
-    hr_threshold_bpm: float | None = None,
-) -> tuple[float | None, str | None]:
-    return _load_metrics.estimate_walk_hike_tss(
-        activity,
-        hours,
-        hr_zones_raw,
-        hr_rest_bpm,
-        hr_max_bpm,
-        activity_details_raw,
-        hr_threshold_bpm,
-    )
-
-
 def _derive_walk_hike_threshold_speed_m_min_from_activities(
     activities: list[dict],
 ) -> float | None:
     return _load_metrics.derive_walk_hike_threshold_speed_m_min_from_activities(activities)
 
 
-def _estimate_tss_from_power_ftp(activity: dict, ftp: float | None, hours: float) -> float | None:
-    return _load_metrics.estimate_tss_from_power_ftp(activity, ftp, hours)
-
-
 def _has_activity_power_data(activity: dict) -> bool:
     """Detecta si la actividad incluye un dato de potencia utilizable (>0)."""
     return _load_metrics.has_activity_power_data(activity)
-
-
-def _estimate_tss_from_threshold_pace(
-    activity: dict,
-    hours: float,
-    running_threshold_pace_sec_per_km: float | None = None,
-    prefer_effective_running_pace: bool = False,
-    if_pace_ceiling: float = 1.20,
-) -> float | None:
-    return _load_metrics.estimate_tss_from_threshold_pace(
-        activity,
-        hours,
-        running_threshold_pace_sec_per_km,
-        prefer_effective_running_pace,
-        if_pace_ceiling,
-    )
-
-
-def _extract_running_if_from_threshold_pace(
-    activity: dict,
-    running_threshold_pace_sec_per_km: float | None = None,
-    prefer_effective_running_pace: bool = False,
-    if_pace_ceiling: float = 1.20,
-) -> float | None:
-    return _load_metrics.extract_running_if_from_threshold_pace(
-        activity,
-        running_threshold_pace_sec_per_km,
-        prefer_effective_running_pace,
-        if_pace_ceiling,
-    )
-
-
-def _extract_running_session_signals(activity: dict) -> dict[str, Any]:
-    return _load_metrics.extract_running_session_signals(activity)
 
 
 def _classify_strength_session_with_confidence(activity: dict) -> dict[str, Any]:
@@ -1746,10 +1601,6 @@ def _classify_walk_hike_session_with_confidence(activity: dict, hours: float) ->
     return _load_metrics.classify_walk_hike_session_with_confidence(activity, hours)
 
 
-def _estimate_if_from_training_effect(activity: dict) -> float | None:
-    return _load_metrics.estimate_if_from_training_effect(activity)
-
-
 def _estimate_session_tss(
     activity: dict,
     ftp: float | None = None,
@@ -1757,7 +1608,6 @@ def _estimate_session_tss(
     hr_rest_bpm: float | None = None,
     hr_max_bpm: float | None = None,
     hr_zones_raw: str | None = None,
-    splits_raw: str | None = None,
     activity_details_raw: str | None = None,
     use_trail_splits: bool = True,
     hr_threshold_bpm: float | None = None,
@@ -1771,7 +1621,6 @@ def _estimate_session_tss(
         hr_rest_bpm=hr_rest_bpm,
         hr_max_bpm=hr_max_bpm,
         hr_zones_raw=hr_zones_raw,
-        splits_raw=splits_raw,
         activity_details_raw=activity_details_raw,
         use_trail_splits=use_trail_splits,
         hr_threshold_bpm=hr_threshold_bpm,
@@ -2039,7 +1888,6 @@ def _format_load_fatigue_summary(load_metrics: dict | None) -> str:
 
 def _compute_effective_week_tss_from_series_and_activities(
     *,
-    profile: dict,
     series: list[dict],
     activities: list[dict],
     week_dates: list[date],
@@ -3795,8 +3643,6 @@ async def _hydrate_profile_hr_anchors_if_missing(mcp_session, profile: dict | No
 async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> str:
     """Respuesta determinista y rápida de FC umbral (LTHR)."""
     profile = profile if isinstance(profile, dict) else {}
-    perf = profile.get("performance") if isinstance(profile.get("performance"), dict) else {}
-
     bpm, date_value, source = _resolve_hr_threshold_bpm(profile)
     if bpm is not None:
         date_d = _parse_iso_date_safe(date_value)
@@ -3828,8 +3674,9 @@ async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> st
             ]
         )
 
-    # Fallback rápido a MCP: solo perfil de usuario (fuente de FC umbral).
-    # No se mezclan consultas de umbral de lactato/ritmo en esta ruta.
+    # Sin FC umbral en el perfil: se muestra la que detectó el reloj, sin guardarla. Se registra a mano con
+    # /perfil umbral fc, que la pone a la vez en hr_threshold_bpm y en hr_threshold_tp_history (27/10: antes
+    # esta ruta guardaba solo hr_threshold_bpm y el hrTSS de trail y bici seguía sin su referencia de TP).
     try:
         raw = await asyncio.wait_for(call_tool(mcp_session, "get_user_profile", {}), timeout=2.0)
         parsed = _try_parse_json(raw)
@@ -3839,46 +3686,37 @@ async def _build_hr_threshold_profile_markdown(mcp_session, profile: dict) -> st
         live_bpm = None
 
     if live_bpm is not None:
-        perf["hr_threshold_bpm"] = int(round(live_bpm))
-        perf["hr_threshold_date"] = date.today().isoformat()
-        profile["performance"] = perf
-        try:
-            _save_user_profile(profile)
-        except (RuntimeError, ValueError, TypeError, OSError) as exc:
-            log.debug("No se pudo persistir hr_threshold_bpm en perfil: %s", exc)
-
+        bpm_txt = int(round(live_bpm))
         return "\n".join(
             [
                 "## 🧭 Resumen",
-                "FC umbral actual resuelta por consulta rápida a Garmin.",
+                f"No tienes la FC umbral registrada en Kairos; tu reloj Garmin tiene {bpm_txt} lpm.",
                 "",
                 "## 📊 Métricas clave",
                 "| Métrica | Valor | Fuente |",
                 "|---|---|---|",
-                f"| FC umbral (LTHR) | {int(round(live_bpm))} bpm | Garmin (MCP rápido) |",
-                "| Fecha de actualización | hoy | Garmin (MCP rápido) |",
+                f"| FC umbral (LTHR) | {bpm_txt} lpm | Garmin (reloj) |",
                 "",
                 "## ✅ Recomendación",
-                "- Mantén este valor en perfil para respuestas instantáneas consistentes.",
+                f"- Si es la misma que tienes en TrainingPeaks, regístrala con `/perfil umbral fc {bpm_txt}`: ancla el hrTSS "
+                "de fuerza, elíptica y remo y la referencia de TrainingPeaks para el de trail y bici sin potencia.",
                 "",
                 "## 🎯 Próximo paso",
-                "- Si quieres, te explico cómo impacta en tus zonas de entrenamiento.",
-                "- Fuente: respuesta determinista (dato resuelto sin pasar por LLM).",
+                "- Fuente: respuesta determinista (dato de Garmin, sin pasar por el LLM).",
             ]
         )
 
     return (
         "## 🧭 Resumen\n"
-        "No tengo registrada tu FC umbral (LTHR) y Garmin no la devolvió en la consulta rápida.\n\n"
+        "No tengo registrada tu FC umbral (LTHR) y Garmin no la devolvió.\n\n"
         "## 📊 Métricas clave\n"
         "| Métrica | Valor | Fuente |\n"
         "|---|---|---|\n"
-        "| FC umbral (LTHR) | sin datos | perfil + MCP rápido |\n\n"
+        "| FC umbral (LTHR) | sin datos | perfil y Garmin |\n\n"
         "## ✅ Recomendación\n"
-        "- Guardar manualmente la FC umbral en perfil para respuestas instantáneas.\n\n"
+        "- Regístrala con `/perfil umbral fc <lpm>`, la misma que tengas en TrainingPeaks.\n\n"
         "## 🎯 Próximo paso\n"
-        "- Si quieres, te guío para dejarla configurada ahora mismo.\n"
-        "- Fuente: respuesta determinista (perfil + fallback MCP rápido, 2s máx.)."
+        "- Fuente: respuesta determinista (perfil y Garmin, sin pasar por el LLM)."
     )
 
 
@@ -5269,11 +5107,6 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         analysis = _build_activity_analysis_block(
             activity_raw=raw_activity or "{}",
             hr_zones_raw=raw_hr_zones,
-            ftp=_extract_cycling_ftp_watts(profile),
-            running_threshold_pace_sec_per_km=(
-                _resolve_running_threshold_pace_for_date(profile, target_d.isoformat())
-                or _resolve_running_threshold_pace_sec_per_km(profile)
-            ),
             stored_tss_row=primary_stored,
         )
         analysis_md = _format_activity_analysis_for_markdown(analysis)
@@ -6150,7 +5983,7 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
         st = str(step_type or "").strip().lower()
         return st not in {"warmup", "cooldown", "rest", "recovery"}
 
-    def _adjust_step(step: dict, is_top_level: bool = False) -> None:
+    def _adjust_step(step: dict) -> None:
         if not isinstance(step, dict):
             return
         stype = str(step.get("type") or "").strip().lower()
@@ -6193,12 +6026,12 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
         nested = step.get("steps")
         if isinstance(nested, list):
             for ch in nested:
-                _adjust_step(ch, is_top_level=False)
+                _adjust_step(ch)
 
     steps = sw.get("steps")
     if isinstance(steps, list):
         for item in steps:
-            _adjust_step(item, is_top_level=True)
+            _adjust_step(item)
 
     total_after = _structured_workout_duration_minutes(sw)
     summary = sw.get("summary")
@@ -7785,7 +7618,7 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
             if not (warmup_idx == 0 and cooldown_idx == len(types) - 1 and warmup_idx < cooldown_idx):
                 local_errors.append("Sesión estructurada inválida: orden debe ser warmup -> main -> cooldown.")
 
-        def _validate_step(step: dict, parent_type: str = "") -> None:
+        def _validate_step(step: dict) -> None:
             if not isinstance(step, dict):
                 local_errors.append("step inválido en structured_workout.")
                 return
@@ -7825,7 +7658,7 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
                 if reps < 1:
                     local_errors.append("Bloques anidados requieren reps >= 1.")
                 for ch in nested:
-                    _validate_step(ch, parent_type=st)
+                    _validate_step(ch)
                 return
 
             duration_min = _safe_float(step.get("duration_min"), -1.0)
@@ -8498,7 +8331,7 @@ def _extract_activity_date_iso(activity: dict) -> str | None:
                     ts = int(s)
                     if ts > 10_000_000_000:   # milisegundos
                         ts //= 1000
-                    return datetime.utcfromtimestamp(ts).date().isoformat()
+                    return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
                 except (ValueError, OSError, OverflowError):
                     pass
 
@@ -8508,7 +8341,7 @@ def _extract_activity_date_iso(activity: dict) -> str | None:
                 ts = int(value)
                 if ts > 10_000_000_000:   # milisegundos
                     ts //= 1000
-                return datetime.utcfromtimestamp(ts).date().isoformat()
+                return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
             except (ValueError, OSError, OverflowError):
                 pass
 
@@ -8872,9 +8705,6 @@ def _build_activity_analysis_block(
     body_battery_raw: str | None = None,
     sleep_raw: str | None = None,
     hrv_raw: str | None = None,
-    training_load_raw: str | None = None,
-    ftp: float | None = None,
-    running_threshold_pace_sec_per_km: float | None = None,
     hr_zones_raw: str | None = None,
     stored_tss_row: dict | None = None,
 ) -> str:
@@ -10367,7 +10197,6 @@ class TrainerAgent:
         tss_by_day:   dict[str, float] = {}
         count_by_day: dict[str, int]   = {}
         _hr_zones_cache: dict[str, str | None] = {}
-        _splits_cache: dict[str, str | None] = {}
         _activity_details_cache: dict[str, str | None] = {}
         activity_tss_rows: list[dict[str, Any]] = []
         _rhr_by_day: dict[str, float | None] = {}
@@ -10492,27 +10321,6 @@ class TrainerAgent:
                 if hr_zones_raw:
                     act["_hr_zones_raw"] = hr_zones_raw
 
-            splits_raw: str | None = None
-            if _is_trail_activity(act_type):
-                act_id = act.get("id") or act.get("activityId")
-                act_id_key = str(act_id) if act_id is not None else ""
-                if act_id_key:
-                    if act_id_key in _splits_cache:
-                        splits_raw = _splits_cache[act_id_key]
-                    else:
-                        try:
-                            splits_raw = await call_tool(
-                                self.mcp_session,
-                                "get_activity_splits",
-                                {"activity_id": int(act_id)},
-                            )
-                        except (TimeoutError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                            log.debug("compute_load: no se pudieron obtener splits de actividad %s: %s", act_id, exc)
-                            splits_raw = None
-                        _splits_cache[act_id_key] = splits_raw
-                if splits_raw:
-                    act["_splits_raw"] = splits_raw
-
             activity_details_raw: str | None = None
             needs_details = (
                 _is_trail_hike_walk_activity(act_type)
@@ -10554,7 +10362,6 @@ class TrainerAgent:
                 hr_rest_bpm=hr_rest_for_activity,
                 hr_max_bpm=hr_max_bpm,
                 hr_zones_raw=hr_zones_raw,
-                splits_raw=splits_raw,
                 activity_details_raw=activity_details_raw,
                 hr_threshold_bpm=hr_threshold_bpm,
                 hr_threshold_tp_bpm=hr_threshold_tp,
@@ -11051,7 +10858,6 @@ class TrainerAgent:
                     )
                     week_activities = _extract_activities_list(week_activities_raw)
                     effective_tss, used_fallback = _compute_effective_week_tss_from_series_and_activities(
-                        profile=getattr(self, "user_profile", {}) if hasattr(self, "user_profile") else {},
                         series=canonical_series,
                         activities=week_activities,
                         week_dates=week_dates,
@@ -11781,7 +11587,6 @@ class TrainerAgent:
         if route_key == "recent_tss_by_sport":
             assistant_reply = await _build_recent_tss_by_sport_markdown(
                 self.mcp_session,
-                self.user_profile,
                 user_message,
             )
             return await self._finalize_chat_reply(user_message, assistant_reply, route="recent_tss_by_sport")
@@ -12224,23 +12029,12 @@ class TrainerAgent:
                         log.debug("pre_data zone update error: %s", _ze)
 
                 # Construir bloque de análisis pre-computado en Python
-                cycling_ftp_for_analysis = None
-                try:
-                    cycling_ftp_for_analysis = await self._get_or_refresh_cycling_ftp()
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError):
-                    cycling_ftp_for_analysis = None
 
                 analysis_block = _build_activity_analysis_block(
                     activity_raw=raw_pre,
                     body_battery_raw=next((p for p in context_parts[1:] if "BODY BATTERY" in p), None),
                     sleep_raw=next((p for p in context_parts if "SUENO" in p), None),
                     hrv_raw=next((p for p in context_parts if "HRV" in p), None),
-                    training_load_raw=next((p for p in context_parts if "CARGA" in p), None),
-                    ftp=cycling_ftp_for_analysis,
-                    running_threshold_pace_sec_per_km=(
-                        _resolve_running_threshold_pace_for_date(self.user_profile, str(user_date or date.today().isoformat()))
-                        or _resolve_running_threshold_pace_sec_per_km(self.user_profile)
-                    ),
                     hr_zones_raw=raw_hr_zones,
                     stored_tss_row=(
                         _load_stored_activity_tss(str(user_date)).get(_activity_id_int({"activityId": pre_id}))

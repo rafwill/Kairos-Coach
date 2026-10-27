@@ -384,14 +384,14 @@ class TestStartupChecks:
         results = [{"ok": False, "error": "Supabase rechazó el cambio"}, {"ok": True}]
         with patch.object(m.Prompt, "ask", side_effect=["123", "nueva-1", "nueva-2"]), \
              patch.object(m, "update_login_password", side_effect=results):
-            assert m._handle_garmin_password_change("runner@example.com") == "nueva-2"
+            assert m._handle_garmin_password_change() == "nueva-2"
         import os
         assert os.environ["GARMIN_PASSWORD"] == "nueva-2"
         assert "Mínimo 6 caracteres" in out() and "Supabase rechazó el cambio" in out()
 
     def test_garmin_password_change_gives_up_after_three(self, out):
         with patch.object(m.Prompt, "ask", return_value="abc"):
-            assert m._handle_garmin_password_change("runner@example.com") is None
+            assert m._handle_garmin_password_change() is None
 
     def test_logging_goes_to_file_only_by_default(self, monkeypatch, tmp_path):
         log_file = tmp_path / "kairos.log"

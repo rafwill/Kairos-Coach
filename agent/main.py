@@ -589,7 +589,7 @@ def _ensure_garmin_credentials(credentials: dict, app_password: str = "") -> dic
     return credentials
 
 
-def _handle_garmin_password_change(username: str) -> str | None:
+def _handle_garmin_password_change() -> str | None:
     """Flujo de recuperación cuando la contraseña de Garmin Connect ha cambiado."""
     console.print(Panel.fit(
         "[bold red]❌ Error de autenticación en Garmin Connect[/]\n\n"
@@ -1554,7 +1554,7 @@ async def main() -> None:
                 ))
             )
             if garmin_auth_failed:
-                new_pw = _handle_garmin_password_change(username)
+                new_pw = _handle_garmin_password_change()
                 if not new_pw:
                     console.print("[bold red]No se pudo actualizar la contraseña. Saliendo.[/]")
                     return
