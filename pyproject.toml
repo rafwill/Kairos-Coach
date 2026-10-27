@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 name = "kairos-coach"
 version = "0.1.0"
 description = "Kairos Coach: entrenador con datos de Garmin (host) y su servidor MCP (garmin_mcp)"
-requires-python = ">=3.11"
+requires-python = ">=3.12"  # garminconnect 0.3 exige 3.12
 
 [tool.setuptools.packages.find]
 include = ["agent*", "garmin_mcp*"]
@@ -18,7 +18,7 @@ include = ["agent*", "garmin_mcp*"]
 # (imports sin usar, nombres no definidos, variables muertas); E9 = errores de sintaxis. Fijadas aquí para que
 # un cambio de versión de ruff no cambie las reglas. El resto, como informe: make lint-informe.
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F", "E9"]

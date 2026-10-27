@@ -29,7 +29,7 @@ La carga nativa de Garmin nunca se usa como TSS: solo se muestra como "Carga Gar
 
 ## Instalación
 
-Requisitos: Python 3.11+ (la CI prueba 3.12 y 3.14), cuenta de Garmin Connect, un proyecto de Supabase y al menos una API key de LLM.
+Requisitos: Python 3.12+ (lo exige `garminconnect`; la CI prueba 3.12 y 3.14), cuenta de Garmin Connect, un proyecto de Supabase y al menos una API key de LLM.
 
 ```powershell
 git clone https://github.com/rafwill/Kairos-Coach.git

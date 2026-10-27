@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Changed (dependencias y versión de Python)
+- Topes en las librerías de cuya API depende el código: `garminconnect>=0.3.20,<0.4` (0.x: una versión menor puede cambiar firmas), `supabase>=2.33,<3` y `openai>=3.0,<4` (antes `>=1.30`, muy por debajo de la 3.37 instalada y nunca probada). Una versión mayor nueva se prueba antes (tests y `make health-mcp`) y se sube el tope a mano. Lo instalado ya cumple los rangos (`pip install --dry-run` sin cambios).
+- Python 3.12+ (README, `pyproject.toml` y su `target-version` de ruff, `setup.ps1`, `setup.sh`): `garminconnect` 0.3.20 lo exige, así que "3.11+" no era cierto.
+
 ### Fixed (tendencia de HRV con días que fallan, E9)
 - `get_hrv_trend` (servidor MCP) pide la HRV día a día y descartaba sin rastro los días que fallaban: con un 429 a mitad, la tendencia salía con huecos y sin aviso. Ahora cada fallo queda en `garmin_mcp.log`, la respuesta trae `failed_days` y, si fallan todos, el error llega a Kairos, que avisa de que Garmin no respondió. Tests: 769.
 - Descartado el "tiempo máximo en las llamadas a Garmin" (pendiente 3): la pregunta que esperó 57 min en la batería de la mañana coincidió con el portátil en espera moderna (registro System: Kernel-Power 506 a las 10:42, red cortada por política a las 10:52:54, 507 a las 11:49:15). Al despertar, la conexión estaba rota (`ConnectionResetError`) y el reintento funcionó. `garminconnect` ya pone 15 s a cada petición y reintenta 3 veces.

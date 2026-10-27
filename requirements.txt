@@ -1,5 +1,6 @@
-# LLM
-openai>=1.30.0
+# LLM. Topes en las librerías de cuya API depende el código (27/10): una versión mayor nueva se prueba antes
+# (tests y `make health-mcp`) y se sube el tope a mano.
+openai>=3.0,<4
 httpx>=0.27.0
 
 # Certificados SSL — necesario en redes con proxy SSL (Zscaler, etc.)
@@ -12,10 +13,12 @@ cryptography>=42.0.0
 mcp>=1.0.0,<2.0.0
 
 # Cliente oficial no-oficial de Garmin Connect para MCP propio local
-garminconnect>=0.2.25
+# 0.x: una versión menor puede cambiar firmas (test_every_tool_calls_garminconnect_with_its_real_signature).
+# Exige Python 3.12+.
+garminconnect>=0.3.20,<0.4
 
 # Persistencia DB-first multiusuario en Supabase
-supabase>=2.0.0
+supabase>=2.33,<3
 
 # Variables de entorno
 python-dotenv>=1.0.0
