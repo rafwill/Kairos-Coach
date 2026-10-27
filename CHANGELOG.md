@@ -4,9 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
-### Changed (limpieza: copias idénticas, D3b)
+### Changed (limpieza: funciones duplicadas, D3a y D3b)
 - Las 6 funciones de clasificación de deporte (`_is_trail_activity`…), `_percentile` y `_find_hr_zones_in_json` tenían una copia idéntica en `trainer_agent.py` (comprobado con el AST: solo cambiaban anotaciones y docstrings). Queda la de `load_metrics.py`, con los docstrings, y `trainer_agent` la importa. Tests: 766.
-- `_parse_hr_zones_list` sigue con dos versiones: la de `load_metrics` no lee el formato real de Garmin (objetos JSON concatenados, comprobado con la actividad 24764615547) y unificarla cambiaría el camino del TSS en sus respaldos. Pendiente de decidir (D3a en `docs/proximos_pasos.md`).
+- `_parse_hr_zones_list` tenía dos versiones distintas: la de `load_metrics`, la del cálculo del TSS, no leía el formato real de `get_activity_hr_in_timezones` (objetos JSON concatenados, comprobado con Garmin real en la actividad 24764615547: `None` frente a 4 zonas). Queda una sola, la buena, en `load_metrics` junto con `_try_parse_json`; `trainer_agent` importa las dos. Decisión del usuario: sin subir `TSS_FORMULA_VERSION` ni recalcular, porque ninguna de las 226 actividades de `activity_tss` pasa por los respaldos que usan zonas (todas salen por su modelo principal: `running:pipeline_fisico`, `trail:tp_zones`, `cycling:power_ftp`…). Solo cambia el respaldo de una actividad nueva sin detalle de Garmin: zonas reales en vez de FC media. Test con el formato real. Tests: 767.
 
 ### Removed (limpieza: código que sobra, D2)
 - Modo de contingencia del MCP (`KAIROS_MCP_ENABLE_FALLBACK`, caché en el perfil, ruta rápida local): apagado desde siempre porque la caché no caducaba. `contracts.py` se queda con los contratos y la normalización; la nota "Transparencia de datos" solo avisa de fallos de Garmin.

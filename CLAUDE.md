@@ -86,7 +86,7 @@ La lista está en `docs/proximos_pasos.md`. Recordatorio: si cambia la FC umbral
 - Maratón de Madrid 22663819817 (26/04, 3.4 h): Kairos 230.1 rTSS frente a TP 299.3 (−23 %), decidido dejarlo así. NGP/ritmo medio en TP 1.100 frente a 1.006 en las otras 96 sesiones: anomalía de TP en esa sesión.
 - Caminatas: no cuadran con TP por diseño (modelo intermedio).
 - Bici 07/08 (23889452312): el export de TP trae 93, metido a mano por estimación; su hrTSS de TP es 62 (Kairos 65.9). En una revalidación, usar 62 o excluirla.
-- Hiking con n bajo; short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real; `_parse_hr_zones_list` no lee el formato real de zonas de Garmin (solo afecta a respaldos).
+- Hiking con n bajo; short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real.
 
 ## Historia
 

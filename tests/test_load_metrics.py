@@ -2128,3 +2128,18 @@ def test_walk_hike_equivalent_speed_monotonic_uphill():
             f"non-monotonic at g={grades[i - 1]:.3f}->{grades[i]:.3f}: "
             f"{values[i - 1]:.3f}->{values[i]:.3f}"
         )
+
+
+def test_hr_zones_read_garmin_concatenated_objects():
+    # Formato real de get_activity_hr_in_timezones (actividad 24764615547, 27/10): un objeto JSON por zona.
+    # La copia de load_metrics devolvía None y el TSS nunca usaba estas zonas (D3a).
+    raw = (
+        '{\n  "zoneNumber": 1,\n  "secsInZone": 0.0,\n  "zoneLowBoundary": 116\n}\n'
+        '{\n  "zoneNumber": 2,\n  "secsInZone": 9.001,\n  "zoneLowBoundary": 136\n}\n'
+        '{\n  "zoneNumber": 3,\n  "secsInZone": 10.017,\n  "zoneLowBoundary": 147\n}\n'
+        '{\n  "zoneNumber": 4,\n  "secsInZone": 927.974,\n  "zoneLowBoundary": 159\n}\n'
+        '{\n  "zoneNumber": 5,\n  "secsInZone": 672.851,\n  "zoneLowBoundary": 170\n}'
+    )
+    zones = lm._parse_hr_zones_list(raw)
+    assert zones is not None
+    assert [round(z["secsInZone"], 3) for z in zones] == [9.001, 10.017, 927.974, 672.851]

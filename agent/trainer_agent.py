@@ -40,7 +40,9 @@ from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _is_strength_activity,
     _is_trail_activity,
     _is_trail_hike_walk_activity,
+    _parse_hr_zones_list,
     _percentile,
+    _try_parse_json,
 )
 
 log = logging.getLogger(__name__)
@@ -1074,33 +1076,6 @@ async def _build_recent_tss_by_sport_markdown(mcp_session, profile: dict, user_m
         "- Fuente: TSS guardado por actividad (activity_tss) + listado de Garmin MCP.",
     ])
     return "\n".join(lines)
-
-def _try_parse_json(raw: str | None) -> Any:
-    """Parsea JSON de forma tolerante; devuelve None si no aplica."""
-    if not raw or not isinstance(raw, str):
-        return None
-    text = raw.strip()
-    if not text.startswith("{") and not text.startswith("["):
-        return None
-    try:
-        return json.loads(text)
-    except (TypeError, json.JSONDecodeError):
-        pass
-    # El MCP devuelve algunas listas como objetos JSON concatenados ("{...} {...}"): se leen como lista.
-    decoder = json.JSONDecoder()
-    items: list[Any] = []
-    pos = 0
-    try:
-        while pos < len(text):
-            obj, end = decoder.raw_decode(text, pos)
-            items.append(obj)
-            pos = end
-            while pos < len(text) and text[pos] in " \t\r\n,":
-                pos += 1
-    except json.JSONDecodeError:
-        return None
-    return items if len(items) > 1 else None
-
 
 def _flatten_garmin_activity(act: dict) -> dict:
     """Sube a primer nivel los campos de summaryDTO/activityTypeDTO de get_activity (sin pisar los existentes)."""
@@ -8777,79 +8752,6 @@ async def _find_activity_id_by_name(mcp_session: ClientSession, name_hint: str) 
         start = next_start_val if next_start_val > start else start + limit
 
     return None
-
-
-def _parse_hr_zones_list(raw: str | None) -> list[dict] | None:
-    """Parsea la respuesta de get_activity_hr_zones en una lista normalizada de zonas."""
-    if not raw or not raw.strip():
-        return None
-    stripped = raw.strip()
-    if stripped in ("null", "[]", "{}", "(sin datos)"):
-        return None
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
-        # get_activity_hr_in_timezones llega como objetos JSON concatenados (uno por zona).
-        data = _try_parse_json(stripped)
-        if data is None:
-            return None
-
-    # Búsqueda recursiva: encontrar la lista de zonas dondequiera que esté
-    zones_raw = _find_hr_zones_in_json(data)
-    if not zones_raw:
-        return None
-
-    # Normalizar cada zona a un dict homogéneo
-    normalized: list[dict] = []
-    for z in zones_raw:
-        if not isinstance(z, dict):
-            continue
-
-        zone_num = (z.get("zoneNumber") or z.get("zone_number")
-                    or z.get("zone") or z.get("zoneNum") or 0)
-        try:
-            zone_num = int(zone_num)
-        except (TypeError, ValueError):
-            zone_num = 0
-
-        # Tiempo en zona (segundos) — varios nombres posibles
-        secs = (z.get("secsInZone") or z.get("secs_in_zone")
-                or z.get("timeInZone") or z.get("time_in_zone")
-                or z.get("seconds") or z.get("durationSeconds") or 0)
-        try:
-            secs = float(secs)
-        except (TypeError, ValueError):
-            secs = 0.0
-
-        # Porcentaje directo (cuando no hay segundos disponibles)
-        pct_direct = z.get("percentInZone") or z.get("percent_in_zone") or z.get("percentage")
-        try:
-            pct_direct = float(pct_direct) if pct_direct is not None else None
-        except (TypeError, ValueError):
-            pct_direct = None
-
-        # Límites de FC de la zona — zoneLow/zoneHigh o minHeartRateIn/maxHeartRateIn
-        lo = (z.get("minHeartRateIn") or z.get("min_heart_rate_in")
-              or z.get("zoneLow") or z.get("zone_low")
-              or z.get("zoneLowBoundary") or z.get("zone_low_boundary")
-              or z.get("minHr") or "?")
-        hi = (z.get("maxHeartRateIn") or z.get("max_heart_rate_in")
-              or z.get("zoneHigh") or z.get("zone_high") or z.get("maxHr") or "?")
-
-        zone_name = (z.get("zoneName") or z.get("zone_name")
-                     or z.get("name") or f"Z{zone_num}")
-
-        if secs > 0 or pct_direct is not None:
-            normalized.append({
-                "zoneNumber": zone_num,
-                "secsInZone": secs,
-                "pctDirect": pct_direct,  # porcentaje directo si está disponible
-                "minHeartRateIn": lo,
-                "maxHeartRateIn": hi,
-                "zoneName": zone_name,
-            })
-
-    return normalized if normalized else None
 
 
 # Nombres de las zonas en los análisis de actividad: los mismos que en el resto de Kairos.
