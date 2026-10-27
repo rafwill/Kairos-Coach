@@ -7,6 +7,7 @@ be imported by other projects without depending on chat or storage layers.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -15,12 +16,32 @@ from statistics import fmean, median
 from datetime import date, datetime, timedelta
 from typing import Any
 
-try:
-    from agent.running_tss import procesar_actividad as _procesar_running_tss
-except (ImportError, RuntimeError):
-    _procesar_running_tss = None
+from agent.running_tss import _moving_average
+from agent.running_tss import procesar_actividad as _procesar_running_tss
 
 log = logging.getLogger(__name__)
+
+
+def _float_in_range(raw: Any, lo: float, hi: float) -> float | None:
+    """El valor como número si cae en [lo, hi]; None si no es numérico o está fuera (lecturas absurdas de Garmin)."""
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
+def _first_float_of(sources: tuple[dict, ...], *keys: str) -> float | None:
+    """Primera clave con valor numérico; cada clave se busca en las fuentes por orden (la primera que la tenga)."""
+    for key in keys:
+        raw = next((src.get(key) for src in sources if src.get(key) is not None), None)
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 # Increase when TSS formula behavior changes.
@@ -1517,22 +1538,6 @@ def _walk_equivalent_flat_speed_from_vo2_m_min(
     return max(0.0, min(WALK_HIKE_EQUIV_SPEED_M_MIN_MAX, float(v_m_min)))
 
 
-def _moving_average(values: list[float], window: int) -> list[float]:
-    if window <= 1 or not values:
-        return list(values)
-
-    out: list[float] = []
-    acc = 0.0
-    for idx, val in enumerate(values):
-        acc += val
-        if idx >= window:
-            acc -= values[idx - window]
-            out.append(acc / float(window))
-        else:
-            out.append(acc / float(idx + 1))
-    return out
-
-
 def _compute_normalized_walk_equivalent_speed_m_min(
     equiv_speed_series_m_min: list[float],
 ) -> float | None:
@@ -1549,27 +1554,9 @@ def _compute_normalized_walk_equivalent_speed_m_min(
 def _resolve_walk_threshold_speed_m_min(activity: dict) -> float:
     summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
 
-    def _coerce_speed_mps(raw: Any) -> float | None:
-        if raw is None:
-            return None
-        try:
-            v = float(raw)
-        except (TypeError, ValueError):
-            return None
-        if 0.5 <= v <= 4.5:
-            return v
-        return None
+    _coerce_speed_mps = functools.partial(_float_in_range, lo=0.5, hi=4.5)
 
-    def _coerce_speed_m_min(raw: Any) -> float | None:
-        if raw is None:
-            return None
-        try:
-            v = float(raw)
-        except (TypeError, ValueError):
-            return None
-        if 30.0 <= v <= 220.0:
-            return v
-        return None
+    _coerce_speed_m_min = functools.partial(_float_in_range, lo=30.0, hi=220.0)
 
     for key in (
         "_walk_hike_threshold_speed_m_min",
@@ -1770,18 +1757,7 @@ def _estimate_walk_hike_tss_from_aggregates(activity: dict, hours: float) -> flo
 
     summary = activity.get("summaryDTO") if isinstance(activity.get("summaryDTO"), dict) else {}
 
-    def _first_float(*keys: str) -> float | None:
-        for key in keys:
-            raw = activity.get(key)
-            if raw is None:
-                raw = summary.get(key)
-            if raw is None:
-                continue
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                continue
-        return None
+    _first_float = functools.partial(_first_float_of, (activity, summary))
 
     distance_m = _first_float("distance", "distance_meters", "distanceMeters", "sumDistance")
     if distance_m is None or distance_m <= 0:
@@ -1897,16 +1873,7 @@ def _estimate_hr_tss_from_activity_details(
 
 
 def _resolve_hr_threshold_bpm_for_activity(activity: dict, hr_threshold_bpm: float | None = None) -> float | None:
-    def _coerce(raw: Any) -> float | None:
-        if raw is None:
-            return None
-        try:
-            v = float(raw)
-        except (TypeError, ValueError):
-            return None
-        if 120.0 <= v <= 230.0:
-            return v
-        return None
+    _coerce = functools.partial(_float_in_range, lo=120.0, hi=230.0)
 
     resolved = _coerce(hr_threshold_bpm)
     if resolved is not None:
@@ -1948,16 +1915,7 @@ def _resolve_hr_threshold_bpm_for_activity(activity: dict, hr_threshold_bpm: flo
 
 
 def _resolve_trail_rest_hr_bpm(activity: dict, hr_rest_bpm: float | None = None) -> float:
-    def _coerce(raw: Any) -> float | None:
-        if raw is None:
-            return None
-        try:
-            v = float(raw)
-        except (TypeError, ValueError):
-            return None
-        if 30.0 <= v <= 100.0:
-            return v
-        return None
+    _coerce = functools.partial(_float_in_range, lo=30.0, hi=100.0)
 
     resolved = _coerce(hr_rest_bpm)
     if resolved is not None:
@@ -2806,16 +2764,7 @@ def _classify_walk_hike_session_with_confidence(activity: dict, hours: float) ->
     ).lower()
     act_type = str(activity.get("type") or activity.get("activityType") or "").lower()
 
-    def _first_float(*keys: str) -> float | None:
-        for key in keys:
-            raw = activity.get(key)
-            if raw is None:
-                continue
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                continue
-        return None
+    _first_float = functools.partial(_first_float_of, (activity,))
 
     distance_m = _first_float("distance", "distance_m", "distanceMeters")
     elev_gain = _first_float("elevationGain", "elevation_gain", "totalAscent", "total_ascent", "elev_gain")
@@ -2994,16 +2943,7 @@ def _extract_running_if_from_threshold_pace(
 
 
 def _extract_running_session_signals(activity: dict) -> dict[str, Any]:
-    def _first_float(*keys: str) -> float | None:
-        for key in keys:
-            raw = activity.get(key)
-            if raw is None:
-                continue
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                continue
-        return None
+    _first_float = functools.partial(_first_float_of, (activity,))
 
     avg_speed = _first_float("avg_speed_mps", "averageSpeedMps", "average_speed_mps")
     max_speed = _first_float("max_speed_mps", "maxSpeedMps", "max_speed_mps")
@@ -3268,8 +3208,6 @@ def _estimate_running_tss_from_activity_details_pipeline(
     hr_threshold_bpm: float | None,
 ) -> float | None:
     """Intenta calcular running TSS desde series de activity_details (NGP + TRIMP calibrado)."""
-    if _procesar_running_tss is None:
-        return None
     if not activity_details_raw:
         return None
 

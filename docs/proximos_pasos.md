@@ -13,7 +13,7 @@ Se reescribe al final de cada sesión.
 **Sesión del 27/10/2026** (ordenador 2). Todo subido a GitHub, sin cambios a medias. 767 tests; batería 25/25.
 
 - En el ordenador 1, al empezar: `git pull`. No hay dependencias ni variables nuevas; la clave tiene que estar ya en `PROVIDER_API_KEY` (el traslado desde `NVIDIA_API_KEY` se quitó).
-- **Siguiente paso:** nada urgente de la revisión del 27/10; el punto 7 (duplicados pequeños, frase de tools de escritura del prompt y "API pública" de `load_metrics`) va cuando se toquen esos ficheros. Pendiente de decidir: si se mantiene la "API pública" de `load_metrics` (punto 7) con los envoltorios (punto 6).
+- **Siguiente paso:** decidir los puntos 6 ("API pública" de `load_metrics`) y 7 ("ordenador 2" en GitHub). La revisión del 27/10 está terminada.
 - **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto de pendientes se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP. Los envoltorios (punto 6), cuando se toque `trainer_agent.py` por otro motivo.
 
 ## Pendiente
@@ -35,13 +35,11 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 4. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
 5. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
 
-### D. Limpieza del proyecto
+### D. Pendiente de decidir
 
-### E. Revisión del proyecto del 27/10 (el paso 1, hecho, está en el CHANGELOG)
+6. **"API pública" de `load_metrics`:** unas 30 funciones de una línea "para reutilizar en otros proyectos" que no usa nadie del repositorio. Quitarla (se recupera de git) o mantenerla.
 
-7. **Cuando se toquen esos ficheros:** duplicados pequeños (`_moving_average` en `load_metrics` y `running_tss`; cuatro `_coerce` de velocidad casi iguales; parejas internas `_first_float`, `_key_candidates`, `_first`; "completar con `activity_tss` los días a cero", repetido en `trainer_agent.py`); la frase de tools de escritura de `prompts/system_prompt.md` (con batería); y decidir si se mantiene la "API pública" de `load_metrics` (unas 30 funciones de una línea "para reutilizar en otros proyectos" que no usa nadie).
-
-
+7. **Quitar "ordenador 2" de todas las referencias que existan en github.** Revisar commits, issues, pull requests y cualquier otro lugar donde aparezca y asegurarse de eliminarlo.
 
 ## Descartado
 

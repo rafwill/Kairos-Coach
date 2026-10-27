@@ -8,6 +8,7 @@ import os
 import time
 import logging
 import math
+import functools
 import json
 import asyncio
 import re
@@ -1767,6 +1768,25 @@ def _format_load_fatigue_summary(load_metrics: dict | None) -> str:
         return "sin datos suficientes"
 
 
+def _fill_zero_days_with_activity_tss(
+    tss_by_day: dict[str, float], activity_tss_by_day: dict[str, float], dates: list[date],
+) -> list[str]:
+    """Días que faltan en la serie diaria o están a 0 (sin cierre): se completan con la suma de `activity_tss`
+    de ese día. Modifica `tss_by_day` y devuelve los días completados."""
+    filled: list[str] = []
+    for d in dates:
+        d_iso = d.isoformat()
+        fallback_tss = activity_tss_by_day.get(d_iso)
+        if fallback_tss is None:
+            continue
+        existing_tss = tss_by_day.get(d_iso)
+        if existing_tss is not None and float(existing_tss) > 0.0:
+            continue
+        tss_by_day[d_iso] = round(float(fallback_tss), 1)
+        filled.append(d_iso)
+    return filled
+
+
 def _compute_effective_week_tss_from_series_and_activities(
     *,
     series: list[dict],
@@ -1801,17 +1821,7 @@ def _compute_effective_week_tss_from_series_and_activities(
             continue
         activity_tss_by_day[d_iso] = round(activity_tss_by_day.get(d_iso, 0.0) + float(stored_row.get("tss") or 0.0), 1)
 
-    used_activity_fallback = False
-    for d in week_dates:
-        d_iso = d.isoformat()
-        fallback_tss = activity_tss_by_day.get(d_iso)
-        if fallback_tss is None:
-            continue
-        existing_tss = tss_by_day.get(d_iso)
-        if existing_tss is not None and float(existing_tss) > 0.0:
-            continue
-        tss_by_day[d_iso] = round(float(fallback_tss), 1)
-        used_activity_fallback = True
+    used_activity_fallback = bool(_fill_zero_days_with_activity_tss(tss_by_day, activity_tss_by_day, week_dates))
 
     total = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
     return total, used_activity_fallback
@@ -3353,6 +3363,25 @@ def _resolve_running_threshold_pace_for_date(profile: dict | None, d_iso: str) -
     return _resolve_profile_history_value(profile, "running_threshold_pace_history", "sec_per_km", d_iso, (150, 600))
 
 
+def _key_candidates(raw_key: Any) -> set[str]:
+    """Formas de una clave para compararla sin mirar mayúsculas ni separadores: snake_case y todo junto."""
+    key = str(raw_key or "").strip().lower()
+    if not key:
+        return set()
+    snake = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
+    compact = re.sub(r"[^a-z0-9]", "", key)
+    return {snake, compact}
+
+
+def _first_value(source: dict, *keys: str) -> Any:
+    """Valor de la primera clave que exista (no None) en `source`."""
+    for key in keys:
+        value = source.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
     """Busca FC umbral (LTHR) en payloads JSON heterogéneos."""
     target_keys = {
@@ -3369,14 +3398,6 @@ def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
         "lactatethresholdheart_rate",
         "user_lactate_threshold_heart_rate",
     }
-
-    def _key_candidates(raw_key: Any) -> set[str]:
-        key = str(raw_key or "").strip().lower()
-        if not key:
-            return set()
-        snake = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
-        compact = re.sub(r"[^a-z0-9]", "", key)
-        return {snake, compact}
 
     def _walk(node: Any) -> float | None:
         if isinstance(node, dict):
@@ -3411,14 +3432,6 @@ def _extract_resting_hr_from_payload(payload: Any) -> float | None:
         "hrrestingvalue",
         "wellness_resting_heart_rate",
     }
-
-    def _key_candidates(raw_key: Any) -> set[str]:
-        key = str(raw_key or "").strip().lower()
-        if not key:
-            return set()
-        snake = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
-        compact = re.sub(r"[^a-z0-9]", "", key)
-        return {snake, compact}
 
     def _coerce(raw: Any) -> float | None:
         try:
@@ -4010,20 +4023,10 @@ async def _build_current_week_tss_markdown(mcp_session, profile: dict, user_mess
                 per_day[bucket] = round(per_day.get(bucket, 0.0) + float(act_tss), 1)
     act_rows.sort(key=lambda x: (x[0], x[1].lower(), x[2].lower()))
 
-    # Si falta un día en la serie diaria, o existe con TSS=0 sin cierre real,
-    # intenta completar con training load por actividad.
-    used_activity_fallback = False
-    for d in (prev_week_dates + week_dates):
-        d_iso = d.isoformat()
-        fallback_tss = activity_tss_by_day.get(d_iso)
-        if fallback_tss is None:
-            continue
-        existing_tss = tss_by_day.get(d_iso)
-        if existing_tss is not None and float(existing_tss) > 0.0:
-            continue
-        tss_by_day[d_iso] = round(float(fallback_tss), 1)
+    filled = _fill_zero_days_with_activity_tss(tss_by_day, activity_tss_by_day, prev_week_dates + week_dates)
+    for d_iso in filled:
         tss_source_by_day[d_iso] = "activity_tss_fallback"
-        used_activity_fallback = True
+    used_activity_fallback = bool(filled)
 
     current_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in week_dates), 1)
     previous_week_tss = round(sum(tss_by_day.get(d.isoformat(), 0.0) for d in prev_week_dates), 1)
@@ -5507,12 +5510,7 @@ def _extract_body_battery_snapshot(payload: Any, target_date: str) -> dict | Non
     if not isinstance(day, dict):
         return None
 
-    def _first(*keys: str):
-        for key in keys:
-            value = day.get(key)
-            if value is not None:
-                return value
-        return None
+    _first = functools.partial(_first_value, day)
 
     snapshot = {
         "level": _first("body_battery_level", "bodyBatteryLevel", "bodyBatteryMostRecentValue", "bodyBatteryValue", "current", "value"),
@@ -5532,12 +5530,7 @@ def _extract_hrv_snapshot(payload: Any, target_date: str) -> dict | None:
     if not isinstance(day, dict):
         return None
 
-    def _first(*keys: str):
-        for key in keys:
-            value = day.get(key)
-            if value is not None:
-                return value
-        return None
+    _first = functools.partial(_first_value, day)
 
     snapshot = {
         "last_night_avg_ms": _first("last_night_avg_hrv_ms", "lastNightAvg", "avgOvernightHrv", "avgHrv"),

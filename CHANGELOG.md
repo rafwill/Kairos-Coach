@@ -4,6 +4,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Changed (duplicados pequeños y prompt, pendiente 7)
+- `_moving_average` estaba en `load_metrics` y en `running_tss`: queda la de `running_tss`, que `load_metrics` importa. Fuera el `try/except` del import de `running_tss` (solo usa la biblioteca estándar; no puede fallar) y su comprobación de `None`.
+- Cuatro funciones internas "número dentro de un rango o None" (velocidades de marcha, FC umbral, FC de reposo) pasan a `_float_in_range`, y tres "primera clave numérica" a `_first_float_of` (en `load_metrics`). En `trainer_agent`, las dos `_key_candidates` idénticas a una de módulo y las dos `_first` a `_first_value`. Comprobado antes que las variables que leían las internas no se reasignan después.
+- "Completar con `activity_tss` los días que la serie tiene a 0", repetido en el TSS de la semana y en el TSS efectivo del arranque, pasa a `_fill_zero_days_with_activity_tss`.
+- `prompts/system_prompt.md`: fuera la frase "No uses herramientas de escritura (`create_`…)": el servidor solo tiene tools `get_*` y una tool fuera del esquema no llega al servidor.
+- Evidencia: tests 769; batería 25/25 con las 21 respuestas deterministas idénticas a la anterior (cambia solo la redacción de las 4 de coaching).
+
 ### Changed (fuera los envoltorios de trainer_agent, pendiente 6)
 - Los 15 envoltorios de una línea que quedaban en `trainer_agent.py` (llamaban a `load_metrics` con la misma firma) pasan a ser imports directos de la función privada de `load_metrics`: mismo comportamiento y una sola definición. Los tests que importaban funciones de `load_metrics` a través de `trainer_agent` las importan de su módulo. Fuera el fixture `pmc_tss_from_fixture`, que parcheaba el recálculo en vivo quitado en E8 y ya no hacía nada. Tests: 769.
 

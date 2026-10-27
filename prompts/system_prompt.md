@@ -73,7 +73,7 @@ El TSS de cada actividad lo calcula Kairos una sola vez con el método de su dep
 
 # Herramientas disponibles (solo lectura)
 
-No uses herramientas de escritura (`create_`, `update_`, `delete_`, `schedule_`, `upload_`, `add_`, `set_`). Si ya hay datos pre-calculados o inyectados para la intención, priorízalos y evita llamadas duplicadas.
+Si ya hay datos pre-calculados o inyectados para la intención, priorízalos y evita llamadas duplicadas.
 
 ## Checklist mínimo por intención
 - **Estado de hoy**: `get_morning_training_readiness` (o `get_training_readiness`), `get_body_battery`, `get_sleep_summary`, `get_hrv_data`, `get_stress_summary` + "Estado de carga actual".
