@@ -37,13 +37,11 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ### D. Limpieza del proyecto
 
-6. **Envoltorios de `trainer_agent.py`:** quedan 16 funciones de una línea que solo llaman a `load_metrics` (las otras 20 no las usaba nadie y se quitaron el 27/10). Los tests las usan para sustituir funciones: dejarlo para cuando se toque `trainer_agent.py` por otro motivo. Va con la decisión sobre la "API pública" de `load_metrics` (punto 7).
-
 ### E. Revisión del proyecto del 27/10 (el paso 1, hecho, está en el CHANGELOG)
 
 7. **Cuando se toquen esos ficheros:** duplicados pequeños (`_moving_average` en `load_metrics` y `running_tss`; cuatro `_coerce` de velocidad casi iguales; parejas internas `_first_float`, `_key_candidates`, `_first`; "completar con `activity_tss` los días a cero", repetido en `trainer_agent.py`); la frase de tools de escritura de `prompts/system_prompt.md` (con batería); y decidir si se mantiene la "API pública" de `load_metrics` (unas 30 funciones de una línea "para reutilizar en otros proyectos" que no usa nadie).
 
-9. **Quitar "ordenador 2" de todas las referencias que existan en github.** Revisar commits, issues, pull requests y cualquier otro lugar donde aparezca y asegurarse de eliminarlo.
+
 
 ## Descartado
 

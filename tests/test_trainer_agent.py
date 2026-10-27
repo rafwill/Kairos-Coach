@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import agent.trainer_agent as ta
+from agent.load_metrics import _extract_threshold_pace_sec_per_km
 
 from agent.trainer_agent import (
     _build_mcp_error_warning_markdown,
@@ -47,7 +48,6 @@ from agent.trainer_agent import (
     _extract_activities_list,
     _fetch_activities_for_load_calc,
     _extract_cycling_ftp_watts,
-    _extract_threshold_pace_sec_per_km,
     _resolve_running_threshold_pace_sec_per_km,
     _resolve_hr_profile_values,
     _extract_iso_date_from_text,

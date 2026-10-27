@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Changed (fuera los envoltorios de trainer_agent, pendiente 6)
+- Los 15 envoltorios de una línea que quedaban en `trainer_agent.py` (llamaban a `load_metrics` con la misma firma) pasan a ser imports directos de la función privada de `load_metrics`: mismo comportamiento y una sola definición. Los tests que importaban funciones de `load_metrics` a través de `trainer_agent` las importan de su módulo. Fuera el fixture `pmc_tss_from_fixture`, que parcheaba el recálculo en vivo quitado en E8 y ya no hacía nada. Tests: 769.
+
 ### Changed (dependencias y versión de Python)
 - Topes en las librerías de cuya API depende el código: `garminconnect>=0.3.20,<0.4` (0.x: una versión menor puede cambiar firmas), `supabase>=2.33,<3` y `openai>=3.0,<4` (antes `>=1.30`, muy por debajo de la 3.37 instalada y nunca probada). Una versión mayor nueva se prueba antes (tests y `make health-mcp`) y se sube el tope a mano. Lo instalado ya cumple los rangos (`pip install --dry-run` sin cambios).
 - Python 3.12+ (README, `pyproject.toml` y su `target-version` de ruff, `setup.ps1`, `setup.sh`): `garminconnect` 0.3.20 lo exige, así que "3.11+" no era cierto.

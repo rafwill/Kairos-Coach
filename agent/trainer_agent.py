@@ -33,7 +33,15 @@ from agent.mcp.client import (
 from agent import storage as _storage
 from agent import load_metrics as _load_metrics
 from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
+    _derive_walk_hike_threshold_speed_m_min_from_activities,
+    _estimate_session_tss,
+    _extract_activity_native_load,
+    _extract_training_load_points,
+    _extract_training_load_tss,
     _find_hr_zones_in_json,
+    _has_activity_power_data,
+    _infer_tss_model_tag,
+    _infer_tss_source_tag,
     _is_cycling_activity,
     _is_hike_walk_activity,
     _is_running_non_trail_activity,
@@ -41,6 +49,9 @@ from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _is_trail_activity,
     _is_trail_hike_walk_activity,
     _parse_hr_zones_list,
+    _resolve_hr_profile_values,
+    _resolve_running_threshold_pace_sec_per_km,
+    _resolve_sport_model_cfg,
     _try_parse_json,
 )
 
@@ -1556,101 +1567,6 @@ def _format_training_effect_fields(src: dict) -> str:
     return " · ".join(parts)
 
 
-def _extract_training_load_points(payload: Any) -> list[dict]:
-    """Extrae puntos diarios de carga desde payloads de tendencia heterogéneos."""
-    return _load_metrics.extract_training_load_points(payload)
-
-
-def _extract_training_load_tss(activity: dict) -> float | None:
-    return _load_metrics.extract_training_load_tss(activity)
-
-
-def _extract_activity_native_load(activity: dict) -> float | None:
-    return _load_metrics.extract_activity_native_load(activity)
-
-
-def _resolve_hr_profile_values(profile: dict | None) -> tuple[float | None, float | None]:
-    """Extrae FC de reposo y FC máxima desde perfil cacheado si existen."""
-    return _load_metrics._resolve_hr_profile_values(profile)
-
-
-def _extract_threshold_pace_sec_per_km(activity: dict, running_threshold_pace_sec_per_km: float | None = None) -> float | None:
-    return _load_metrics.extract_threshold_pace_sec_per_km(
-        activity,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-    )
-
-
-def _derive_walk_hike_threshold_speed_m_min_from_activities(
-    activities: list[dict],
-) -> float | None:
-    return _load_metrics.derive_walk_hike_threshold_speed_m_min_from_activities(activities)
-
-
-def _has_activity_power_data(activity: dict) -> bool:
-    """Detecta si la actividad incluye un dato de potencia utilizable (>0)."""
-    return _load_metrics.has_activity_power_data(activity)
-
-
-def _classify_strength_session_with_confidence(activity: dict) -> dict[str, Any]:
-    return _load_metrics.classify_strength_session_with_confidence(activity)
-
-
-def _classify_walk_hike_session_with_confidence(activity: dict, hours: float) -> dict[str, Any]:
-    return _load_metrics.classify_walk_hike_session_with_confidence(activity, hours)
-
-
-def _estimate_session_tss(
-    activity: dict,
-    ftp: float | None = None,
-    running_threshold_pace_sec_per_km: float | None = None,
-    hr_rest_bpm: float | None = None,
-    hr_max_bpm: float | None = None,
-    hr_zones_raw: str | None = None,
-    activity_details_raw: str | None = None,
-    use_trail_splits: bool = True,
-    hr_threshold_bpm: float | None = None,
-    hr_threshold_tp_bpm: float | None = None,
-) -> tuple[float, str]:
-    """Estima carga de sesión con prioridades explícitas por tipo de actividad."""
-    return _load_metrics._estimate_session_tss(
-        activity,
-        ftp=ftp,
-        running_threshold_pace_sec_per_km=running_threshold_pace_sec_per_km,
-        hr_rest_bpm=hr_rest_bpm,
-        hr_max_bpm=hr_max_bpm,
-        hr_zones_raw=hr_zones_raw,
-        activity_details_raw=activity_details_raw,
-        use_trail_splits=use_trail_splits,
-        hr_threshold_bpm=hr_threshold_bpm,
-        hr_threshold_tp_bpm=hr_threshold_tp_bpm,
-    )
-
-
-def _infer_tss_source_tag(
-    activity: dict,
-    tss_label: str,
-    ftp: float | None,
-    hr_zones_raw: str | None,
-) -> str:
-    """Etiqueta la fuente principal del TSS para trazabilidad operativa."""
-    return _load_metrics._infer_tss_source_tag(
-        activity,
-        tss_label=tss_label,
-        ftp=ftp,
-        hr_zones_raw=hr_zones_raw,
-    )
-
-
-def _infer_tss_model_tag(activity: dict) -> str:
-    return _load_metrics.infer_tss_model_tag(activity)
-
-
-def _resolve_running_threshold_pace_sec_per_km(profile: dict | None) -> float | None:
-    """Extrae ritmo umbral (unidad interna min/km) desde perfil cacheado."""
-    return _load_metrics._resolve_running_threshold_pace_sec_per_km(profile)
-
-
 def _parse_iso_date_safe(raw: Any) -> date | None:
     """Parsea fechas ISO (YYYY-MM-DD o datetime ISO) de forma tolerante."""
     if raw is None:
@@ -1689,24 +1605,6 @@ def _resolve_load_parameters_effective_date(profile: dict | None) -> date | None
     if not parsed:
         return None
     return max(parsed)
-
-
-def _resolve_sport_model_cfg(profile: dict | None) -> dict:
-    """Devuelve configuración de modelo de carga según deporte + overrides."""
-    return _load_metrics._resolve_sport_model_cfg(profile)
-
-
-def _compute_weekly_spike_signal(
-    series: list[dict],
-    reference_day: date | None = None,
-    threshold_ratio: float = 0.20,
-) -> dict[str, Any]:
-    """Calcula si la semana actual supera en >X% la semana anterior."""
-    return _load_metrics._compute_weekly_spike_signal(
-        series=series,
-        reference_day=reference_day,
-        threshold_ratio=threshold_ratio,
-    )
 
 
 def _build_load_trend_table(series: list[dict], mode: str = "weeks") -> str:
