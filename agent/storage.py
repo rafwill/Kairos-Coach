@@ -572,28 +572,9 @@ def _build_training_plan_session_rows(plan_id: str, sessions: list[dict] | None)
 
 
 def _insert_training_plan_session_rows(sb, session_rows: list[dict]) -> None:
-    """Inserta sesiones de plan con compatibilidad hacia esquemas legacy.
-
-    Si la columna `structured_workout` no existe en la tabla del entorno,
-    reintenta sin ese campo para no romper persistencia.
-    """
-    if not session_rows:
-        return
-    try:
+    """Inserta las sesiones de un plan (con `structured_workout`, que crea supabase/schema.sql)."""
+    if session_rows:
         sb.table("training_plan_session").insert(session_rows).execute()
-        return
-    except Exception:
-        pass
-
-    legacy_rows = []
-    for row in session_rows:
-        if not isinstance(row, dict):
-            continue
-        r = dict(row)
-        r.pop("structured_workout", None)
-        legacy_rows.append(r)
-    if legacy_rows:
-        sb.table("training_plan_session").insert(legacy_rows).execute()
 
 
 def list_training_plans(include_archived: bool = False) -> list[dict]:

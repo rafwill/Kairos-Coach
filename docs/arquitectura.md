@@ -142,19 +142,14 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 - **Arranque del servidor:** `_get_server_params()` lanza `python -m garmin_mcp` con el mismo intérprete que Kairos (`sys.executable`, el del `.venv`) y la raíz del repo como `cwd`, igual que las herramientas de `tools/`. El subproceso recibe el entorno de Kairos más las credenciales de Garmin del usuario. (Hasta el 23/10 lo hacía a través de los lanzadores `tools/garmin-mcp-frozen.*` y `MCP_BACKEND=frozen`, restos del MCP de terceros.)
 - **Catálogo esencial:** 45 tools, las 42 de Garmin (`GARMIN_ESSENTIAL_TOOLS`) y las 3 internas `kairos_*`. Los tests fallan si cambia el número o si a una le falta su contrato.
 - **Antes de cada llamada:** `normalize_tool_invocation` corrige alias y formas de los argumentos (por ejemplo, `date` → `start_date`/`end_date` en `get_body_battery`), y `validate_min_input_contract` comprueba los argumentos obligatorios de `TOOL_CONTRACTS_V1`. Si faltan, devuelve un error de contrato (`mcp-adapter-v1`) sin llamar a Garmin.
-- **Ruta única por defecto:** cada llamada va al servidor, sin caché ni rutas alternativas. Los errores de Garmin se clasifican (tipo, código HTTP, `retry_after`) y se registran.
+- **Ruta única:** cada llamada va al servidor, sin caché ni rutas alternativas. Los errores de Garmin se clasifican (tipo, código HTTP, `retry_after`) y se registran.
 - **En paralelo:** las tools que el LLM pide en un mismo mensaje se lanzan a la vez (`asyncio.gather`, en orden) y el servidor las atiende en hilos con un tope de 4 llamadas simultáneas a Garmin. Cada llamada se corta a los 8 s (`KAIROS_TOOL_TIMEOUT_SECONDS`); tras 2 timeouts en una respuesta, las siguientes no se mandan a Garmin (cortacircuitos).
-- **Modo de contingencia** (desactivado; se activa con `KAIROS_MCP_ENABLE_FALLBACK=true`):
-  - Caché por usuario en el perfil (`mcp_adapter_cache` → `mcp-adapter-v1`) para 12 tools críticas (`CRITICAL_CACHEABLE_TOOLS`: perfil, actividades, body battery, HRV, sueño, readiness, carga de Garmin, récords…), con clave tool + argumentos y las 10 últimas respuestas por tool.
-  - Con el modo activo, esas tools se responden primero desde la caché, salvo `get_activities_by_date`, que siempre consulta Garmin y solo usa la caché si la llamada falla.
-  - Si la llamada al servidor falla por una excepción (transporte, tiempo agotado…) y hay caché, se devuelve la caché. Los errores que devuelve Garmin como respuesta no usan la caché.
-  - Cada uso de la caché se anota y la respuesta termina con un bloque "Transparencia de datos" ("Se usó modo de contingencia…", con la tool y el motivo).
-  - **La caché no caduca:** con el modo activo, una respuesta puede salir de datos de hace días, aunque lo diga ese bloque. Por eso está desactivado. Antes, `get_training_load_trend` se resolvía contra `load_metrics_daily`; se quitó porque daba el TSS de Kairos con el nombre de la carga de Garmin.
+- Si una llamada falla, se anota (`mcp_error`) y la respuesta lo avisa arriba ("No se pudo consultar Garmin") y al pie ("Transparencia de datos"). Hasta el 27/10 había un modo de contingencia con caché en el perfil (`mcp_adapter_cache`), desactivado porque la caché no caducaba; se quitó con su caché.
 
 ## Seguridad
 
 - Cuentas y acceso a datos: Supabase Auth (email + la misma contraseña que en Garmin) y seguridad por fila (RLS) en las 11 tablas, de modo que cada usuario solo ve y modifica sus filas y la clave `anon` sin sesión no ve nada. Sesión guardada en `~/.kairos/supabase_session.json`. Nada se lee de la base de datos antes de iniciar sesión. Conceptos, políticas, puesta en marcha en dos fases y marcha atrás: [`supabase/README.md`](../supabase/README.md); comprobación: `make check-rls`.
 - Contraseña de Garmin: cifrada con Fernet (`ENCRYPTION_KEY` del `.env`); `_sanitize_credentials_for_storage` impide guardarla en claro.
-- Solo lectura en Garmin: el MCP propio no expone escrituras y, además, `MCP_READ_ONLY` (activado por defecto) filtra las tools de escritura en `TrainerAgent.initialize()` y las bloquea en el bucle de tool-calls.
+- Solo lectura en Garmin: el MCP propio solo expone tools `get_*`, y una tool que no esté en el esquema (una de escritura que pidiera el LLM) no se manda al servidor.
 - Tokens de Garmin en `~/.garminconnect/kairos/` (fuera del repo).
 - Datos reales del atleta (exports de TP, payloads de Garmin, salidas de la batería) solo en rutas ignoradas por git: `_archivo/`, `fixtures/real_payloads/`, `.tmp/`.

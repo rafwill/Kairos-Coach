@@ -1,6 +1,6 @@
 """
 tests/test_mcp_client.py
-Cobertura del cliente MCP (arranque del servidor, contratos, caché de contingencia).
+Cobertura del cliente MCP (arranque del servidor, contratos y normalización).
 """
 
 from __future__ import annotations
@@ -117,8 +117,7 @@ def test_validate_min_input_contract_requires_range_for_body_composition():
 def test_essentials_catalog_counts_and_uniqueness():
     assert len(mcp_client.GARMIN_ESSENTIAL_TOOLS) == 42
     assert len(mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS) == 3
-    assert len(mcp_client.ALL_ESSENTIAL_TOOLS) == 45
-    assert len(set(mcp_client.ALL_ESSENTIAL_TOOLS)) == 45
+    assert len(set(mcp_client.GARMIN_ESSENTIAL_TOOLS + mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS)) == 45
 
 
 def test_essentials_catalog_contains_must_have_critical_tools():
@@ -134,14 +133,14 @@ def test_essentials_catalog_contains_must_have_critical_tools():
         "get_personal_record",
         "kairos_load_trends",
     }
-    catalog = set(mcp_client.ALL_ESSENTIAL_TOOLS)
+    catalog = set(mcp_client.GARMIN_ESSENTIAL_TOOLS + mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS)
     missing = must_have - catalog
     assert not missing, f"Faltan tools críticas en catálogo: {sorted(missing)}"
 
 
 def test_contract_registry_covers_all_essential_tools():
-    contracts = mcp_adapter.get_contract_registry()
-    missing = set(mcp_client.ALL_ESSENTIAL_TOOLS) - set(contracts.keys())
+    catalog = set(mcp_client.GARMIN_ESSENTIAL_TOOLS + mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS)
+    missing = catalog - set(mcp_adapter.TOOL_CONTRACTS_V1)
     assert not missing, f"Faltan contratos v1 para: {sorted(missing)}"
 
 
@@ -185,155 +184,7 @@ async def test_call_tool_returns_contract_error_without_calling_session():
 
 
 @pytest.mark.asyncio
-async def test_call_tool_records_transparency_event_for_fastpath(monkeypatch):
-    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setattr(mcp_client, "resolve_local_fastpath_response", lambda *_args, **_kwargs: '{"ok":1}')
-    monkeypatch.setattr(mcp_client, "cache_tool_response", lambda *_args, **_kwargs: None)
-
-    class FakeSession:
-        async def call_tool(self, _name: str, _arguments: dict):
-            raise AssertionError("must not be called when fastpath is available")
-
-    mcp_client.reset_tool_transparency_events()
-    out = await mcp_client.call_tool(FakeSession(), "get_training_load_trend", {"start_date": "2026-09-01", "end_date": "2026-09-03"})
-    events = mcp_client.consume_tool_transparency_events()
-
-    assert out == '{"ok":1}'
-    assert len(events) == 1
-    assert events[0]["tool"] == "get_training_load_trend"
-    assert events[0]["mode"] == "fallback_fastpath"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_records_transparency_event_for_cached_error_fallback(monkeypatch):
-    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setattr(mcp_client, "resolve_local_fastpath_response", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(mcp_client, "resolve_cached_tool_response", lambda *_args, **_kwargs: '{"cached":true}')
-
-    class FakeSession:
-        async def call_tool(self, _name: str, _arguments: dict):
-            raise RuntimeError("network boom")
-
-    mcp_client.reset_tool_transparency_events()
-    out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
-    events = mcp_client.consume_tool_transparency_events()
-
-    assert out == '{"cached":true}'
-    assert len(events) == 1
-    assert events[0]["tool"] == "get_user_profile"
-    assert events[0]["mode"] == "fallback_cache_on_error"
-    assert "RuntimeError" in events[0]["reason"]
-
-
-def test_cache_tool_response_ignores_error_payload(monkeypatch):
-    saved = {}
-
-    monkeypatch.setattr(mcp_adapter, "_load_adapter_cache_from_profile", lambda: {})
-    monkeypatch.setattr(mcp_adapter, "_save_adapter_cache_to_profile", lambda payload: saved.update(payload))
-
-    mcp_adapter.cache_tool_response("get_user_profile", {}, "Error executing tool get_user_profile: boom")
-
-    assert saved == {}
-
-
-def test_resolve_cached_tool_response_ignores_cached_errors(monkeypatch):
-    fake_cache = {
-        "tools": {
-            "get_user_profile": {
-                mcp_adapter._build_cache_key("get_user_profile", {}): {
-                    "response": "Error executing tool get_user_profile: boom",
-                    "updated_at": "2026-09-03T00:00:00Z",
-                }
-            }
-        }
-    }
-    monkeypatch.setattr(mcp_adapter, "_load_adapter_cache_from_profile", lambda: fake_cache)
-
-    out = mcp_adapter.resolve_cached_tool_response("get_user_profile", {})
-    assert out is None
-
-
-def test_fastpath_never_returns_kairos_tss_as_garmin_training_load(monkeypatch):
-    # get_training_load_trend es la carga nativa de Garmin: la contingencia no la sustituye por el
-    # TSS de Kairos (antes devolvía load_metrics_daily.tss con el nombre trainingLoad).
-    monkeypatch.setattr(
-        mcp_adapter._storage,
-        "get_load_metrics_series",
-        lambda days: [{"date": "2026-09-02", "tss": 20.5}],
-    )
-    monkeypatch.setattr(mcp_adapter, "resolve_cached_tool_response", lambda *_args, **_kwargs: None)
-    out = mcp_adapter.resolve_local_fastpath_response(
-        "get_training_load_trend",
-        {"start_date": "2026-09-01", "end_date": "2026-09-03"},
-    )
-    assert out is None
-
-
-@pytest.mark.asyncio
-async def test_call_tool_uses_local_fastpath_when_available(monkeypatch):
-    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setattr(
-        mcp_client,
-        "resolve_local_fastpath_response",
-        lambda tool_name, arguments: "[{\"date\":\"2026-09-03\",\"trainingLoad\":12.3}]",
-    )
-
-    class FakeSession:
-        async def call_tool(self, _name: str, _arguments: dict):
-            raise AssertionError("must not call MCP when fast-path exists")
-
-    out = await mcp_client.call_tool(
-        FakeSession(),
-        "get_training_load_trend",
-        {"start_date": "2026-09-03", "end_date": "2026-09-03"},
-    )
-    assert "trainingLoad" in out
-
-
-@pytest.mark.asyncio
-async def test_call_tool_returns_cached_response_on_runtime_error(monkeypatch):
-    monkeypatch.setenv("KAIROS_MCP_ENABLE_FALLBACK", "true")
-    monkeypatch.setattr(
-        mcp_client,
-        "resolve_local_fastpath_response",
-        lambda tool_name, arguments: None,
-    )
-    monkeypatch.setattr(
-        mcp_client,
-        "resolve_cached_tool_response",
-        lambda tool_name, arguments: '{"cached":true}',
-    )
-
-    class FakeSession:
-        async def call_tool(self, _name: str, _arguments: dict):
-            raise RuntimeError("mcp down")
-
-    out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
-    assert out == '{"cached":true}'
-
-
-@pytest.mark.asyncio
-async def test_call_tool_default_single_path_ignores_fastpath(monkeypatch):
-    monkeypatch.delenv("KAIROS_MCP_ENABLE_FALLBACK", raising=False)
-    monkeypatch.setattr(
-        mcp_client,
-        "resolve_local_fastpath_response",
-        lambda tool_name, arguments: '{"should":"not-use"}',
-    )
-
-    class FakeSession:
-        async def call_tool(self, _name: str, _arguments: dict):
-            return SimpleNamespace(content=[SimpleNamespace(text="direct")])
-
-    out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
-    assert out == "direct"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_default_single_path_returns_error_without_cache(monkeypatch):
-    monkeypatch.delenv("KAIROS_MCP_ENABLE_FALLBACK", raising=False)
-    monkeypatch.setattr(mcp_client, "resolve_cached_tool_response", lambda *_args, **_kwargs: '{"cached":true}')
-
+async def test_call_tool_returns_error_text_when_the_server_fails():
     class FakeSession:
         async def call_tool(self, _name: str, _arguments: dict):
             raise RuntimeError("mcp down")

@@ -145,7 +145,7 @@ No uses herramientas de escritura (`create_`, `update_`, `delete_`, `schedule_`,
 # Protocolos de análisis
 
 ## Contrato estructurado de sesión
-Las sesiones del motor de planes llevan un objeto `structured_workout` (`schema: kairos-workout-v1`, `sessionType`, `steps` con `name`, `type`, `duration_min` o pasos anidados, `reps`, `intensityClass` ∈ `recovery|endurance|tempo|threshold|vo2` y `target` con `metric` ∈ `hr_zone|ftp_pct|rpe|pace_pct`, donde `hr_zone` es la zona de Garmin (1-5); los planes creados antes del 23/10/2026 pueden traer `hr_pct`, un formato interno antiguo que no se muestra). En el bloque "Plan activo" cada sesión llega ya con su zona de Garmin y su RPE. Si describes una sesión, mantén la coherencia con ese contrato y al usuario dale la FC en zonas de Garmin (nombre y lpm), nunca en %.
+Las sesiones del motor de planes llevan un objeto `structured_workout` (`schema: kairos-workout-v1`, `sessionType`, `steps` con `name`, `type`, `duration_min` o pasos anidados, `reps`, `intensityClass` ∈ `recovery|endurance|tempo|threshold|vo2` y `target` con `metric` ∈ `hr_zone|ftp_pct|rpe|pace_pct`, donde `hr_zone` es la zona de Garmin (1-5)). En el bloque "Plan activo" cada sesión llega ya con su zona de Garmin y su RPE. Si describes una sesión, mantén la coherencia con ese contrato y al usuario dale la FC en zonas de Garmin (nombre y lpm), nunca en %.
 
 ## Revisión post-sesión (nota del entrenador)
 Si el atleta comparte una actividad sin pedir análisis profundo: máx. 5–7 líneas con lo que fue bien, lo que se desvió del plan (si hay sesión prevista) y un ajuste concreto para la próxima sesión del mismo tipo.

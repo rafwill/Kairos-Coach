@@ -12,7 +12,6 @@ from agent.trainer_agent import (
     _build_proactive_status_markdown,
     _build_activity_analysis_block,
     _build_load_trend_table,
-    _classify_running_session_with_confidence,
     _classify_strength_session_with_confidence,
     _classify_walk_hike_session_with_confidence,
     _estimate_session_tss,
@@ -28,7 +27,7 @@ from agent.load_metrics import (
     _extract_duration_seconds_from_activity_details_payload,
     _resolve_activity_duration_hours,
 )
-from agent.load_metrics import estimate_session_tss
+from agent.load_metrics import _classify_running_session_with_confidence, estimate_session_tss
 import agent.load_metrics as lm
 
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import unicodedata
 from statistics import fmean, median
@@ -2075,18 +2074,6 @@ def _estimate_hr_tss_from_activity_details_lthr(
         tss_total += (dt / 3600.0) * (if_sec**2) * 100.0
         covered_seconds += dt
 
-    attenuation_debug = str(os.environ.get("KAIROS_TRAIL_LOW_IF_DEBUG") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    low_ratio_debug = 0.0
-    low_total_seconds_debug = 0.0
-    attenuation_applied_debug = False
-    attenuation_tss_share_debug = 0.0
-    tss_before_attenuation_debug = tss_total
-
     if attenuate_sustained_low_if and segments and covered_seconds > 0:
         low_threshold = float(TRAIL_NON_FAST_LOW_IF_THRESHOLD)
         low_floor = float(TRAIL_NON_FAST_LOW_IF_FLOOR)
@@ -2120,72 +2107,14 @@ def _estimate_hr_tss_from_activity_details_lthr(
             i += 1
 
         low_ratio = low_total_seconds / covered_seconds
-        low_ratio_debug = low_ratio
-        low_total_seconds_debug = low_total_seconds
         if low_ratio >= float(TRAIL_NON_FAST_LOW_IF_APPLY_RATIO):
-            attenuation_applied_debug = True
             tss_total = sum((dt / 3600.0) * (if_sec**2) * 100.0 for dt, if_sec, _ in adjusted_segments)
-            attenuated_tss = sum(
-                (dt / 3600.0) * (if_sec**2) * 100.0
-                for dt, if_sec, is_attenuated in adjusted_segments
-                if is_attenuated
-            )
-            if tss_total > 0:
-                attenuation_tss_share_debug = max(0.0, min(1.0, attenuated_tss / tss_total))
 
     coverage_ratio = (covered_seconds / duration_seconds) if duration_seconds > 0 else 0.0
     if coverage_ratio < max(0.0, float(min_coverage_ratio or 0.0)):
         return None
 
-    if attenuation_debug and attenuate_sustained_low_if:
-        activity_id = activity.get("activityId") or activity.get("activity_id") or activity.get("id") or "?"
-        activity_name = str(activity.get("activityName") or activity.get("name") or "")
-        log.warning(
-            "[trail_low_if_debug] id=%s name=%s low_ratio=%.3f threshold=%.3f low_seconds=%.1f covered_seconds=%.1f applied=%s tss_before=%.1f tss_after=%.1f attenuated_tss_share=%.3f coverage=%.3f",
-            activity_id,
-            activity_name,
-            low_ratio_debug,
-            float(TRAIL_NON_FAST_LOW_IF_APPLY_RATIO),
-            low_total_seconds_debug,
-            covered_seconds,
-            attenuation_applied_debug,
-            tss_before_attenuation_debug,
-            tss_total,
-            attenuation_tss_share_debug,
-            coverage_ratio,
-        )
-
     return max(0.0, tss_total)
-
-
-def _extract_splits_list(payload: Any) -> list[dict]:
-    data = _decode_json_like(payload)
-    if isinstance(data, list):
-        return [row for row in data if isinstance(row, dict)]
-
-    if isinstance(data, dict):
-        for key in (
-            "splits",
-            "splitSummaries",
-            "split_summary",
-            "laps",
-            "data",
-            "items",
-            "result",
-            "lapDTOs",
-            "lapSummaries",
-        ):
-            nested = data.get(key)
-            if isinstance(nested, list):
-                return [row for row in nested if isinstance(row, dict)]
-
-        for value in data.values():
-            if isinstance(value, (list, dict)):
-                found = _extract_splits_list(value)
-                if found:
-                    return found
-
-    return []
 
 
 def _estimate_trail_tss_high_precision(

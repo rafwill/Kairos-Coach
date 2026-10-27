@@ -571,7 +571,6 @@ def find_wrong_weekday_date(text: str, today: date | None) -> list[Finding]:
 
 # ─── S16: nota de seguridad glucémica ───────────────────────────────────────
 
-_INSULIN_DIABETES = re.compile(r"(?i)\bdt\s?1\b|diabetes\s+tipo\s*1|\btipo\s*1\b|\blada\b|insulin")
 # Prescribe una sesión: su estructura o una propuesta explícita. "Rodaje" o "series" sueltos no bastan: salen en
 # listas de actividades y tablas de zonas (24/10: la nota se añadía a "¿cuántos km he corrido este mes?").
 _PRESCRIBES_SESSION = re.compile(
@@ -585,12 +584,6 @@ GLUCOSE_NOTE = (
     "de 100, toma carbohidratos rápidos antes), lleva carbohidratos si la sesión pasa de 60 min y vigila la "
     "hipoglucemia retardada después, sobre todo si entrenas por la tarde o la noche."
 )
-
-
-def has_insulin_diabetes(health_texts: list[str]) -> bool:
-    """Diabetes tratada con insulina en el texto libre del perfil (respaldo de agent/diabetes.py mientras el
-    atleta no confirma el campo `health.diabetes`)."""
-    return any(_INSULIN_DIABETES.search(str(t or "")) for t in health_texts)
 
 
 def add_glucose_note(text: str, insulin_diabetes: bool) -> str:

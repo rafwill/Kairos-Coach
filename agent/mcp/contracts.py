@@ -1,19 +1,10 @@
 """
 agent/mcp/contracts.py — capa del cliente MCP en el host (Kairos).
 
-Contratos mínimos de argumentos por tool, normalización de invocaciones (fechas, alias) y caché
-de contingencia por usuario. La clave del perfil `mcp_adapter_cache` se conserva por compatibilidad
-con los datos ya guardados en Supabase.
+Contratos mínimos de argumentos por tool y normalización de invocaciones (fechas, alias).
 """
 
 from __future__ import annotations
-
-import json
-from datetime import UTC
-from datetime import datetime
-from hashlib import sha256
-
-from agent import storage as _storage
 
 ADAPTER_CONTRACT_VERSION = "mcp-adapter-v1"
 
@@ -66,114 +57,6 @@ TOOL_CONTRACTS_V1: dict[str, dict] = {
     "kairos_weekly_sport_breakdown": {},
 }
 
-CRITICAL_CACHEABLE_TOOLS: set[str] = {
-    "get_user_profile",
-    "get_activities",
-    "get_activities_by_date",
-    "get_activity",
-    "get_activity_hr_in_timezones",
-    "get_body_battery",
-    "get_hrv_data",
-    "get_sleep_summary",
-    "get_training_readiness",
-    "get_morning_training_readiness",
-    "get_training_load_trend",
-    "get_personal_record",
-}
-
-# Estas tools deben consultarse al MCP siempre como ruta primaria.
-# El caché solo se usa como fallback ante error de transporte/ejecución.
-NO_FASTPATH_CACHE_TOOLS: set[str] = {
-    "get_activities_by_date",
-}
-
-
-def get_contract_registry() -> dict[str, dict]:
-    """Devuelve copia del registro de contratos v1 por tool."""
-    return dict(TOOL_CONTRACTS_V1)
-
-
-def _build_cache_key(tool_name: str, arguments: dict) -> str:
-    payload = {
-        "tool": str(tool_name or "").strip(),
-        "args": dict(arguments or {}),
-    }
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _load_adapter_cache_from_profile() -> dict:
-    try:
-        profile = _storage.load_user_profile() or {}
-    except Exception:
-        return {}
-    root = profile.get("mcp_adapter_cache") or {}
-    versioned = root.get(ADAPTER_CONTRACT_VERSION) or {}
-    return versioned if isinstance(versioned, dict) else {}
-
-
-def _save_adapter_cache_to_profile(cache_payload: dict) -> None:
-    try:
-        profile = _storage.load_user_profile() or {}
-        root = profile.get("mcp_adapter_cache") or {}
-        root[ADAPTER_CONTRACT_VERSION] = dict(cache_payload or {})
-        profile["mcp_adapter_cache"] = root
-        _storage.save_user_profile(profile)
-    except Exception:
-        return
-
-
-def cache_tool_response(tool_name: str, arguments: dict, response_text: str) -> None:
-    """Persiste respuesta MCP en caché local por usuario para el modo de contingencia."""
-    name = str(tool_name or "").strip()
-    if name not in CRITICAL_CACHEABLE_TOOLS:
-        return
-    payload = str(response_text or "").strip()
-    if not payload:
-        return
-    if payload.startswith("Error ") or "Error executing tool" in payload:
-        return
-
-    cache_key = _build_cache_key(name, arguments)
-    cache = _load_adapter_cache_from_profile()
-    tools_bucket = cache.get("tools") or {}
-    per_tool = tools_bucket.get(name) or {}
-    per_tool[cache_key] = {
-        "response": payload,
-        "updated_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
-    }
-
-    # Evita crecimiento indefinido: conserva solo las últimas 10 entradas por tool.
-    if len(per_tool) > 10:
-        ordered_items = sorted(
-            per_tool.items(),
-            key=lambda item: str((item[1] or {}).get("updated_at") or ""),
-        )
-        per_tool = dict(ordered_items[-10:])
-
-    tools_bucket[name] = per_tool
-    cache["tools"] = tools_bucket
-    _save_adapter_cache_to_profile(cache)
-
-
-def resolve_cached_tool_response(tool_name: str, arguments: dict) -> str | None:
-    """Devuelve el payload cacheado de una tool crítica (modo de contingencia)."""
-    name = str(tool_name or "").strip()
-    if name not in CRITICAL_CACHEABLE_TOOLS:
-        return None
-
-    cache = _load_adapter_cache_from_profile()
-    tools_bucket = cache.get("tools") or {}
-    per_tool = tools_bucket.get(name) or {}
-    entry = per_tool.get(_build_cache_key(name, arguments)) or {}
-    payload = entry.get("response")
-    text = str(payload) if payload else ""
-    if not text:
-        return None
-    if text.startswith("Error ") or "Error executing tool" in text:
-        return None
-    return text
-
 
 def normalize_tool_invocation(tool_name: str, arguments: dict) -> tuple[str, dict]:
     """Normaliza alias y shape mínimo de argumentos antes de llamar al MCP."""
@@ -217,14 +100,3 @@ def validate_min_input_contract(tool_name: str, arguments: dict) -> str | None:
             f"faltan campos requeridos. Aceptado: {' | '.join(options)}."
         )
     return None
-
-
-def resolve_local_fastpath_response(tool_name: str, arguments: dict) -> str | None:
-    """Devuelve respuesta local (caché) para tools críticas, o None para usar MCP.
-
-    get_training_load_trend no se sustituye por el TSS de Kairos: es la carga nativa de Garmin y
-    darla con el nombre trainingLoad mezclaría escalas. Usa la caché genérica como el resto.
-    """
-    if tool_name in NO_FASTPATH_CACHE_TOOLS:
-        return None
-    return resolve_cached_tool_response(tool_name, arguments)

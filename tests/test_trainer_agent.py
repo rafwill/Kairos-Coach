@@ -25,8 +25,6 @@ from agent.trainer_agent import (
     _build_mcp_transparency_markdown,
     _build_goal_status_markdown,
     _build_training_plan_status_markdown,
-    _build_tools_schema,
-    _build_mcp_read_only_block_message,
     _build_personal_records_markdown,
     _build_startup_plan_recommendation,
     _build_activity_candidates_payload,
@@ -78,7 +76,6 @@ from agent.trainer_agent import (
     _is_week_activities_intent,
     _is_load_trend_intent,
     _is_planning_intent,
-    _is_write_mcp_tool,
     _resolve_week_window,
     _resolve_load_parameters_effective_date,
     _resolve_activity_id_from_query,
@@ -400,7 +397,6 @@ class TestImpossibleDateAndUnknownTool:
         agent.conversation_history = []
         agent.tools_schema = [{"type": "function", "function": {"name": "get_activities"}}]
         agent.mcp_session = MagicMock()
-        agent.mcp_read_only = True
         agent._build_messages = lambda _msg: [{"role": "user", "content": "x"}]
         agent.model = "m"
         agent.total_prompt_tokens = agent.total_completion_tokens = 0
@@ -456,7 +452,6 @@ class TestToolTimeoutBreaker:
         agent.conversation_history = []
         agent.tools_schema = [{"type": "function", "function": {"name": "get_activity"}}]
         agent.mcp_session = MagicMock()
-        agent.mcp_read_only = True
         agent._build_messages = lambda _msg: [{"role": "user", "content": "x"}]
         agent.model = "m"
         agent.total_prompt_tokens = agent.total_completion_tokens = 0
@@ -3460,7 +3455,6 @@ class TestPlanStatusChatRoute:
         agent.conversation_history = []
         agent.tools_schema = []
         agent.mcp_session = MagicMock()
-        agent.mcp_read_only = True
         agent.model = "test-model"
         agent._build_messages = lambda _msg: []
         agent.client = MagicMock()
@@ -3503,7 +3497,6 @@ class TestPlanStatusChatRoute:
         agent.conversation_history = []
         agent.tools_schema = []
         agent.mcp_session = MagicMock()
-        agent.mcp_read_only = True
         agent.model = "test-model"
         agent._build_messages = lambda _msg: []
         agent.client = MagicMock()
@@ -3559,7 +3552,6 @@ class TestPlanStatusChatRoute:
         agent.conversation_history = []
         agent.tools_schema = []
         agent.mcp_session = MagicMock()
-        agent.mcp_read_only = True
         agent.model = "test-model"
         agent._build_messages = lambda _msg: []
         agent.client = MagicMock()
@@ -3595,44 +3587,11 @@ class TestPlannedSessionSelection:
         assert out["session_type"] == "running_quality"
 
 
-class TestMcpReadOnlyPolicy:
-    def test_is_write_mcp_tool_detects_mutations(self):
-        assert _is_write_mcp_tool("create_custom_food")
-        assert _is_write_mcp_tool("update_custom_food")
-        assert _is_write_mcp_tool("delete_workout")
-        assert _is_write_mcp_tool("schedule_workout")
-        assert _is_write_mcp_tool("upload_workout")
-
-    def test_is_write_mcp_tool_allows_read_tools(self):
-        assert not _is_write_mcp_tool("get_activity")
-        assert not _is_write_mcp_tool("get_training_status")
-
-    def test_read_only_block_message_has_expected_shape(self):
-        payload = json.loads(_build_mcp_read_only_block_message("schedule_workout"))
-        assert payload["error"] == "mcp_read_only_mode"
-        assert payload["tool"] == "schedule_workout"
-
-    def test_build_tools_schema_can_be_filtered_for_read_only(self):
-        tools = [
-            {
-                "name": "get_activity",
-                "description": "read",
-                "input_schema": {"type": "object", "properties": {}},
-            },
-            {
-                "name": "create_run_workout",
-                "description": "write",
-                "input_schema": {"type": "object", "properties": {}},
-            },
-        ]
-        filtered = [t for t in tools if not _is_write_mcp_tool(t["name"])]
-        schema = _build_tools_schema(filtered)
-        names = {(item.get("function") or {}).get("name") for item in schema}
-        assert "get_activity" in names
-        assert "create_run_workout" not in names
-
+class TestWriteToolsNeverReachTheServer:
     @pytest.mark.asyncio
-    async def test_chat_blocks_write_tool_calls_in_read_only_mode(self):
+    async def test_chat_never_sends_a_write_tool_to_the_server(self):
+        # El servidor propio solo tiene tools get_*: una de escritura que pida el LLM no está en el esquema y no
+        # llega al servidor (guardia de tools inexistentes, 24/10).
         from agent.trainer_agent import TrainerAgent
 
         tool_call = MagicMock()
@@ -3672,12 +3631,11 @@ class TestMcpReadOnlyPolicy:
         agent.tools_schema = [{
             "type": "function",
             "function": {
-                "name": "schedule_workout",
-                "description": "write",
+                "name": "get_activity",
+                "description": "read",
                 "parameters": {"type": "object", "properties": {}}
             }
         }]
-        agent.mcp_read_only = True
         agent.client = MagicMock()
         agent.model = "test-model"
         agent.client.chat = MagicMock()
@@ -3733,7 +3691,7 @@ class TestWeekTssDeterministicRoute:
 
         message = "¿Qué tipo de sesión me recomiendas para esta semana dado mi estado?"
         assert not _is_week_tss_followup_intent(message, history)
-        assert ToolRouter(enabled=True).route_key(message, history, {}) == "daily_readiness"
+        assert ToolRouter().route_key(message, history, {}) == "daily_readiness"
 
     def test_is_week_tss_followup_intent_false_without_context(self):
         history = [{"role": "assistant", "content": "¿Cómo te encuentras hoy?"}]
@@ -3754,7 +3712,7 @@ class TestWeekTssDeterministicRoute:
     def test_tool_router_routes_week_tss_followup_without_tss_word(self):
         import agent.trainer_agent as ta
 
-        router = ta.ToolRouter(enabled=True)
+        router = ta.ToolRouter()
         history = [
             {
                 "role": "assistant",
@@ -3767,7 +3725,7 @@ class TestWeekTssDeterministicRoute:
     def test_tool_router_routes_week_tss_for_comparative_weekly_query(self):
         import agent.trainer_agent as ta
 
-        router = ta.ToolRouter(enabled=True)
+        router = ta.ToolRouter()
         route = router.route_key(
             "Compárame esta semana vs la semana pasada: TSS total, diferencia porcentual y si hay spike >20%",
             [],
@@ -3778,7 +3736,7 @@ class TestWeekTssDeterministicRoute:
     def test_tool_router_routes_week_tss_for_weekly_tss_contribution_query(self):
         import agent.trainer_agent as ta
 
-        router = ta.ToolRouter(enabled=True)
+        router = ta.ToolRouter()
         route = router.route_key(
             "¿Qué actividades han contribuido al TSS de esta semana? Dame día, actividad y TSS estimado por sesión",
             [],
@@ -3789,7 +3747,7 @@ class TestWeekTssDeterministicRoute:
     def test_tool_router_routes_single_day_tss_to_mcp_factual(self):
         import agent.trainer_agent as ta
 
-        router = ta.ToolRouter(enabled=True)
+        router = ta.ToolRouter()
         route = router.route_key(
             "Dime los TSSs del domingo 20 de septiembre",
             [],
@@ -3805,7 +3763,7 @@ class TestWeekTssDeterministicRoute:
     def test_tool_router_routes_load_trend_query(self):
         import agent.trainer_agent as ta
 
-        router = ta.ToolRouter(enabled=True)
+        router = ta.ToolRouter()
         route = router.route_key(
             "Muéstrame la tendencia de los últimos 14 días de ATL, CTL y TSB, y dime si voy hacia fatiga o disponibilidad",
             [],
@@ -5074,7 +5032,7 @@ class TestMcpFactualDeterministicRoute:
         # factual de un día y respondía con los datos de hoy. Las tendencias van al LLM (get_hrv_trend…).
         import agent.trainer_agent as ta
 
-        router = ta.ToolRouter(enabled=True)
+        router = ta.ToolRouter()
         for q in ("¿Cómo ha evolucionado mi HRV en las últimas dos semanas?", "¿Cómo ha ido mi HRV este mes?",
                   "Evolución de mi FC en reposo este mes"):
             assert not ta._is_mcp_factual_query_intent(q), q
@@ -5104,7 +5062,7 @@ class TestMcpFactualDeterministicRoute:
     def test_tool_router_routes_today_load_status_query(self):
         import agent.trainer_agent as ta
 
-        router = ta.ToolRouter(enabled=True)
+        router = ta.ToolRouter()
         route = router.route_key(
             "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada",
             [],
@@ -5724,14 +5682,6 @@ class TestSessionSummaryCheckpoint:
 
         assert TrainerAgent.generate_session_summary_checkpoint(agent) == ""
 
-    def test_strip_previous_reply_from_stored_summaries(self):
-        from agent.trainer_agent import _strip_previous_reply
-
-        old = "Temas recientes: Cómo está mi HRV hoy?. Última respuesta: HRV 73 ms, TSB -12."
-        assert _strip_previous_reply(old) == "Temas recientes: Cómo está mi HRV hoy?."
-        assert _strip_previous_reply("Temas recientes: Mi FTP?.") == "Temas recientes: Mi FTP?."
-        assert _strip_previous_reply("Última respuesta: TSS 260.4") == ""
-
     def test_save_session_summary_checkpoint_calls_daily_upsert(self):
         from agent.trainer_agent import TrainerAgent
 
@@ -5748,21 +5698,6 @@ class TestSessionSummaryCheckpoint:
 
 
 class TestMcpTransparencyAndLatencyRegression:
-    def test_build_mcp_transparency_markdown_groups_events(self):
-        events = [
-            {"tool": "get_user_profile", "mode": "fallback_cache_on_error", "reason": "RuntimeError: boom"},
-            {"tool": "get_user_profile", "mode": "fallback_cache_on_error", "reason": "RuntimeError: boom"},
-            {"tool": "get_training_load_trend", "mode": "fallback_fastpath", "reason": "local fastpath"},
-        ]
-
-        out = _build_mcp_transparency_markdown(events)
-
-        assert "## ℹ️ Transparencia de datos" in out
-        assert "get_user_profile: fallback_cache_on_error x2" in out
-        assert "get_training_load_trend: fallback_fastpath x1" in out
-        assert "fallaron" not in out
-        assert _build_mcp_error_warning_markdown(events) == ""
-
     def test_mcp_errors_produce_top_warning_and_correct_transparency(self):
         # Caso real (21/10): tokens de Garmin rechazados → la semana salía "0 actividades" sin aviso.
         events = [
@@ -5776,7 +5711,7 @@ class TestMcpTransparencyAndLatencyRegression:
         assert "No se pudo consultar Garmin" in warning
         assert "get_activities_by_date" in warning
         assert "Algunas consultas a Garmin (MCP) fallaron." in out
-        assert "contingencia" not in out
+        assert "get_activities_by_date: mcp_error x2" in out
 
     @pytest.mark.asyncio
     async def test_finalize_reply_puts_garmin_error_warning_first(self, monkeypatch):
@@ -5921,7 +5856,7 @@ class TestRecentTssBySportRoute:
     def test_original_question_routes_to_recent_tss_with_three_sports(self):
         import agent.trainer_agent as ta
 
-        assert ta.ToolRouter(enabled=True).route_key(self.QUESTION, [], {}) == "recent_tss_by_sport"
+        assert ta.ToolRouter().route_key(self.QUESTION, [], {}) == "recent_tss_by_sport"
         sports, n = ta._parse_recent_tss_sports_request(self.QUESTION)
         assert set(sports) == {"trail", "strength", "running"}
         assert n == 20
@@ -5929,7 +5864,7 @@ class TestRecentTssBySportRoute:
     def test_single_sport_activities_phrasing_still_routes(self):
         import agent.trainer_agent as ta
 
-        assert ta.ToolRouter(enabled=True).route_key("TSS de mis 10 últimas actividades de trail", [], {}) == "recent_tss_by_sport"
+        assert ta.ToolRouter().route_key("TSS de mis 10 últimas actividades de trail", [], {}) == "recent_tss_by_sport"
 
     @pytest.mark.asyncio
     async def test_lists_stored_tss_with_garmin_load_apart(self):
@@ -6235,15 +6170,14 @@ class TestStructuredPlanEngine:
         assert warmup == {"metric": "hr_zone", "zone": 1, "zone_to": 2}
         assert "hr_pct" not in json.dumps(sw)
 
-    def test_session_label_shows_garmin_zone_with_rpe_also_for_saved_plans(self, monkeypatch):
+    def test_session_label_shows_garmin_zone_with_rpe(self, monkeypatch):
         zones = [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
                  ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
         monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
-        # Plan guardado antes del 23/10: RPE en el texto y hr_pct dentro.
-        old = {"session_type": "running_z2", "duration_min": 45, "intensity": "RPE 3-4",
-               "structured_workout": {"summary": {"intensityClass": "endurance"},
-                                      "targets": {"primary": {"metric": "hr_pct", "range": [85, 89]}}}}
-        assert ta._session_intensity_label(old, {}) == "Z2 Aeróbica (135–145 lpm) · RPE 3-4"
+        z2 = {"session_type": "running_z2", "duration_min": 45, "intensity": "RPE 3-4",
+              "structured_workout": {"summary": {"intensityClass": "endurance"},
+                                     "targets": {"primary": {"metric": "hr_zone", "zone": 2}}}}
+        assert ta._session_intensity_label(z2, {}) == "Z2 Aeróbica (135–145 lpm) · RPE 3-4"
         assert ta._session_intensity_label({"session_type": "strength", "duration_min": 40, "intensity": "RPE 5-6"}, {}) == "RPE 5-6"
         assert ta._session_intensity_label({"session_type": "rest", "duration_min": 0, "intensity": ""}, {}) == "descanso"
 
@@ -6252,15 +6186,11 @@ class TestStructuredPlanEngine:
             {"name": "Warm-up", "type": "warmup", "duration_min": 10, "target": {"metric": "hr_zone", "zone": 1, "zone_to": 2}},
             {"name": "Main", "type": "steady", "duration_min": 30, "intensityClass": "tempo",
              "target": {"metric": "hr_zone", "zone": 3}},
-            {"name": "Legacy", "type": "steady", "duration_min": 20, "intensityClass": "endurance",
-             "target": {"metric": "hr_pct", "range": [85, 89]}},
         ]}}
         sw, trace = ta._apply_structured_workout_adjustment(session, "easy")
-        main, legacy = sw["steps"][1], sw["steps"][2]
+        main = sw["steps"][1]
         assert main["target"]["zone"] == 2 and main["intensityClass"] == "endurance"
         assert main["duration_min"] == 21.0
-        # Antes se multiplicaba por el factor de volumen (85-89 % → 59,5-62,3 %).
-        assert legacy["target"]["range"] == [85, 89]
         assert any("Z3->Z2" in t for t in trace)
 
     def test_today_session_frame_per_decision(self, monkeypatch):

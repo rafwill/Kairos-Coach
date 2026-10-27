@@ -1,4 +1,4 @@
-# Próximos pasos — Kairos Coach
+﻿# Próximos pasos — Kairos Coach
 
 Última revisión: 26/10/2026.
 
@@ -38,32 +38,20 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ### D. Limpieza del proyecto (revisión del 26/10)
 
-Revisión completa de código y documentación del 26/10: incoherencias, código que sobra y duplicados. D1 (documentación) y D4 (menores) hechos el 27/10. Cada bloque, su commit.
+Revisión completa de código y documentación del 26/10: incoherencias, código que sobra y duplicados. Hechos el 27/10: D1 (documentación), D4 (menores) y D2 (código que sobra, con su limpieza del perfil en Supabase). Cada bloque, su commit.
 
 **Recomendación (por aquí se sigue):**
 
-1. **Quitar con tests y una batería antes y después:** el código que sobra (6, D2), unas 300–400 líneas. Borrar la caché `mcp_adapter_cache` del perfil es un cambio de datos en Supabase: prueba previa, aplicación y lectura de vuelta, como la memoria.
-2. **Unificar en `load_metrics.py`:** los duplicados 7a y 7b. Las zonas (7a) primero, comprobando qué versión es la correcta.
-3. **Dejar para otro momento:** los envoltorios (7c), porque tocan mucho para ganar poco.
+1. **Unificar en `load_metrics.py`:** los duplicados 6a y 6b. Las zonas (6a) primero, comprobando qué versión es la correcta.
+2. **Dejar para otro momento:** los envoltorios (6c), porque tocan mucho para ganar poco.
 
-6. **D2. Código que sobra** (≈ 300–400 líneas; con tests y batería antes y después)
-
-   | # | Qué | Por qué sobra |
-   | --- | --- | --- |
-   | a | Modo de contingencia del MCP: `KAIROS_MCP_ENABLE_FALLBACK`, caché en el perfil, ruta rápida local (`agent/mcp/client.py`, `contracts.py`) | Apagado desde siempre; la caché no caduca y por eso no se activa (`docs/arquitectura.md`). El perfil aún guarda `mcp_adapter_cache` sin que nadie la lea: borrarla es un cambio de datos en Supabase (prueba antes, como la memoria). |
-   | b | Bloqueo de tools de escritura: `MCP_READ_ONLY`, `_is_write_mcp_tool`, `_build_mcp_read_only_block_message` | El servidor propio solo tiene las 42 tools `get_*`. |
-   | c | Interruptores que nadie activa: `KAIROS_DETERMINISTIC_ROUTER`, `KAIROS_TRAIL_LOW_IF_DEBUG`, `KAIROS_WELLNESS_REFRESH_ON_STARTUP` | Mismo caso que `KAIROS_TOOL_GROUPS` (quitado el 26/10). |
-   | d | `running_session_inference` (`compute_and_persist_load_metrics`) | Se escribe en el perfil en cada cálculo de carga y nadie lo lee. |
-   | e | Compatibilidad con datos que ya no existen | Planes con `hr_pct` (no hay ningún plan guardado), `_strip_previous_reply` (memoria vaciada el 26/10), inserción de sesiones de plan sin `structured_workout` (`schema.sql` ya la crea). |
-   | f | Sin uso | `load_metrics._extract_splits_list`, `contracts.get_contract_registry`, `sensors.has_insulin_diabetes` (sustituida por `agent/diabetes.py`), `_TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM`; `ALL_ESSENTIAL_TOOLS` solo en tests. |
-
-7. **D3. Código duplicado entre `trainer_agent.py` y `load_metrics.py`**
+6. **D3. Código duplicado entre `trainer_agent.py` y `load_metrics.py`**
 
    | # | Qué | Riesgo |
    | --- | --- | --- |
    | a | `_parse_hr_zones_list` y `_find_hr_zones_in_json`, con versiones **distintas** en cada módulo | Alto: la misma entrada puede dar zonas distintas. Primero comprobar cuál es la correcta (`CLAUDE.md`: `_parse_hr_zones_list` no lee el formato real de Garmin). |
    | b | `_is_trail_activity` y otras 6 de clasificación de deporte, y `_percentile`, copiadas idénticas | Medio: un cambio en una copia no llega a la otra. Dejar las de `load_metrics.py`. |
-   | c | 37 envoltorios de una línea en `trainer_agent.py` que solo llaman a `load_metrics` | Bajo (estético); los tests los usan para sustituir funciones. Dejar para otro momento. |
+   | c | 36 envoltorios de una línea en `trainer_agent.py` que solo llaman a `load_metrics` | Bajo (estético); los tests los usan para sustituir funciones. Dejar para otro momento. |
 
 ## Descartado
 

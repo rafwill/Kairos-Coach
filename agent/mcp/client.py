@@ -16,13 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from agent.mcp.contracts import (
-    cache_tool_response,
-    normalize_tool_invocation,
-    resolve_local_fastpath_response,
-    resolve_cached_tool_response,
-    validate_min_input_contract,
-)
+from agent.mcp.contracts import normalize_tool_invocation, validate_min_input_contract
 
 # Raíz del repositorio (este fichero vive en agent/mcp/).
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -41,7 +35,7 @@ def reset_tool_transparency_events() -> None:
 
 
 def _record_tool_transparency_event(tool_name: str, mode: str, reason: str | None = None) -> None:
-    """Registra que una tool se resolvió por ruta de contingencia/caché."""
+    """Registra que una tool de Garmin falló, para avisarlo en la respuesta."""
     current = _MCP_TRANSPARENCY_EVENTS.get()
     events = list(current) if isinstance(current, list) else []
     events.append(
@@ -61,12 +55,6 @@ def consume_tool_transparency_events() -> list[dict]:
     out = list(current) if isinstance(current, list) else []
     _MCP_TRANSPARENCY_EVENTS.set([])
     return out
-
-
-def _is_mcp_fallback_enabled() -> bool:
-    """Controla fallback/caché MCP. Por defecto desactivado para ruta única."""
-    raw = (os.environ.get("KAIROS_MCP_ENABLE_FALLBACK") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
 
 
 def _extract_first_http_code(text: str) -> str:
@@ -212,8 +200,6 @@ KAIROS_INTERNAL_ESSENTIAL_TOOLS: tuple[str, ...] = (
     "kairos_weekly_sport_breakdown",
 )
 
-ALL_ESSENTIAL_TOOLS: tuple[str, ...] = GARMIN_ESSENTIAL_TOOLS + KAIROS_INTERNAL_ESSENTIAL_TOOLS
-
 
 def _get_server_params() -> StdioServerParameters:
     """Construye los parámetros de arranque del servidor MCP propio de Kairos."""
@@ -312,19 +298,6 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
         if contract_error:
             return contract_error
 
-        fallback_enabled = _is_mcp_fallback_enabled()
-
-        if fallback_enabled:
-            local_fastpath = resolve_local_fastpath_response(normalized_tool_name, normalized_args)
-            if local_fastpath is not None:
-                _record_tool_transparency_event(
-                    normalized_tool_name,
-                    mode="fallback_fastpath",
-                    reason="resolved via local fastpath/cache",
-                )
-                cache_tool_response(normalized_tool_name, normalized_args, local_fastpath)
-                return local_fastpath
-
         result = await session.call_tool(normalized_tool_name, normalized_args)
         # El contenido puede ser texto o JSON estructurado
         if result.content:
@@ -351,21 +324,7 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
                         f"retry_after={diag.get('retry_after_seconds') or ''}"
                     ),
                 )
-            if fallback_enabled:
-                cache_tool_response(normalized_tool_name, normalized_args, response_text)
             return response_text
         return "Sin datos disponibles."
     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError) as e:
-        if _is_mcp_fallback_enabled():
-            cached = resolve_cached_tool_response(
-                normalized_tool_name if 'normalized_tool_name' in locals() else tool_name,
-                normalized_args if 'normalized_args' in locals() else arguments,
-            )
-            if cached is not None:
-                _record_tool_transparency_event(
-                    normalized_tool_name if 'normalized_tool_name' in locals() else tool_name,
-                    mode="fallback_cache_on_error",
-                    reason=f"{type(e).__name__}: {e}",
-                )
-                return cached
         return f"Error al llamar a '{tool_name}': {str(e)}"

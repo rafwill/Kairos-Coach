@@ -4,6 +4,16 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-27
 
+### Removed (limpieza: código que sobra, D2)
+- Modo de contingencia del MCP (`KAIROS_MCP_ENABLE_FALLBACK`, caché en el perfil, ruta rápida local): apagado desde siempre porque la caché no caducaba. `contracts.py` se queda con los contratos y la normalización; la nota "Transparencia de datos" solo avisa de fallos de Garmin.
+- Bloqueo de tools de escritura (`MCP_READ_ONLY`, `_is_write_mcp_tool`, `_build_mcp_read_only_block_message`): el servidor propio solo tiene tools `get_*`, y una tool fuera del esquema ya no llega al servidor (guardia de tools inexistentes del 24/10). El test del bucle lo comprueba con una tool de escritura.
+- Interruptores que nadie activaba: `KAIROS_DETERMINISTIC_ROUTER` (`ToolRouter` sin `enabled`), `KAIROS_TRAIL_LOW_IF_DEBUG` (solo un log; el cálculo del trail no cambia) y `KAIROS_WELLNESS_REFRESH_ON_STARTUP` (los datos de hoy se piden siempre a Garmin, como ya pasaba).
+- `running_session_inference`: se escribía en el perfil en cada cálculo de carga y nadie lo leía. El clasificador no modifica la actividad, así que el TSS no cambia.
+- Compatibilidad con datos que ya no existen, comprobado antes en Supabase (0 planes, 0 resúmenes, ningún `hr_pct`): `hr_pct` en planes y en el prompt de sistema, `_strip_previous_reply` y el reintento sin `structured_workout` al guardar sesiones de plan.
+- Sin uso: `_extract_splits_list`, `get_contract_registry`, `sensors.has_insulin_diabetes`, `_TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM`, `ALL_ESSENTIAL_TOOLS` y el envoltorio `_classify_running_session_with_confidence` de `trainer_agent`.
+- Datos: fuera del perfil `mcp_adapter_cache` (3,2 MB que se leían con el perfil en cada carga) y `running_session_inference`. Prueba sin escribir (solo esas dos claves, el resto idéntico), copia local, aplicación y lectura de vuelta: 8 → 6 claves.
+- Unas 440 líneas menos en `agent/`. Tests: 766 (fuera los de lo quitado). Batería 25/25 antes y después; en la de después, la pregunta 25 esperó 57 min a Garmin hasta un corte de red (`ConnectionResetError` 10054) y repetida sola salió bien en 21 s.
+
 ### Changed (limpieza: documentación y menores, D1 y D4)
 - README: protocolo de diabetes con o sin insulina según la medicación y lesiones aparte (decía "tipo 1 con insulina"); en "Estructura", `agent/diabetes.py`, `ia_provider.py`, `tool_groups.py`, `tools/check_rls.py`, `prompts/diabetes/` y `supabase/rls.sql` con su README; los pendientes están en `docs/proximos_pasos.md`, no en `CLAUDE.md`.
 - `salir` decía "Cerrar sesión" (README, menú y ayuda), pero la sesión queda guardada: ahora "Salir de Kairos (la sesión queda guardada)". Sin cierre de sesión real.

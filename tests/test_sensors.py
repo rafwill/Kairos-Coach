@@ -190,11 +190,6 @@ class TestGlucoseNoteS16:
         assert sensors.add_glucose_note("- Rodaje suave 40 min.", False) == "- Rodaje suave 40 min."
         assert sensors.add_glucose_note("- Tu HRV está estable.", True) == "- Tu HRV está estable."
 
-    def test_insulin_diabetes_markers(self):
-        assert sensors.has_insulin_diabetes(["DT1 desde 2010"])
-        assert sensors.has_insulin_diabetes(["", "diabetes tipo 1 con bomba de insulina"])
-        assert not sensors.has_insulin_diabetes(["tendinitis aquílea"])
-
 
 def test_sensors_module_does_not_import_the_agent():
     # agent/sensors.py lo usan el agente y las herramientas: no puede depender de trainer_agent.

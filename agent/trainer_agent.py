@@ -108,14 +108,6 @@ def _load_session_summaries() -> list[dict]:
     return _storage.load_session_summaries()
 
 
-def _strip_previous_reply(summary: str) -> str:
-    """Quita la "Última respuesta: …" de los resúmenes guardados antes del 23/10.
-
-    Las respuestas viejas traen cifras caducadas; al LLM solo le llegan los temas.
-    """
-    return re.sub(r"\s*Última respuesta:.*\Z", "", summary, flags=re.DOTALL).strip()
-
-
 def _add_ia_tokens(tokens: int) -> None:
     """Suma el consumo de una llamada al LLM en ia_provider (26/10). Un fallo al apuntarlo nunca corta el chat."""
     try:
@@ -154,29 +146,6 @@ _GARMIN_STRIP_FIELDS = {
     "displayName", "locationName", "countryCode", "timeZoneId",
 }
 
-_WRITE_TOOL_PREFIXES = (
-    "create_",
-    "update_",
-    "delete_",
-    "set_",
-    "schedule_",
-    "unschedule_",
-    "upload_",
-    "add_",
-)
-
-
-def _is_mcp_read_only_enabled() -> bool:
-    """Lee la política de solo lectura para tools MCP (por defecto activada)."""
-    raw = str(os.environ.get("MCP_READ_ONLY", "true")).strip().lower()
-    return raw not in {"0", "false", "no", "off"}
-
-
-def _is_deterministic_router_enabled() -> bool:
-    """Activa/desactiva el router determinista para intenciones críticas."""
-    raw = str(os.environ.get("KAIROS_DETERMINISTIC_ROUTER", "true")).strip().lower()
-    return raw not in {"0", "false", "no", "off"}
-
 
 def _session_memory_enabled() -> bool:
     """Memoria entre sesiones (historial y resumen del día en `session_context`). La apaga solo la batería
@@ -204,31 +173,6 @@ def _tool_timeout_seconds() -> float:
     except (TypeError, ValueError):
         value = 8.0
     return max(2.0, min(60.0, value))
-
-
-def _is_write_mcp_tool(tool_name: str) -> bool:
-    """Detecta tools MCP de escritura para bloquearlas en modo read-only."""
-    name = str(tool_name or "").strip().lower()
-    if not name:
-        return False
-    if name == "request_reload":
-        return False
-    return name.startswith(_WRITE_TOOL_PREFIXES)
-
-
-def _build_mcp_read_only_block_message(tool_name: str) -> str:
-    """Mensaje estándar cuando se bloquea una tool de escritura."""
-    return json.dumps(
-        {
-            "error": "mcp_read_only_mode",
-            "tool": tool_name,
-            "message": (
-                "Esta sesión está en modo solo consulta: se bloquean herramientas de escritura "
-                "(create/update/delete/schedule/unschedule/upload/add/set)."
-            ),
-        },
-        ensure_ascii=False,
-    )
 
 
 def _strip_garmin_object(obj):
@@ -340,10 +284,6 @@ def _is_running_non_trail_activity(act_type) -> bool:
 # Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
 # para forzar recálculo automático de la serie histórica en el próximo arranque.
 _TSS_FORMULA_VERSION = _load_metrics.TSS_FORMULA_VERSION
-
-# Regla especial: en trail rápido (< 6:00/km) se explicita uso de hrTSS bruto.
-_TRAIL_FAST_PACE_RAW_ZONES_SEC_PER_KM = 6 * 60
-
 
 # Metadatos de récords personales de Garmin (mapeado de typeId a categoría y formato)
 _PR_METADATA = {
@@ -821,14 +761,9 @@ def _build_tools_schema(tools: list[dict]) -> list[dict]:
 
 
 class ToolRouter:
-    """Router determinista opcional para intenciones críticas."""
-
-    def __init__(self, enabled: bool = True) -> None:
-        self.enabled = bool(enabled)
+    """Router determinista para intenciones críticas."""
 
     def route_key(self, user_message: str, history: list[dict], profile: dict) -> str | None:
-        if not self.enabled:
-            return None
         if _is_config_options_intent(user_message):
             return "config_options"
         if _is_plan_status_intent(user_message):
@@ -1868,10 +1803,6 @@ def _extract_running_if_from_threshold_pace(
 
 def _extract_running_session_signals(activity: dict) -> dict[str, Any]:
     return _load_metrics.extract_running_session_signals(activity)
-
-
-def _classify_running_session_with_confidence(activity: dict) -> dict[str, Any]:
-    return _load_metrics.classify_running_session_with_confidence(activity)
 
 
 def _classify_strength_session_with_confidence(activity: dict) -> dict[str, Any]:
@@ -6310,8 +6241,7 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
                     trace.append(f"intensidad {old_ic}->{new_ic} en {stype}")
 
             # La intensidad baja una zona de Garmin. Antes se multiplicaba target.range por el factor de
-            # volumen (85-89 % del LTHR pasaba a 59,5-62,3 %); los planes antiguos (hr_pct) conservan su
-            # rango y bajan solo por intensityClass.
+            # volumen (85-89 % del LTHR pasaba a 59,5-62,3 %).
             target = step.get("target")
             if isinstance(target, dict) and str(target.get("metric") or "") == "hr_zone":
                 old_zone = int(_safe_float(target.get("zone"), 2.0))
@@ -7893,7 +7823,7 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
 
     by_week: dict[int, list[dict]] = {}
     allowed_intensity_classes = {"recovery", "endurance", "tempo", "threshold", "vo2"}
-    allowed_target_metrics = {"hr_zone", "hr_pct", "ftp_pct", "rpe", "pace_pct"}  # hr_pct: planes guardados antes del 23/10
+    allowed_target_metrics = {"hr_zone", "ftp_pct", "rpe", "pace_pct"}
 
     def _validate_structured_workout(session: dict) -> list[str]:
         local_errors: list[str] = []
@@ -9983,7 +9913,7 @@ def _build_load_fatigue_dict_from_series(series: list[dict], model_cfg: dict) ->
 
 
 def _build_mcp_transparency_markdown(events: list[dict]) -> str:
-    """Nota visible cuando se usa ruta de contingencia/caché MCP."""
+    """Nota visible al pie cuando alguna consulta a Garmin (MCP) falló."""
     if not events:
         return ""
 
@@ -9991,19 +9921,13 @@ def _build_mcp_transparency_markdown(events: list[dict]) -> str:
     reasons: dict[tuple[str, str], str] = {}
     for ev in events:
         tool = str(ev.get("tool") or "tool_desconocida").strip() or "tool_desconocida"
-        mode = str(ev.get("mode") or "fallback").strip() or "fallback"
+        mode = str(ev.get("mode") or "mcp_error").strip() or "mcp_error"
         key = (tool, mode)
         grouped[key] = grouped.get(key, 0) + 1
         if key not in reasons:
             reasons[key] = str(ev.get("reason") or "").strip()
 
-    has_errors = any(mode == "mcp_error" for _tool, mode in grouped)
-    has_fallbacks = any(mode != "mcp_error" for _tool, mode in grouped)
-    lines = ["", "## ℹ️ Transparencia de datos"]
-    if has_errors:
-        lines.append("- Algunas consultas a Garmin (MCP) fallaron.")
-    if has_fallbacks:
-        lines.append("- Se usó modo de contingencia (caché/fastpath) en algunas consultas MCP.")
+    lines = ["", "## ℹ️ Transparencia de datos", "- Algunas consultas a Garmin (MCP) fallaron."]
     for (tool, mode), count in sorted(grouped.items(), key=lambda item: (-item[1], item[0][0])):
         reason = reasons.get((tool, mode))
         if reason:
@@ -10051,7 +9975,6 @@ class TrainerAgent:
         self.user_profile = _load_user_profile()
         self.conversation_history: list[dict] = []
         self.tools_schema: list[dict] = []
-        self.mcp_read_only = _is_mcp_read_only_enabled()
         self.knowledge_chunks, self.knowledge_sources = _load_athlete_knowledge_chunks(
             os.environ.get("ATHLETE_KB_PATHS", "")
         )
@@ -10064,7 +9987,7 @@ class TrainerAgent:
         # Variables para tracking de tokens de la sesión
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
-        self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
+        self.tool_router = ToolRouter()
 
     def set_provider(self, config: dict) -> None:
         """Configura o cambia el proveedor de IA (fila de ia_provider: provider, base_url, model)."""
@@ -10106,11 +10029,6 @@ class TrainerAgent:
     async def initialize(self) -> None:
         """Carga las herramientas disponibles del MCP y restaura el historial reciente."""
         tools = await list_available_tools(self.mcp_session)
-        if self.mcp_read_only:
-            tools = [
-                tool for tool in tools
-                if not _is_write_mcp_tool((tool or {}).get("name", ""))
-            ]
         self.tools_schema = _build_tools_schema(tools)
         # Añadir herramientas internas Kairos (no requieren MCP)
         self.tools_schema.extend(_KAIROS_INTERNAL_TOOLS)
@@ -10642,8 +10560,6 @@ class TrainerAgent:
         )
         tss_by_day:   dict[str, float] = {}
         count_by_day: dict[str, int]   = {}
-        running_mix_by_day: dict[str, dict[str, int]] = {}
-        running_inference_samples: list[dict] = []
         _hr_zones_cache: dict[str, str | None] = {}
         _splits_cache: dict[str, str | None] = {}
         _activity_details_cache: dict[str, str | None] = {}
@@ -10734,27 +10650,6 @@ class TrainerAgent:
             if not d_iso:
                 continue
             act_type = act.get("type") or act.get("activityType") or ""
-
-            if _is_running_non_trail_activity(act_type):
-                cls = _classify_running_session_with_confidence(act)
-                kind = str(cls.get("session_kind") or "calidad")
-                conf = str(cls.get("confidence") or "low")
-                mix = running_mix_by_day.setdefault(
-                    d_iso,
-                    {"rodaje": 0, "fartlek": 0, "series": 0, "calidad": 0},
-                )
-                if kind not in mix:
-                    mix[kind] = 0
-                mix[kind] += 1
-                running_inference_samples.append(
-                    {
-                        "date": d_iso,
-                        "activity_id": act.get("id") or act.get("activityId"),
-                        "name": act.get("name") or act.get("activityName") or "running",
-                        "session_kind": kind,
-                        "confidence": conf,
-                    }
-                )
 
             stored_row = stored_tss.get(_activity_id_int(act))
             if stored_row is not None:
@@ -10925,16 +10820,6 @@ class TrainerAgent:
                     len(activity_tss_rows),
                     exc,
                 )
-
-        if running_inference_samples:
-            running_inference_samples.sort(key=lambda item: str(item.get("date") or ""), reverse=True)
-            self.user_profile["running_session_inference"] = {
-                "updated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
-                "window_start": fetch_from,
-                "window_end": today.isoformat(),
-                "samples": running_inference_samples[:30],
-                "mix_by_day": running_mix_by_day,
-            }
 
         # 6. Configuración de tau por deporte
         model_cfg = _resolve_sport_model_cfg(self.user_profile)
@@ -11115,10 +11000,6 @@ class TrainerAgent:
                 return _try_parse_json(compact) or compact
             return await _tool_json(tool_name, args)
 
-        def _wellness_refresh_on_startup() -> bool:
-            raw = str(os.environ.get("KAIROS_WELLNESS_REFRESH_ON_STARTUP", "true") or "true").strip().lower()
-            return raw not in {"0", "false", "no", "off"}
-
         def _safe_upsert_wellness(
             metric_date: str,
             *,
@@ -11143,8 +11024,6 @@ class TrainerAgent:
         async def _return(value: Any) -> Any:
             return value
 
-        force_refresh_today = _wellness_refresh_on_startup()
-
         def _session_get(metric_date: str, metric_key: str) -> Any:
             day_bucket = _session_wellness_cache.get(metric_date) or {}
             return day_bucket.get(metric_key)
@@ -11153,16 +11032,7 @@ class TrainerAgent:
             day_bucket = _session_wellness_cache.setdefault(metric_date, {})
             day_bucket[metric_key] = payload
 
-        use_session_body_today = (
-            ("body_today" not in _pf)
-            and (not force_refresh_today)
-            and _session_get(today_iso, "body") is not None
-        )
-        use_session_hrv_today = (
-            ("hrv_today" not in _pf)
-            and (not force_refresh_today)
-            and _session_get(today_iso, "hrv") is not None
-        )
+        # Los datos de hoy se piden siempre a Garmin (cambian durante el día); los de ayer, de la caché de la sesión.
         use_session_body_yday = (
             ("body_yday" not in _pf)
             and _session_get(yesterday_iso, "body") is not None
@@ -11175,8 +11045,6 @@ class TrainerAgent:
         body_today_task: Awaitable[Any]
         if "body_today" in _pf:
             body_today_task = _cached_or_fetch("body_today", "get_body_battery", {"start_date": today_iso, "end_date": today_iso})
-        elif use_session_body_today:
-            body_today_task = _return(_session_get(today_iso, "body"))
         else:
             body_today_task = _tool_json("get_body_battery", {"start_date": today_iso, "end_date": today_iso})
 
@@ -11189,8 +11057,6 @@ class TrainerAgent:
         hrv_today_task: Awaitable[Any]
         if "hrv_today" in _pf:
             hrv_today_task = _cached_or_fetch("hrv_today", "get_hrv_data", {"date": today_iso})
-        elif use_session_hrv_today:
-            hrv_today_task = _return(_session_get(today_iso, "hrv"))
         else:
             hrv_today_task = _tool_json("get_hrv_data", {"date": today_iso})
 
@@ -11237,32 +11103,28 @@ class TrainerAgent:
             _session_set(yesterday_iso, "hrv", hrv_yday)
 
         wellness_sources = {
-            "body_today": "session" if use_session_body_today else "mcp",
-            "hrv_today": "session" if use_session_hrv_today else "mcp",
+            "body_today": "mcp" if body_today_from_mcp is not None else "mcp_unavailable",
+            "hrv_today": "mcp" if hrv_today_from_mcp is not None else "mcp_unavailable",
             "body_yday": "session" if use_session_body_yday else "mcp",
             "hrv_yday": "session" if use_session_hrv_yday else "mcp",
         }
-        if (not use_session_body_today) and (body_today_from_mcp is None):
-            wellness_sources["body_today"] = "mcp_unavailable"
-        if (not use_session_hrv_today) and (hrv_today_from_mcp is None):
-            wellness_sources["hrv_today"] = "mcp_unavailable"
         if (not use_session_body_yday) and (body_yday_from_mcp is None):
             wellness_sources["body_yday"] = "mcp_unavailable"
         if (not use_session_hrv_yday) and (hrv_yday_from_mcp is None):
             wellness_sources["hrv_yday"] = "mcp_unavailable"
 
         # Persistir/actualizar wellness diario con datos nuevos de MCP o prefetch.
-        if ("body_today" in _pf or not use_session_body_today) and body_today_from_mcp is not None:
+        if body_today_from_mcp is not None:
             _safe_upsert_wellness(
                 today_iso,
                 body_payload=body_today,
-                hrv_payload=hrv_today if (("hrv_today" in _pf or not use_session_hrv_today) and hrv_today_from_mcp is not None) else None,
+                hrv_payload=hrv_today if hrv_today_from_mcp is not None else None,
                 source_payload={
                     "body": body_today,
-                    "hrv": hrv_today if (("hrv_today" in _pf or not use_session_hrv_today) and hrv_today_from_mcp is not None) else None,
+                    "hrv": hrv_today if hrv_today_from_mcp is not None else None,
                 },
             )
-        elif ("hrv_today" in _pf or not use_session_hrv_today) and hrv_today_from_mcp is not None:
+        elif hrv_today_from_mcp is not None:
             _safe_upsert_wellness(
                 today_iso,
                 hrv_payload=hrv_today,
@@ -11707,7 +11569,7 @@ class TrainerAgent:
         if summaries:
             recent = summaries[-3:]  # últimas 3 sesiones
             _MAX_SUMMARY = 350  # caracteres máximos por resumen
-            texts = [(s["date"], _strip_previous_reply(str(s.get("summary") or ""))) for s in recent]
+            texts = [(s["date"], str(s.get("summary") or "").strip()) for s in recent]
             lines = "\n".join(
                 f"- **{d}**: {t[:_MAX_SUMMARY]}{'…' if len(t) > _MAX_SUMMARY else ''}"
                 for d, t in texts
@@ -12001,7 +11863,7 @@ class TrainerAgent:
         Gestiona automáticamente las llamadas a herramientas de Garmin.
         """
         if not hasattr(self, "tool_router") or not isinstance(getattr(self, "tool_router", None), ToolRouter):
-            self.tool_router = ToolRouter(enabled=_is_deterministic_router_enabled())
+            self.tool_router = ToolRouter()
 
         impossible = _find_impossible_date(user_message)
         if impossible:
@@ -12845,15 +12707,6 @@ class TrainerAgent:
                                     arguments = {"activity_id": resolved_id}
                     arguments = _normalize_trend_date_range(tool_name, arguments)
 
-
-                    if self.mcp_read_only and _is_write_mcp_tool(tool_name):
-                        log.debug(f"Bloqueada tool de escritura por MCP_READ_ONLY: {tool_name}")
-                        raw_result = _build_mcp_read_only_block_message(tool_name)
-                        return {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": raw_result,
-                        }
 
                     # Herramienta que no existe (24/10: el LLM llamó a "goals", que es una tabla citada en el
                     # prompt): no se manda al servidor, que lo devolvía como fallo de Garmin y se avisaba al
