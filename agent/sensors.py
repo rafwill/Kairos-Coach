@@ -219,7 +219,8 @@ def find_hr_ranges_outside_zones(coaching: str, zones: Zones, zones_cycling: Zon
         # \bVO2: un "vo" suelto casaba con "objetivo" ("objetivo 120–180 mg/dL" de glucemia).
         is_hr = "lpm" in after or re.search(r"(?i)(Z[1-5]|FC|lpm|recuper|resistencia|tempo|umbral|\bVO2)", before)
         # Un rango con otra unidad no es de FC aunque haya una zona cerca ("Z1–Z2 → agua 150–250 ml", 23/10).
-        other_unit = re.match(r"(?i)\s*(?:ml|mg|g\b|min|km|m\b|kcal|w\b|rpm|pasos|%)", after)
+        # El TSS también puede ir detrás ("Z2) → ~180–200 TSS semanal", 28/10).
+        other_unit = re.match(r"(?i)\s*(?:ml|mg|g\b|min|km|m\b|kcal|w\b|rpm|pasos|%|(?:hr|r)?tss\b)", after)
         if not is_hr or "TSS" in before or other_unit:
             continue  # rangos de FC, no TSS, glucemia, hidratación ni otras cifras
         lo, hi = sorted((int(mr.group(1)), int(mr.group(2))))

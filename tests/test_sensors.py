@@ -84,7 +84,9 @@ class TestHrRanges:
 
     def test_glucose_and_tss_ranges_are_ignored(self):
         text = ("- Glucemia objetivo 120–180 mg/dL.\n- TSS 150–200 en la semana.\n"
-                "- Durante: sesión < 60 min en Z1–Z2 → agua 150–250 ml/30 min.")
+                "- Durante: sesión < 60 min en Z1–Z2 → agua 150–250 ml/30 min.\n"
+                # 28/10 (base_final, pregunta 8): el TSS detrás del rango y una zona en la misma línea.
+                "- Semana: tirada larga controlada (máx. 1 h 45 min Z2) → ~180–200 TSS semanal.")
         assert sensors.find_hr_ranges_outside_zones(text, ZONES) == []
 
 

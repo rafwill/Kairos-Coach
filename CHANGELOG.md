@@ -6,6 +6,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, cobertura, lint ampliado y tiempos de `agent.log`); de ella salen los tres cambios siguientes. Lo que queda, en `docs/proximos_pasos.md` (Pendiente E).
 
+### Fixed (S10: un rango con TSS detrás no es de FC)
+- Señal (batería de cierre `base_final`, pregunta 8): "tirada larga controlada (máx. 1 h 45 min Z2) → ~180–200 TSS semanal" saltaba como rango de FC fuera de zonas, en vivo (aviso al pie) y en el juez (24/25). S10 descartaba el TSS delante del rango, no detrás.
+- Qué se hizo: TSS, hrTSS y rTSS detrás del rango cuentan como otra unidad, como ml, mg o km. Test con el caso real. La batería pasa a 25/25.
+
 ### Changed (tests/test_trainer_agent.py dividido; pendiente 7, segunda parte)
 - `tests/test_trainer_agent.py` (7.090 líneas, 61 clases) pasa a 12 ficheros por módulo o familia (`test_dates`, `test_hr_profile`, `test_tool_results`, `test_context`, `test_llm_calls`, `test_activity_analysis`, `test_routes_load`, `test_routes`, `test_startup`, `test_load_compute`, `test_plans`, `test_tool_loop`). Por clases enteras (algunas tienen ayudantes propios), salvo los tres tests del refresco de la carga que estaban en la clase del formato del análisis (ahora `TestLoadRefreshWindow`). El fixture autouse que evita leer `activity_tss` real va a `tests/agent_fixtures.py` y lo importa cada fichero, para que se aplique a los mismos tests que antes.
 - Criterio: los mismos 811 tests, en verde todos juntos y cada fichero por separado. Resultado: 811 y los 12 por separado en verde.
