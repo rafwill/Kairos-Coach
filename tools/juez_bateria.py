@@ -35,6 +35,7 @@ from agent import storage  # noqa: E402
 from agent import trainer_agent as ta  # noqa: E402
 import agent.data_access as _data_access
 import agent.garmin_data as _garmin_data
+import agent.hr_profile as _hr_profile
 
 TOL = 0.1          # TSS, CTL, ATL, TSB (se muestran con un decimal)
 TOL_BPM = sensors.TOL_BPM        # rangos de FC (definidas en agent/sensors.py)
@@ -129,12 +130,12 @@ class Truth:
         self.profile = _data_access._load_user_profile()
         self.perf = (self.profile or {}).get("performance") or {}
         self.plan = storage.get_active_training_plan()
-        lthr, _, _ = ta._resolve_hr_threshold_bpm(self.profile)
+        lthr, _, _ = _hr_profile._resolve_hr_threshold_bpm(self.profile)
         self.lthr = float(lthr) if lthr else None
         # Zonas de carrera de Garmin guardadas en el perfil (las del reloj y TP); sin ellas, % del LTHR.
-        self.zones, self.zones_source = ta._resolve_hr_zones(self.profile, "running")
-        self.zones_cycling, _ = ta._resolve_hr_zones(self.profile, "cycling")
-        self.pace_today = ta._resolve_running_threshold_pace_for_date(self.profile, self.today.isoformat())
+        self.zones, self.zones_source = _hr_profile._resolve_hr_zones(self.profile, "running")
+        self.zones_cycling, _ = _hr_profile._resolve_hr_zones(self.profile, "cycling")
+        self.pace_today = _hr_profile._resolve_running_threshold_pace_for_date(self.profile, self.today.isoformat())
         self._prs: set[str] | None = None
 
     def latest(self) -> dict:
@@ -324,7 +325,7 @@ def self_or_empty(x):
 def check_hr_threshold(v: Verdict, body: str, t: Truth) -> None:
     m = re.search(r"FC umbral \(LTHR\) es (\d+) lpm", body)
     v.check(bool(m) and t.lthr is not None and abs(int(m.group(1)) - t.lthr) <= TOL_BPM, f"FC umbral {m.group(1) if m else '?'} ≠ {t.lthr}")
-    tp = ta._resolve_tp_hr_threshold_for_date(t.profile, t.today.isoformat())
+    tp = _hr_profile._resolve_tp_hr_threshold_for_date(t.profile, t.today.isoformat())
     m2 = re.search(r"Referencia de TrainingPeaks para hrTSS\s+(\d+) lpm", body)
     if tp:
         v.check(bool(m2) and abs(int(m2.group(1)) - tp) <= TOL_BPM, f"referencia TP {m2.group(1) if m2 else '?'} ≠ {tp}")

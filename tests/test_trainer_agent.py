@@ -34,16 +34,11 @@ from agent.trainer_agent import (
     _build_post_activity_section_spec,
     _format_activity_analysis_for_markdown,
     _build_load_trend_table,
-    _format_body_battery_day,
-    _format_sleep_day,
-    _format_hrv_day,
-    _pick_day_payload,
     _format_load_fatigue_summary,
     _build_recovery_fallback_snapshot,
     _compute_daily_plan_adjustment,
     _compute_plan_execution_feedback,
     _fetch_activities_for_load_calc,
-    _extract_cycling_ftp_watts,
     _resolve_running_threshold_pace_sec_per_km,
     _resolve_hr_profile_values,
     _generate_structured_plan_payload,
@@ -89,6 +84,11 @@ from agent.knowledge import _build_athlete_knowledge_context, _load_athlete_know
 from agent.tool_results import _compact_personal_records, _compact_tool_result, _extract_activities_list, _flatten_garmin_activity, _is_no_data_result, _strip_garmin_object
 import agent.data_access as _data_access
 from agent.garmin_data import _is_activity_in_last_48h
+import agent.hr_profile as _hr_profile
+from agent.hr_profile import _extract_cycling_ftp_watts, _resolve_running_threshold_pace_for_date, _resolve_tp_hr_threshold_for_date
+import agent.wellness as _wellness
+from agent.wellness import _format_body_battery_day, _format_hrv_day, _format_sleep_day, _pick_day_payload
+import agent.kairos_tools as _kairos_tools
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
@@ -506,12 +506,12 @@ class TestCoachingHorizon:
         assert "La semana que viene: lun 26/10" in cal and "dom 01/11" in cal
 
     def test_hrv_deviation_is_given_already_computed(self):
-        assert ta._hrv_deviation_text(58, 59) == "-2 % frente a su media de 7 días"
-        assert ta._hrv_deviation_text(66, 59) == "+12 % frente a su media de 7 días"
-        assert ta._hrv_deviation_text(59.2, 59) == "igual que su media de 7 días"
-        assert ta._hrv_deviation_text(None, 59) == "" and ta._hrv_deviation_text(58, 0) == ""
+        assert _wellness._hrv_deviation_text(58, 59) == "-2 % frente a su media de 7 días"
+        assert _wellness._hrv_deviation_text(66, 59) == "+12 % frente a su media de 7 días"
+        assert _wellness._hrv_deviation_text(59.2, 59) == "igual que su media de 7 días"
+        assert _wellness._hrv_deviation_text(None, 59) == "" and _wellness._hrv_deviation_text(58, 0) == ""
         day = {"calendarDate": "2026-10-24", "lastNightAvg": 58, "weeklyAvg": 59, "status": "UNBALANCED"}
-        assert ta._format_hrv_day([day], "2026-10-24") == (
+        assert _wellness._format_hrv_day([day], "2026-10-24") == (
             "58.0 ms · 7d 59.0 ms · -2 % frente a su media de 7 días · UNBALANCED")
 
 
@@ -4592,14 +4592,13 @@ class TestHrThresholdDeterministicRoute:
         assert not _is_config_options_intent("que entrenamiento hago manana?")
 
     def test_extract_hr_threshold_from_payload_supports_camel_case(self):
-        import agent.trainer_agent as ta
 
         payload = {
             "userData": {
                 "lactateThresholdHeartRate": 169,
             }
         }
-        out = ta._extract_hr_threshold_from_payload(payload)
+        out = _hr_profile._extract_hr_threshold_from_payload(payload)
         assert out == 169
 
     @pytest.mark.asyncio
@@ -6118,9 +6117,7 @@ class TestThresholdHistoryResolvers:
         assert 230.0 <= pace <= 260.0
 
     def test_resolve_tp_hr_threshold_for_date_picks_value_in_force(self):
-        from agent.trainer_agent import (
-            _resolve_tp_hr_threshold_for_date,
-        )
+        pass
 
         profile = {
             "performance": {
@@ -6137,9 +6134,7 @@ class TestThresholdHistoryResolvers:
         assert _resolve_tp_hr_threshold_for_date({"performance": {}}, "2026-05-01") is None
 
     def test_resolve_running_threshold_pace_for_date_picks_value_in_force(self):
-        from agent.trainer_agent import (
-            _resolve_running_threshold_pace_for_date,
-        )
+        pass
 
         profile = {
             "performance": {
@@ -6767,20 +6762,18 @@ class TestHrZonesFromGarmin:
         return {"performance": perf}
 
     def test_uses_garmin_zones_per_sport(self):
-        import agent.trainer_agent as ta
-        zones, source = ta._resolve_hr_zones(self._profile(self.GARMIN), "running")
+        zones, source = _hr_profile._resolve_hr_zones(self._profile(self.GARMIN), "running")
         assert source == "Garmin (reserva de FC)"
         assert zones == [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
                          ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
-        cycling, _ = ta._resolve_hr_zones(self._profile(self.GARMIN), "cycling")
+        cycling, _ = _hr_profile._resolve_hr_zones(self._profile(self.GARMIN), "cycling")
         assert cycling[1] == ("Z2 Aeróbica", 125, 135)
         # Deporte sin zonas propias y sin "default": no inventa; cae al respaldo por LTHR.
-        other, source = ta._resolve_hr_zones(self._profile(self.GARMIN), "swimming")
+        other, source = _hr_profile._resolve_hr_zones(self._profile(self.GARMIN), "swimming")
         assert source.startswith("% del LTHR")
 
     def test_lthr_fallback_has_no_gaps(self):
-        import agent.trainer_agent as ta
-        zones, source = ta._resolve_hr_zones(self._profile(), "running")
+        zones, source = _hr_profile._resolve_hr_zones(self._profile(), "running")
         assert source.startswith("% del LTHR")
         covered = {bpm for _, lo, hi in zones for bpm in range(lo, hi + 1)}
         assert set(range(100, 200)) <= covered  # antes 151 y 160 no caían en ninguna zona
@@ -7106,7 +7099,7 @@ class TestKairosLoadTrends:
     def test_all_metrics_daily_and_every_week(self, monkeypatch):
         series = self._series()
         patch_everywhere(monkeypatch, "_load_metrics_series", lambda *a, **k: series)
-        out = json.loads(ta._kairos_load_trends({}, weeks_back=12))
+        out = json.loads(_kairos_tools._kairos_load_trends({}, weeks_back=12))
         assert out["daily"]["columns"] == ["date", "tss", "ctl", "atl", "tsb"]
         assert [r[0] for r in out["daily"]["rows"]] == [r["date"] for r in series[-14:]]
         assert len(out["weekly"]["rows"]) == 12
@@ -7135,7 +7128,7 @@ class TestKairosLoadTrends:
         agent = object.__new__(ta.TrainerAgent)
         agent.user_profile = {}
         agent.conversation_history = []
-        agent.tools_schema = list(ta._KAIROS_INTERNAL_TOOLS)
+        agent.tools_schema = list(_kairos_tools._KAIROS_INTERNAL_TOOLS)
         agent.mcp_session = MagicMock()
         agent._build_messages = lambda _msg: [{"role": "user", "content": "x"}]
         agent.model = "m"
