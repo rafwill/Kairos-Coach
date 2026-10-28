@@ -3,7 +3,9 @@ tests/test_tool_router.py
 Router determinista: intenciones que se responden sin LLM (docs/Harness.md, G5).
 """
 
-from agent.trainer_agent import ToolRouter
+from agent.trainer_agent import (
+    ToolRouter,
+)
 
 
 class TestToolRouter:

@@ -14,6 +14,7 @@ import pytest
 from rich.console import Console
 
 from agent import main as m
+from tests.agent_patch import patch_all
 
 
 @pytest.fixture
@@ -340,7 +341,7 @@ class TestPlanScreens:
 
 class TestLoadTrend:
     def test_without_series(self, out):
-        with patch("agent.trainer_agent._load_metrics_series", return_value=[]):
+        with patch_all("_load_metrics_series", return_value=[]):
             m._show_load_trend_cli(_Agent())
         assert "Aún no hay datos de carga" in out()
 
@@ -351,7 +352,7 @@ class TestLoadTrend:
                    "ctl": 45.0, "tsb": 2.0} for i in range(101)]
         agent = _Agent()
         # La serie sale de load_metrics_daily (27/10: antes de una copia en el perfil).
-        with patch("agent.trainer_agent._load_metrics_series", return_value=series):
+        with patch_all("_load_metrics_series", return_value=series):
             m._show_load_trend_cli(agent, cmd)
         text = out()
         assert "CTL" in text and "ATL" in text

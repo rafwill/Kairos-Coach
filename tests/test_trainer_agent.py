@@ -85,7 +85,6 @@ from agent.trainer_agent import (
     _normalize_trend_date_range,
     _normalize_get_activity_args,
     _normalize_date_args,
-    _load_system_prompt,
     _load_athlete_knowledge_chunks,
     _resolve_kb_paths,
     _retrieve_athlete_knowledge,
@@ -94,6 +93,9 @@ from agent.trainer_agent import (
     _validate_structured_plan,
     TrainerAgent,
 )
+from tests.agent_patch import patch_all, patch_everywhere
+import agent.prompts as _prompts
+from agent.prompts import PROMPTS_DIR, _PROMPT_MARKER, _load_coaching_rules, _load_system_prompt, _render_prompt
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
@@ -181,7 +183,6 @@ class TestNormalizeDateArgs:
         assert result["end_date"] == "2026-08-02"
 
     def test_dd_mm_without_year_converted_to_iso(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -189,7 +190,7 @@ class TestNormalizeDateArgs:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         result = _normalize_date_args({"date": "27/07"})
         assert result["date"] == "2026-07-27"
 
@@ -235,7 +236,6 @@ class TestExtractIsoDateFromText:
         assert _extract_iso_date_from_text("17/08/26") == "2026-08-17"
 
     def test_extracts_dd_mm_without_year(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -243,13 +243,12 @@ class TestExtractIsoDateFromText:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         assert _extract_iso_date_from_text("27/07") == "2026-07-27"
 
 
 class TestExtractIsoDateRangeFromText:
     def test_extracts_del_al_without_year(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -257,14 +256,13 @@ class TestExtractIsoDateRangeFromText:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         assert _extract_iso_date_range_from_text("semana del 27/07 al 02/08") == ("2026-07-27", "2026-08-02")
 
     def test_extracts_entre_y_iso(self):
         assert _extract_iso_date_range_from_text("entre 2026-07-27 y 2026-08-02") == ("2026-07-27", "2026-08-02")
 
     def test_extracts_entre_el_y_el_without_year(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -272,11 +270,10 @@ class TestExtractIsoDateRangeFromText:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         assert _extract_iso_date_range_from_text("entre el 25/08 y el 30/08") == ("2026-08-25", "2026-08-30")
 
     def test_extracts_desde_hasta_without_year(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -284,11 +281,10 @@ class TestExtractIsoDateRangeFromText:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         assert _extract_iso_date_range_from_text("desde 25/08 hasta 30/08") == ("2026-08-25", "2026-08-30")
 
     def test_extracts_cross_year_without_year(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -296,7 +292,7 @@ class TestExtractIsoDateRangeFromText:
             def today(cls):
                 return cls(2026, 12, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         assert _extract_iso_date_range_from_text("del 27/12 al 03/01") == ("2026-12-27", "2027-01-03")
 
 
@@ -371,7 +367,7 @@ class TestImpossibleDateAndUnknownTool:
         agent.conversation_history = []
         agent.client = MagicMock()
         agent.client.chat.completions.create = AsyncMock()
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await ta.TrainerAgent.chat(agent, "¿Qué actividades hice el 31/02/2026?")
         assert "31/02/2026 no existe" in out
         agent.client.chat.completions.create.assert_not_awaited()
@@ -405,9 +401,9 @@ class TestImpossibleDateAndUnknownTool:
             _resp(tool_calls=[call]), _resp(content="Tu objetivo es la media de Santa Pola."),
         ])
         sent = AsyncMock()
-        monkeypatch.setattr(ta, "call_tool", sent)
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
-        with patch("agent.trainer_agent._save_history_entries"):
+        patch_everywhere(monkeypatch, "call_tool", sent)
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        with patch_all("_save_history_entries"):
             out = await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
 
         sent.assert_not_awaited()
@@ -461,11 +457,11 @@ class TestToolTimeoutBreaker:
             _resp(tool_calls=[_call(4), _call(5)]),
             _resp(content="No he podido consultar todas las actividades."),
         ])
-        monkeypatch.setattr(ta, "call_tool", slow_tool)
-        monkeypatch.setattr(ta, "_tool_timeout_seconds", lambda: 0.2)
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        patch_everywhere(monkeypatch, "call_tool", slow_tool)
+        patch_everywhere(monkeypatch, "_tool_timeout_seconds", lambda: 0.2)
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
         t0 = _time.perf_counter()
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
         elapsed = _time.perf_counter() - t0
 
@@ -491,7 +487,7 @@ class TestCoachingHorizon:
             def today(cls):
                 return date(2026, 10, 24)
 
-        monkeypatch.setattr(ta, "date", FixedDate)
+        patch_everywhere(monkeypatch, "date", FixedDate)
 
     def test_next_week_is_not_this_week(self):
         out = ta._coaching_horizon("¿Y la semana que viene qué me recomiendas?")
@@ -533,11 +529,12 @@ class TestOutputSensors:
              ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
 
     def _agent(self, monkeypatch, replies):
-        import agent.trainer_agent as ta
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: (self.ZONES, "Garmin"))
-        monkeypatch.setattr(ta, "_resolve_running_threshold_pace_for_date", lambda profile, iso: 240.0)
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: (self.ZONES, "Garmin"))
+        patch_everywhere(monkeypatch, "_resolve_running_threshold_pace_for_date", lambda profile, iso: 240.0)
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {}
         agent.model = "test-model"
@@ -685,7 +682,7 @@ class TestPromptFiles:
     """Los textos para el LLM viven en prompts/ (23/10); el código solo los compone."""
 
     def _prompt_names(self):
-        from agent.trainer_agent import PROMPTS_DIR
+        pass
 
         return sorted(
             p.relative_to(PROMPTS_DIR).with_suffix("").as_posix()
@@ -694,7 +691,7 @@ class TestPromptFiles:
         )
 
     def test_every_prompt_renders_with_all_markers_resolved(self):
-        from agent.trainer_agent import PROMPTS_DIR, _PROMPT_MARKER, _render_prompt
+        pass
 
         names = self._prompt_names()
         assert len(names) >= 19
@@ -705,7 +702,7 @@ class TestPromptFiles:
             assert out == out.strip("\n"), name
 
     def test_render_rejects_missing_or_extra_values(self):
-        from agent.trainer_agent import _render_prompt
+        pass
 
         with pytest.raises(ValueError, match="marcadores"):
             _render_prompt("coaching/user", pregunta="x", ruta="y", horizonte="z")
@@ -717,14 +714,15 @@ class TestPromptFiles:
 
         import agent.trainer_agent as ta
 
-        src = Path(ta.__file__).read_text(encoding="utf-8")
+        # Todo agent/: al dividir trainer_agent.py (28/10) los prompts se usan desde varios módulos.
+        src = "\n".join(p.read_text(encoding="utf-8") for p in Path(ta.__file__).parent.rglob("*.py"))
         unused = [n for n in self._prompt_names() if f'"{n}"' not in src]
         assert unused == [], f"Prompts sin usar: {unused}"
 
 
 class TestCoachingRulesSingleSource:
     def test_system_prompt_embeds_coaching_rules_once(self):
-        from agent.trainer_agent import _load_coaching_rules
+        pass
 
         prompt = _load_system_prompt()
         rules = _load_coaching_rules()
@@ -759,7 +757,9 @@ class TestLlmKey:
         return agent
 
     def test_rejected_key_sets_the_flag_and_raises_a_runtime_error(self, monkeypatch):
-        from agent.trainer_agent import LLMAuthError
+        from agent.trainer_agent import (
+            LLMAuthError,
+        )
 
         agent = self._agent(monkeypatch, self._Unauthorized("Error code: 401 - Unauthorized"))
         with pytest.raises(LLMAuthError) as exc:
@@ -790,7 +790,7 @@ class TestLlmKey:
 
         client = MagicMock()
         client.chat.completions.create = AsyncMock(side_effect=error)
-        monkeypatch.setattr(ta, "_build_llm_client", lambda c: (client, "m", "k"))
+        patch_everywhere(monkeypatch, "_build_llm_client", lambda c: (client, "m", "k"))
         assert asyncio.run(ta.probe_llm_key(NVIDIA))[0] == status
 
     def test_client_uses_the_athlete_config_and_key(self, monkeypatch):
@@ -815,7 +815,9 @@ class TestDiabetesProtocolInContext:
     """Atleta sano, con otra patología, con DT1 o con DT2 (26/10): protocolo según patologías y medicación."""
 
     def _block(self, health):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"personal": {"name": "Ana"}, "health": health}
@@ -896,7 +898,9 @@ class TestConcatenatedJsonFromMcp:
     )
 
     def test_try_parse_json_reads_concatenated_objects_as_list(self):
-        from agent.trainer_agent import _try_parse_json
+        from agent.trainer_agent import (
+            _try_parse_json,
+        )
 
         data = _try_parse_json(self.RAW)
         assert isinstance(data, list) and [d["typeId"] for d in data] == [3, 5]
@@ -908,7 +912,9 @@ class TestConcatenatedJsonFromMcp:
         assert "| Medio Maratón | 01:31:23 |" in out
 
     def test_flatten_garmin_activity_lifts_summary_dto(self):
-        from agent.trainer_agent import _flatten_garmin_activity
+        from agent.trainer_agent import (
+            _flatten_garmin_activity,
+        )
 
         act = {"activityName": "X", "activityTypeDTO": {"typeKey": "trail_running"},
                "summaryDTO": {"duration": 3600.0, "distance": 10000.0, "averageHR": 140}}
@@ -1133,12 +1139,11 @@ class TestPreviousSessionContext:
         return agent, {"history": history}
 
     def test_restores_only_user_questions_and_no_old_answers(self, monkeypatch):
-        import agent.trainer_agent as ta
         agent, ctx = self._agent([
             {"role": "user", "content": "¿Cómo ha evolucionado mi HRV?"},
             {"role": "assistant", "content": "No hay datos de HRV (0 días con datos)."},
         ])
-        monkeypatch.setattr(ta, "_load_session_context", lambda: ctx)
+        patch_everywhere(monkeypatch, "_load_session_context", lambda: ctx)
         agent._restore_previous_session()
         assert agent.previous_session_questions == ("¿Cómo ha evolucionado mi HRV?",)
         assert agent.conversation_history == []
@@ -1158,7 +1163,7 @@ class TestPreviousSessionContext:
         import agent.trainer_agent as ta
         monkeypatch.setenv("KAIROS_SESSION_MEMORY", "false")
         load, save, persist = MagicMock(), MagicMock(), MagicMock()
-        monkeypatch.setattr(ta, "_load_session_context", load)
+        patch_everywhere(monkeypatch, "_load_session_context", load)
         monkeypatch.setattr(ta._storage, "save_history_entry", save)
         monkeypatch.setattr(ta._storage, "persist_session_summary_daily", persist)
         agent, _ = self._agent([])
@@ -1364,7 +1369,7 @@ class TestNormalizeGetActivityArgs:
                 ],
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _normalize_get_activity_args(MagicMock(), {"activity_id": "2 de julio de 2026"})
         assert out == {"activity_id": 222}
 
@@ -1387,7 +1392,7 @@ class TestNormalizeGetActivityArgs:
                 ],
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _normalize_get_activity_args(MagicMock(), {"activity_id": "Ultra Trail. Hoka Val d"})
         assert out == {"activity_id": 2002}
 
@@ -1405,7 +1410,7 @@ class TestNormalizeGetActivityArgs:
                 ],
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _normalize_get_activity_args(MagicMock(), {"activity_id": "actividad inventada"})
         assert out == {}
 
@@ -1424,7 +1429,7 @@ class TestNormalizeGetActivityArgs:
                 ],
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _normalize_get_activity_args(
                 MagicMock(),
                 {},
@@ -1451,7 +1456,7 @@ class TestNormalizeGetActivityArgs:
                 ],
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _normalize_get_activity_args(
                 MagicMock(),
                 {},
@@ -1482,7 +1487,7 @@ class TestNormalizeGetActivityArgs:
                 ],
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _normalize_get_activity_args(
                 MagicMock(),
                 {},
@@ -1507,7 +1512,7 @@ class TestResolveActivityIdFromQuery:
                 ],
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _resolve_activity_id_from_query(
                 MagicMock(),
                 "Analiza mi competición del 2 de julio de 2026",
@@ -1527,7 +1532,7 @@ class TestResolveActivityIdFromQuery:
                 ]
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             raw = await _build_activity_candidates_payload(
                 MagicMock(),
                 "Analiza mi competición del 2 de julio de 2026",
@@ -1550,7 +1555,7 @@ class TestResolveActivityIdFromQuery:
                 ]
             }
         )
-        with patch("agent.trainer_agent.call_tool", return_value=fake_response):
+        with patch_all("call_tool", return_value=fake_response):
             out = await _resolve_activity_id_from_query(
                 MagicMock(),
                 "Analiza mi competición del 2 de julio de 2026",
@@ -1578,7 +1583,7 @@ class TestRecoveryFallback:
                 return '{"charged":72,"drained":28}'
             return "No data found"
 
-        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool):
+        with patch_all("call_tool", side_effect=_fake_call_tool):
             payload = await _build_recovery_fallback_snapshot(MagicMock(), "2026-07-03")
 
         assert payload is not None
@@ -1597,7 +1602,7 @@ class TestRecoveryFallback:
                 return "Battery score: 58"
             return "No data found"
 
-        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool):
+        with patch_all("call_tool", side_effect=_fake_call_tool):
             payload = await _build_recovery_fallback_snapshot(MagicMock(), "2026-07-03")
 
         assert payload is not None
@@ -1973,7 +1978,9 @@ class TestStartupProactive:
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_48h_collects_metrics(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
         captured_calls: list[tuple[str, dict]] = []
 
         async def _fake_call_tool(_session, tool_name, _arguments):
@@ -2001,7 +2008,7 @@ class TestStartupProactive:
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
 
-        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool):
+        with patch_all("call_tool", side_effect=_fake_call_tool):
             snapshot = await TrainerAgent.collect_startup_snapshot_48h(agent)
 
         assert snapshot["window_hours"] == 48
@@ -2020,7 +2027,9 @@ class TestStartupProactive:
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_refreshes_today_wellness_from_mcp(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
         captured_calls: list[tuple[str, dict]] = []
 
         now_iso = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
@@ -2079,7 +2088,7 @@ class TestStartupProactive:
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
 
-        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool), \
+        with patch_all("call_tool", side_effect=_fake_call_tool), \
              patch("agent.trainer_agent._storage.get_wellness_daily", side_effect=_fake_get_wellness), \
              patch("agent.trainer_agent._storage.upsert_wellness_daily") as upsert_mock:
             snapshot = await TrainerAgent.collect_startup_snapshot_48h(agent)
@@ -2094,7 +2103,9 @@ class TestStartupProactive:
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_no_db_fallback_when_mcp_unavailable(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         async def _fake_call_tool(_session, tool_name, _arguments):
             if tool_name in {"get_body_battery", "get_hrv_data", "get_sleep_data"}:
@@ -2119,7 +2130,7 @@ class TestStartupProactive:
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
 
-        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool), \
+        with patch_all("call_tool", side_effect=_fake_call_tool), \
              patch("agent.trainer_agent._storage.get_wellness_daily", side_effect=_fake_get_wellness):
             snapshot = await TrainerAgent.collect_startup_snapshot_48h(agent)
 
@@ -2134,7 +2145,9 @@ class TestStartupProactive:
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_fallback_when_by_date_unavailable(self):
         """Si get_activities_by_date lanza excepción, el snapshot sigue funcionando."""
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         async def _fake_call_tool(_session, tool_name, _arguments):
             today = date.today().isoformat()
@@ -2152,7 +2165,7 @@ class TestStartupProactive:
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
 
-        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool):
+        with patch_all("call_tool", side_effect=_fake_call_tool):
             snapshot = await TrainerAgent.collect_startup_snapshot_48h(agent)
 
         assert snapshot["window_hours"] == 48
@@ -2161,7 +2174,9 @@ class TestStartupProactive:
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_preserves_formula_version_in_profile_cache(self):
         import agent.trainer_agent as ta
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         async def _fake_call_tool(_session, tool_name, _arguments):
             today = date.today().isoformat()
@@ -2187,7 +2202,7 @@ class TestStartupProactive:
             "load_metrics": {"formula_version": ta._TSS_FORMULA_VERSION},
         }
 
-        with patch("agent.trainer_agent.call_tool", side_effect=_fake_call_tool), patch(
+        with patch_all("call_tool", side_effect=_fake_call_tool), patch(
             "agent.trainer_agent._save_user_profile"
         ):
             await TrainerAgent.collect_startup_snapshot_48h(agent)
@@ -2199,7 +2214,9 @@ class TestStartupProactive:
 
     @pytest.mark.asyncio
     async def test_build_startup_status_markdown_uses_training_plan_not_goals(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
@@ -2227,7 +2244,9 @@ def _no_baseline_in_db():
 class TestComputeAndPersistLoadMetrics:
     @pytest.mark.asyncio
     async def test_compute_persists_activity_tss_rows_matching_golden_controls(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -2311,10 +2330,10 @@ class TestComputeAndPersistLoadMetrics:
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=None), \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series"), \
              patch("agent.trainer_agent._storage.upsert_activity_tss_rows") as upsert_activity_tss_mock, \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
-             patch("agent.trainer_agent._estimate_session_tss", side_effect=_fake_estimate), \
-             patch("agent.trainer_agent._hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch_all("_estimate_session_tss", side_effect=_fake_estimate), \
+             patch_all("_hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=205.0)), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
@@ -2339,7 +2358,9 @@ class TestComputeAndPersistLoadMetrics:
 
     @pytest.mark.asyncio
     async def test_compute_continues_when_activity_tss_persistence_fails(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -2364,11 +2385,11 @@ class TestComputeAndPersistLoadMetrics:
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=None), \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_daily_mock, \
              patch("agent.trainer_agent._storage.upsert_activity_tss_rows", side_effect=RuntimeError("boom")), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
-             patch("agent.trainer_agent._estimate_session_tss", return_value=(50.0, "TSS")), \
-             patch("agent.trainer_agent._infer_tss_source_tag", return_value="kairos_model"), \
-             patch("agent.trainer_agent._hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch_all("_estimate_session_tss", return_value=(50.0, "TSS")), \
+             patch_all("_infer_tss_source_tag", return_value="kairos_model"), \
+             patch_all("_hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=205.0)), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
@@ -2377,7 +2398,9 @@ class TestComputeAndPersistLoadMetrics:
 
     async def _run_compute_capturing_details(self, activities, details_by_id):
         """Ejecuta compute_and_persist_load_metrics y devuelve {activity_id: activity_details_raw pasado}."""
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         async def _fake_fetch(_session, _start_date, _end_date):
             return activities
@@ -2404,10 +2427,10 @@ class TestComputeAndPersistLoadMetrics:
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=None), \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series"), \
              patch("agent.trainer_agent._storage.upsert_activity_tss_rows"), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
-             patch("agent.trainer_agent._estimate_session_tss", side_effect=_fake_estimate), \
-             patch("agent.trainer_agent._hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=_fake_call_tool)) as call_mock, \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch_all("_estimate_session_tss", side_effect=_fake_estimate), \
+             patch_all("_hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
+             patch_all("call_tool", new=AsyncMock(side_effect=_fake_call_tool)) as call_mock, \
              patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=205.0)), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
@@ -2428,7 +2451,9 @@ class TestComputeAndPersistLoadMetrics:
         profile_perf=None,
     ):
         """Ejecuta compute_and_persist_load_metrics y captura lecturas/escrituras."""
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         async def _fake_fetch(_session, _start_date, _end_date):
             return [dict(a) for a in activities]
@@ -2461,10 +2486,10 @@ class TestComputeAndPersistLoadMetrics:
              patch("agent.trainer_agent._storage.get_load_metrics_row", return_value=seed), \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_series_mock, \
              patch("agent.trainer_agent._storage.upsert_activity_tss_rows") as upsert_rows_mock, \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
-             patch("agent.trainer_agent._estimate_session_tss", side_effect=_fake_estimate), \
-             patch("agent.trainer_agent._hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=_fake_call_tool)) as call_mock, \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch_all("_estimate_session_tss", side_effect=_fake_estimate), \
+             patch_all("_hydrate_profile_hr_anchors_if_missing", new=AsyncMock(return_value=(37.0, None, 169.0))), \
+             patch_all("call_tool", new=AsyncMock(side_effect=_fake_call_tool)) as call_mock, \
              patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=205.0)), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(
@@ -2533,7 +2558,9 @@ class TestComputeAndPersistLoadMetrics:
 
     async def _run_compute_with_stored_none(self, today_iso):
         with patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=None):
-            from agent.trainer_agent import TrainerAgent
+            from agent.trainer_agent import (
+                TrainerAgent,
+            )
 
             agent = object.__new__(TrainerAgent)
             agent.mcp_session = MagicMock()
@@ -2543,11 +2570,11 @@ class TestComputeAndPersistLoadMetrics:
                  patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=None), \
                  patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_series_mock, \
                  patch("agent.trainer_agent._storage.upsert_activity_tss_rows") as upsert_rows_mock, \
-                 patch("agent.trainer_agent._fetch_activities_for_load_calc", new=AsyncMock(return_value=[
+                 patch_all("_fetch_activities_for_load_calc", new=AsyncMock(return_value=[
                      {"activityId": 1, "type": {"typeKey": "running"}, "startTimeLocal": f"{today_iso}T07:00:00"}
                  ])), \
-                 patch("agent.trainer_agent._estimate_session_tss", estimate_mock), \
-                 patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+                 patch_all("_estimate_session_tss", estimate_mock), \
+                 patch_all("call_tool", new=AsyncMock(return_value="")), \
                  patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=None)), \
                  patch.object(TrainerAgent, "_apply_series_to_profile"):
                 await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
@@ -2636,7 +2663,9 @@ class TestComputeAndPersistLoadMetrics:
 
     @pytest.mark.asyncio
     async def test_force_full_recalc_fetches_full_window_for_new_user(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         expected_start = (today - timedelta(days=120)).isoformat()
@@ -2665,8 +2694,8 @@ class TestComputeAndPersistLoadMetrics:
         with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today.isoformat()), \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch), \
              patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=True)
 
@@ -2682,7 +2711,9 @@ class TestComputeAndPersistLoadMetrics:
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_keeps_incremental_path(self):
         import agent.trainer_agent as trainer_mod
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         existing_series = [
@@ -2706,7 +2737,7 @@ class TestComputeAndPersistLoadMetrics:
 
         with patch("agent.trainer_agent._storage.get_load_metrics_series", return_value=existing_series), \
                  patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today.isoformat()), \
-                 patch("agent.trainer_agent._fetch_activities_for_load_calc", new=AsyncMock(return_value=[])) as fetch_mock, \
+                 patch_all("_fetch_activities_for_load_calc", new=AsyncMock(return_value=[])) as fetch_mock, \
                  patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
                  patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
                 await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
@@ -2722,7 +2753,9 @@ class TestComputeAndPersistLoadMetrics:
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_refreshes_today_when_new_activity_detected(self):
         import agent.trainer_agent as trainer_mod
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -2748,9 +2781,9 @@ class TestComputeAndPersistLoadMetrics:
 
         with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
@@ -2767,7 +2800,9 @@ class TestComputeAndPersistLoadMetrics:
 
     @pytest.mark.asyncio
     async def test_formula_change_full_recalc_bypasses_effective_date_clamp(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -2800,9 +2835,9 @@ class TestComputeAndPersistLoadMetrics:
 
         with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch), \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
@@ -2816,7 +2851,9 @@ class TestComputeAndPersistLoadMetrics:
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_refreshes_from_yesterday_when_missing_activity(self):
         import agent.trainer_agent as trainer_mod
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -2872,9 +2909,9 @@ class TestComputeAndPersistLoadMetrics:
 
         with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_apply_series_to_profile") as apply_mock:
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
@@ -2917,7 +2954,9 @@ class TestActivityAnalysisMarkdownFormatting:
     @pytest.mark.asyncio
     async def test_recent_refresh_from_yesterday_bypasses_effective_date_clamp(self):
         import agent.trainer_agent as trainer_mod
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -2989,9 +3028,9 @@ class TestActivityAnalysisMarkdownFormatting:
 
         with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch), \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch), \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
@@ -3004,7 +3043,9 @@ class TestActivityAnalysisMarkdownFormatting:
     @pytest.mark.asyncio
     async def test_up_to_date_checks_from_last_trained_day_not_fixed_recent_window(self):
         import agent.trainer_agent as trainer_mod
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -3063,9 +3104,9 @@ class TestActivityAnalysisMarkdownFormatting:
 
         with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
@@ -3078,7 +3119,9 @@ class TestActivityAnalysisMarkdownFormatting:
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_refreshes_from_two_days_ago_when_missing_activity(self):
         import agent.trainer_agent as trainer_mod
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         today = date.today()
         today_iso = today.isoformat()
@@ -3158,9 +3201,9 @@ class TestActivityAnalysisMarkdownFormatting:
 
         with patch("agent.trainer_agent._storage.get_load_metrics_series", side_effect=[existing_series, []]), \
              patch("agent.trainer_agent._storage.get_load_metrics_last_date", return_value=today_iso), \
-             patch("agent.trainer_agent._fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
+             patch_all("_fetch_activities_for_load_calc", side_effect=_fake_fetch) as fetch_mock, \
              patch("agent.trainer_agent._storage.upsert_load_metrics_series") as upsert_mock, \
-             patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value="")), \
+             patch_all("call_tool", new=AsyncMock(return_value="")), \
              patch.object(TrainerAgent, "_apply_series_to_profile"):
             await TrainerAgent.compute_and_persist_load_metrics(agent, force_full_recalc=False)
 
@@ -3208,7 +3251,7 @@ class TestFetchActivitiesForLoadCalc:
         )
 
         session = MagicMock()
-        with patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=[first_page, second_page])):
+        with patch_all("call_tool", new=AsyncMock(side_effect=[first_page, second_page])):
             out = await _fetch_activities_for_load_calc(session, yesterday_iso, today_iso)
 
         assert len(out) == 1
@@ -3242,7 +3285,7 @@ class TestFetchActivitiesForLoadCalc:
         )
 
         session = MagicMock()
-        with patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value=raw_concat)):
+        with patch_all("call_tool", new=AsyncMock(return_value=raw_concat)):
             out = await _fetch_activities_for_load_calc(session, yesterday_iso, today_iso)
 
         ids = {int(a.get("activityId") or 0) for a in out}
@@ -3266,7 +3309,7 @@ class TestFetchActivitiesForLoadCalc:
         ])]
         session = MagicMock()
         call_mock = AsyncMock(side_effect=pages)
-        with patch("agent.trainer_agent.call_tool", new=call_mock):
+        with patch_all("call_tool", new=call_mock):
             out = await _fetch_activities_for_load_calc(session, start_iso, today.isoformat())
 
         assert len(out) == 201
@@ -3289,7 +3332,7 @@ class TestFetchActivitiesForLoadCalc:
         ])
         session = MagicMock()
         call_mock = AsyncMock(side_effect=[recent, older, older])
-        with patch("agent.trainer_agent.call_tool", new=call_mock):
+        with patch_all("call_tool", new=call_mock):
             out = await _fetch_activities_for_load_calc(session, start_iso, today.isoformat())
 
         assert len(out) == 100
@@ -3420,8 +3463,8 @@ class TestCyclingFtpResolution:
         agent.user_profile = {"performance": {}}
         agent.mcp_session = object()
 
-        with patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value='{"data":{"cyclingFtp":266}}')) as call_mock, \
-             patch("agent.trainer_agent._save_user_profile") as save_mock:
+        with patch_all("call_tool", new=AsyncMock(return_value='{"data":{"cyclingFtp":266}}')) as call_mock, \
+             patch_all("_save_user_profile") as save_mock:
             ftp = await TrainerAgent._get_or_refresh_cycling_ftp(agent)
 
         assert ftp == 266.0
@@ -3435,8 +3478,8 @@ class TestCyclingFtpResolution:
         agent.user_profile = {"performance": {"cycling_ftp": 248.0}}
         agent.mcp_session = object()
 
-        with patch("agent.trainer_agent.call_tool", new=AsyncMock()) as call_mock, \
-             patch("agent.trainer_agent._save_user_profile") as save_mock:
+        with patch_all("call_tool", new=AsyncMock()) as call_mock, \
+             patch_all("_save_user_profile") as save_mock:
             ftp = await TrainerAgent._get_or_refresh_cycling_ftp(agent)
 
         assert ftp == 248.0
@@ -3447,7 +3490,9 @@ class TestCyclingFtpResolution:
 class TestPlanStatusChatRoute:
     @pytest.mark.asyncio
     async def test_chat_plan_status_does_not_call_llm_and_is_consistent_with_profile(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -3466,7 +3511,7 @@ class TestPlanStatusChatRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Tengo algun plan?")
 
         assert "No tienes plan asignado" in out
@@ -3474,7 +3519,9 @@ class TestPlanStatusChatRoute:
 
     @pytest.mark.asyncio
     async def test_chat_planning_generates_structured_plan_without_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -3506,7 +3553,7 @@ class TestPlanStatusChatRoute:
                 "target_race": "10K",
                 "target_race_date": "2026-11-22",
             },
-        }) as mocked_create, patch("agent.trainer_agent._save_user_profile"), patch("agent.trainer_agent._save_history_entries"):
+        }) as mocked_create, patch_all("_save_user_profile"), patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Puedes planificarme la semana para mi 10K?")
 
         assert "Resumen" in out
@@ -3516,7 +3563,9 @@ class TestPlanStatusChatRoute:
 
     @pytest.mark.asyncio
     async def test_chat_planning_updates_existing_plan_and_reports_changes(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -3565,7 +3614,7 @@ class TestPlanStatusChatRoute:
             "plan_data": {"target_race": "10K", "target_race_date": "2026-11-22"},
         }) as mocked_update, patch("agent.trainer_agent._storage.create_training_plan") as mocked_create, patch(
             "agent.trainer_agent._save_user_profile"
-        ), patch("agent.trainer_agent._save_history_entries"):
+        ), patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Ajusta mi plan de esta semana")
 
         mocked_update.assert_called_once()
@@ -3575,7 +3624,9 @@ class TestPlanStatusChatRoute:
 
     @pytest.mark.asyncio
     async def test_chat_planning_validation_error_returns_user_facing_message(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -3596,7 +3647,7 @@ class TestPlanStatusChatRoute:
             "agent.trainer_agent._validate_structured_plan", return_value=["Error de validación de prueba"]
         ), patch("agent.trainer_agent._storage.create_training_plan") as mocked_create, patch(
             "agent.trainer_agent._storage.update_training_plan"
-        ) as mocked_update, patch("agent.trainer_agent._save_history_entries"):
+        ) as mocked_update, patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Planifícame para mi 10K")
 
         mocked_create.assert_not_called()
@@ -3625,7 +3676,9 @@ class TestWriteToolsNeverReachTheServer:
     async def test_chat_never_sends_a_write_tool_to_the_server(self):
         # El servidor propio solo tiene tools get_*: una de escritura que pida el LLM no está en el esquema y no
         # llega al servidor (guardia de tools inexistentes, 24/10).
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         tool_call = MagicMock()
         tool_call.id = "tc_1"
@@ -3676,8 +3729,8 @@ class TestWriteToolsNeverReachTheServer:
         agent.client.chat.completions.create = AsyncMock(side_effect=[response1, response2])
         agent._build_messages = lambda _msg: []
 
-        with patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=AssertionError("Should not call MCP write tools"))):
-            with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("call_tool", new=AsyncMock(side_effect=AssertionError("Should not call MCP write tools"))):
+            with patch_all("_save_history_entries"):
                 out = await TrainerAgent.chat(agent, "Programa un entrenamiento para mañana")
 
         assert out == "respuesta final"
@@ -3720,7 +3773,9 @@ class TestWeekTssDeterministicRoute:
             "content": "## 🧭 Resumen\nEstado de hoy.\n\n## 🧠 Interpretación de coaching\n"
                        "- Si el TSS acumulado del lunes a miércoles supera ~130, reduce.",
         }]
-        from agent.trainer_agent import ToolRouter
+        from agent.trainer_agent import (
+            ToolRouter,
+        )
 
         message = "¿Qué tipo de sesión me recomiendas para esta semana dado mi estado?"
         assert not _is_week_tss_followup_intent(message, history)
@@ -3806,7 +3861,9 @@ class TestWeekTssDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_load_trend_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {}
@@ -3823,7 +3880,7 @@ class TestWeekTssDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM no debe ejecutarse en load_trend"))
 
-        with patch("agent.trainer_agent._save_history_entries"), patch("agent.trainer_agent._save_user_profile"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
+        with patch_all("_save_history_entries"), patch_all("_save_user_profile"),                 patch_all("_load_metrics_series", return_value=series):
             out = await TrainerAgent.chat(
                 agent,
                 "Muéstrame la tendencia de los últimos 14 días de ATL, CTL y TSB, y dime si voy hacia fatiga o disponibilidad",
@@ -3833,7 +3890,9 @@ class TestWeekTssDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_load_trend_with_recommendation_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -3858,7 +3917,7 @@ class TestWeekTssDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._save_history_entries"), patch("agent.trainer_agent._save_user_profile"):
+        with patch_all("_save_history_entries"), patch_all("_save_user_profile"):
             out = await TrainerAgent.chat(
                 agent,
                 "Muéstrame la tendencia de los últimos 14 días de ATL, CTL y TSB, y recomiéndame si hoy debo hacer calidad o rodaje suave",
@@ -3886,7 +3945,9 @@ class TestGoalStatusDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_goal_status_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -3904,7 +3965,7 @@ class TestGoalStatusDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "¿Cuál es mi próximo objetivo?")
 
         assert out.startswith("## 🧭 Resumen")
@@ -3912,7 +3973,9 @@ class TestGoalStatusDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_week_tss_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -3926,7 +3989,7 @@ class TestGoalStatusDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
+        with patch_all("_build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cuánto TSS llevo esta semana?")
@@ -3938,7 +4001,9 @@ class TestGoalStatusDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_week_tss_with_recommendation_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -3955,7 +4020,7 @@ class TestGoalStatusDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
+        with patch_all("_build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(
@@ -3969,7 +4034,9 @@ class TestGoalStatusDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_week_activities_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -3983,7 +4050,7 @@ class TestGoalStatusDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
+        with patch_all("_build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cuales son mis actividades de la semana del 10 de agosto 2026?")
@@ -3995,7 +4062,9 @@ class TestGoalStatusDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_week_activities_with_recommendation_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -4012,7 +4081,7 @@ class TestGoalStatusDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
+        with patch_all("_build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(
@@ -4041,7 +4110,7 @@ class TestGoalStatusDeterministicRoute:
 
                 return _Date.fromisoformat(value)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {501: {"activity_id": 501, "start_date": "2026-08-15", "tss": 82.49, "method": "TSS"}})
 
@@ -4071,7 +4140,7 @@ class TestGoalStatusDeterministicRoute:
             assert tool_name == "get_activities_by_date"
             return activities_payload
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile)
 
@@ -4081,7 +4150,6 @@ class TestGoalStatusDeterministicRoute:
         assert "fallback" in out
 
     def test_resolve_week_window_uses_explicit_historical_date(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -4089,14 +4157,13 @@ class TestGoalStatusDeterministicRoute:
             def today(cls):
                 return cls(2026, 8, 18)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
 
         week_start, week_end = _resolve_week_window("semana del 10 de agosto de 2026", _FakeDate.today())
         assert week_start.isoformat() == "2026-08-10"
         assert week_end.isoformat() == "2026-08-16"
 
     def test_resolve_week_window_uses_explicit_range_without_year(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         class _FakeDate(_Date):
@@ -4104,7 +4171,7 @@ class TestGoalStatusDeterministicRoute:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
 
         week_start, week_end = _resolve_week_window(
             "Cuales fueron las actividades y TSS de la semana del 27/07 al 02/08 ?",
@@ -4123,7 +4190,7 @@ class TestGoalStatusDeterministicRoute:
             def today(cls):
                 return cls(2026, 8, 18)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         profile = {
@@ -4164,7 +4231,7 @@ class TestGoalStatusDeterministicRoute:
                 },
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -4200,7 +4267,7 @@ class TestGoalStatusDeterministicRoute:
 
                 return _Date.fromisoformat(value)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {502: {"activity_id": 502, "start_date": "2026-08-17", "tss": 79.4, "method": "TSS"}})
 
@@ -4225,7 +4292,7 @@ class TestGoalStatusDeterministicRoute:
                 }
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -4254,7 +4321,7 @@ class TestGoalStatusDeterministicRoute:
 
                 return _Date.fromisoformat(value)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {})
 
@@ -4271,7 +4338,7 @@ class TestGoalStatusDeterministicRoute:
                 }
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -4292,7 +4359,7 @@ class TestGoalStatusDeterministicRoute:
             def today(cls):
                 return cls(2026, 8, 21)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         # Semana previa (10-14/08): 100.0 total
@@ -4318,7 +4385,7 @@ class TestGoalStatusDeterministicRoute:
             assert tool_name == "get_activities_by_date"
             return []
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -4340,7 +4407,7 @@ class TestGoalStatusDeterministicRoute:
             def today(cls):
                 return cls(2026, 9, 20)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         profile = {
@@ -4374,7 +4441,7 @@ class TestGoalStatusDeterministicRoute:
                 },
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -4401,7 +4468,7 @@ class TestGoalStatusDeterministicRoute:
                 # Martes: semana actual empieza 31/08, semana pasada es 24/08-30/08
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {503: {"activity_id": 503, "start_date": "2026-08-30", "tss": 220.4, "method": "hrTSS"}, 504: {"activity_id": 504, "start_date": "2026-09-01", "tss": 20.0, "method": "TSS"}})
 
@@ -4445,7 +4512,7 @@ class TestGoalStatusDeterministicRoute:
                 },
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -4483,7 +4550,7 @@ class TestGoalStatusDeterministicRoute:
 
                 return _Date.fromisoformat(value)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {505: {"activity_id": 505, "start_date": "2026-08-17", "tss": 45.0, "method": "hrTSS"}})
 
@@ -4510,7 +4577,7 @@ class TestGoalStatusDeterministicRoute:
                 }
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -4551,7 +4618,9 @@ class TestHrThresholdDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_hr_threshold_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -4570,7 +4639,7 @@ class TestHrThresholdDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cual es mi FC umbral?")
@@ -4580,7 +4649,9 @@ class TestHrThresholdDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_hr_threshold_route_reads_garmin_user_profile_camel_case(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {}
@@ -4599,9 +4670,9 @@ class TestHrThresholdDeterministicRoute:
                 return {"userData": {"lactateThresholdHeartRate": 169}}
             raise AssertionError(f"Unexpected tool: {tool_name}")
 
-        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
             "agent.trainer_agent._save_history_entry"
-        ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
+        ), patch_all("call_tool", _fake_call_tool), patch_all("_save_user_profile"):
             out = await TrainerAgent.chat(agent, "puedes consultar a garmin connect cual es mi FC umbral?")
 
         assert out.startswith("## 🧭 Resumen")
@@ -4609,7 +4680,9 @@ class TestHrThresholdDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_hr_threshold_route_does_not_update_load_effective_date_marker(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -4632,9 +4705,9 @@ class TestHrThresholdDeterministicRoute:
                 return {"userData": {"lactateThresholdHeartRate": 169}}
             raise AssertionError(f"Unexpected tool: {tool_name}")
 
-        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
             "agent.trainer_agent._save_history_entry"
-        ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
+        ), patch_all("call_tool", _fake_call_tool), patch_all("_save_user_profile"):
             out = await TrainerAgent.chat(agent, "mi frecuencia cardiaca umbral")
 
         assert "169 lpm" in out and "/perfil umbral fc 169" in out
@@ -4645,7 +4718,9 @@ class TestHrThresholdDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_hr_threshold_route_never_calls_lactate_threshold_tool(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {}
@@ -4666,16 +4741,18 @@ class TestHrThresholdDeterministicRoute:
                 return {"userData": {"lactateThresholdHeartRate": 169}}
             raise AssertionError(f"Unexpected tool: {tool_name}")
 
-        with patch("agent.trainer_agent._load_user_profile", return_value=agent.user_profile), patch(
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
             "agent.trainer_agent._save_history_entry"
-        ), patch("agent.trainer_agent.call_tool", _fake_call_tool), patch("agent.trainer_agent._save_user_profile"):
+        ), patch_all("call_tool", _fake_call_tool), patch_all("_save_user_profile"):
             out = await TrainerAgent.chat(agent, "cual es mi FC umbral?")
 
         assert "169 lpm" in out
 
     @pytest.mark.asyncio
     async def test_chat_config_options_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {}
@@ -4689,7 +4766,7 @@ class TestHrThresholdDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "que opciones puedo cambiar?")
 
         assert out.startswith("## 🧭 Resumen")
@@ -4700,7 +4777,9 @@ class TestHrThresholdDeterministicRoute:
 class TestTomorrowWorkoutViaLlm:
     @pytest.mark.asyncio
     async def test_chat_planning_generic_reply_uses_llm_rescue_without_goal(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         msg_generic = MagicMock()
         msg_generic.tool_calls = None
@@ -4737,7 +4816,7 @@ class TestTomorrowWorkoutViaLlm:
         agent.total_completion_tokens = 0
         agent._api_key = ""
 
-        with patch("agent.trainer_agent._save_history_entries"), patch.object(
+        with patch_all("_save_history_entries"), patch.object(
             TrainerAgent,
             "collect_startup_snapshot_48h",
             new=AsyncMock(
@@ -4759,7 +4838,9 @@ class TestTomorrowWorkoutViaLlm:
     async def test_chat_generic_reply_with_goal_never_writes_a_plan(self):
         # Hasta el 24/10, con objetivo en el perfil, una respuesta genérica del LLM creaba un plan "activo"
         # vacío en Supabase y desactivaba el plan real del atleta. Ahora pasa por el rescate, sin escribir.
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         def _resp(text):
             m = MagicMock()
@@ -4785,9 +4866,9 @@ class TestTomorrowWorkoutViaLlm:
         agent.total_prompt_tokens = agent.total_completion_tokens = 0
         agent._api_key = ""
 
-        with patch("agent.trainer_agent._save_history_entries"), \
+        with patch_all("_save_history_entries"), \
              patch("agent.trainer_agent._storage.create_training_plan") as create_plan, \
-             patch("agent.trainer_agent._save_user_profile") as save_profile, \
+             patch_all("_save_user_profile") as save_profile, \
              patch.object(TrainerAgent, "collect_startup_snapshot_48h", new=AsyncMock(return_value={
                  "dates": {"today": "2026-10-24"}, "body_battery": {}, "hrv": {}, "sleep": {},
                  "load_fatigue": {}, "trainings": [],
@@ -4804,7 +4885,9 @@ class TestTomorrowWorkoutViaLlm:
 class TestPostActivityGenericRescue:
     @pytest.mark.asyncio
     async def test_chat_activity_feedback_generic_reply_uses_llm_rescue(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         msg_generic = MagicMock()
         msg_generic.tool_calls = None
@@ -4860,7 +4943,7 @@ class TestPostActivityGenericRescue:
                 return json.dumps([])
             return json.dumps({})
 
-        with patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=_fake_call_tool)), patch(
+        with patch_all("call_tool", new=AsyncMock(side_effect=_fake_call_tool)), patch(
             "agent.trainer_agent._build_activity_analysis_block",
             return_value="RESUMEN DE ACTIVIDAD PRECOMPUTADO",
         ), patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=None)), patch(
@@ -4913,7 +4996,9 @@ class TestDailyReadinessDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_daily_readiness_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -4935,7 +5020,7 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Dame mi training readiness")
 
         agent.collect_startup_snapshot_48h.assert_awaited_once()
@@ -4945,7 +5030,9 @@ class TestDailyReadinessDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_daily_readiness_with_recommendation_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -4970,7 +5057,7 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Con mi estado actual (TSB + ATL + CTL), ¿recomiendas calidad, rodaje suave o descanso hoy? Justifica con datos")
 
         agent.client.chat.completions.create.assert_awaited_once()
@@ -4978,7 +5065,9 @@ class TestDailyReadinessDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_daily_readiness_forma_fisica_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -5003,21 +5092,23 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "¿Cómo está mi forma física hoy?")
 
         agent.client.chat.completions.create.assert_awaited_once()
         assert "## 🧠 Interpretación de coaching" in out
         # La capa de coaching recibe las mismas reglas que el system prompt (fuente única)
         # y ya no pide la intensidad en % del umbral de FC.
-        from agent.trainer_agent import _load_coaching_rules
+        pass
         system = agent.client.chat.completions.create.await_args.kwargs["messages"][0]["content"]
         assert _load_coaching_rules() in system
         assert "% del umbral de FC" not in system
 
     @pytest.mark.asyncio
     async def test_chat_daily_readiness_without_plan_returns_explicit_choice(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -5049,7 +5140,7 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Con mi estado actual (TSB + ATL + CTL), ¿recomiendas calidad, rodaje suave o descanso hoy? Justifica con datos")
 
         agent.client.chat.completions.create.assert_awaited_once()
@@ -5103,7 +5194,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_today_load_status_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"sports": ["running"]}
@@ -5117,7 +5210,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entries"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
+        with patch_all("_save_history_entries"),                 patch_all("_load_metrics_series", return_value=series):
             out = await TrainerAgent.chat(
                 agent,
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada",
@@ -5129,7 +5222,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_today_load_status_with_recommendation_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -5153,7 +5248,7 @@ class TestMcpFactualDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(
                 agent,
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada y recomiéndame la sesión",
@@ -5164,7 +5259,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_today_load_status_with_recommendation_reports_llm_unavailable_on_timeout(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -5185,7 +5282,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=TimeoutError())
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(
                 agent,
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, regla aplicada y recomiéndame sesión para hoy",
@@ -5258,7 +5355,7 @@ class TestMcpFactualDeterministicRoute:
             return {}
 
         stored = {123: {"activity_id": 123, "start_date": "2026-08-30", "tss": 140.0, "method": "hrTSS"}}
-        with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
+        with patch_all("call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
             out = await ta._build_mcp_factual_query_markdown(
                 mcp_session=object(),
@@ -5274,7 +5371,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_returns_controlled_message_on_llm_forbidden(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -5288,7 +5387,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=Exception("403 Forbidden from provider (Zscaler)"))
 
-        with patch("agent.trainer_agent._save_history_entries"):
+        with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Que tipo de sesion me recomiendas esta semana?")
 
         assert "403/Forbidden" in out
@@ -5304,7 +5403,7 @@ class TestMcpFactualDeterministicRoute:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         profile = {
@@ -5328,7 +5427,7 @@ class TestMcpFactualDeterministicRoute:
                 }
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -5353,7 +5452,7 @@ class TestMcpFactualDeterministicRoute:
             def today(cls):
                 return cls(2026, 8, 2)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(
             ta._storage,
@@ -5378,7 +5477,7 @@ class TestMcpFactualDeterministicRoute:
                 {"activityId": 4, "activityName": "Paseo", "activityType": "walking", "startTimeLocal": "2026-07-30 07:00:00"},
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
         out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile, user_message="cuanto tss hice esta semana?")
         assert "rTSS: 50.0" in out
         assert "hrTSS: 30.0" in out
@@ -5394,7 +5493,7 @@ class TestMcpFactualDeterministicRoute:
             def today(cls):
                 return cls(2026, 9, 1)
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
         monkeypatch.setattr(ta._storage, "get_activity_tss_map", lambda _start: {506: {"activity_id": 506, "start_date": "2026-08-31", "tss": 40.4, "method": "TSS"}})
 
@@ -5420,7 +5519,7 @@ class TestMcpFactualDeterministicRoute:
                 }
             ]
 
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_current_week_tss_markdown(
             mcp_session=object(),
@@ -5433,7 +5532,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_factual_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -5446,7 +5547,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "¿Qué TSS hice ayer?")
@@ -5458,7 +5559,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_factual_route_with_recommendation_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -5475,7 +5578,7 @@ class TestMcpFactualDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "¿Qué TSS hice ayer y qué me recomiendas para mañana?")
@@ -5486,7 +5589,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_activity_details_weekday_route_does_not_call_llm(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -5499,7 +5604,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Examina mi entrenamiento del martes")
@@ -5511,7 +5616,9 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_activity_details_with_recommendation_uses_hybrid_llm_layer(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {"load_metrics": {"series": []}}
@@ -5528,7 +5635,7 @@ class TestMcpFactualDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Examina mi entrenamiento del martes y recomiéndame qué hacer mañana")
@@ -5568,7 +5675,7 @@ class TestMcpFactualDeterministicRoute:
         }
 
         stored = {601: {"activity_id": 601, "start_date": target_iso, "tss": 70.5, "method": "TSS"}}
-        with patch("agent.trainer_agent.call_tool", _fake_call_tool), patch(
+        with patch_all("call_tool", _fake_call_tool), patch(
             "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
         ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
             out = await ta._build_mcp_factual_query_markdown(
@@ -5595,7 +5702,7 @@ class TestMcpFactualDeterministicRoute:
             return {}
 
         profile = {}
-        with patch("agent.trainer_agent._load_metrics_series", return_value=[{"date": target_iso, "tss": 62.3}]),                 patch("agent.trainer_agent.call_tool", _fake_call_tool), patch(
+        with patch_all("_load_metrics_series", return_value=[{"date": target_iso, "tss": 62.3}]),                 patch_all("call_tool", _fake_call_tool), patch(
             "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
         ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value={}):
             out = await ta._build_mcp_factual_query_markdown(
@@ -5615,7 +5722,9 @@ class TestRunningThresholdDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_chat_running_threshold_uses_latest_persisted_profile(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -5642,7 +5751,7 @@ class TestRunningThresholdDeterministicRoute:
             }
         }
 
-        with patch("agent.trainer_agent._load_user_profile", return_value=latest_profile), patch(
+        with patch_all("_load_user_profile", return_value=latest_profile), patch(
             "agent.trainer_agent._save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cual es mi ritmo umbral actual?")
@@ -5656,7 +5765,9 @@ class TestRunningThresholdDeterministicRoute:
 class TestCyclingFtpRefreshDatePolicy:
     @pytest.mark.asyncio
     async def test_refresh_same_ftp_does_not_update_change_date(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.user_profile = {
@@ -5668,7 +5779,7 @@ class TestCyclingFtpRefreshDatePolicy:
         }
         agent.mcp_session = MagicMock()
 
-        with patch("agent.trainer_agent.call_tool", new=AsyncMock(return_value='{"functionalThresholdPower": 250}')), patch(
+        with patch_all("call_tool", new=AsyncMock(return_value='{"functionalThresholdPower": 250}')), patch(
             "agent.trainer_agent._save_user_profile"
         ):
             out = await TrainerAgent._get_or_refresh_cycling_ftp(agent, force_refresh=True)
@@ -5681,7 +5792,9 @@ class TestCyclingFtpRefreshDatePolicy:
 
 class TestSessionSummaryCheckpoint:
     def test_generate_session_summary_checkpoint_uses_recent_turns(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.conversation_history = [
@@ -5700,7 +5813,9 @@ class TestSessionSummaryCheckpoint:
         assert "73 ms" not in summary
 
     def test_summary_checkpoint_empty_without_user_questions(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.conversation_history = [{"role": "assistant", "content": "HRV 73 ms, balanced."}]
@@ -5708,7 +5823,9 @@ class TestSessionSummaryCheckpoint:
         assert TrainerAgent.generate_session_summary_checkpoint(agent) == ""
 
     def test_save_session_summary_checkpoint_calls_daily_upsert(self):
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         agent = object.__new__(TrainerAgent)
         agent.conversation_history = [
@@ -5740,14 +5857,15 @@ class TestMcpTransparencyAndLatencyRegression:
 
     @pytest.mark.asyncio
     async def test_finalize_reply_puts_garmin_error_warning_first(self, monkeypatch):
-        import agent.trainer_agent as ta
-        from agent.trainer_agent import TrainerAgent
+        from agent.trainer_agent import (
+            TrainerAgent,
+        )
 
         events = [{"tool": "get_activities_by_date", "mode": "mcp_error", "reason": "kind=unknown"}]
-        monkeypatch.setattr(ta, "consume_tool_transparency_events", lambda: list(events))
+        patch_everywhere(monkeypatch, "consume_tool_transparency_events", lambda: list(events))
         agent = TrainerAgent.__new__(TrainerAgent)
         agent.conversation_history = []
-        monkeypatch.setattr(ta, "_save_history_entry", lambda *a, **k: None)
+        patch_everywhere(monkeypatch, "_save_history_entry", lambda *a, **k: None)
 
         reply = await agent._finalize_chat_reply("¿Qué actividades hice esta semana?", "## 🧭 Resumen\n- Sin actividades.", "week_activities")
 
@@ -5778,7 +5896,7 @@ class TestMcpTransparencyAndLatencyRegression:
             }
 
         monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_week_activities_markdown(object(), "¿Qué actividades hice esta semana?")
         assert "Actividades detectadas | 1" in out
@@ -5821,9 +5939,9 @@ class TestMcpTransparencyAndLatencyRegression:
             }
         }
 
-        monkeypatch.setattr(ta, "date", _FakeDate)
+        patch_everywhere(monkeypatch, "date", _FakeDate)
         monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
         out = await ta._build_current_week_tss_markdown(object(), profile, "¿Cuánto TSS hice esta semana?")
@@ -5863,7 +5981,7 @@ class TestMcpTransparencyAndLatencyRegression:
             return {}
 
         monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
-        monkeypatch.setattr(ta, "call_tool", _fake_call_tool)
+        patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await ta._build_mcp_factual_query_markdown(
             object(),
@@ -5914,9 +6032,9 @@ class TestRecentTssBySportRoute:
             assert tool_name == "get_activities_by_date"
             return activities
 
-        with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
+        with patch_all("call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored), \
-             patch("agent.trainer_agent._estimate_session_tss") as estimate_mock:
+             patch_all("_estimate_session_tss") as estimate_mock:
             out = await ta._build_recent_tss_by_sport_markdown(object(), self.QUESTION)
 
         estimate_mock.assert_not_called()
@@ -5945,7 +6063,7 @@ class TestRecentTssBySportRoute:
         async def _fake_call_tool(_session, _tool_name, _args):
             return activities
 
-        with patch("agent.trainer_agent.call_tool", _fake_call_tool), \
+        with patch_all("call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
             out = await ta._build_recent_tss_by_sport_markdown(object(), "¿Dime los TSS de mis 20 ultimas actividades de Ciclismo?")
 
@@ -6014,7 +6132,9 @@ class TestThresholdHistoryResolvers:
         assert 230.0 <= pace <= 260.0
 
     def test_resolve_tp_hr_threshold_for_date_picks_value_in_force(self):
-        from agent.trainer_agent import _resolve_tp_hr_threshold_for_date
+        from agent.trainer_agent import (
+            _resolve_tp_hr_threshold_for_date,
+        )
 
         profile = {
             "performance": {
@@ -6031,7 +6151,9 @@ class TestThresholdHistoryResolvers:
         assert _resolve_tp_hr_threshold_for_date({"performance": {}}, "2026-05-01") is None
 
     def test_resolve_running_threshold_pace_for_date_picks_value_in_force(self):
-        from agent.trainer_agent import _resolve_running_threshold_pace_for_date
+        from agent.trainer_agent import (
+            _resolve_running_threshold_pace_for_date,
+        )
 
         profile = {
             "performance": {
@@ -6198,7 +6320,7 @@ class TestStructuredPlanEngine:
     def test_session_label_shows_garmin_zone_with_rpe(self, monkeypatch):
         zones = [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
                  ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
         z2 = {"session_type": "running_z2", "duration_min": 45, "intensity": "RPE 3-4",
               "structured_workout": {"summary": {"intensityClass": "endurance"},
                                      "targets": {"primary": {"metric": "hr_zone", "zone": 2}}}}
@@ -6221,7 +6343,7 @@ class TestStructuredPlanEngine:
     def test_today_session_frame_per_decision(self, monkeypatch):
         zones = [("Z1 Recuperación", 115, 134), ("Z2 Aeróbica", 135, 145), ("Z3 Tempo", 146, 157),
                  ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
 
         easy = ta._build_today_session_frame(
             {"decision": "easy", "resulting_session": "rodaje suave 30-50 min en Z1-Z2 + movilidad"}, {})
@@ -6247,7 +6369,7 @@ class TestStructuredPlanEngine:
 
     @pytest.mark.asyncio
     async def test_coaching_gets_session_frame_only_for_today(self, monkeypatch):
-        monkeypatch.setattr(ta, "_build_today_session_frame", lambda decision, profile: "MARCO-DE-HOY")
+        patch_everywhere(monkeypatch, "_build_today_session_frame", lambda decision, profile: "MARCO-DE-HOY")
         agent = object.__new__(ta.TrainerAgent)
         agent.user_profile = {}
         agent.model = "m"
@@ -6258,7 +6380,7 @@ class TestStructuredPlanEngine:
         reply.usage = None
         agent.client = MagicMock()
         agent.client.chat.completions.create = AsyncMock(return_value=reply)
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
 
         await agent._augment_with_llm_coaching_if_needed(
             "¿Qué me recomiendas hoy?", "datos", "daily_readiness", daily_plan_decision={"decision": "easy"})
@@ -6283,10 +6405,10 @@ class TestStructuredPlanEngine:
         agent = object.__new__(ta.TrainerAgent)
         agent.user_profile = {}
         agent.collect_startup_snapshot_48h = AsyncMock(return_value={"dates": {}})
-        monkeypatch.setattr(ta, "_get_active_training_plan", lambda profile: None)
+        patch_everywhere(monkeypatch, "_get_active_training_plan", lambda profile: None)
         monkeypatch.setattr(ta, "_compute_daily_plan_adjustment",
                             lambda snapshot, plan: {"decision": "easy", "resulting_session": "rodaje suave 30-45 min"})
-        monkeypatch.setattr(ta, "_build_today_session_frame", lambda decision, profile: "MARCO " + decision["decision"])
+        patch_everywhere(monkeypatch, "_build_today_session_frame", lambda decision, profile: "MARCO " + decision["decision"])
 
         frame, decision = await agent._today_frame_for_loop({"hrv_today": "{}"})
         assert (frame, decision) == ("MARCO easy", "easy")
@@ -6308,14 +6430,14 @@ class TestStructuredPlanEngine:
         reply.usage = None
         agent.client = MagicMock()
         agent.client.chat.completions.create = AsyncMock(return_value=reply)
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
 
         # Sin palabras de recomendación: con always=True la lectura del LLM se añade igual.
         out = await agent._augment_with_llm_coaching_if_needed(
             "¿Cómo he dormido últimamente?", "TABLA", "sleep_trend", always=True, prompt="coaching/sleep_trend",
             horizon="las últimas 7 noches frente a las 7 anteriores")
         messages = agent.client.chat.completions.create.await_args.kwargs["messages"]
-        assert ta._render_prompt("coaching/sleep_trend") in messages[0]["content"]
+        assert _prompts._render_prompt("coaching/sleep_trend") in messages[0]["content"]
         assert "las últimas 7 noches frente a las 7 anteriores" in messages[1]["content"]
         assert "TABLA" in out and "Sueño estable" in out
 
@@ -6689,7 +6811,7 @@ class TestHrZonesFromGarmin:
         agent = TrainerAgent.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
         agent.user_profile = profile
-        return agent, patch("agent.trainer_agent.call_tool", AsyncMock(return_value=payload))
+        return agent, patch_all("call_tool", AsyncMock(return_value=payload))
 
     def _payload(self, z2_floor=135):
         return json.dumps({"sports": [
@@ -6701,12 +6823,12 @@ class TestHrZonesFromGarmin:
     async def test_refresh_saves_only_when_zones_change(self):
         profile = self._profile(self.GARMIN)
         agent, tool_patch = self._agent_with_tool(self._payload(), profile)
-        with tool_patch, patch("agent.trainer_agent._save_user_profile") as save_mock:
+        with tool_patch, patch_all("_save_user_profile") as save_mock:
             await agent._refresh_hr_zones_from_garmin()
         save_mock.assert_not_called()
 
         agent, tool_patch = self._agent_with_tool(self._payload(z2_floor=136), profile)
-        with tool_patch, patch("agent.trainer_agent._save_user_profile") as save_mock:
+        with tool_patch, patch_all("_save_user_profile") as save_mock:
             await agent._refresh_hr_zones_from_garmin()
         save_mock.assert_called_once()
         perf = profile["performance"]
@@ -6721,8 +6843,8 @@ class TestHrZonesFromGarmin:
         agent = TrainerAgent.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
         agent.user_profile = profile
-        with patch("agent.trainer_agent.call_tool", AsyncMock(side_effect=TimeoutError("sin red"))), \
-             patch("agent.trainer_agent._save_user_profile") as save_mock:
+        with patch_all("call_tool", AsyncMock(side_effect=TimeoutError("sin red"))), \
+             patch_all("_save_user_profile") as save_mock:
             await agent._refresh_hr_zones_from_garmin()
         save_mock.assert_not_called()
         assert profile["performance"]["hr_zones_garmin"]["sports"] == self.GARMIN["sports"]
@@ -6766,8 +6888,8 @@ class TestPeriodAndSleepRoutes:
             page = self.ACTS[:2] if args["page"] == 0 else self.ACTS[2:]
             return json.dumps({"activities": page, "has_more": args["page"] == 0})
 
-        monkeypatch.setattr(ta, "call_tool", fake_call)
-        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        patch_everywhere(monkeypatch, "call_tool", fake_call)
+        patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
         out = await ta._build_period_activities_markdown(None, "¿Cuántos kilómetros he corrido en septiembre?")
         assert calls == [0, 1]
         assert "50.04 km en 2 actividades" in out  # carrera + trail; ni fuerza ni la de octubre
@@ -6778,8 +6900,8 @@ class TestPeriodAndSleepRoutes:
         async def fake_call(_session, name, args):
             return json.dumps({"activities": self.ACTS, "has_more": False})
 
-        monkeypatch.setattr(ta, "call_tool", fake_call)
-        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        patch_everywhere(monkeypatch, "call_tool", fake_call)
+        patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
         # 28/10: días sin entrenar y horas los sumaba el LLM.
         out = await ta._build_period_activities_markdown(None, "¿Cuántos días he descansado en septiembre?")
         assert "Días con actividad: 3 de 30; sin actividad: 27." in out
@@ -6794,8 +6916,8 @@ class TestPeriodAndSleepRoutes:
         async def fake_call(_session, name, args):
             return json.dumps({"activities": self.ACTS, "has_more": False})
 
-        monkeypatch.setattr(ta, "call_tool", fake_call)
-        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        patch_everywhere(monkeypatch, "call_tool", fake_call)
+        patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
         out = await ta._build_period_activities_markdown(None, "¿Cuál fue mi actividad más larga de septiembre?")
         summary = out.split("## 📊")[0]
         assert "Trail largo · 33.52 km" in summary and "Fuera de rango" not in out
@@ -6809,8 +6931,8 @@ class TestPeriodAndSleepRoutes:
         async def fake_call(_session, name, args):
             return json.dumps(nights.get(args["date"], {"date": args["date"], "sleepTimeSeconds": None}))
 
-        monkeypatch.setattr(ta, "call_tool", fake_call)
-        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        patch_everywhere(monkeypatch, "call_tool", fake_call)
+        patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
         out = await ta._build_sleep_night_markdown(None)
         assert "aún no tiene el sueño de anoche" in out
         assert "La noche que terminó el sábado 24/10/2026 dormiste 6 h 49 min, puntuación 74/100" in out
@@ -6843,8 +6965,8 @@ class TestPeriodAndSleepRoutes:
         async def fake_call(_session, name, args):
             return json.dumps({"date": args["date"], "sleepTimeSeconds": None})
 
-        monkeypatch.setattr(ta, "call_tool", fake_call)
-        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        patch_everywhere(monkeypatch, "call_tool", fake_call)
+        patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
         out = await ta._build_sleep_night_markdown(None, date(2026, 10, 20))
         assert "no tiene sueño registrado de la noche que termina el martes 20/10/2026" in out
 
@@ -6862,8 +6984,8 @@ class TestPeriodAndSleepRoutes:
             i = (self.TODAY - date.fromisoformat(args["date"])).days
             return json.dumps(night(i) or {"sleepTimeSeconds": None})
 
-        monkeypatch.setattr(ta, "call_tool", fake_call)
-        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        patch_everywhere(monkeypatch, "call_tool", fake_call)
+        patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
         out = await ta._build_sleep_trend_markdown(None, 7)
         # 6 noches con datos: 5 de 7 h y 1 de 5 h → 6 h 40 min; frente a 8 h → −80 min y −15 puntos.
         assert "media 6 h 40 min, puntuación 70/100; 1 por debajo de 6 h. Sin datos en 1 noche(s)." in out
@@ -6889,7 +7011,7 @@ class TestResolveLastActivity:
                 return "Error al llamar a 'get_activities': Connection closed"
             return json.dumps(acts)  # call_tool devuelve texto: antes no se leía como JSON y nunca encontraba nada
 
-        monkeypatch.setattr(ta, "call_tool", fake_call)
+        patch_everywhere(monkeypatch, "call_tool", fake_call)
 
     @pytest.mark.asyncio
     async def test_finds_latest_of_requested_sport(self, monkeypatch):
@@ -6908,7 +7030,7 @@ class TestResolveLastActivity:
     @pytest.mark.asyncio
     async def test_without_garmin_uses_last_day_with_load(self, monkeypatch):
         self._garmin(monkeypatch, fail=True)
-        monkeypatch.setattr(ta, "_load_metrics_series", lambda: [
+        patch_everywhere(monkeypatch, "_load_metrics_series", lambda: [
             {"date": "2026-10-26", "tss": 55.0}, {"date": "2026-10-27", "tss": 0.0, "activities_count": 0}])
         assert await ta._resolve_last_activity(None, "Feedback de mi último entreno") == ("2026-10-26", None)
 
@@ -6963,8 +7085,8 @@ class TestStartupInParallel:
             order.append("serie leída")
             return []
 
-        monkeypatch.setattr(ta, "call_tool", garmin)
-        monkeypatch.setattr(ta, "_load_metrics_series", series)
+        patch_everywhere(monkeypatch, "call_tool", garmin)
+        patch_everywhere(monkeypatch, "_load_metrics_series", series)
         monkeypatch.setattr(ta._storage, "upsert_wellness_daily", lambda *a, **k: None)
         load_task = asyncio.ensure_future(load())
         await agent.collect_startup_snapshot_48h(load_ready=load_task)
@@ -6977,7 +7099,7 @@ class TestStartupInParallel:
         agent = ta.TrainerAgent.__new__(ta.TrainerAgent)
         agent.mcp_session = MagicMock()
         garmin = AsyncMock(return_value="{}")
-        monkeypatch.setattr(ta, "call_tool", garmin)
+        patch_everywhere(monkeypatch, "call_tool", garmin)
         raw = json.dumps({"userData": {"gender": "MALE", "weight": 67000.0, "height": 178}})
 
         out = await agent.fetch_garmin_personal_data(profile_raw=raw)
@@ -6997,7 +7119,7 @@ class TestKairosLoadTrends:
 
     def test_all_metrics_daily_and_every_week(self, monkeypatch):
         series = self._series()
-        monkeypatch.setattr(ta, "_load_metrics_series", lambda *a, **k: series)
+        patch_everywhere(monkeypatch, "_load_metrics_series", lambda *a, **k: series)
         out = json.loads(ta._kairos_load_trends({}, weeks_back=12))
         assert out["daily"]["columns"] == ["date", "tss", "ctl", "atl", "tsb"]
         assert [r[0] for r in out["daily"]["rows"]] == [r["date"] for r in series[-14:]]
@@ -7012,7 +7134,7 @@ class TestKairosLoadTrends:
     @pytest.mark.asyncio
     async def test_the_llm_receives_every_week(self, monkeypatch):
         # Antes la poda genérica dejaba 4 semanas (las más antiguas) y el LLM decía que septiembre estaba "en 0".
-        monkeypatch.setattr(ta, "_load_metrics_series", lambda *a, **k: self._series())
+        patch_everywhere(monkeypatch, "_load_metrics_series", lambda *a, **k: self._series())
         call = MagicMock()
         call.id = "k1"
         call.function.name = "kairos_load_trends"
@@ -7034,8 +7156,8 @@ class TestKairosLoadTrends:
         agent.total_prompt_tokens = agent.total_completion_tokens = 0
         agent.client = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=[_resp(tool_calls=[call]), _resp(content="Hecho.")])
-        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
-        with patch("agent.trainer_agent._save_history_entries"):
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        with patch_all("_save_history_entries"):
             await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
 
         final = agent.client.chat.completions.create.await_args_list[-1].kwargs["messages"]

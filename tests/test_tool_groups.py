@@ -65,7 +65,9 @@ def test_all_groups_need_no_request_tool():
 
 
 def test_request_tool_adds_the_group_for_the_next_call():
-    from agent.trainer_agent import TrainerAgent
+    from agent.trainer_agent import (
+        TrainerAgent,
+    )
 
     agent = object.__new__(TrainerAgent)
     agent._turn_tool_groups = {"dia_a_dia"}

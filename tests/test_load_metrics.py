@@ -31,6 +31,7 @@ from agent.load_metrics import (
     _classify_walk_hike_session_with_confidence,
 )
 import agent.load_metrics as lm
+from tests.agent_patch import patch_all
 
 
 def _compute_load_fatigue_metrics(activities, trend_payload=None, profile=None, days_window=56, reference_day=None):
@@ -114,7 +115,6 @@ class TestSessionTssEstimation:
         assert out["latest"]["tsb"] == 0.0
 
     def test_compute_load_fatigue_metrics_flags_weekly_spike_over_20_percent(self):
-        import agent.trainer_agent as ta
 
         class _FakeDate:
             @staticmethod
@@ -130,7 +130,7 @@ class TestSessionTssEstimation:
 
                 return _Date.fromisoformat(value)
 
-        with patch.object(ta, "date", _FakeDate):
+        with patch_all("date", _FakeDate):
             today = _FakeDate.today()
             activities = []
             for idx in range(14):
@@ -1309,7 +1309,7 @@ class TestLoadFatigueModel:
             }
         )
 
-        with patch("agent.trainer_agent._estimate_session_tss") as estimate_mock:
+        with patch_all("_estimate_session_tss") as estimate_mock:
             out = _build_activity_analysis_block(activity_raw=activity_raw)
 
         estimate_mock.assert_not_called()
