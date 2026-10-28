@@ -40,6 +40,7 @@ from agent.hr_profile import (
     _resolve_tp_hr_threshold_for_date,
 )
 from agent.daily_engine import (
+    _session_type_label,
     _extract_activity_duration_minutes,
     _get_active_training_plan,
     _get_planned_session_for_date,
@@ -206,6 +207,11 @@ class ContextMixin:
         if not isinstance(plan, dict) or not plan:
             return "\n\n## Plan activo\n- No hay plan activo.\n"
         lines = [f"- {plan.get('title') or 'Plan activo'}"]
+        if not plan.get("sessions"):
+            # Planes creados antes del 28/10 con el formulario de /plan crear: sin sesiones que leer.
+            lines.append("- El plan no tiene sesiones (se creó solo con el formulario): para tenerlas, `/plan crear` "
+                         "lo genera de nuevo por semanas.")
+            return "\n\n## Plan activo\n" + "\n".join(lines) + "\n"
         for offset, label in ((0, "Hoy"), (1, "Mañana"), (2, "Pasado mañana")):
             d = date.today() + timedelta(days=offset)
             row = _get_planned_session_for_date(plan, d.isoformat())
@@ -215,7 +221,7 @@ class ContextMixin:
             if session_type == "rest" or int(row.get("duration_min") or 0) <= 0:
                 desc = "descanso"
             else:
-                desc = f"{session_type}, {int(row.get('duration_min') or 0)} min, {_session_intensity_label(row, self.user_profile)}".strip(", ")
+                desc = f"{_session_type_label(session_type)}, {int(row.get('duration_min') or 0)} min, {_session_intensity_label(row, self.user_profile)}".strip(", ")
                 notes = str(row.get("notes") or "").strip()
                 if notes:
                     desc += f" — {notes[:160]}"

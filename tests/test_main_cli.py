@@ -43,12 +43,15 @@ class TestHandleCliCommand:
         ("/perfil", "_show_profile"), ("/profile", "_show_profile"), ("/menu", "_show_menu"),
         ("/ayuda", "_show_help"), ("/help", "_show_help"), ("/?", "_show_help"),
         ("/plan", "_show_plan_help"), ("/plan listar", "_show_training_plans"),
-        ("/plan crear", "_create_training_plan_cli"),
     ])
     def test_simple_commands_call_their_screen(self, entry, target):
         with patch.object(m, target) as screen:
             assert m._handle_cli_command(entry, _Agent()) is True
         screen.assert_called_once()
+
+    def test_plan_create_goes_to_the_async_main_loop(self):
+        # 28/10: /plan crear usa el motor de planes (asíncrono); lo atiende el bucle principal de main().
+        assert m._handle_cli_command("/plan crear", _Agent()) is False
 
     def test_plan_view_and_activate_pass_the_id(self):
         agent = _Agent()
@@ -293,7 +296,7 @@ class TestPlanScreens:
              patch.object(m, "list_training_plan_sessions", side_effect=RuntimeError("x")):
             m._show_training_plan("p1")
         text = out()
-        assert "Semana 1 · Día 2 · rodaje · 50 min · Z2 Aeróbica (135–145 lpm)" in text
+        assert "Semana 1 · Día 2 · Rodaje · 50 min · Z2 Aeróbica (135–145 lpm)" in text
         assert "Sin sesiones registradas" in text
 
     def test_activate_plan(self, out):
@@ -313,28 +316,45 @@ class TestPlanScreens:
         assert "Uso: /plan activar" in text and "Error activando plan" in text and "No se pudo activar" in text
         assert "Plan activado: Base" in text
 
-    def test_create_plan_retries_weeks_and_mirrors_profile(self, out):
+    def test_create_plan_uses_the_plan_engine_and_shows_the_plan(self, out):
+        # 28/10: antes guardaba solo el formulario (sin sesiones) y Kairos no tenía nada que leer del plan.
         agent = _Agent()
-        profile = {"goals": {"target_race": "Ultra PDA"}}
-        answers = ["Plan hacia Ultra PDA", "Ultra PDA", "Plan base", "moderate", "ocho", "8", "rodaje suave"]
-        created = {"id": "1234567890ab", "title": "Plan hacia Ultra PDA", "source": "cli_plan_create"}
-        with patch.object(m, "_load_user_profile", return_value=profile), patch.object(m, "_save_user_profile"), \
-             patch.object(m.Prompt, "ask", side_effect=answers), \
-             patch.object(m, "create_training_plan", return_value=created) as create:
-            m._create_training_plan_cli(agent)
-        payload = create.call_args.args[0]
-        assert payload["duration_weeks"] == 8 and payload["plan_data"]["today_focus"] == "rodaje suave"
-        assert profile["training_plan"]["id"] == "1234567890ab"
+        agent._route_planning = AsyncMock(return_value="## 🧭 Resumen\nPlan activo: Hacia Santa Pola\n- Semana 1: ~380 min")
+        with patch.object(m, "_load_user_profile", return_value={"goals": {"target_race": "Santa Pola"}}), \
+             patch.object(m.Prompt, "ask", return_value="no puedo los martes"):
+            asyncio.run(m._create_training_plan_cli(agent))
+        message = agent._route_planning.await_args.args[0]
+        assert agent._route_planning.await_args.kwargs == {"force_new": True}
+        assert "plan nuevo" in message.lower() and "no puedo los martes" in message
         text = out()
-        assert "Introduce un número entero" in text and "Plan creado y activado" in text
+        assert "Santa Pola" in text and "Semana 1" in text
 
-    def test_create_plan_error_does_not_touch_profile(self, out):
-        profile = {"goals": {}}
-        with patch.object(m, "_load_user_profile", return_value=profile), \
-             patch.object(m.Prompt, "ask", side_effect=["T", "O", "D", "easy", "4", ""]), \
-             patch.object(m, "create_training_plan", side_effect=RuntimeError("rls")):
-            m._create_training_plan_cli(_Agent())
-        assert "training_plan" not in profile and "Error creando plan" in out()
+    def test_create_plan_fallback_reply_is_shown(self, out):
+        agent = _Agent()
+        agent._route_planning = AsyncMock(return_value=("Plan genérico de respaldo", "planning_fallback"))
+        with patch.object(m, "_load_user_profile", return_value={}), patch.object(m.Prompt, "ask", return_value=""):
+            asyncio.run(m._create_training_plan_cli(agent))
+        assert agent._route_planning.await_args.args[0] == "Crea un plan nuevo"
+        assert "Plan genérico de respaldo" in out()
+
+    def test_plan_refs_by_number_short_id_or_full_id(self):
+        plans = [{"id": "3fad2d42826a4862bca23173e7ed85a0"}, {"id": "3fb01c9e00aa4f6d8f1e2b3c4d5e6f70"},
+                 {"id": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"}]
+        with patch.object(m, "list_training_plans", return_value=plans):
+            assert m._resolve_plan_id("1") == plans[0]["id"]
+            assert m._resolve_plan_id("3fad2d42") == plans[0]["id"]
+            assert m._resolve_plan_id("A1B2") == plans[2]["id"]
+            assert m._resolve_plan_id("3f") is None  # dos planes empiezan así
+            assert m._resolve_plan_id("9") == "9"  # ni número válido ni prefijo: se prueba tal cual
+        with patch.object(m, "list_training_plans", side_effect=RuntimeError("sin red")):
+            assert m._resolve_plan_id("3fad2d42") == "3fad2d42"
+
+    def test_list_shows_number_and_short_id(self, out):
+        plans = [{"id": "3fad2d42826a4862bca23173e7ed85a0", "title": "Santa Pola", "status": "active", "duration_weeks": 11}]
+        with patch.object(m, "list_training_plans", return_value=plans):
+            m._show_training_plans()
+        text = out()
+        assert "3fad2d42" in text and "3fad2d42826a" not in text and "/plan ver <nº>" in text
 
 
 # ─── /carga ──────────────────────────────────────────────────────────────────
@@ -558,6 +578,12 @@ class TestMainLoop:
         agent = _MainAgent.instances[0]
         assert agent.build_startup_status_markdown.await_args.kwargs["load_ready"] is not None
         assert "Listo" in out()
+
+    def test_plan_create_is_awaited_by_the_main_loop(self, monkeypatch, out):
+        with patch.object(m, "_create_training_plan_cli", new=AsyncMock()) as create:
+            _run_main(["/plan crear", "salir"], monkeypatch=monkeypatch, skip_status=True)
+        create.assert_awaited_once()
+        assert _MainAgent.instances[0].chat.call_count == 0
 
     def test_ctrl_c_ends_the_session(self, monkeypatch, out):
         _run_main(KeyboardInterrupt(), monkeypatch=monkeypatch)

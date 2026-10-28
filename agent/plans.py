@@ -5,7 +5,7 @@ Planes de entrenamiento: estado del plan y del objetivo, restricciones del atlet
 
 import math
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 
@@ -14,6 +14,8 @@ from agent.dates import (
     _safe_float,
 )
 from agent.daily_engine import (
+    _get_planned_session_for_date,
+    _session_type_label,
     _get_active_training_plan,
     _intensity_class_from_rpe,
     _normalize_intensity_class,
@@ -21,6 +23,37 @@ from agent.daily_engine import (
     _structured_workout_duration_minutes,
     _zone_for_intensity_class,
 )
+
+
+_DAY_NAMES_ES = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves", 5: "Viernes", 6: "Sábado", 7: "Domingo"}
+
+
+def _plan_week_lines(plan: dict, profile: dict, monday: date | None = None) -> list[str]:
+    """Sesiones del plan de una semana de calendario (por defecto esta), una fila por día con su fecha (28/10).
+
+    Antes "¿qué me toca esta semana?" solo decía que había un plan; el LLM, sin sesiones, contestaba que no podía
+    leerlo. Un plan sin sesiones (creado antes del 28/10 solo con el formulario) lo dice y propone regenerarlo.
+    """
+    if not (plan or {}).get("sessions"):
+        return ["", "## 🗓️ Esta semana", "El plan no tiene sesiones: créalo de nuevo con `/plan crear` para generarlas."]
+    monday = monday or (date.today() - timedelta(days=date.today().weekday()))
+    rows = []
+    for offset in range(7):
+        day = monday + timedelta(days=offset)
+        session = _get_planned_session_for_date(plan, day.isoformat())
+        if session is None:
+            continue
+        kind = str(session.get("session_type") or "sesión")
+        minutes = int(session.get("duration_min") or 0)
+        if kind == "rest" or minutes <= 0:
+            what, intensity = "Descanso", "—"
+        else:
+            what, intensity = f"{_session_type_label(kind)} · {minutes} min", _session_intensity_label(session, profile)
+        today_mark = " (hoy)" if day == date.today() else ""
+        rows.append(f"| {_DAY_NAMES_ES[day.isoweekday()]} {day.strftime('%d/%m')}{today_mark} | {what} | {intensity} |")
+    if not rows:
+        return ["", "## 🗓️ Esta semana", "Esta semana queda fuera de las fechas del plan."]
+    return ["", "## 🗓️ Esta semana", "| Día | Sesión | Intensidad |", "|---|---|---|", *rows]
 
 
 def _build_training_plan_status_markdown(profile: dict) -> str:
@@ -78,6 +111,7 @@ def _build_training_plan_status_markdown(profile: dict) -> str:
     ]
     if today_focus:
         lines.append(f"| Sesión sugerida hoy | {today_focus} | plan activo |")
+    lines.extend(_plan_week_lines(plan, profile))
     lines.extend([
         "",
         "## ✅ Recomendación",
@@ -964,7 +998,9 @@ def _generate_structured_plan_payload(
             "weekly_training_hours": weekly_hours,
             "injuries": injuries,
             "difficulty_reason": difficulty_reason,
-            "start_date": date.today().isoformat(),
+            # Lunes de esta semana: las semanas del plan son las de calendario (antes empezaba hoy y la semana 1
+            # iba de miércoles a martes; 28/10). Las sesiones de días ya pasados de esta semana quedan atrás.
+            "start_date": (date.today() - timedelta(days=date.today().weekday())).isoformat(),
             "phase_weeks": {
                 "base": base_weeks,
                 "build": build_weeks,
@@ -1328,7 +1364,7 @@ def _build_structured_plan_markdown(
         lines.append(f"- Semana {wi}: ~{week_total} min")
         for s in week_rows:
             day = day_names.get(int(s.get("day_index") or 0), f"Día {s.get('day_index', '?')}")
-            session_type = str(s.get("session_type") or "sesión")
+            session_type = _session_type_label(s.get("session_type"))
             duration = int(s.get("duration_min") or 0)
             intensity = _session_intensity_label(s, profile)
             lines.append(f"  - {day}: {session_type} · {duration} min · {intensity}")

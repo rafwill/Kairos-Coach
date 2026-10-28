@@ -66,7 +66,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/perfil umbral <mm:ss>` | Nuevo ritmo umbral de running (rige desde hoy) |
 | `/perfil umbral fc <lpm>` | Nueva FC umbral tras un test, la misma que en TrainingPeaks (rige desde hoy) |
 | `/perfil fc <reposo> <max>` | FC de reposo y máxima |
-| `/plan listar` · `/plan ver <id>` · `/plan activar <id>` · `/plan crear` | Planes de entrenamiento |
+| `/plan listar` · `/plan ver <nº o id>` · `/plan activar <nº o id>` · `/plan crear` | Planes de entrenamiento: `/plan crear` genera semanas y sesiones a partir del objetivo del perfil; el nº y el id corto salen en `/plan listar` |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |
 | `/proveedor` | Cambiar de proveedor de IA, modelo o clave |
 | `salir` | Salir de Kairos (la sesión queda guardada para la próxima vez) |

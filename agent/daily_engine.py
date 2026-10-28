@@ -120,6 +120,21 @@ def _resolve_today_plan_session(plan: dict) -> str:
     return title or "sesión planificada"
 
 
+_SESSION_TYPE_LABELS = {
+    "strength": "Fuerza (gimnasio)", "strength_home": "Fuerza en casa",
+    "running_quality": "Calidad de carrera", "running_z2": "Rodaje Z2", "long_run": "Tirada larga",
+    "trail_z2": "Trail suave Z2", "trail_long": "Trail largo",
+    "cycling_z2": "Bici Z2", "cycling_mtb": "Bici de montaña", "cycling_recovery": "Bici de recuperación",
+    "recovery": "Recuperación", "rest": "Descanso",
+}
+
+
+def _session_type_label(session_type: str | None) -> str:
+    """Nombre en español del tipo de sesión del motor de planes (28/10: antes se mostraba el código, "long_run")."""
+    code = str(session_type or "").strip()
+    return _SESSION_TYPE_LABELS.get(code) or (code.replace("_", " ").capitalize() if code else "Sesión")
+
+
 def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | None:
     """Obtiene la sesión planificada para una fecha.
 
@@ -138,10 +153,12 @@ def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | No
         return None
 
     target_week_index = None
+    start_known = False
     try:
         plan_data = plan.get("plan_data") if isinstance(plan.get("plan_data"), dict) else plan
         start_iso = str((plan_data or {}).get("start_date") or (plan_data or {}).get("created_at") or "").strip()
         if start_iso:
+            start_known = True
             start_d = date.fromisoformat(start_iso[:10])
             target_d = date.fromisoformat(target_date_iso[:10])
             delta_days = (target_d - start_d).days
@@ -171,6 +188,11 @@ def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | No
         if same_week:
             same_week.sort(key=lambda x: int(x.get("day_index") or 1))
             return same_week[0]
+        # Con fecha de inicio, un día fuera de las semanas del plan no tiene sesión (28/10: antes devolvía la del
+        # mismo día de la semana 1, y tras acabar el plan seguía proponiendo su primera semana).
+        return None
+    if start_known:
+        return None  # antes del inicio del plan
 
     candidates.sort(key=lambda x: int(x.get("week_index") or 1))
     return candidates[0]

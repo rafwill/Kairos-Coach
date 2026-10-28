@@ -136,6 +136,43 @@ class TestPlanningFallbackAndRanges:
 
 
 class TestPlannedSessionSelection:
+    def test_a_day_outside_the_plan_has_no_session(self):
+        # 28/10: antes devolvía la del mismo día de la semana 1, también después de acabar el plan.
+        plan = {"plan_data": {"start_date": "2026-01-05"},  # lunes
+                "sessions": [{"week_index": 1, "day_index": 2, "session_type": "running_z2", "duration_min": 40}]}
+        assert _get_planned_session_for_date(plan, "2026-01-06")["session_type"] == "running_z2"
+        assert _get_planned_session_for_date(plan, "2026-01-13") is None  # semana 2: el plan no la tiene
+        assert _get_planned_session_for_date(plan, "2025-12-30") is None  # antes del inicio
+
+    def test_week_lines_list_this_week_with_dates(self, monkeypatch):
+        import agent.plans as plans
+
+        class _Today(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 10, 28)  # miércoles
+
+        patch_everywhere(monkeypatch, "date", _Today)
+        plan = {"plan_data": {"start_date": "2026-10-26"},
+                "sessions": [{"week_index": 1, "day_index": 3, "session_type": "running_quality", "duration_min": 60,
+                              "intensity": "RPE 7"},
+                             {"week_index": 1, "day_index": 5, "session_type": "rest", "duration_min": 0},
+                             {"week_index": 2, "day_index": 1, "session_type": "long_run", "duration_min": 90}]}
+        text = "\n".join(plans._plan_week_lines(plan, {}))
+        assert "Miércoles 28/10 (hoy) | Calidad de carrera · 60 min" in text
+        assert "Viernes 30/10 | Descanso" in text and "Tirada larga" not in text
+        assert "regenerarlo" not in text
+        empty = "\n".join(plans._plan_week_lines({"title": "Solo formulario"}, {}))
+        assert "no tiene sesiones" in empty and "/plan crear" in empty
+
+    def test_new_plans_start_on_monday(self):
+        import agent.plans as plans
+
+        plan, sessions = plans._generate_structured_plan_payload({"goals": {}}, "plan nuevo")
+        start = date.fromisoformat(plan["plan_data"]["start_date"])
+        assert start.weekday() == 0 and (date.today() - start).days < 7
+        assert sessions and {s["day_index"] for s in sessions if s["week_index"] == 1} == set(range(1, 8))
+
     def test_get_planned_session_for_date_respects_week_index_when_available(self):
         plan = {
             "plan_data": {"start_date": "2026-01-06"},  # lunes

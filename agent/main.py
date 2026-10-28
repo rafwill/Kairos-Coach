@@ -116,7 +116,6 @@ from agent.storage import (
     activate_training_plan,
     check_supabase_connection,
     create_app_user,
-    create_training_plan,
     decrypt_password,
     encrypt_password,
     get_active_user,
@@ -135,7 +134,7 @@ from agent.storage import (
     update_user_credentials,
 )
 from agent.routes.load import _build_load_trend_table
-from agent.daily_engine import _session_intensity_label
+from agent.daily_engine import _session_intensity_label, _session_type_label
 from agent.data_access import _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile
 from agent.llm import probe_llm_key
 
@@ -892,10 +891,10 @@ def _parse_plan_command(cmd: str) -> tuple[str | None, str | None]:
 def _show_plan_help() -> None:
     console.print(Panel.fit(
         "[bold]Comandos de planificación:[/]\n\n"
-        "  [bold cyan]/plan listar[/bold cyan]            Lista planes y marca el activo\n"
-        "  [bold cyan]/plan ver <plan_id>[/bold cyan]     Muestra detalle del plan y sus sesiones\n"
-        "  [bold cyan]/plan activar <plan_id>[/bold cyan] Activa un plan y desactiva el anterior\n"
-        "  [bold cyan]/plan crear[/bold cyan]             Crea un plan base en DB (interactivo)",
+        "  [bold cyan]/plan listar[/bold cyan]          Lista planes (nº e id corto) y marca el activo\n"
+        "  [bold cyan]/plan ver <nº o id>[/bold cyan]     Muestra el plan y sus sesiones (ej.: /plan ver 1)\n"
+        "  [bold cyan]/plan activar <nº o id>[/bold cyan] Activa un plan y desactiva el anterior\n"
+        "  [bold cyan]/plan crear[/bold cyan]           Genera un plan por semanas con sus sesiones y lo activa",
         title="[bold blue]Kairos Coach — Gestión de planes[/]",
         border_style="blue",
     ))
@@ -913,6 +912,7 @@ def _show_training_plans() -> None:
         return
 
     table = Table(title="Planes de entrenamiento")
+    table.add_column("Nº", justify="right")
     table.add_column("Activo", justify="center")
     table.add_column("ID")
     table.add_column("Título")
@@ -920,21 +920,27 @@ def _show_training_plans() -> None:
     table.add_column("Duración")
     table.add_column("Objetivo")
 
-    for plan in plans:
+    for number, plan in enumerate(plans, 1):
         status = str(plan.get("status") or "").strip().lower()
         is_active = status == "active"
         plan_id = str(plan.get("id") or "")
         title = str(plan.get("title") or "Plan").strip()
         duration = str(plan.get("duration_weeks") or 0)
         objective = str(plan.get("objective") or "—").strip() or "—"
-        table.add_row("✓" if is_active else "", plan_id, title, status or "—", f"{duration} sem", objective)
+        table.add_row(str(number), "✓" if is_active else "", _plan_short_id(plan_id), title, status or "—",
+                      f"{duration} sem", objective)
 
     console.print(table)
+    console.print("[dim]/plan ver <nº> o /plan activar <nº> (también con el id corto)[/]")
 
 
-def _show_training_plan(plan_id: str) -> None:
+def _show_training_plan(plan_ref: str) -> None:
+    if not plan_ref:
+        console.print("[yellow]Uso: /plan ver <nº o id> (el nº y el id corto salen en /plan listar)[/]")
+        return
+    plan_id = _resolve_plan_id(plan_ref)
     if not plan_id:
-        console.print("[yellow]Uso: /plan ver <plan_id>[/]")
+        console.print(f"[yellow]'{plan_ref}' coincide con varios planes: escribe más caracteres del id o su nº.[/]")
         return
 
     try:
@@ -944,7 +950,7 @@ def _show_training_plan(plan_id: str) -> None:
         return
 
     if not plan:
-        console.print(f"[yellow]No encontré el plan '{plan_id}'.[/]")
+        console.print(f"[yellow]No encontré el plan '{plan_ref}'. Mira /plan listar.[/]")
         return
 
     sessions = []
@@ -955,7 +961,7 @@ def _show_training_plan(plan_id: str) -> None:
         sessions = []
 
     lines = [
-        f"[bold]ID:[/] {plan.get('id', '—')}",
+        f"[bold]ID:[/] {_plan_short_id(plan.get('id', ''))}",
         f"[bold]Título:[/] {plan.get('title', '—')}",
         f"[bold]Estado:[/] {plan.get('status', '—')}",
         f"[bold]Objetivo:[/] {plan.get('objective', '—')}",
@@ -971,7 +977,7 @@ def _show_training_plan(plan_id: str) -> None:
         for s in sessions[:14]:
             lines.append(
                 f"- Semana {s.get('week_index', 1)} · Día {s.get('day_index', 1)} · "
-                f"{s.get('session_type', 'session')} · {s.get('duration_min') or 'n/d'} min · "
+                f"{_session_type_label(s.get('session_type'))} · {s.get('duration_min') or 'n/d'} min · "
                 f"{_session_intensity_label(s, profile)}"
             )
     else:
@@ -981,9 +987,13 @@ def _show_training_plan(plan_id: str) -> None:
     console.print(Panel("\n".join(lines), title="[bold blue]Detalle de plan[/]", border_style="blue"))
 
 
-def _activate_training_plan_cli(plan_id: str, agent: TrainerAgent) -> None:
+def _activate_training_plan_cli(plan_ref: str, agent: TrainerAgent) -> None:
+    if not plan_ref:
+        console.print("[yellow]Uso: /plan activar <nº o id> (el nº y el id corto salen en /plan listar)[/]")
+        return
+    plan_id = _resolve_plan_id(plan_ref)
     if not plan_id:
-        console.print("[yellow]Uso: /plan activar <plan_id>[/]")
+        console.print(f"[yellow]'{plan_ref}' coincide con varios planes: escribe más caracteres del id o su nº.[/]")
         return
 
     try:
@@ -993,7 +1003,7 @@ def _activate_training_plan_cli(plan_id: str, agent: TrainerAgent) -> None:
         return
 
     if not activated:
-        console.print(f"[yellow]No se pudo activar el plan '{plan_id}'.[/]")
+        console.print(f"[yellow]No se pudo activar el plan '{plan_ref}'.[/]")
         return
 
     # Espejo backward-compatible en perfil local en memoria.
@@ -1011,85 +1021,55 @@ def _activate_training_plan_cli(plan_id: str, agent: TrainerAgent) -> None:
     console.print(f"[green]✓[/] Plan activado: [bold]{activated.get('title', plan_id)}[/]")
 
 
-def _create_training_plan_cli(agent: TrainerAgent) -> None:
-    profile = _load_user_profile()
-    goals = (profile or {}).get("goals", {})
+async def _create_training_plan_cli(agent: TrainerAgent) -> None:
+    """Crea y activa un plan estructurado con el motor de planes (28/10).
 
+    Antes guardaba solo lo del formulario (título, objetivo, semanas) sin ninguna sesión: Kairos no tenía nada que
+    leer y "¿qué me toca mañana?" acababa en "no puedo leer el plan". Ahora usa el mismo motor que el chat
+    (`_route_planning`): semanas y sesiones a partir del objetivo del perfil, del volumen real y de lo que se le
+    diga aquí, validadas y guardadas.
+    """
+    goals = (_load_user_profile() or {}).get("goals", {}) or {}
+    race = goals.get("target_race") or "sin objetivo (plan genérico de 8 semanas)"
+    race_date = goals.get("target_race_date") or "—"
     console.print(Panel.fit(
-        "Crea una planificación base persistida en BD.\n"
-        "Puedes ajustar sesiones y detalles después.",
+        "Genero un plan estructurado por semanas a partir de tu objetivo, tu volumen reciente y tu estado de carga.\n\n"
+        f"[bold]Objetivo:[/] {race}\n[bold]Fecha:[/] {race_date}\n"
+        f"[bold]Tiempo objetivo:[/] {goals.get('target_time') or '—'} · "
+        f"[bold]Horas/semana:[/] {goals.get('weekly_training_hours') or '—'}\n\n"
+        "[dim]Para cambiar el objetivo: /perfil editar objetivo[/]",
         title="[bold blue]Kairos Coach — Crear plan[/]",
         border_style="blue",
     ))
-
-    default_race = str(goals.get("target_race") or "")
-    default_weeks = "8"
-
-    title = Prompt.ask("Título del plan", default=(f"Plan hacia {default_race}" if default_race else "Plan personalizado")).strip()
-    objective = Prompt.ask("Objetivo principal", default=(default_race or "Mejora general")).strip()
-    description = Prompt.ask("Descripción breve", default="Plan base generado desde CLI").strip()
-    difficulty = Prompt.ask(
-        "Dificultad",
-        choices=["easy", "moderate", "hard"],
-        default="moderate",
-        show_choices=True,
+    notes = Prompt.ask(
+        "¿Algo que deba tener en cuenta? (días disponibles, lesiones, sesiones que no puedes hacer… Enter si nada)",
+        default="",
     ).strip()
+    message = "Crea un plan nuevo" + (f". A tener en cuenta: {notes}" if notes else "")
+    with console.status("[dim]Generando el plan…[/]"):
+        result = await agent._route_planning(message, force_new=True)
+    reply = result[0] if isinstance(result, tuple) else result
+    console.print(Markdown(str(reply or "")))
 
-    while True:
-        duration_weeks_raw = Prompt.ask("Duración (semanas)", default=default_weeks).strip()
-        try:
-            duration_weeks = max(0, int(duration_weeks_raw))
-            break
-        except ValueError:
-            console.print("[red]✗[/] Introduce un número entero de semanas.")
 
-    today_focus = Prompt.ask("Sesión sugerida para hoy (opcional)", default="").strip()
+def _plan_short_id(plan_id: str) -> str:
+    """Los 8 primeros caracteres del id: bastan para distinguir los planes de un atleta (el id completo es un UUID)."""
+    return str(plan_id or "")[:8]
 
-    plan_data = {
-        "target_race": goals.get("target_race"),
-        "target_race_date": goals.get("target_race_date"),
-        "target_time": goals.get("target_time"),
-    }
-    if today_focus:
-        plan_data["today_focus"] = today_focus
 
+def _resolve_plan_id(ref: str) -> str | None:
+    """Id completo de un plan a partir de su número en `/plan listar`, su id corto o el id completo (28/10)."""
+    ref = (ref or "").strip().lower()
+    if not ref:
+        return None
     try:
-        created = create_training_plan(
-            {
-                "title": title,
-                "description": description,
-                "objective": objective,
-                "difficulty": difficulty,
-                "duration_weeks": duration_weeks,
-                "status": "active",
-                "source": "cli_plan_create",
-                "plan_data": plan_data,
-            },
-            sessions=None,
-            change_reason="created_from_cli",
-        )
-    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
-        console.print(f"[bold red]Error creando plan:[/] {exc}")
-        return
-
-    # Espejo backward-compatible en perfil local.
-    profile["training_plan"] = {
-        "id": created.get("id"),
-        "title": created.get("title"),
-        "status": "active",
-        "active": True,
-        "today_focus": today_focus,
-        "source": created.get("source") or "cli_plan_create",
-        "target_race": goals.get("target_race"),
-        "target_race_date": goals.get("target_race_date"),
-    }
-    _save_user_profile(profile)
-    agent.user_profile = _load_user_profile()
-
-    console.print(
-        f"[green]✓[/] Plan creado y activado: [bold]{created.get('title', 'Plan')}[/] "
-        f"([dim]{str(created.get('id') or '')[:8]}...[/])"
-    )
+        plans = list_training_plans(include_archived=False)
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+        return ref  # sin lista, se intenta con lo que se escribió
+    if ref.isdigit() and 1 <= int(ref) <= len(plans):
+        return str(plans[int(ref) - 1].get("id") or "")
+    matches = [str(p.get("id") or "") for p in plans if str(p.get("id") or "").lower().startswith(ref)]
+    return matches[0] if len(matches) == 1 else (ref if not matches else None)
 
 
 def _show_load_trend_cli(agent: "TrainerAgent", cmd: str = "/carga") -> None:
@@ -1511,7 +1491,7 @@ def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
         elif action == "activate":
             _activate_training_plan_cli(arg or "", agent)
         elif action == "create":
-            _create_training_plan_cli(agent)
+            return False  # asíncrono (usa el motor de planes): lo atiende el bucle principal
         else:
             _show_plan_help()
         return True
@@ -1765,6 +1745,10 @@ async def main() -> None:
 
             if cmd in {"/proveedor", "/provider"}:
                 provider = await _switch_provider(agent, provider)
+                continue
+
+            if _parse_plan_command(cmd)[0] == "create":
+                await _create_training_plan_cli(agent)
                 continue
 
             if _handle_cli_command(user_input, agent):

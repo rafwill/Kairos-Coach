@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-28
 
+### Fixed (planes: /plan crear sin sesiones; visto por el usuario)
+- Señal (el usuario, al crear un plan): (1) `/plan crear` guardaba solo lo del formulario (título, objetivo, semanas) sin ninguna sesión, y tras crearlo no se veía nada del plan; (2) "¿qué me toca esta semana?" respondía solo título y fecha objetivo, y "¿qué me toca mañana?" acababa en "no puedo leer el contenido detallado del plan"; (3) el id del plan era el UUID de 32 caracteres, que había que escribir entero en `/plan ver` y `/plan activar`.
+- Qué se hizo: `/plan crear` usa el motor de planes, el mismo del chat (`_route_planning(..., force_new=True)`), y muestra el plan generado; pregunta solo qué tener en cuenta (días, lesiones…), porque semanas y sesiones salen del objetivo del perfil, el volumen real y el estado de carga. Los planes empiezan el lunes de esta semana (antes "hoy": la semana 1 iba de miércoles a martes) y un día fuera de sus semanas no tiene sesión (antes devolvía la de la semana 1, también con el plan acabado). La respuesta del estado del plan lista las sesiones de esta semana con fecha, tipo, duración e intensidad, y si el plan no tiene sesiones lo dice y propone `/plan crear` (también en el contexto del LLM). Tipos de sesión en español ("Tirada larga", no `long_run`). `/plan listar` numera los planes y muestra el id corto (8 caracteres); `/plan ver` y `/plan activar` aceptan el nº, el id corto o el completo.
+- Comprobado sin escribir con el perfil real: el motor da 11 semanas y 77 sesiones válidas hacia la media maratón del 19/01/2027. En vivo, con el plan vacío actual, las dos preguntas del usuario dicen que no tiene sesiones y proponen `/plan crear`. Tests: 817.
+
+
 Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, cobertura, lint ampliado y tiempos de `agent.log`); de ella salen los tres cambios siguientes. Lo que queda, en `docs/proximos_pasos.md` (Pendiente E).
 
 ### Fixed (S10: un rango con TSS detrás no es de FC)

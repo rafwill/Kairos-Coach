@@ -189,7 +189,7 @@ class RoutesMixin:
             daily_plan_decision=snapshot.get("daily_plan_decision") or {},
         )
         return assistant_reply
-    async def _route_planning(self, user_message: str):
+    async def _route_planning(self, user_message: str, force_new: bool = False):
         """Ruta funcional de planificación: generación/actualización estructurada, persistida y versionada en DB sin depender del LLM."""
         try:
             previous_plan_row = None
@@ -218,7 +218,8 @@ class RoutesMixin:
                     + "\n\nAjusta perfil/objetivo con `/perfil editar objetivo` y lo regenero."
                 )
             else:
-                wants_new = _wants_new_plan_intent(user_message)
+                # force_new: `/plan crear` (28/10) siempre crea uno nuevo; en el chat, solo si se pide.
+                wants_new = force_new or _wants_new_plan_intent(user_message)
                 if previous_plan and previous_plan.get("id") and not wants_new:
                     persisted = _storage.update_training_plan(
                         str(previous_plan.get("id")),
