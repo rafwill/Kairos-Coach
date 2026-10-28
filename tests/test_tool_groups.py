@@ -21,7 +21,7 @@ def _names(schema):
 
 
 def test_groups_cover_every_garmin_tool_once():
-    assert len(GARMIN_TOOLS) == 43 == sum(len(t) for t in tg.GROUPS.values())
+    assert len(GARMIN_TOOLS) == 44 == sum(len(t) for t in tg.GROUPS.values())
 
 
 def test_server_tools_are_all_grouped():

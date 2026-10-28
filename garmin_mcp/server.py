@@ -419,6 +419,49 @@ def _rhr_trend(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_STRESS_RANGE_MAX_DAYS = 28  # Garmin rechaza (400) un rango de estrés diario de más de 28 días (contando los dos extremos)
+
+
+def _stress_trend(args: dict[str, Any]) -> dict[str, Any]:
+    """Estrés día a día en un rango con get_daily_stress_stats (28/10): una petición por tramo de 28 días.
+
+    Con solo get_stress_summary, "¿qué tal mi estrés esta semana?" llevaba al LLM a pedir un día por vuelta (hasta
+    12 vueltas). Por día: nivel medio de Garmin y minutos en reposo, bajo, medio y alto.
+    """
+    start = _as_iso_day(args.get("start_date") or args.get("date"))
+    end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
+    days = _iso_date_iter(start, end)  # ordena y limita a 90 días como el resto de tendencias
+    by_day: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(days), _STRESS_RANGE_MAX_DAYS):
+        chunk = days[i:i + _STRESS_RANGE_MAX_DAYS]
+        for row in _invoke_with_auth_retry("get_daily_stress_stats", chunk[0], chunk[-1]) or []:
+            if isinstance(row, dict) and row.get("calendarDate"):
+                by_day[str(row["calendarDate"])] = row.get("values") or {}
+
+    def _minutes(values: dict, key: str) -> int | None:
+        seconds = values.get(key)
+        return round(seconds / 60) if isinstance(seconds, (int, float)) else None
+
+    trend = []
+    for day in days:
+        values = by_day.get(day) or {}
+        level = values.get("overallStressLevel")
+        trend.append({
+            "date": day,
+            "stress": level if isinstance(level, (int, float)) and level >= 0 else None,
+            "rest_min": _minutes(values, "restStressDuration"),
+            "low_min": _minutes(values, "lowStressDuration"),
+            "medium_min": _minutes(values, "mediumStressDuration"),
+            "high_min": _minutes(values, "highStressDuration"),
+        })
+    return {
+        "start_date": days[0],
+        "end_date": days[-1],
+        "days_with_data": sum(1 for row in trend if row["stress"] is not None),
+        "trend": trend,
+    }
+
+
 # Endpoint de Garmin que usa get_max_metrics; admite rango, pero la librería solo lo llama con un día.
 _MAX_METRICS_URL = "/metrics-service/metrics/maxmet/daily"
 
@@ -543,6 +586,8 @@ def _dispatch(tool_name: str, args: dict[str, Any]) -> Any:
         return _vo2max_trend(args)
     if tool_name == "get_rhr_trend":
         return _rhr_trend(args)
+    if tool_name == "get_stress_trend":
+        return _stress_trend(args)
     if tool_name == "get_activities_fordate":
         return _activities_fordate(args)
     if tool_name == "get_heart_rates_summary":
@@ -712,6 +757,14 @@ def get_stress_summary(date: Day = None):
     return _dispatch("get_stress_summary", {"date": date})
 
 
+@_tool("get_stress_trend", "Tendencia de estrés",
+       "Estrés día a día en un rango (máximo 90 días): nivel medio de Garmin y minutos en reposo, bajo, medio y "
+       "alto. Para comparar periodos (esta semana y la pasada, dos meses), un solo rango que los cubra a los dos. "
+       "Para el detalle de un solo día, get_stress_summary.")
+def get_stress_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
+    return _dispatch("get_stress_trend", {"start_date": start_date, "end_date": end_date, "date": date})
+
+
 @_tool("get_respiration_summary", "Respiración del día",
        "Frecuencia respiratoria del día y de la noche (media, mínima y máxima).")
 def get_respiration_summary(date: Day = None):
@@ -817,7 +870,7 @@ def get_hrv_trend(start_date: StartDate = None, end_date: EndDate = None, date: 
 
 @_tool("get_rhr_trend", "Tendencia de FC en reposo",
        "FC en reposo día a día en un rango (máximo 90 días), con una sola consulta a Garmin. Para ver cómo "
-       "evoluciona o comparar periodos; para un solo día, get_rhr_day.")
+       "evoluciona o comparar periodos, un solo rango que los cubra a los dos; para un solo día, get_rhr_day.")
 def get_rhr_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_rhr_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 

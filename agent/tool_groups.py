@@ -26,7 +26,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
         "get_training_readiness", "get_morning_training_readiness",
     ),
     "dia_a_dia": (
-        "get_stats", "get_heart_rates_summary", "get_stress_summary", "get_all_day_stress", "get_all_day_events",
+        "get_stats", "get_heart_rates_summary", "get_stress_summary", "get_stress_trend", "get_all_day_stress", "get_all_day_events",
         "get_respiration_summary", "get_spo2_data", "get_daily_steps", "get_hydration_data",
     ),
     "rendimiento": (

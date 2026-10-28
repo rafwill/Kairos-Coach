@@ -162,6 +162,7 @@ def _normalize_trend_date_range(tool_name: str, arguments: dict) -> dict:
         "get_vo2max_trend": 90,
         "get_hrv_trend": 30,
         "get_rhr_trend": 90,
+        "get_stress_trend": 90,
     }
     max_days = max_days_by_tool.get(tool_name)
     if not max_days:

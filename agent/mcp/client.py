@@ -191,6 +191,7 @@ GARMIN_ESSENTIAL_TOOLS: tuple[str, ...] = (
     "get_training_effect",
     "get_hrv_trend",
     "get_rhr_trend",
+    "get_stress_trend",
     "get_vo2max_trend",
     # Rendimiento avanzado
     "get_endurance_score",

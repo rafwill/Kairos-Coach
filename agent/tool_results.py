@@ -224,7 +224,7 @@ def _compact_personal_records(data: list) -> str:
 # Tools que devuelven una serie diaria dentro de un objeto ({..., "trend": [{date, ...}, ...]}).
 # La poda genérica deja 4 elementos de cada lista anidada: con 15 días el LLM recibía 4 e inventaba el resto.
 _DAILY_SERIES_TOOLS = {"get_hrv_trend": "trend", "get_training_load_trend": "trend", "get_vo2max_trend": "trend",
-                       "get_rhr_trend": "trend"}
+                       "get_rhr_trend": "trend", "get_stress_trend": "trend"}
 
 
 def _daily_series_summary(rows: list[dict], columns: list[str]) -> dict:

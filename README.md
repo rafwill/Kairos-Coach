@@ -108,8 +108,8 @@ agent/
   mcp/
     client.py            cliente MCP: arranca el servidor, sesión stdio y llamadas a tools
     contracts.py         contratos de argumentos, normalización y caché de las tools
-garmin_mcp/              servidor MCP de Garmin Connect (43 tools, solo lectura), independiente de agent/
-  README.md              arranque, configuración y catálogo de las 43 tools
+garmin_mcp/              servidor MCP de Garmin Connect (44 tools, solo lectura), independiente de agent/
+  README.md              arranque, configuración y catálogo de las 44 tools
   server.py              definición de las tools; arranque: python -m garmin_mcp
 prompts/                 todo el texto que recibe el LLM: system prompt, reglas de entrenador y
                          plantillas por familia (system/, coaching/, rescue/, activity_analysis/, diabetes/)
@@ -145,7 +145,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 
 - **Tests:** no necesitan red. Los pasan el pre-commit y la CI.
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
-- **`healthcheck_mcp`:** llama a las 43 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
+- **`healthcheck_mcp`:** llama a las 44 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
 - **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`; no lee ni escribe la memoria del atleta); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
 - Las salidas con datos reales van a `.tmp/`, que está en `.gitignore`.
 
@@ -157,7 +157,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Capas, tablas de Supabase, flujos de arranque, cálculo y chat, MCP y seguridad |
 | [`docs/Harness.md`](docs/Harness.md) | Guías y sensores que rodean al LLM (qué existe, dónde vive y su estado) y rúbrica de la batería |
 | [`docs/proximos_pasos.md`](docs/proximos_pasos.md) | Pendientes y descartados |
-| [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración, problemas frecuentes (429/403, certificados) y catálogo de las 43 tools (generado) |
+| [`garmin_mcp/README.md`](garmin_mcp/README.md) | Servidor MCP: arranque, configuración, problemas frecuentes (429/403, certificados) y catálogo de las 44 tools (generado) |
 | [`CHANGELOG.md`](CHANGELOG.md) | Cambios (los pendientes, en `docs/proximos_pasos.md`) |
 
 ## Privacidad

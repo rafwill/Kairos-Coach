@@ -22,6 +22,7 @@ Se reescribe al final de cada sesión.
 1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`.** Usar Kairos unos días con preguntas reales y revisar juntos cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7). En concreto:
    - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales, y si con las guías G13 (calendario) y G14 (HRV calculada) del 26/10 bajan los saltos de S25, S27 y S28.
    - **S27, falsos positivos vistos el 28/10** (batería 20261028_141326, preguntas 8 y 9): "mañana" dicho desde otro día del texto ("Dom 01 · … Revisa HRV mañana lunes" en una fila de plan; "Mañana (viernes 30)" después de la sesión del jueves 29). S27 lo mide siempre desde hoy y el reintento no lo arregla porque no hay error. Idea: no juzgar "mañana" en una línea o fila que empieza por otro día o fecha.
+   - **Cifras inventadas fuera de la carga** (28/10, `estres_2`, pregunta 2): para comparar el estrés de dos semanas el LLM no pidió el detalle de esta semana y se inventó los minutos por día (510 min en reposo el 26/10; Garmin: 1.097). S14 solo vigila cifras de carga: mirar con preguntas reales si hace falta un sensor de cifras que no salen de las tools.
    - Enrutado: cada pregunta real mal enrutada va al banco de frases (`PHRASE_BANK` en `tests/test_tool_router.py`) antes de tocar los detectores. Mirar también si salta `[G15]` (marco de hoy en el bucle con tools) y si S15 lo hace cumplir.
 
 ### B. Chat y LLM
@@ -45,7 +46,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15, los totales del periodo, los puntos 9 a 11 y el rendimiento (CHANGELOG).
 
 7. **Dividir `tests/test_trainer_agent.py`** (≈ 7.000 líneas) como se dividió `agent/trainer_agent.py` el 28/10 (un fichero de tests por módulo), cuando haga falta tocarlo; sin prisa: los tests ya importan cada función de su módulo.
-8. **Bucle con tools, lo que queda tras el 28/10** (rendimiento 8a, 8b y 8c hechos; CHANGELOG). Medir con `docs/bateria_bucle_preguntas.txt` y `[TOOL] iter=N pide:`. (a) El estrés de la semana se sigue pidiendo día a día (`get_stress_summary`, 3–4 vueltas): una tool de rango como `get_rhr_trend`, si `garminconnect` tiene el endpoint. (b) El juez da por buena la respuesta de tope del bucle ("la consulta requirió demasiadas llamadas… reformula"): debería contar como fallo (cambio de rúbrica: decidirlo antes). (c) Lo que queda del arranque (≈ 2,2 s de importar `openai` y `mcp`, ≈ 1,6 s del servidor MCP) no se ha tocado.
+8. **Arranque, lo que queda** (8c, en curso el 28/10): importar `openai` y `mcp` (≈ 1,5 s) y arrancar el servidor MCP (≈ 1,6 s). Hechos el 28/10: estrés de un rango en una llamada (`get_stress_trend`) y la regla del juez para la respuesta de tope del bucle (CHANGELOG).
 
 ## Descartado
 

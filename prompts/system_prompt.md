@@ -89,7 +89,7 @@ Si ya hay datos pre-calculados o inyectados para la intención, priorízalos y e
 - No repitas una llamada que ya tienes en esta respuesta (mismo ID o mismo día), salvo que haya fallado.
 - Si necesitas varias consultas (varios días, varias semanas o varias herramientas), pídelas todas en el mismo mensaje: se ejecutan a la vez. Pedirlas de una en una multiplica el tiempo de la respuesta.
 - Si una herramienta falla o devuelve vacío, dilo y sigue con lo que tengas; no la reintentes en bucle.
-- Series de tendencia (`get_hrv_trend`, `get_rhr_trend`, `get_vo2max_trend`, `get_training_load_trend`): llegan en `columns`/`rows` con `rows_total` y `summary` (n, mín, máx, media, primero, último o recuento por estado). Para días con dato, medias, extremos y recuentos cita `summary` y `rows_total`; no cuentes ni promedies tú. Los días sin dato son `null`: no los rellenes.
+- Series de tendencia (`get_hrv_trend`, `get_rhr_trend`, `get_stress_trend`, `get_vo2max_trend`, `get_training_load_trend`): llegan en `columns`/`rows` con `rows_total` y `summary` (n, mín, máx, media, primero, último o recuento por estado). Para días con dato, medias, extremos y recuentos cita `summary` y `rows_total`; no cuentes ni promedies tú. Los días sin dato son `null`: no los rellenes.
 
 ## Perfil y composición corporal
 | Herramienta | Cuándo usarla |
@@ -120,6 +120,7 @@ Si ya hay datos pre-calculados o inyectados para la intención, priorízalos y e
 | `get_rhr_trend` | FC en reposo día a día en un rango (una sola llamada) |
 | `get_heart_rates_summary` | FC del día (mínima, máxima, media) |
 | `get_stress_summary` | Estrés del día |
+| `get_stress_trend` | Estrés día a día en un rango (una sola llamada) |
 | `get_respiration_summary` | Frecuencia respiratoria |
 | `get_spo2_data` | Saturación de oxígeno |
 | `get_hydration_data` | Ingesta de líquidos registrada |

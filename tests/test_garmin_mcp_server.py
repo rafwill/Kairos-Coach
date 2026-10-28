@@ -118,6 +118,29 @@ def test_rhr_trend_asks_garmin_once_for_the_whole_range(monkeypatch):
                             {"date": "2026-09-03", "rhr": 45.0}]
 
 
+def test_stress_trend_asks_garmin_by_28_day_windows(monkeypatch):
+    # 28/10: con solo get_stress_summary el LLM pedía un día por vuelta (12 vueltas en una semana). Garmin
+    # rechaza rangos de más de 28 días (comprobado en vivo: 29 días ya da 400): 60 días van en tres peticiones.
+    calls = []
+
+    class _Client:
+        def get_daily_stress_stats(self, start, end):
+            calls.append((start, end))
+            return [{"calendarDate": start, "values": {"overallStressLevel": 25, "restStressDuration": 3600,
+                                                       "lowStressDuration": 600, "mediumStressDuration": 120,
+                                                       "highStressDuration": 0}},
+                    {"calendarDate": end, "values": {"overallStressLevel": -1}}]
+
+    monkeypatch.setattr(server, "_garmin_client", lambda: _Client())
+    out = server._stress_trend({"start_date": "2026-09-01", "end_date": "2026-10-30"})
+
+    assert calls == [("2026-09-01", "2026-09-28"), ("2026-09-29", "2026-10-26"), ("2026-10-27", "2026-10-30")]
+    assert len(out["trend"]) == 60 and out["days_with_data"] == 3
+    assert out["trend"][0] == {"date": "2026-09-01", "stress": 25, "rest_min": 60, "low_min": 10, "medium_min": 2,
+                               "high_min": 0}
+    assert out["trend"][27]["stress"] is None  # -1: Garmin sin dato ese día
+
+
 def test_hrv_trend_says_which_days_failed(monkeypatch):
     # 27/10: los días que fallaban se descartaban sin rastro (una tendencia con un 429 salía con huecos).
     class _Flaky:
@@ -458,7 +481,7 @@ def test_all_tools_follow_mcp_style_guide():
     import asyncio
 
     tools = asyncio.run(server.mcp.list_tools())
-    assert len(tools) == 43
+    assert len(tools) == 44
     for tool in tools:
         assert tool.title, tool.name
         assert tool.description and tool.description.strip(), tool.name

@@ -1,6 +1,6 @@
 # garmin_mcp — servidor MCP de Garmin Connect
 
-Servidor [MCP](https://modelcontextprotocol.io) que expone **43 tools de solo lectura** sobre los datos de Garmin Connect: actividades, salud diaria, sueño, HRV, rendimiento, zonas de FC y récords. Es el **servidor** de la arquitectura MCP de Kairos: Kairos (`agent/`) es el host y `agent/mcp/` su cliente (ver [`docs/arquitectura.md`](../docs/arquitectura.md)).
+Servidor [MCP](https://modelcontextprotocol.io) que expone **44 tools de solo lectura** sobre los datos de Garmin Connect: actividades, salud diaria, sueño, HRV, rendimiento, zonas de FC y récords. Es el **servidor** de la arquitectura MCP de Kairos: Kairos (`agent/`) es el host y `agent/mcp/` su cliente (ver [`docs/arquitectura.md`](../docs/arquitectura.md)).
 
 Es un paquete independiente: no importa nada de `agent/` (lo comprueba un test), así que cualquier cliente MCP puede usarlo.
 
@@ -63,12 +63,12 @@ La mayoría de las tools llaman a un método de la librería y devuelven su resp
 Al añadir una tool: definirla en `server.py` con `_tool(nombre, título, descripción)` y parámetros descritos con `Annotated[..., Field(description=...)]`, añadirla a una categoría en `tools/gen_mcp_docs.py`, regenerar este catálogo y, si Kairos debe usarla, añadirla en el host al catálogo esencial (`GARMIN_ESSENTIAL_TOOLS` en `agent/mcp/client.py`) y a los contratos de argumentos (`TOOL_CONTRACTS_V1` en `agent/mcp/contracts.py`). Los tests del catálogo fallan si falta una de las dos o si cambia el número de tools (`test_essentials_catalog_counts_and_uniqueness`, `test_contract_registry_covers_all_essential_tools`).
 <!-- BEGIN: catálogo generado por tools/gen_mcp_docs.py (no editar a mano) -->
 
-## Catálogo de tools (43)
+## Catálogo de tools (44)
 
 | Categoría | Tools |
 |---|---|
 | Actividades | [`get_activities`](#get-activities), [`get_activities_by_date`](#get-activities-by-date), [`get_activities_fordate`](#get-activities-fordate), [`get_activity`](#get-activity), [`get_activity_details`](#get-activity-details), [`get_activity_splits`](#get-activity-splits), [`get_activity_hr_in_timezones`](#get-activity-hr-in-timezones), [`get_activity_power_in_timezones`](#get-activity-power-in-timezones), [`get_activity_exercise_sets`](#get-activity-exercise-sets), [`get_training_effect`](#get-training-effect) |
-| Salud diaria | [`get_stats`](#get-stats), [`get_heart_rates_summary`](#get-heart-rates-summary), [`get_rhr_day`](#get-rhr-day), [`get_stress_summary`](#get-stress-summary), [`get_all_day_stress`](#get-all-day-stress), [`get_all_day_events`](#get-all-day-events), [`get_body_battery`](#get-body-battery), [`get_respiration_summary`](#get-respiration-summary), [`get_spo2_data`](#get-spo2-data), [`get_daily_steps`](#get-daily-steps), [`get_hydration_data`](#get-hydration-data), [`get_body_composition`](#get-body-composition) |
+| Salud diaria | [`get_stats`](#get-stats), [`get_heart_rates_summary`](#get-heart-rates-summary), [`get_rhr_day`](#get-rhr-day), [`get_stress_summary`](#get-stress-summary), [`get_stress_trend`](#get-stress-trend), [`get_all_day_stress`](#get-all-day-stress), [`get_all_day_events`](#get-all-day-events), [`get_body_battery`](#get-body-battery), [`get_respiration_summary`](#get-respiration-summary), [`get_spo2_data`](#get-spo2-data), [`get_daily_steps`](#get-daily-steps), [`get_hydration_data`](#get-hydration-data), [`get_body_composition`](#get-body-composition) |
 | Sueño y recuperación | [`get_sleep_data`](#get-sleep-data), [`get_sleep_summary`](#get-sleep-summary), [`get_hrv_data`](#get-hrv-data), [`get_hrv_trend`](#get-hrv-trend), [`get_rhr_trend`](#get-rhr-trend), [`get_training_readiness`](#get-training-readiness), [`get_morning_training_readiness`](#get-morning-training-readiness) |
 | Rendimiento | [`get_training_status`](#get-training-status), [`get_training_load_trend`](#get-training-load-trend), [`get_vo2max_trend`](#get-vo2max-trend), [`get_endurance_score`](#get-endurance-score), [`get_fitnessage_data`](#get-fitnessage-data), [`get_lactate_threshold`](#get-lactate-threshold), [`get_heart_rate_zones`](#get-heart-rate-zones), [`get_cycling_ftp`](#get-cycling-ftp), [`get_race_predictions`](#get-race-predictions), [`get_personal_record`](#get-personal-record) |
 | Resúmenes semanales | [`get_weekly_steps`](#get-weekly-steps), [`get_weekly_intensity_minutes`](#get-weekly-intensity-minutes), [`get_weekly_stress`](#get-weekly-stress) |
@@ -240,6 +240,19 @@ Estrés del día según Garmin (media, máximo y reparto por niveles).
 
 *solo lectura, no destructiva, idempotente, consulta un servicio externo (Garmin)*
 
+<a id="get-stress-trend"></a>
+#### `get_stress_trend` — Tendencia de estrés
+
+Estrés día a día en un rango (máximo 90 días): nivel medio de Garmin y minutos en reposo, bajo, medio y alto. Para comparar periodos (esta semana y la pasada, dos meses), un solo rango que los cubra a los dos. Para el detalle de un solo día, get_stress_summary.
+
+| Parámetro | Tipo | Por defecto | Descripción |
+|---|---|---|---|
+| `start_date` | string (opcional) | — | Inicio del rango, AAAA-MM-DD (incluido). |
+| `end_date` | string (opcional) | — | Fin del rango, AAAA-MM-DD (incluido). Por defecto, igual que el inicio. |
+| `date` | string (opcional) | — | Alternativa a start_date/end_date para un solo día (AAAA-MM-DD). |
+
+*solo lectura, no destructiva, idempotente, consulta un servicio externo (Garmin)*
+
 <a id="get-all-day-stress"></a>
 #### `get_all_day_stress` — Estrés a lo largo del día
 
@@ -383,7 +396,7 @@ HRV nocturna día a día en un rango (máximo 90 días).
 <a id="get-rhr-trend"></a>
 #### `get_rhr_trend` — Tendencia de FC en reposo
 
-FC en reposo día a día en un rango (máximo 90 días), con una sola consulta a Garmin. Para ver cómo evoluciona o comparar periodos; para un solo día, get_rhr_day.
+FC en reposo día a día en un rango (máximo 90 días), con una sola consulta a Garmin. Para ver cómo evoluciona o comparar periodos, un solo rango que los cubra a los dos; para un solo día, get_rhr_day.
 
 | Parámetro | Tipo | Por defecto | Descripción |
 |---|---|---|---|
