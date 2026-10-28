@@ -39,7 +39,7 @@ Capas, de abajo arriba (cada una importa solo de las de debajo, nunca de `traine
 | Rutas | `routes/` (load, period, sleep, records, profile, day_data, db_count) y `router` |
 | Mixins del agente | `load_compute` (LoadMixin), `startup` (StartupMixin), `context` (ContextMixin), `llm_calls` (LLMMixin), `routes/handlers` (RoutesMixin), `prefetch` (PrefetchMixin), `tool_loop` (ToolLoopMixin) |
 
-Tests: `tests/agent_patch.py` (`patch_all`, `patch_everywhere`) sustituye una función en todos los módulos que la usan; sustituirla solo en uno dejaría a los demás con la de verdad.
+Tests: un fichero por módulo o familia (`test_routes.py`, `test_routes_load.py`, `test_tool_loop.py`, `test_load_compute.py`, `test_startup.py`, `test_context.py`, `test_llm_calls.py`, `test_plans.py`…; antes `test_trainer_agent.py`, 7.090 líneas). `tests/agent_patch.py` (`patch_all`, `patch_everywhere`) sustituye una función en todos los módulos que la usan (sustituirla solo en uno dejaría a los demás con la de verdad) y `tests/agent_fixtures.py` tiene el fixture que evita leer `activity_tss` real.
 
 - **Datos (Python):** Garmin aporta las señales base y las zonas de FC del reloj; Kairos calcula en Python todo lo derivado (TSS, CTL/ATL/TSB, ritmos, hidratación) antes de entregarlo al LLM.
 - **Coaching (LLM):** interpreta los datos ya calculados con el perfil del atleta. Nunca hace aritmética ni inventa métricas.

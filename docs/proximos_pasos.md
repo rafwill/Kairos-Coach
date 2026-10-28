@@ -10,10 +10,10 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 28/10/2026** (ordenador 1). 807 tests; batería 25/25; batería del bucle 10/10.
+**Sesión del 28/10/2026** (ordenador 1). 811 tests; batería 25/25; batería del bucle 10/10.
 
-- Hecho: ordenador 1 alineado con el historial reescrito; ticket de GitHub Support **4918285** abierto (purga de los 80 commits viejos, de `eeee21b` a `716cd0c`; cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API); revisión completa del proyecto y sus arreglos: errores del proveedor que cerraban Kairos, G15, totales del periodo y récords, tests de los lectores y del cliente MCP (11), avisos de Garmin (9), precarga de "mi último trail" (10) rendimiento (8b caché de Supabase, 8c arranque en paralelo, 8a bucle con tools con `get_rhr_trend` y `kairos_load_trends` sin poda) y `trainer_agent.py` dividido en módulos (7; de 12.363 a 200 líneas, mapa en `docs/arquitectura.md`). Último commit: el del punto 7 ("refactor: _answer en tabla de rutas…"); lo del 8a y anteriores ya está en GitHub, lo del 7 sin subir hasta orden expresa. En el ordenador 2, al empezar: `git pull`.
-- **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1, 2 y 8, con las preguntas mal enrutadas al banco de frases. Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
+- Hecho: ordenador 1 alineado con el historial reescrito; ticket de GitHub Support **4918285** abierto (purga de los 80 commits viejos, de `eeee21b` a `716cd0c`; cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API); revisión completa del proyecto y todos sus puntos (CHANGELOG del 28/10): errores del proveedor, G15, totales y récords, avisos de Garmin, precarga de "mi último trail", rendimiento (caché de Supabase, arranque en paralelo y con `openai`/`mcp` en un hilo, bucle con `get_rhr_trend`, `get_stress_trend` y `kairos_load_trends` sin poda), regla del juez para la respuesta de tope del bucle y `trainer_agent.py` y sus tests divididos en módulos (mapa en `docs/arquitectura.md`). Último commit: "test: tests/test_trainer_agent.py dividido…". En el ordenador 2, al empezar: `git pull`.
+- **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1 y 2, con las preguntas mal enrutadas al banco de frases y las cifras inventadas que aparezcan (punto 1). Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
 ## Pendiente
 
@@ -45,8 +45,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15, los totales del periodo, los puntos 9 a 11 y el rendimiento (CHANGELOG).
 
-7. **Dividir `tests/test_trainer_agent.py`** (≈ 7.000 líneas) como se dividió `agent/trainer_agent.py` el 28/10 (un fichero de tests por módulo), cuando haga falta tocarlo; sin prisa: los tests ya importan cada función de su módulo.
-8. **Arranque del servidor MCP** (2,6–3,8 s, otro proceso que importa `garminconnect` y FastMCP; lo demás del rendimiento, hecho el 28/10: CHANGELOG). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
+7. **Arranque del servidor MCP** (2,6–3,8 s, otro proceso que importa `garminconnect` y FastMCP; lo demás del rendimiento, hecho el 28/10: CHANGELOG). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
 
 ## Descartado
 

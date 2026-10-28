@@ -6,6 +6,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, cobertura, lint ampliado y tiempos de `agent.log`); de ella salen los tres cambios siguientes. Lo que queda, en `docs/proximos_pasos.md` (Pendiente E).
 
+### Changed (tests/test_trainer_agent.py dividido; pendiente 7, segunda parte)
+- `tests/test_trainer_agent.py` (7.090 líneas, 61 clases) pasa a 12 ficheros por módulo o familia (`test_dates`, `test_hr_profile`, `test_tool_results`, `test_context`, `test_llm_calls`, `test_activity_analysis`, `test_routes_load`, `test_routes`, `test_startup`, `test_load_compute`, `test_plans`, `test_tool_loop`). Por clases enteras (algunas tienen ayudantes propios), salvo los tres tests del refresco de la carga que estaban en la clase del formato del análisis (ahora `TestLoadRefreshWindow`). El fixture autouse que evita leer `activity_tss` real va a `tests/agent_fixtures.py` y lo importa cada fichero, para que se aplique a los mismos tests que antes.
+- Criterio: los mismos 811 tests, en verde todos juntos y cada fichero por separado. Resultado: 811 y los 12 por separado en verde.
+
 ### Changed (arranque: openai y mcp en un hilo; pendiente 8c, segunda parte)
 - Señal: importar `agent.main` costaba 2,2–3,5 s antes de empezar nada, sobre todo `openai` (≈ 0,9 s, sus tipos) y el paquete `mcp` (≈ 0,6 s, que arrastra el servidor FastMCP aunque el host solo use el cliente).
 - Qué se hizo: los dos se importan al usarlos (`_build_llm_client`, `_provider_error()` para `openai.APIError`, el cliente MCP y `_mcp_error()`; en el resto de módulos `ClientSession` solo se usa en anotaciones, bajo `TYPE_CHECKING`) y `main()` los precarga en un hilo al empezar (`_warm_imports`), mientras el arranque espera a Supabase y al servidor MCP. Importar `agent.main` baja a 1,3 s.
