@@ -9,6 +9,8 @@ from datetime import date, timedelta
 from typing import Any
 
 
+from agent import run_plan as _run_plan
+from agent.hr_profile import _resolve_hr_zones, _resolve_running_threshold_pace_for_date
 from agent.dates import (
     _format_iso_date_es,
     _safe_float,
@@ -36,6 +38,26 @@ def _plan_week_lines(plan: dict, profile: dict, monday: date | None = None) -> l
     """
     if not (plan or {}).get("sessions"):
         return ["", "## 🗓️ Esta semana", "El plan no tiene sesiones: créalo de nuevo con `/plan crear` para generarlas."]
+    if _is_block_plan(plan) and _plan_start(plan):
+        # Plan por bloques (28/10): cada día con fecha, sesión, duración, km, TSS y sus tramos.
+        monday = monday or (date.today() - timedelta(days=date.today().weekday()))
+        start = _plan_start(plan)
+        week_index = (monday - start).days // 7 + 1
+        rows = sorted([s for s in plan["sessions"] if int(s.get("week_index") or 0) == week_index],
+                      key=lambda s: int(s.get("day_index") or 1))
+        if not rows:
+            return ["", "## 🗓️ Esta semana", "Esta semana queda fuera de las fechas del plan."]
+        zones, _ = _resolve_hr_zones(profile or {}, "running")
+        phases = (plan.get("plan_data") or {}).get("phases") or []
+        phase = phases[week_index - 1] if week_index - 1 < len(phases) else ""
+        deload = week_index in set((plan.get("plan_data") or {}).get("deload_weeks") or [])
+        out = ["", "## 🗓️ Esta semana", _run_plan.week_header(week_index, start, phase, deload, rows), ""]
+        for s in rows:
+            day = monday + timedelta(days=int(s.get("day_index") or 1) - 1)
+            sl = _run_plan.session_lines(s, day, zones)
+            out.append(f"- **{sl[0]}{' (hoy)' if day == date.today() else ''}**")
+            out += [f"  - {x.strip()}" for x in sl[1:]]
+        return out
     monday = monday or (date.today() - timedelta(days=date.today().weekday()))
     rows = []
     for offset in range(7):
@@ -105,6 +127,7 @@ def _build_training_plan_status_markdown(profile: dict) -> str:
         "## 📊 Métricas clave",
         "| Métrica | Valor | Fuente |",
         "|---|---|---|",
+        "| Plan activo | Sí | perfil/DB |",
         f"| Estado del plan | {status} | plan activo |",
         f"| Objetivo | {race} | plan/perfil |",
         f"| Fecha objetivo | {race_date} | plan/perfil |",
@@ -495,6 +518,20 @@ def _generate_structured_plan_payload(
         load_notes.append("Inicio con fatiga: primera semana al 80 % y calidad a RPE 5-6.")
     if past_race_note:
         load_notes.append(past_race_note)
+
+    # Carrera en asfalto con ritmo umbral conocido: plan por bloques con descarga, ritmos de Friel sobre el umbral y
+    # tramos detallados (agent/run_plan.py, 28/10). Trail, bici y triatlón siguen con el motor de abajo.
+    run_threshold = _resolve_running_threshold_pace_for_date(profile, date.today().isoformat())
+    # Manda la carrera objetivo, no el deporte principal del perfil (un atleta de trail puede preparar una media).
+    explicit_other = any(k in user_lower for k in ("trail", "montaña", "mtb", "bici", "ciclismo", "triatl"))
+    road_race = _run_plan.race_distance_km(race) is not None and not any(
+        k in race.lower() for k in ("trail", "ultra", "montaña", "monte"))
+    runner_without_goal = not race_date and not any(k in primary for k in ("trail", "tri", "multi", "cycl", "bici"))
+    if run_threshold and not explicit_other and (road_race or runner_without_goal):
+        return _generate_run_plan_payload(
+            profile, race, race_date, target_time, run_threshold, weekly_hours, constraints, load_context,
+            difficulty, difficulty_reason, load_notes, injuries, user_message, base_plan, wants_gym,
+        )
 
     taper_weeks = 2 if duration_weeks >= 10 else 1
     peak_weeks = max(1, int(round(duration_weeks * 0.2)))
@@ -1028,6 +1065,146 @@ def _generate_structured_plan_payload(
     return plan, sessions
 
 
+def _run_plan_layout(constraints: dict) -> dict:
+    """Días de la semana del plan de carrera según la disponibilidad del atleta (descanso, calidad, tirada, fuerza)."""
+    available = set(int(d) for d in (constraints.get("available_days") or [])) or set(range(1, 8))
+    unavailable = set(range(1, 8)) - available
+    long_pref = [int(d) for d in (constraints.get("long_day_preferences") or []) if int(d) in available]
+    long_day = long_pref[0] if long_pref else (7 if 7 in available else max(available))
+    rest_days = set(unavailable)
+    for d in (5, 1, 3):
+        if len(rest_days) >= max(1, int(constraints.get("min_rest_days") or 1)):
+            break
+        if d != long_day:
+            rest_days.add(d)
+    free = [d for d in range(1, 8) if d not in rest_days and d != long_day]
+    quality = []
+    for d in [2, 4, 3, 1, 6, 5]:
+        if d in free and all(abs(d - q) >= 2 for q in quality) and abs(d - long_day) >= 2 and len(quality) < 2:
+            quality.append(d)
+    while len(quality) < 2 and free:
+        extra = next((d for d in free if d not in quality), None)
+        if extra is None:
+            break
+        quality.append(extra)
+    quality = sorted(quality[:2]) if len(quality) >= 2 else [2, 4]
+    strength = next((d for d in (1, 3, 6) if d in free and d not in quality), None)
+    return {"long_day": long_day, "quality_days": tuple(quality), "rest_days": tuple(sorted(rest_days)),
+            "strength_day": strength}
+
+
+def _generate_run_plan_payload(profile, race, race_date, target_time, threshold, weekly_hours, constraints, load_context,
+                               difficulty, difficulty_reason, load_notes, injuries, user_message, base_plan, wants_gym):
+    """Plan de carrera en asfalto por bloques (agent/run_plan.py) con el formato de plan y sesiones de siempre."""
+    today = date.today()
+    start = today - timedelta(days=today.weekday())
+    if race_date:
+        race_day = date.fromisoformat(race_date)
+        race_label = race
+    else:
+        # Sin objetivo: bloque de 8 semanas que acaba con un test de 10K en domingo.
+        race_day = start + timedelta(weeks=7, days=6)
+        race_label = "Test de 10K"
+        target_time = ""
+    layout = _run_plan_layout(constraints)
+    if race_day.isoweekday() in layout["quality_days"] or race_day.isoweekday() == layout["long_day"]:
+        pass  # la semana de la carrera tiene su propio reparto
+    zones, _ = _resolve_hr_zones(profile, "running")
+    plan_data_run, sessions = _run_plan.build_run_plan(
+        race=race_label, race_date=race_day, target_time=target_time, threshold_pace=threshold, start=start,
+        weekly_minutes_goal=weekly_hours * 60, recent_weekly_minutes=load_context.get("recent_weekly_minutes"),
+        longest_recent_min=load_context.get("longest_recent_min"), long_day=layout["long_day"],
+        quality_days=layout["quality_days"], rest_days=layout["rest_days"], strength_day=layout["strength_day"],
+        hr_zones=zones,
+    )
+    weeks = max(s["week_index"] for s in sessions)
+    objective = f"Preparación para {race_label}" + (f" con objetivo de {target_time}" if target_time else "")
+    description = ("Plan por bloques con descarga (base → construcción → específico → afinamiento). Ritmos sobre el "
+                   f"umbral vigente ({_run_plan.fmt_pace(threshold)}/km) y el ritmo de carrera "
+                   f"({_run_plan.fmt_pace(plan_data_run['race_pace_sec_per_km'])}/km); FC de Garmin como referencia. "
+                   f"{difficulty_reason} {' '.join(load_notes)}").strip()
+    plan = {
+        "title": f"Plan hacia {race_label}",
+        "description": description,
+        "objective": objective,
+        "difficulty": difficulty,
+        "duration_weeks": weeks,
+        "status": "active",
+        "source": "agent_structured_plan",
+        "plan_data": {
+            **plan_data_run,
+            "target_race": race_label,
+            "target_race_date": race_day.isoformat(),
+            "target_time": target_time,
+            "weekly_training_hours": weekly_hours,
+            "injuries": injuries,
+            "difficulty_reason": difficulty_reason,
+            "start_date": start.isoformat(),
+            "constraints": constraints,
+            "layout": {k: list(v) if isinstance(v, tuple) else v for k, v in layout.items()},
+            "generation_note": (user_message or "")[:240],
+            "base_plan_id": (base_plan or {}).get("id"),
+            "load_context": {k: load_context.get(k) for k in ("recent_weekly_minutes", "longest_recent_min", "ctl", "atl",
+                                                               "tsb", "status") if load_context.get(k) is not None},
+            "target_pace_sec_per_km": plan_data_run["race_pace_sec_per_km"],
+        },
+    }
+    return plan, sessions
+
+
+def _is_block_plan(plan: dict | None) -> bool:
+    return str(((plan or {}).get("plan_data") or {}).get("method") or "") == "bloques_con_descarga"
+
+
+def _plan_start(plan: dict) -> date | None:
+    try:
+        return date.fromisoformat(str(((plan or {}).get("plan_data") or {}).get("start_date") or "")[:10])
+    except ValueError:
+        return None
+
+
+def _plan_detail_markdown(plan: dict, sessions: list[dict], profile: dict | None, weeks: list[int] | None = None) -> str:
+    """Plan de carrera por semanas: tabla de todas y el detalle de los días de `weeks` (por defecto esta y la siguiente)."""
+    start = _plan_start(plan) or date.today()
+    pd = plan.get("plan_data") or {}
+    phases = pd.get("phases") or []
+    deloads = set(pd.get("deload_weeks") or [])
+    by_week: dict[int, list[dict]] = {}
+    for s in sessions:
+        by_week.setdefault(int(s.get("week_index") or 1), []).append(s)
+    current = max(1, (date.today() - start).days // 7 + 1)
+    weeks = weeks or [w for w in (current, current + 1) if w in by_week]
+    zones, _ = _resolve_hr_zones(profile or {}, "running")
+    lines = [f"## 🗓️ {plan.get('title') or 'Plan'}",
+             f"{plan.get('objective') or ''} · ritmo umbral {_run_plan.fmt_pace(float(pd.get('threshold_pace_sec_per_km') or 0))}/km"
+             f" · ritmo de carrera {_run_plan.fmt_pace(float(pd.get('race_pace_sec_per_km') or 0))}/km", "",
+             "| Semana | Fechas | Fase | Tiempo | km | TSS |", "|---|---|---|---|---:|---:|"]
+    names = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento"}
+    for wi in sorted(by_week):
+        rows = by_week[wi]
+        monday = start + timedelta(weeks=wi - 1)
+        summ = [((r.get("structured_workout") or {}).get("summary") or {}) for r in rows]
+        phase = phases[wi - 1] if wi - 1 < len(phases) else ""
+        label = names.get(phase, phase) + (" · descarga" if wi in deloads else "")
+        lines.append(f"| {wi}{' (actual)' if wi == current else ''} | {monday.strftime('%d/%m')}–{(monday + timedelta(days=6)).strftime('%d/%m')} | "
+                     f"{label} | {_run_plan.fmt_duration(sum(float(x.get('duration_min') or 0) for x in summ))} | "
+                     f"{sum(float(x.get('distance_km') or 0) for x in summ):.0f} | {sum(float(x.get('tss') or 0) for x in summ):.0f} |")
+    for wi in weeks:
+        rows = sorted(by_week.get(wi, []), key=lambda r: int(r.get("day_index") or 1))
+        if not rows:
+            continue
+        phase = phases[wi - 1] if wi - 1 < len(phases) else ""
+        lines += ["", "### " + _run_plan.week_header(wi, start, phase, wi in deloads, rows)]
+        monday = start + timedelta(weeks=wi - 1)
+        for r in rows:
+            day = monday + timedelta(days=int(r.get("day_index") or 1) - 1)
+            sl = _run_plan.session_lines(r, day, zones)
+            lines.append(f"- **{sl[0]}**")
+            lines += [f"  - {x.strip()}" for x in sl[1:]]
+    lines += ["", "Otra semana: `/plan ver <nº> semana <n>`; todas: `/plan ver <nº> todo`."]
+    return "\n".join(lines)
+
+
 def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -> list[str]:
     """Valida la coherencia básica del plan estructurado antes de persistir."""
     errors: list[str] = []
@@ -1045,7 +1222,7 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
 
     by_week: dict[int, list[dict]] = {}
     allowed_intensity_classes = {"recovery", "endurance", "tempo", "threshold", "vo2"}
-    allowed_target_metrics = {"hr_zone", "ftp_pct", "rpe", "pace_pct"}
+    allowed_target_metrics = {"hr_zone", "ftp_pct", "rpe", "pace_pct", "pace"}
 
     def _validate_structured_workout(session: dict) -> list[str]:
         local_errors: list[str] = []
@@ -1235,6 +1412,10 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
             if any(k in str(s.get("session_type") or "").lower() for k in ("quality", "tempo", "hills"))
         )
         min_quality_sessions = min(2, max_quality_sessions)
+        if _is_block_plan(plan) and wi == max(by_week):
+            min_quality_sessions = 0  # semana de carrera: la carrera es la sesión clave
+        elif _is_block_plan(plan) and wi in set((plan.get("plan_data") or {}).get("deload_weeks") or []):
+            min_quality_sessions = 1  # descarga: una sola sesión de calidad
         if len(quality_days) > max_quality_sessions:
             errors.append(f"La semana {wi} excede el máximo de sesiones de calidad ({max_quality_sessions}).")
             break
@@ -1309,6 +1490,8 @@ def _build_structured_plan_markdown(
     profile: dict | None = None,
 ) -> str:
     """Construye respuesta funcional del plan con estructura accionable."""
+    if _is_block_plan(plan):
+        return _plan_detail_markdown(plan, sessions, profile) + "\n\n## 🎯 Próximo paso\n" + str(change_summary or "")
     title = str(plan.get("title") or "Plan de entrenamiento").strip()
     objective = str(plan.get("objective") or "Objetivo no especificado").strip()
     difficulty = str(plan.get("difficulty") or "moderate").strip()

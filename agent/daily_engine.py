@@ -381,7 +381,22 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
             # La intensidad baja una zona de Garmin. Antes se multiplicaba target.range por el factor de
             # volumen (85-89 % del LTHR pasaba a 59,5-62,3 %).
             target = step.get("target")
-            if isinstance(target, dict) and str(target.get("metric") or "") == "hr_zone":
+            if isinstance(target, dict) and str(target.get("metric") or "") == "pace":
+                # Plan por bloques (28/10): la zona de ritmo baja un nivel y el rango se recalcula con el umbral.
+                from agent import run_plan as _run_plan
+
+                threshold = _safe_float(sw.get("threshold_pace"), 0.0)
+                key = str(target.get("pace_zone") or "")
+                if key == "RP" and threshold:
+                    key = _run_plan.Paces(threshold, threshold).zone_of(sum(target.get("range") or [0, 0]) / 2)
+                if threshold and key in _run_plan.ZONE_ORDER:
+                    lower = _run_plan.ZONE_ORDER[max(0, _run_plan.ZONE_ORDER.index(key) - intensity_levels)]
+                    if lower != key:
+                        new = _run_plan._target(_run_plan.Paces(threshold, threshold), lower)
+                        target.update({k: new[k] for k in ("range", "pace_zone", "zone", "intensityClass")})
+                        step["intensityClass"] = new["intensityClass"]
+                        trace.append(f"ritmo {key}->{lower} en {stype}")
+            elif isinstance(target, dict) and str(target.get("metric") or "") == "hr_zone":
                 old_zone = int(_safe_float(target.get("zone"), 2.0))
                 new_zone = max(1, old_zone - intensity_levels)
                 if new_zone != old_zone:

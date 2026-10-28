@@ -11,6 +11,8 @@ from typing import Any
 
 from agent import diabetes as _diabetes
 from agent import load_metrics as _load_metrics
+from agent import run_plan as _run_plan
+from agent.plans import _is_block_plan
 from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _is_running_non_trail_activity,
     _resolve_running_threshold_pace_sec_per_km,
@@ -218,6 +220,12 @@ class ContextMixin:
             if not row:
                 continue
             session_type = str(row.get("session_type") or "sesión")
+            if _is_block_plan(plan) and session_type != "rest":
+                # Plan por bloques (28/10): la sesión con su título, duración, km, TSS y tramos (ritmo y FC).
+                zones, _ = _resolve_hr_zones(self.user_profile, "running")
+                detail = _run_plan.session_lines(row, d, zones)
+                lines.append(f"- {label}: " + " · ".join(x.strip() for x in detail))
+                continue
             if session_type == "rest" or int(row.get("duration_min") or 0) <= 0:
                 desc = "descanso"
             else:

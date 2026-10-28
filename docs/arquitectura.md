@@ -35,7 +35,7 @@ Capas, de abajo arriba (cada una importa solo de las de debajo, nunca de `traine
 | Capa | Módulos |
 | --- | --- |
 | Utilidades | `prompts`, `dates`, `llm`, `knowledge`, `tool_results`, `garmin_data`, `data_access` |
-| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans`, `activity_analysis`, `startup_status`, `replies`, `coaching` |
+| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans`, `run_plan` (plan de carrera por bloques), `activity_analysis`, `startup_status`, `replies`, `coaching` |
 | Rutas | `routes/` (load, period, sleep, records, profile, day_data, db_count) y `router` |
 | Mixins del agente | `load_compute` (LoadMixin), `startup` (StartupMixin), `context` (ContextMixin), `llm_calls` (LLMMixin), `routes/handlers` (RoutesMixin), `prefetch` (PrefetchMixin), `tool_loop` (ToolLoopMixin) |
 

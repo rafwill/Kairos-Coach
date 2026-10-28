@@ -28,6 +28,10 @@ Se reescribe al final de cada sesión.
 
 2. **Metatooling, si hace falta más** (los grupos de tools ya están; CHANGELOG del 26/10): (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
 
+### B2. Planes
+
+9. **Revisión del plan de carrera por bloques** (28/10): generar el plan real con `/plan crear` y revisar como entrenador las sesiones de cada fase, los ritmos, el volumen y el afinamiento; ajustar la biblioteca de sesiones de `agent/run_plan.py` con lo que haga falta. Revisar también la fecha del objetivo (19/01/2027 cae en martes).
+
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
@@ -45,6 +49,16 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 ### E. Fuera de nuestras manos
 
 8. **Ticket de GitHub Support 4918285** (abierto el 28/10): purga de las vistas en caché de los 80 commits viejos, de `eeee21b` a `716cd0c`. Cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API.
+
+### F. Notas adicionales
+
+9. Revisar como conectar Claude con Kairos para la sincronización de datos y la generación de TSS en vez de Nvidia
+
+10. Revisar garmin-personal-mcp. MCP que se puede conectar a Claude para preguntar cosas a Calude o ChatGPT
+
+11. Revisar construcción de planes de entrenamiento en Kairos y cómo se integran con los datos de Garmin y Claude. Pregunta con orografia, donde vive el atleta, temperatura, entrenamientos cruzados de ciclismo, remo, gimnasio dentro de la planificacion. Preguntar prioridades del atleta en cuanto a tiempos semanales de entrenamiento y dias de la semana donde tiene disponibilidad para entrenar. El atleta puede sugerir ajustes o preferencias adicionales que Kairos debe considerar al generar el plan, y ser dinamico en cada momento. El atleta puede tener unviaje no planificado, ponerse malo o tener que entrenar en momentos que no puede, y kairos tiene que replanificar basado en los datos de garmin y los de entrenamiento, esto es lo que dará la fuerza y el valor a nuestro codigo
+
+12. Añadir un porcentaje de cumplimiento de los entrenamientos en Kairos basado en los datos de kairos y los entrenamientos del atleta
 
 ## Descartado
 

@@ -135,6 +135,7 @@ from agent.storage import (
 )
 from agent.routes.load import _build_load_trend_table
 from agent.daily_engine import _session_intensity_label, _session_type_label
+from agent.plans import _is_block_plan, _plan_detail_markdown
 from agent.data_access import _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile
 from agent.llm import probe_llm_key
 
@@ -936,8 +937,16 @@ def _show_training_plans() -> None:
 
 def _show_training_plan(plan_ref: str) -> None:
     if not plan_ref:
-        console.print("[yellow]Uso: /plan ver <nº o id> (el nº y el id corto salen en /plan listar)[/]")
+        console.print("[yellow]Uso: /plan ver <nº o id> [semana <n> | todo] (el nº y el id corto salen en /plan listar)[/]")
         return
+    # "/plan ver 1 semana 5" o "/plan ver 1 todo" (28/10): qué semanas se detallan en un plan por bloques.
+    parts = plan_ref.split()
+    plan_ref, options = parts[0], parts[1:]
+    weeks: list[int] | None = None
+    if options and options[0] == "todo":
+        weeks = list(range(1, 60))
+    elif len(options) >= 2 and options[0] == "semana" and options[1].isdigit():
+        weeks = [int(options[1])]
     plan_id = _resolve_plan_id(plan_ref)
     if not plan_id:
         console.print(f"[yellow]'{plan_ref}' coincide con varios planes: escribe más caracteres del id o su nº.[/]")
@@ -959,6 +968,12 @@ def _show_training_plan(plan_ref: str) -> None:
     except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.debug("_show_training_plan: no se pudieron cargar sesiones de %s: %s", plan_id, exc)
         sessions = []
+
+    if sessions and _is_block_plan(plan):
+        # Plan por bloques: semanas con fechas, fase, tiempo, km y TSS, y los días con sus tramos.
+        console.print(f"[dim]ID {_plan_short_id(plan.get('id', ''))} · {plan.get('status', '—')}[/]")
+        console.print(Markdown(_plan_detail_markdown(plan, sessions, _load_user_profile(), weeks)))
+        return
 
     lines = [
         f"[bold]ID:[/] {_plan_short_id(plan.get('id', ''))}",

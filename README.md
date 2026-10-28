@@ -92,6 +92,7 @@ agent/
   load_compute.py        TSS de las actividades nuevas y serie de carga en Supabase
   daily_engine.py        motor diario: plan de hoy, ajuste por HRV/sueño/body battery, zonas
   plans.py               motor de planes: generación, validación y estado
+  run_plan.py            plan de carrera en asfalto por bloques: ritmos de Friel, fases, descargas, tramos y rTSS
   activity_analysis.py   localizar una actividad y su análisis precalculado
   hr_profile.py · wellness.py · garmin_data.py · tool_results.py · kairos_tools.py · dates.py ·
   data_access.py · knowledge.py · prompts.py · llm.py · coaching.py · replies.py
