@@ -45,7 +45,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15, los totales del periodo, los puntos 9 a 11 y el rendimiento (CHANGELOG).
 
-7. **Arranque del servidor MCP** (2,6–3,8 s, otro proceso que importa `garminconnect` y FastMCP; lo demás del rendimiento, hecho el 28/10: CHANGELOG). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
+7. **Arranque del servidor MCP** (2,6–3,8 s, otro proceso que importa `garminconnect` y FastMCP, la API de servidor del SDK oficial `mcp` (no el paquete aparte `fastmcp`); lo demás del rendimiento, hecho el 28/10: CHANGELOG). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
 
 ## Descartado
 
