@@ -30,7 +30,7 @@ CATEGORIES: list[tuple[str, list[str]]] = [
         "get_hydration_data", "get_body_composition",
     ]),
     ("Sueño y recuperación", [
-        "get_sleep_data", "get_sleep_summary", "get_hrv_data", "get_hrv_trend", "get_training_readiness",
+        "get_sleep_data", "get_sleep_summary", "get_hrv_data", "get_hrv_trend", "get_rhr_trend", "get_training_readiness",
         "get_morning_training_readiness",
     ]),
     ("Rendimiento", [

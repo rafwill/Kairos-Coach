@@ -535,6 +535,8 @@ _DM = r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?![\d/])"
 _WEEKDAY_DATE = re.compile(rf"(?i)(?<![\wáéíóú]){_WD}[ \t]*[,(]?[ \t]*(?:d[ií]a[ \t]+)?{_DM}")
 # "Del 26/10 al 01/11 (lunes a domingo)" (26/10): el paréntesis es el rango de días de la semana, no el día del 01/11.
 _DATE_WEEKDAY = re.compile(rf"(?i)(?<![\d/]){_DM}[ \t]*[(,][ \t]*{_WD}\b(?![ \t]*(?:a|al|[–\-])[ \t]*{_WD})")
+# "Semana a miércoles (3/7 días)" (28/10): una fracción con su unidad detrás no es una fecha.
+_FRACTION_UNIT = re.compile(r"(?i)[ \t]*(?:d[ií]as?|sesiones|semanas|entrenos|entrenamientos)\b")
 
 
 def find_wrong_weekday_date(text: str, today: date | None) -> list[Finding]:
@@ -547,7 +549,7 @@ def find_wrong_weekday_date(text: str, today: date | None) -> list[Finding]:
     hits = [(m, m.group(1), m.group(2), m.group(3), m.group(4)) for m in _WEEKDAY_DATE.finditer(text)]
     hits += [(m, m.group(4), m.group(1), m.group(2), m.group(3)) for m in _DATE_WEEKDAY.finditer(text)]
     for m, weekday, dd, mm, yy in hits:
-        if _is_score(text, m, dd, mm, yy):
+        if _is_score(text, m, dd, mm, yy) or (not yy and _FRACTION_UNIT.match(text, m.end())):
             continue
         if yy:
             try:

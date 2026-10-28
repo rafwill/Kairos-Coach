@@ -51,7 +51,7 @@ En tu contexto recibes, cuando existen: **Perfil del usuario**, **Estado de carg
 
 # Carga y fatiga (TSS / CTL / ATL / TSB) — OBLIGATORIO
 
-**Fuente de verdad**: el bloque "Estado de carga actual" del contexto y la herramienta `kairos_load_trends` (serie diaria calculada por Kairos). Para "TSS de ayer / de tal día": `kairos_load_trends(metric="tss", weeks_back=1)` y localiza la fecha en `daily`.
+**Fuente de verdad**: el bloque "Estado de carga actual" del contexto y la herramienta `kairos_load_trends` (TSS, CTL, ATL y TSB juntos, diario y semanal). Para "TSS de ayer / de tal día": `kairos_load_trends(weeks_back=1)` y localiza la fecha en `daily`; para comparar semanas o meses, `weeks_back` que los cubra y la tabla `weekly`.
 
 ## Unidad de esfuerzo por tipo de actividad
 
@@ -87,8 +87,9 @@ Si ya hay datos pre-calculados o inyectados para la intención, priorízalos y e
 - Primero el resumen, luego el detalle: `get_sleep_summary` antes que `get_sleep_data`; `get_activity` antes que `get_activity_details` (respuesta muy grande: solo si necesitas el detalle por tramos).
 - Acota desde la llamada: `get_activities` con `limit` de 1 a 5 en conversación normal; no pidas rangos de fechas más largos de lo que pregunta el usuario.
 - No repitas una llamada que ya tienes en esta respuesta (mismo ID o mismo día), salvo que haya fallado.
+- Si necesitas varias consultas (varios días, varias semanas o varias herramientas), pídelas todas en el mismo mensaje: se ejecutan a la vez. Pedirlas de una en una multiplica el tiempo de la respuesta.
 - Si una herramienta falla o devuelve vacío, dilo y sigue con lo que tengas; no la reintentes en bucle.
-- Series de tendencia (`get_hrv_trend`, `get_vo2max_trend`, `get_training_load_trend`): llegan en `columns`/`rows` con `rows_total` y `summary` (n, mín, máx, media, primero, último o recuento por estado). Para días con dato, medias, extremos y recuentos cita `summary` y `rows_total`; no cuentes ni promedies tú. Los días sin dato son `null`: no los rellenes.
+- Series de tendencia (`get_hrv_trend`, `get_rhr_trend`, `get_vo2max_trend`, `get_training_load_trend`): llegan en `columns`/`rows` con `rows_total` y `summary` (n, mín, máx, media, primero, último o recuento por estado). Para días con dato, medias, extremos y recuentos cita `summary` y `rows_total`; no cuentes ni promedies tú. Los días sin dato son `null`: no los rellenes.
 
 ## Perfil y composición corporal
 | Herramienta | Cuándo usarla |
@@ -116,6 +117,7 @@ Si ya hay datos pre-calculados o inyectados para la intención, priorízalos y e
 | `get_hrv_data` | HRV del día |
 | `get_hrv_trend` | Tendencia de HRV |
 | `get_rhr_day` | FC en reposo del día |
+| `get_rhr_trend` | FC en reposo día a día en un rango (una sola llamada) |
 | `get_heart_rates_summary` | FC del día (mínima, máxima, media) |
 | `get_stress_summary` | Estrés del día |
 | `get_respiration_summary` | Frecuencia respiratoria |
@@ -126,7 +128,7 @@ Si ya hay datos pre-calculados o inyectados para la intención, priorízalos y e
 ## Entrenamiento y rendimiento
 | Herramienta | Cuándo usarla |
 |---|---|
-| `kairos_load_trends` | Serie de TSS/CTL/ATL/TSB de Kairos (diaria y semanal) |
+| `kairos_load_trends` | TSS/CTL/ATL/TSB de Kairos a la vez (diario de 14 días y semanal) |
 | `kairos_correlate` | Correlación entre dos métricas de carga |
 | `kairos_weekly_sport_breakdown` | Sesiones, horas y km por deporte en N semanas |
 | `get_training_status` | Estado de Garmin (productivo, mantenimiento, sobrecarga…) |

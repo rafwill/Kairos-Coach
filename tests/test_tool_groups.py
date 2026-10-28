@@ -8,7 +8,7 @@ import json
 
 from agent import tool_groups as tg
 
-GARMIN_42 = {tool for tools in tg.GROUPS.values() for tool in tools}
+GARMIN_TOOLS = {tool for tools in tg.GROUPS.values() for tool in tools}
 KAIROS = ("kairos_load_trends", "kairos_correlate", "kairos_weekly_sport_breakdown")
 
 
@@ -20,8 +20,8 @@ def _names(schema):
     return [t["function"]["name"] for t in schema]
 
 
-def test_groups_cover_the_42_garmin_tools_once():
-    assert len(GARMIN_42) == 42 == sum(len(t) for t in tg.GROUPS.values())
+def test_groups_cover_every_garmin_tool_once():
+    assert len(GARMIN_TOOLS) == 43 == sum(len(t) for t in tg.GROUPS.values())
 
 
 def test_server_tools_are_all_grouped():
@@ -29,7 +29,7 @@ def test_server_tools_are_all_grouped():
     from garmin_mcp.server import mcp
 
     names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert names == GARMIN_42
+    assert names == GARMIN_TOOLS
 
 
 def test_questions_pick_their_groups():
@@ -48,19 +48,19 @@ def test_questions_pick_their_groups():
 
 
 def test_select_sends_the_groups_kairos_tools_and_the_request_tool():
-    schema = _schema([*sorted(GARMIN_42), *KAIROS])
+    schema = _schema([*sorted(GARMIN_TOOLS), *KAIROS])
     out = _names(tg.select(schema, {"dia_a_dia"}))
     assert set(out) == {*tg.GROUPS["dia_a_dia"], *KAIROS, tg.REQUEST_TOOL}
     assert len(out) < len(schema) // 2
 
 
 def test_no_group_sends_everything_as_before():
-    schema = _schema([*sorted(GARMIN_42), *KAIROS])
+    schema = _schema([*sorted(GARMIN_TOOLS), *KAIROS])
     assert _names(tg.select(schema, set())) == _names(schema)
 
 
 def test_all_groups_need_no_request_tool():
-    schema = _schema([*sorted(GARMIN_42), *KAIROS])
+    schema = _schema([*sorted(GARMIN_TOOLS), *KAIROS])
     assert tg.REQUEST_TOOL not in _names(tg.select(schema, set(tg.GROUPS)))
 
 

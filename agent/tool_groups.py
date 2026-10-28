@@ -22,6 +22,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "sueno_recuperacion": (
         "get_sleep_data", "get_sleep_summary", "get_hrv_data", "get_hrv_trend", "get_body_battery", "get_rhr_day",
+        "get_rhr_trend",
         "get_training_readiness", "get_morning_training_readiness",
     ),
     "dia_a_dia": (

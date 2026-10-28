@@ -10,7 +10,7 @@ Uso:
   o ENTORNO (Garmin bloquea con 429 o la autenticación falla: no es un fallo de Kairos).
 - Complementa al test de contrato sin red (tests/test_garmin_mcp_server.py): ese detecta que llamamos mal a
   garminconnect; este, que Garmin ha cambiado algo por su lado. Lanzarlo al actualizar garminconnect, antes de
-  una batería o si algo parece raro. No en el arranque de Kairos (42 llamadas a Garmin).
+  una batería o si algo parece raro. No en el arranque de Kairos (43 llamadas a Garmin).
 - Guarda el informe en .tmp/healthcheck/ (datos reales: ignorado por git). Sale con 1 si alguna tool falla,
   2 si solo hay fallos de entorno, 0 si todo va bien.
 """

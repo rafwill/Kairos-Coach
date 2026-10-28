@@ -20,7 +20,7 @@ Con la terminología del estándar MCP: Kairos es el **host** (la aplicación co
                    │ protocolo MCP (stdio, subproceso)
 ┌──────────────────▼───────────────────────────────────────────────────┐
 │  SERVIDOR MCP: garmin_mcp/ (server.py) — independiente del host      │
-│  42 tools de Garmin Connect · solo lectura · garminconnect           │
+│  43 tools de Garmin Connect · solo lectura · garminconnect           │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -135,7 +135,7 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 ## Servidor MCP propio
 
 - `garmin_mcp/server.py` (arranque: `python -m garmin_mcp`), sobre la librería `garminconnect`, solo lectura, transporte stdio. Paquete independiente del host.
-- Catálogo de las 42 tools (parámetros, tipos y anotaciones): [`garmin_mcp/README.md`](../garmin_mcp/README.md), generado desde el servidor con `tools/gen_mcp_docs.py`. Además, el host añade 3 tools internas `kairos_*` (`kairos_load_trends`, `kairos_correlate`, `kairos_weekly_sport_breakdown`) que no pasan por el MCP, y `kairos_pedir_herramientas`, con la que el LLM pide otro grupo de tools (metatooling).
+- Catálogo de las 43 tools (parámetros, tipos y anotaciones): [`garmin_mcp/README.md`](../garmin_mcp/README.md), generado desde el servidor con `tools/gen_mcp_docs.py`. Además, el host añade 3 tools internas `kairos_*` (`kairos_load_trends`, `kairos_correlate`, `kairos_weekly_sport_breakdown`) que no pasan por el MCP, y `kairos_pedir_herramientas`, con la que el LLM pide otro grupo de tools (metatooling).
 - Lado cliente en el host: `agent/mcp/client.py` (sesión y llamadas) y `agent/mcp/contracts.py` (contratos, normalización y caché). Detalle en "Cliente MCP" más abajo. Problemas frecuentes (429/403, certificados detrás de un proxy): [`garmin_mcp/README.md`](../garmin_mcp/README.md#problemas-frecuentes).
 - Algunas listas llegan como objetos JSON concatenados (`_try_parse_json`) y `get_activity` trae las métricas en `summaryDTO` (`_flatten_garmin_activity`).
 - Guía de estilo MCP de apiaddicts ([mcps-style-guide](https://github.com/apiaddicts/mcps-style-guide)): cada tool tiene título, descripción (la que ve el LLM de Kairos para elegirla), descripción de cada parámetro y anotaciones de solo lectura (`readOnlyHint`, `idempotentHint`, `openWorldHint`). `tools/lint_mcp.py` (o `make lint-mcp`) pide `tools/list` por stdio y lo pasa por Spectral con `tools/mcp_lint/.spectral.yaml`: el ruleset anclado a un commit, sin las dos reglas no adoptadas (camelCase y `outputSchema`, con su motivo). Resultado el 22/10: 0 hallazgos (antes 217). `tests/test_garmin_mcp_server.py` lo garantiza sin red.
@@ -144,7 +144,7 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 ### Cliente MCP (`agent/mcp/`)
 
 - **Arranque del servidor:** `_get_server_params()` lanza `python -m garmin_mcp` con el mismo intérprete que Kairos (`sys.executable`, el del `.venv`) y la raíz del repo como `cwd`, igual que las herramientas de `tools/`. El subproceso recibe el entorno de Kairos más las credenciales de Garmin del usuario. (Hasta el 23/10 lo hacía a través de los lanzadores `tools/garmin-mcp-frozen.*` y `MCP_BACKEND=frozen`, restos del MCP de terceros.)
-- **Catálogo esencial:** 45 tools, las 42 de Garmin (`GARMIN_ESSENTIAL_TOOLS`) y las 3 internas `kairos_*`. Los tests fallan si cambia el número o si a una le falta su contrato.
+- **Catálogo esencial:** 46 tools, las 43 de Garmin (`GARMIN_ESSENTIAL_TOOLS`) y las 3 internas `kairos_*`. Los tests fallan si cambia el número o si a una le falta su contrato.
 - **Antes de cada llamada:** `normalize_tool_invocation` corrige alias y formas de los argumentos (por ejemplo, `date` → `start_date`/`end_date` en `get_body_battery`), y `validate_min_input_contract` comprueba los argumentos obligatorios de `TOOL_CONTRACTS_V1`. Si faltan, devuelve un error de contrato (`mcp-adapter-v1`) sin llamar a Garmin.
 - **Ruta única:** cada llamada va al servidor, sin caché ni rutas alternativas. Los errores de Garmin se clasifican (tipo, código HTTP, `retry_after`) y se registran.
 - **En paralelo:** las tools que el LLM pide en un mismo mensaje se lanzan a la vez (`asyncio.gather`, en orden) y el servidor las atiende en hilos con un tope de 4 llamadas simultáneas a Garmin. Cada llamada se corta a los 8 s (`KAIROS_TOOL_TIMEOUT_SECONDS`); tras 2 timeouts en una respuesta, las siguientes no se mandan a Garmin (cortacircuitos).

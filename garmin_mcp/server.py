@@ -398,6 +398,27 @@ def _hrv_trend(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _rhr_trend(args: dict[str, Any]) -> dict[str, Any]:
+    """FC en reposo día a día en un rango, con una sola petición a Garmin (get_rhr_daily, 28/10).
+
+    Con solo get_rhr_day, "¿ha mejorado mi FC en reposo este mes?" llevaba al LLM a pedir un día por vuelta (hasta
+    agotar las 15 del bucle). Los días sin dato van con rhr None, como en las demás tendencias.
+    """
+    start = _as_iso_day(args.get("start_date") or args.get("date"))
+    end = _as_iso_day(args.get("end_date") or args.get("date") or start, default=start)
+    days = _iso_date_iter(start, end)  # ordena y limita a 90 días como el resto de tendencias
+    start, end = days[0], days[-1]
+    payload = _invoke_with_auth_retry("get_rhr_daily", start, end)
+    values = {str(row.get("calendarDate")): row.get("value") for row in payload or [] if isinstance(row, dict)}
+    trend = [{"date": day, "rhr": values.get(day)} for day in days]
+    return {
+        "start_date": start,
+        "end_date": end,
+        "days_with_data": sum(1 for row in trend if row["rhr"] is not None),
+        "trend": trend,
+    }
+
+
 # Endpoint de Garmin que usa get_max_metrics; admite rango, pero la librería solo lo llama con un día.
 _MAX_METRICS_URL = "/metrics-service/metrics/maxmet/daily"
 
@@ -520,6 +541,8 @@ def _dispatch(tool_name: str, args: dict[str, Any]) -> Any:
         return _hrv_trend(args)
     if tool_name == "get_vo2max_trend":
         return _vo2max_trend(args)
+    if tool_name == "get_rhr_trend":
+        return _rhr_trend(args)
     if tool_name == "get_activities_fordate":
         return _activities_fordate(args)
     if tool_name == "get_heart_rates_summary":
@@ -790,6 +813,13 @@ def get_training_effect(
        "HRV nocturna día a día en un rango (máximo 90 días).")
 def get_hrv_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_hrv_trend", {"start_date": start_date, "end_date": end_date, "date": date})
+
+
+@_tool("get_rhr_trend", "Tendencia de FC en reposo",
+       "FC en reposo día a día en un rango (máximo 90 días), con una sola consulta a Garmin. Para ver cómo "
+       "evoluciona o comparar periodos; para un solo día, get_rhr_day.")
+def get_rhr_trend(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
+    return _dispatch("get_rhr_trend", {"start_date": start_date, "end_date": end_date, "date": date})
 
 
 @_tool("get_vo2max_trend", "Tendencia de VO2máx",

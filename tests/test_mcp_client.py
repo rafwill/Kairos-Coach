@@ -115,9 +115,9 @@ def test_validate_min_input_contract_requires_range_for_body_composition():
 
 
 def test_essentials_catalog_counts_and_uniqueness():
-    assert len(mcp_client.GARMIN_ESSENTIAL_TOOLS) == 42
+    assert len(mcp_client.GARMIN_ESSENTIAL_TOOLS) == 43
     assert len(mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS) == 3
-    assert len(set(mcp_client.GARMIN_ESSENTIAL_TOOLS + mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS)) == 45
+    assert len(set(mcp_client.GARMIN_ESSENTIAL_TOOLS + mcp_client.KAIROS_INTERNAL_ESSENTIAL_TOOLS)) == 46
 
 
 def test_essentials_catalog_contains_must_have_critical_tools():

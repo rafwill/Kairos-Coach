@@ -100,6 +100,24 @@ def test_hrv_trend_reads_values_from_hrv_summary(monkeypatch):
     assert out["trend"][1] == {"date": "2026-09-02", "hrv": None, "weekly_avg": None, "status": None}
 
 
+def test_rhr_trend_asks_garmin_once_for_the_whole_range(monkeypatch):
+    # 28/10: con solo get_rhr_day el LLM pedía un día por vuelta y agotaba las 15 del bucle.
+    calls = []
+
+    class _Client:
+        def get_rhr_daily(self, start, end):
+            calls.append((start, end))
+            return [{"calendarDate": "2026-09-01", "value": 47.0}, {"calendarDate": "2026-09-03", "value": 45.0}]
+
+    monkeypatch.setattr(server, "_garmin_client", lambda: _Client())
+    out = server._rhr_trend({"start_date": "2026-09-01", "end_date": "2026-09-03"})
+
+    assert calls == [("2026-09-01", "2026-09-03")]
+    assert out["days_with_data"] == 2
+    assert out["trend"] == [{"date": "2026-09-01", "rhr": 47.0}, {"date": "2026-09-02", "rhr": None},
+                            {"date": "2026-09-03", "rhr": 45.0}]
+
+
 def test_hrv_trend_says_which_days_failed(monkeypatch):
     # 27/10: los días que fallaban se descartaban sin rastro (una tendencia con un 429 salía con huecos).
     class _Flaky:
@@ -440,7 +458,7 @@ def test_all_tools_follow_mcp_style_guide():
     import asyncio
 
     tools = asyncio.run(server.mcp.list_tools())
-    assert len(tools) == 42
+    assert len(tools) == 43
     for tool in tools:
         assert tool.title, tool.name
         assert tool.description and tool.description.strip(), tool.name

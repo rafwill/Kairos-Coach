@@ -403,7 +403,8 @@ def _compact_personal_records(data: list) -> str:
 
 # Tools que devuelven una serie diaria dentro de un objeto ({..., "trend": [{date, ...}, ...]}).
 # La poda genérica deja 4 elementos de cada lista anidada: con 15 días el LLM recibía 4 e inventaba el resto.
-_DAILY_SERIES_TOOLS = {"get_hrv_trend": "trend", "get_training_load_trend": "trend", "get_vo2max_trend": "trend"}
+_DAILY_SERIES_TOOLS = {"get_hrv_trend": "trend", "get_training_load_trend": "trend", "get_vo2max_trend": "trend",
+                       "get_rhr_trend": "trend"}
 
 
 def _daily_series_summary(rows: list[dict], columns: list[str]) -> dict:
@@ -7870,6 +7871,7 @@ def _normalize_trend_date_range(tool_name: str, arguments: dict) -> dict:
         "get_training_load_trend": 90,
         "get_vo2max_trend": 90,
         "get_hrv_trend": 30,
+        "get_rhr_trend": 90,
     }
     max_days = max_days_by_tool.get(tool_name)
     if not max_days:
@@ -9185,37 +9187,45 @@ async def _build_activity_candidates_payload(mcp_session: ClientSession, user_me
 # Estas tools operan sobre datos ya almacenados en el perfil (load_metrics.series)
 # o sobre actividades Garmin MCP, y se procesan en Python puro sin llamar al LLM.
 
-def _kairos_load_trends(profile: dict, metric: str, weeks_back: int = 8) -> str:
-    """Devuelve la serie temporal de una métrica de carga/fatiga desde el perfil."""
-    valid = {"tss", "atl", "ctl", "tsb"}
-    metric = str(metric or "tsb").strip().lower()
-    if metric not in valid:
-        return json.dumps({"error": f"Métrica '{metric}' no válida. Opciones: {sorted(valid)}"}, ensure_ascii=False)
+def _kairos_load_trends(profile: dict, weeks_back: int = 8) -> str:
+    """TSS, CTL (Estado físico), ATL (Fatiga) y TSB (Forma) de `load_metrics_daily` en una sola llamada (28/10).
+
+    Antes devolvía una métrica por llamada y el LLM hacía cuatro vueltas para comparar periodos (≈ 25.000 tokens
+    cada una). Columnas y filas, como las series de tendencia: diario de los últimos 14 días y semanal (lunes a
+    domingo) de todo el periodo; en la semana, TSS es la suma y CTL/ATL/TSB el valor del último día con dato.
+    """
     series = _load_metrics_series()
     if not series:
         return json.dumps({"error": "Sin datos históricos de carga/fatiga. Ejecuta una sesión para que el sistema los calcule.", "n": 0}, ensure_ascii=False)
     weeks_back = max(1, min(int(weeks_back), 52))
     cutoff = (date.today() - timedelta(days=weeks_back * 7)).isoformat()
-    filtered = [r for r in series if str(r.get("date") or "") >= cutoff]
+    filtered = [r for r in series if str(r.get("date") or "") >= cutoff and r.get("date")]
     if not filtered:
         return json.dumps({"error": f"Sin datos en las últimas {weeks_back} semanas.", "n": 0}, ensure_ascii=False)
-    points = [{"date": r["date"], "value": round(float(r.get(metric, 0.0)), 1)} for r in filtered if r.get("date")]
+    metrics = ("tss", "ctl", "atl", "tsb")
+
+    def _row(label: str, rows: list[dict], tss_sum: bool) -> list:
+        last = rows[-1]
+        tss = sum(float(r.get("tss") or 0.0) for r in rows) if tss_sum else float(last.get("tss") or 0.0)
+        return [label, round(tss, 1)] + [round(float(last.get(m) or 0.0), 1) for m in metrics[1:]]
+
     today = date.today()
-    # Semanas naturales lunes→domingo (no ventanas deslizantes)
-    _week_mon = today - timedelta(days=today.weekday())  # lunes de esta semana
+    first_monday = today - timedelta(days=today.weekday()) - timedelta(weeks=weeks_back - 1)
     weekly = []
-    for w in range(weeks_back - 1, -1, -1):
-        mon = _week_mon - timedelta(weeks=w)
+    for w in range(weeks_back):
+        mon = first_monday + timedelta(weeks=w)
         sun = mon + timedelta(days=6)
-        wpts = [p for p in points if mon.isoformat() <= p["date"] <= sun.isoformat()]
-        if wpts:
-            agg = round(sum(p["value"] for p in wpts), 1) if metric == "tss" else round(wpts[-1]["value"], 1)
-            weekly.append({"week": f"{mon.strftime('%d/%m')}–{sun.strftime('%d/%m')}", "value": agg})
+        rows = [r for r in filtered if mon.isoformat() <= str(r["date"]) <= sun.isoformat()]
+        if rows:
+            weekly.append(_row(f"{mon.strftime('%d/%m')}–{sun.strftime('%d/%m/%Y')}", rows, tss_sum=True))
+    daily = [_row(str(r["date"]), [r], tss_sum=False) for r in filtered[-14:]]
     return json.dumps({
-        "metric": metric, "n_days": len(points), "weeks_back": weeks_back,
-        "latest": points[-1] if points else None,
-        "daily": points[-14:], "weekly": weekly,
-        "nota": "Fuente: series TSS/CTL (Estado físico)/ATL (Fatiga)/TSB (Forma) calculadas desde actividades Garmin y almacenadas en perfil.",
+        "weeks_back": weeks_back,
+        "latest": dict(zip(("date",) + metrics, _row(str(filtered[-1]["date"]), [filtered[-1]], tss_sum=False))),
+        "daily": {"columns": ["date", *metrics], "rows": daily},
+        "weekly": {"columns": ["week", "tss_semana", "ctl_fin", "atl_fin", "tsb_fin"], "rows": weekly},
+        "nota": "Fuente: load_metrics_daily (TSS de Kairos por actividad y CTL/ATL/TSB calculados con él). "
+                "Una semana sin fila no tiene datos en la serie; una con tss_semana 0 no tuvo actividades.",
     }, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -9328,7 +9338,8 @@ _KAIROS_INTERNAL_TOOLS: list[dict] = [
         "function": {
             "name": "kairos_load_trends",
             "description": (
-                "Devuelve la serie diaria y semanal de TSS, CTL (Estado físico), ATL (Fatiga) o TSB (Forma) calculados desde el perfil. "
+                "Devuelve en una sola llamada TSS, CTL (Estado físico), ATL (Fatiga) y TSB (Forma) de Kairos: diario de "
+                "los últimos 14 días y semanal (TSS sumado, CTL/ATL/TSB al final de la semana) de las semanas pedidas. "
                 "ÚSALA como PRIMERA opción para CUALQUIER pregunta sobre carga, fatiga o forma: "
                 "'¿cuál fue mi TSS ayer?', '¿cuánto TSS llevo esta semana?', '¿cómo está mi CTL (Estado físico)/ATL (Fatiga)/TSB (Forma)?', "
                 "'evolución de carga', '¿estoy en sobreentrenamiento?'. "
@@ -9337,10 +9348,9 @@ _KAIROS_INTERNAL_TOOLS: list[dict] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "metric": {"type": "string", "enum": ["tss", "atl", "ctl", "tsb"], "description": "tss=carga sesión, atl=fatiga (ATL), ctl=estado físico (CTL), tsb=forma (TSB)"},
-                    "weeks_back": {"type": "integer", "description": "Semanas hacia atrás (1–52, por defecto 8)"},
+                    "weeks_back": {"type": "integer", "description": "Semanas hacia atrás (1–52, por defecto 8); para comparar meses, las que los cubran"},
                 },
-                "required": ["metric"],
+                "required": [],
             },
         },
     },
@@ -11005,11 +11015,7 @@ class TrainerAgent:
                                "nota": "Ya las tienes disponibles: llámalas en tu siguiente paso."},
                               ensure_ascii=False)
         if tool_name == "kairos_load_trends":
-            return _kairos_load_trends(
-                self.user_profile,
-                metric=str(args.get("metric") or "tsb"),
-                weeks_back=int(args.get("weeks_back") or 8),
-            )
+            return _kairos_load_trends(self.user_profile, weeks_back=int(args.get("weeks_back") or 8))
         elif tool_name == "kairos_correlate":
             return _kairos_correlate(
                 self.user_profile,
@@ -12182,7 +12188,9 @@ class TrainerAgent:
                             log.debug("Training readiness sin datos; usando snapshot alternativo de recuperación")
                             raw_result = fallback_snapshot
 
-                    tool_result = _compact_tool_result(raw_result, tool_name)
+                    # Las tools de Kairos ya devuelven sus datos compactos: la poda genérica (listas a 4 elementos, los
+                    # más antiguos) dejaba a kairos_load_trends sin las últimas semanas ni los últimos días (28/10).
+                    tool_result = raw_result if str(tool_name).startswith("kairos_") else _compact_tool_result(raw_result, tool_name)
                     log.debug(f"Resultado ({len(raw_result or '')} -> {len(tool_result)} chars): {tool_result[:150]}")
 
                     return {

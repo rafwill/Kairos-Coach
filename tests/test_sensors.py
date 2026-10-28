@@ -311,6 +311,8 @@ class TestWeekdayDateS28:
             "Domingo día 1/11: tirada larga.",
             "El lunes te duele 4/10.",          # puntuación, no fecha
             "Martes: series. 20/10 fue el test.",  # el día no va pegado a la fecha
+            "Semana a miércoles (3/7 días): 45 % del objetivo.",  # fracción, no fecha (28/10)
+            "Hasta el jueves 2/4 sesiones hechas.",
         ]
         for text in ok:
             assert sensors.find_wrong_weekday_date(text, self.MON) == [], text

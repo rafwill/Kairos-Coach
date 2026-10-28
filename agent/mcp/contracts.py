@@ -41,6 +41,7 @@ TOOL_CONTRACTS_V1: dict[str, dict] = {
     "get_training_load_trend": {"required_any": [("start_date", "end_date")]},
     "get_training_effect": {},
     "get_hrv_trend": {"required_any": [("start_date", "end_date")]},
+    "get_rhr_trend": {"required_any": [("start_date", "end_date")]},
     "get_vo2max_trend": {"required_any": [("start_date", "end_date")]},
     "get_endurance_score": {},
     "get_fitnessage_data": {},

@@ -371,7 +371,7 @@ class TestImpossibleDateAndUnknownTool:
         agent.conversation_history = []
         agent.client = MagicMock()
         agent.client.chat.completions.create = AsyncMock()
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await ta.TrainerAgent.chat(agent, "¿Qué actividades hice el 31/02/2026?")
         assert "31/02/2026 no existe" in out
         agent.client.chat.completions.create.assert_not_awaited()
@@ -407,7 +407,7 @@ class TestImpossibleDateAndUnknownTool:
         sent = AsyncMock()
         monkeypatch.setattr(ta, "call_tool", sent)
         monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
 
         sent.assert_not_awaited()
@@ -465,7 +465,7 @@ class TestToolTimeoutBreaker:
         monkeypatch.setattr(ta, "_tool_timeout_seconds", lambda: 0.2)
         monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
         t0 = _time.perf_counter()
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
         elapsed = _time.perf_counter() - t0
 
@@ -3466,7 +3466,7 @@ class TestPlanStatusChatRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Tengo algun plan?")
 
         assert "No tienes plan asignado" in out
@@ -3506,7 +3506,7 @@ class TestPlanStatusChatRoute:
                 "target_race": "10K",
                 "target_race_date": "2026-11-22",
             },
-        }) as mocked_create, patch("agent.trainer_agent._save_user_profile"), patch("agent.trainer_agent._save_history_entry"):
+        }) as mocked_create, patch("agent.trainer_agent._save_user_profile"), patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Puedes planificarme la semana para mi 10K?")
 
         assert "Resumen" in out
@@ -3565,7 +3565,7 @@ class TestPlanStatusChatRoute:
             "plan_data": {"target_race": "10K", "target_race_date": "2026-11-22"},
         }) as mocked_update, patch("agent.trainer_agent._storage.create_training_plan") as mocked_create, patch(
             "agent.trainer_agent._save_user_profile"
-        ), patch("agent.trainer_agent._save_history_entry"):
+        ), patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Ajusta mi plan de esta semana")
 
         mocked_update.assert_called_once()
@@ -3596,7 +3596,7 @@ class TestPlanStatusChatRoute:
             "agent.trainer_agent._validate_structured_plan", return_value=["Error de validación de prueba"]
         ), patch("agent.trainer_agent._storage.create_training_plan") as mocked_create, patch(
             "agent.trainer_agent._storage.update_training_plan"
-        ) as mocked_update, patch("agent.trainer_agent._save_history_entry"):
+        ) as mocked_update, patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Planifícame para mi 10K")
 
         mocked_create.assert_not_called()
@@ -3677,7 +3677,7 @@ class TestWriteToolsNeverReachTheServer:
         agent._build_messages = lambda _msg: []
 
         with patch("agent.trainer_agent.call_tool", new=AsyncMock(side_effect=AssertionError("Should not call MCP write tools"))):
-            with patch("agent.trainer_agent._save_history_entry"):
+            with patch("agent.trainer_agent._save_history_entries"):
                 out = await TrainerAgent.chat(agent, "Programa un entrenamiento para mañana")
 
         assert out == "respuesta final"
@@ -3823,7 +3823,7 @@ class TestWeekTssDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM no debe ejecutarse en load_trend"))
 
-        with patch("agent.trainer_agent._save_history_entry"), patch("agent.trainer_agent._save_user_profile"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
+        with patch("agent.trainer_agent._save_history_entries"), patch("agent.trainer_agent._save_user_profile"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
             out = await TrainerAgent.chat(
                 agent,
                 "Muéstrame la tendencia de los últimos 14 días de ATL, CTL y TSB, y dime si voy hacia fatiga o disponibilidad",
@@ -3858,7 +3858,7 @@ class TestWeekTssDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._save_history_entry"), patch("agent.trainer_agent._save_user_profile"):
+        with patch("agent.trainer_agent._save_history_entries"), patch("agent.trainer_agent._save_user_profile"):
             out = await TrainerAgent.chat(
                 agent,
                 "Muéstrame la tendencia de los últimos 14 días de ATL, CTL y TSB, y recomiéndame si hoy debo hacer calidad o rodaje suave",
@@ -3904,7 +3904,7 @@ class TestGoalStatusDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "¿Cuál es mi próximo objetivo?")
 
         assert out.startswith("## 🧭 Resumen")
@@ -4689,7 +4689,7 @@ class TestHrThresholdDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "que opciones puedo cambiar?")
 
         assert out.startswith("## 🧭 Resumen")
@@ -4737,7 +4737,7 @@ class TestTomorrowWorkoutViaLlm:
         agent.total_completion_tokens = 0
         agent._api_key = ""
 
-        with patch("agent.trainer_agent._save_history_entry"), patch.object(
+        with patch("agent.trainer_agent._save_history_entries"), patch.object(
             TrainerAgent,
             "collect_startup_snapshot_48h",
             new=AsyncMock(
@@ -4785,7 +4785,7 @@ class TestTomorrowWorkoutViaLlm:
         agent.total_prompt_tokens = agent.total_completion_tokens = 0
         agent._api_key = ""
 
-        with patch("agent.trainer_agent._save_history_entry"), \
+        with patch("agent.trainer_agent._save_history_entries"), \
              patch("agent.trainer_agent._storage.create_training_plan") as create_plan, \
              patch("agent.trainer_agent._save_user_profile") as save_profile, \
              patch.object(TrainerAgent, "collect_startup_snapshot_48h", new=AsyncMock(return_value={
@@ -4935,7 +4935,7 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Dame mi training readiness")
 
         agent.collect_startup_snapshot_48h.assert_awaited_once()
@@ -4970,7 +4970,7 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Con mi estado actual (TSB + ATL + CTL), ¿recomiendas calidad, rodaje suave o descanso hoy? Justifica con datos")
 
         agent.client.chat.completions.create.assert_awaited_once()
@@ -5003,7 +5003,7 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "¿Cómo está mi forma física hoy?")
 
         agent.client.chat.completions.create.assert_awaited_once()
@@ -5049,7 +5049,7 @@ class TestDailyReadinessDeterministicRoute:
             "trainings": [],
         })
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Con mi estado actual (TSB + ATL + CTL), ¿recomiendas calidad, rodaje suave o descanso hoy? Justifica con datos")
 
         agent.client.chat.completions.create.assert_awaited_once()
@@ -5117,7 +5117,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._save_history_entry"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
+        with patch("agent.trainer_agent._save_history_entries"),                 patch("agent.trainer_agent._load_metrics_series", return_value=series):
             out = await TrainerAgent.chat(
                 agent,
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada",
@@ -5153,7 +5153,7 @@ class TestMcpFactualDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(
                 agent,
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada y recomiéndame la sesión",
@@ -5185,7 +5185,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=TimeoutError())
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(
                 agent,
                 "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, regla aplicada y recomiéndame sesión para hoy",
@@ -5288,7 +5288,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=Exception("403 Forbidden from provider (Zscaler)"))
 
-        with patch("agent.trainer_agent._save_history_entry"):
+        with patch("agent.trainer_agent._save_history_entries"):
             out = await TrainerAgent.chat(agent, "Que tipo de sesion me recomiendas esta semana?")
 
         assert "403/Forbidden" in out
@@ -6984,3 +6984,61 @@ class TestStartupInParallel:
 
         assert out == {"gender": "hombre", "height_cm": 178, "weight_kg": 67.0}
         garmin.assert_not_called()
+
+
+class TestKairosLoadTrends:
+    """kairos_load_trends (8a, 28/10): las cuatro métricas en una llamada y sin la poda de las tools de Garmin."""
+
+    @staticmethod
+    def _series(days=90):
+        today = date.today()
+        return [{"date": (today - timedelta(days=days - 1 - i)).isoformat(), "tss": 50.0 + i, "ctl": 40.0 + i / 10,
+                 "atl": 45.0 + i / 10, "tsb": -5.0, "activities_count": 1} for i in range(days)]
+
+    def test_all_metrics_daily_and_every_week(self, monkeypatch):
+        series = self._series()
+        monkeypatch.setattr(ta, "_load_metrics_series", lambda *a, **k: series)
+        out = json.loads(ta._kairos_load_trends({}, weeks_back=12))
+        assert out["daily"]["columns"] == ["date", "tss", "ctl", "atl", "tsb"]
+        assert [r[0] for r in out["daily"]["rows"]] == [r["date"] for r in series[-14:]]
+        assert len(out["weekly"]["rows"]) == 12
+        # Semana actual: TSS sumado y CTL/ATL/TSB del último día.
+        monday = date.today() - timedelta(days=date.today().weekday())
+        this_week = [r for r in series if r["date"] >= monday.isoformat()]
+        assert out["weekly"]["rows"][-1][1:] == [round(sum(r["tss"] for r in this_week), 1), round(series[-1]["ctl"], 1),
+                                                round(series[-1]["atl"], 1), -5.0]
+        assert out["latest"]["date"] == series[-1]["date"]
+
+    @pytest.mark.asyncio
+    async def test_the_llm_receives_every_week(self, monkeypatch):
+        # Antes la poda genérica dejaba 4 semanas (las más antiguas) y el LLM decía que septiembre estaba "en 0".
+        monkeypatch.setattr(ta, "_load_metrics_series", lambda *a, **k: self._series())
+        call = MagicMock()
+        call.id = "k1"
+        call.function.name = "kairos_load_trends"
+        call.function.arguments = json.dumps({"weeks_back": 12})
+
+        def _resp(content=None, tool_calls=None):
+            m = MagicMock(content=content, tool_calls=tool_calls)
+            r = MagicMock(usage=None)
+            r.choices = [MagicMock(message=m, finish_reason="stop")]
+            return r
+
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = list(ta._KAIROS_INTERNAL_TOOLS)
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: [{"role": "user", "content": "x"}]
+        agent.model = "m"
+        agent.total_prompt_tokens = agent.total_completion_tokens = 0
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=[_resp(tool_calls=[call]), _resp(content="Hecho.")])
+        monkeypatch.setattr(ta, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        with patch("agent.trainer_agent._save_history_entries"):
+            await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
+
+        final = agent.client.chat.completions.create.await_args_list[-1].kwargs["messages"]
+        tool_msg = next(m for m in final if isinstance(m, dict) and m.get("role") == "tool")
+        payload = json.loads(tool_msg["content"])
+        assert len(payload["weekly"]["rows"]) == 12 and len(payload["daily"]["rows"]) == 14
