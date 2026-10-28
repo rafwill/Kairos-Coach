@@ -25,26 +25,17 @@ from agent.trainer_agent import (
     _build_mcp_error_warning_markdown,
     _build_mcp_transparency_markdown,
     _build_goal_status_markdown,
-    _build_training_plan_status_markdown,
     _build_personal_records_markdown,
-    _build_startup_plan_recommendation,
     _build_activity_candidates_payload,
-    _build_goal_plan_fallback,
     _build_proactive_status_markdown,
     _build_post_activity_section_spec,
     _format_activity_analysis_for_markdown,
     _build_load_trend_table,
     _format_load_fatigue_summary,
     _build_recovery_fallback_snapshot,
-    _compute_daily_plan_adjustment,
-    _compute_plan_execution_feedback,
     _fetch_activities_for_load_calc,
     _resolve_running_threshold_pace_sec_per_km,
     _resolve_hr_profile_values,
-    _generate_structured_plan_payload,
-    _get_active_training_plan,
-    _get_planned_session_for_date,
-    _has_goal_in_profile,
     _detect_personal_records_sport_intent,
     _is_coaching_recommendation_intent,
     _strip_simulated_user_turn,
@@ -68,9 +59,7 @@ from agent.trainer_agent import (
     _resolve_week_window,
     _resolve_load_parameters_effective_date,
     _resolve_activity_id_from_query,
-    _summarize_plan_changes,
     _normalize_get_activity_args,
-    _validate_structured_plan,
     TrainerAgent,
 )
 from tests.agent_patch import patch_all, patch_everywhere
@@ -89,6 +78,9 @@ from agent.hr_profile import _extract_cycling_ftp_watts, _resolve_running_thresh
 import agent.wellness as _wellness
 from agent.wellness import _format_body_battery_day, _format_hrv_day, _format_sleep_day, _pick_day_payload
 import agent.kairos_tools as _kairos_tools
+import agent.daily_engine as _daily_engine
+from agent.daily_engine import _build_startup_plan_recommendation, _compute_daily_plan_adjustment, _compute_plan_execution_feedback, _get_active_training_plan, _get_planned_session_for_date
+from agent.plans import _build_goal_plan_fallback, _build_training_plan_status_markdown, _generate_structured_plan_payload, _has_goal_in_profile, _summarize_plan_changes, _validate_structured_plan
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
@@ -6293,7 +6285,7 @@ class TestStructuredPlanEngine:
         sw = quality["structured_workout"]
         primary = sw["targets"]["primary"]
         assert primary["metric"] == "hr_zone"
-        assert primary["zone"] == ta._zone_for_intensity_class(sw["summary"]["intensityClass"])
+        assert primary["zone"] == _daily_engine._zone_for_intensity_class(sw["summary"]["intensityClass"])
         warmup = sw["steps"][0]["target"]
         assert warmup == {"metric": "hr_zone", "zone": 1, "zone_to": 2}
         assert "hr_pct" not in json.dumps(sw)
@@ -6305,9 +6297,9 @@ class TestStructuredPlanEngine:
         z2 = {"session_type": "running_z2", "duration_min": 45, "intensity": "RPE 3-4",
               "structured_workout": {"summary": {"intensityClass": "endurance"},
                                      "targets": {"primary": {"metric": "hr_zone", "zone": 2}}}}
-        assert ta._session_intensity_label(z2, {}) == "Z2 Aeróbica (135–145 lpm) · RPE 3-4"
-        assert ta._session_intensity_label({"session_type": "strength", "duration_min": 40, "intensity": "RPE 5-6"}, {}) == "RPE 5-6"
-        assert ta._session_intensity_label({"session_type": "rest", "duration_min": 0, "intensity": ""}, {}) == "descanso"
+        assert _daily_engine._session_intensity_label(z2, {}) == "Z2 Aeróbica (135–145 lpm) · RPE 3-4"
+        assert _daily_engine._session_intensity_label({"session_type": "strength", "duration_min": 40, "intensity": "RPE 5-6"}, {}) == "RPE 5-6"
+        assert _daily_engine._session_intensity_label({"session_type": "rest", "duration_min": 0, "intensity": ""}, {}) == "descanso"
 
     def test_daily_adjustment_lowers_one_zone_without_rescaling_intensity(self):
         session = {"structured_workout": {"steps": [
@@ -6315,7 +6307,7 @@ class TestStructuredPlanEngine:
             {"name": "Main", "type": "steady", "duration_min": 30, "intensityClass": "tempo",
              "target": {"metric": "hr_zone", "zone": 3}},
         ]}}
-        sw, trace = ta._apply_structured_workout_adjustment(session, "easy")
+        sw, trace = _daily_engine._apply_structured_workout_adjustment(session, "easy")
         main = sw["steps"][1]
         assert main["target"]["zone"] == 2 and main["intensityClass"] == "endurance"
         assert main["duration_min"] == 21.0
@@ -6326,27 +6318,27 @@ class TestStructuredPlanEngine:
                  ("Z4 Subumbral", 158, 168), ("Z5 Supraumbral", 169, 179)]
         patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: (zones, "Garmin"))
 
-        easy = ta._build_today_session_frame(
+        easy = _daily_engine._build_today_session_frame(
             {"decision": "easy", "resulting_session": "rodaje suave 30-50 min en Z1-Z2 + movilidad"}, {})
         assert "sesión suave" in easy
         assert "Z1–Z2 (115–145 lpm), techo 145 lpm" in easy
         assert "Duración máxima: 50 min" in easy
 
-        reduce = ta._build_today_session_frame(
+        reduce = _daily_engine._build_today_session_frame(
             {"decision": "reduce", "resulting_session": "rodaje controlado 40-60 min (sin bloques intensos)"}, {})
         assert "hasta Z3 (115–157 lpm)" in reduce and "sin bloques en Z4–Z5" in reduce
         assert "Duración máxima: 60 min" in reduce
 
-        rest = ta._build_today_session_frame({"decision": "rest", "resulting_session": "descanso + movilidad ligera (20-30 min)"}, {})
+        rest = _daily_engine._build_today_session_frame({"decision": "rest", "resulting_session": "descanso + movilidad ligera (20-30 min)"}, {})
         assert "Decisión del motor diario: descanso" in rest and "Duración máxima: 30 min" in rest
 
         planned = {"decision": "maintain", "resulting_session": "tempo 3x10'",
                    "adjusted_structured_workout": {"summary": {"intensityClass": "threshold"},
                                                    "steps": [{"type": "steady", "duration_min": 55}]}}
-        maintain = ta._build_today_session_frame(planned, {})
+        maintain = _daily_engine._build_today_session_frame(planned, {})
         assert "Z4 Subumbral (158–168 lpm)" in maintain and "Duración máxima: 55 min" in maintain
 
-        assert ta._build_today_session_frame({}, {}) == ""
+        assert _daily_engine._build_today_session_frame({}, {}) == ""
 
     @pytest.mark.asyncio
     async def test_coaching_gets_session_frame_only_for_today(self, monkeypatch):
@@ -6428,7 +6420,7 @@ class TestStructuredPlanEngine:
             {"type": "steady", "duration_min": 30, "intensityClass": "endurance"},
             {"type": "cooldown", "duration_min": 5},
         ]}}
-        assert ta._structured_workout_summary(row) == "bloque principal: 30' (Z2 Aeróbica)"
+        assert _daily_engine._structured_workout_summary(row) == "bloque principal: 30' (Z2 Aeróbica)"
 
     def test_generate_structured_plan_payload_structured_workout_contract(self):
         profile = {
