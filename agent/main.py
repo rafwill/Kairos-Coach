@@ -107,8 +107,12 @@ from agent import diabetes as _diabetes
 from agent import ia_provider as _ia_provider
 from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import (
-    TrainerAgent, _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile,
-    _session_intensity_label, probe_llm_key,
+    TrainerAgent,
+    _TSS_FORMULA_VERSION,
+    _load_metrics_view,
+    _load_user_profile,
+    _save_user_profile,
+    _session_intensity_label,
 )
 from agent import storage as _storage
 from agent.storage import (
@@ -133,6 +137,7 @@ from agent.storage import (
     update_login_password,
     update_user_credentials,
 )
+from agent.llm import probe_llm_key
 
 
 async def _sync_from_garmin(agent, profile_raw: str | None = None) -> list[str]:
@@ -1089,7 +1094,9 @@ def _create_training_plan_cli(agent: TrainerAgent) -> None:
 
 def _show_load_trend_cli(agent: "TrainerAgent", cmd: str = "/carga") -> None:
     """Muestra la tabla de tendencia de carga/fatiga (semanal o mensual)."""
-    from agent.trainer_agent import _build_load_trend_table
+    from agent.trainer_agent import (
+        _build_load_trend_table,
+    )
 
     parts = cmd.strip().lower().split()
     mode = "months" if len(parts) > 1 and parts[1] in {"meses", "mensual", "months", "month"} else "weeks"

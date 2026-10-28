@@ -30,7 +30,6 @@ from agent.trainer_agent import (
     _build_startup_plan_recommendation,
     _build_activity_candidates_payload,
     _build_goal_plan_fallback,
-    _build_athlete_knowledge_context,
     _build_proactive_status_markdown,
     _build_post_activity_section_spec,
     _format_activity_analysis_for_markdown,
@@ -43,15 +42,10 @@ from agent.trainer_agent import (
     _build_recovery_fallback_snapshot,
     _compute_daily_plan_adjustment,
     _compute_plan_execution_feedback,
-    _compact_personal_records,
-    _compact_tool_result,
-    _extract_activities_list,
     _fetch_activities_for_load_calc,
     _extract_cycling_ftp_watts,
     _resolve_running_threshold_pace_sec_per_km,
     _resolve_hr_profile_values,
-    _extract_iso_date_from_text,
-    _extract_iso_date_range_from_text,
     _generate_structured_plan_payload,
     _get_active_training_plan,
     _get_planned_session_for_date,
@@ -81,21 +75,19 @@ from agent.trainer_agent import (
     _resolve_activity_id_from_query,
     _summarize_plan_changes,
     _is_activity_in_last_48h,
-    _is_no_data_result,
-    _normalize_trend_date_range,
     _normalize_get_activity_args,
-    _normalize_date_args,
-    _load_athlete_knowledge_chunks,
-    _resolve_kb_paths,
-    _retrieve_athlete_knowledge,
-    _seconds_to_hhmmss,
-    _strip_garmin_object,
     _validate_structured_plan,
     TrainerAgent,
 )
 from tests.agent_patch import patch_all, patch_everywhere
 import agent.prompts as _prompts
 from agent.prompts import PROMPTS_DIR, _PROMPT_MARKER, _load_coaching_rules, _load_system_prompt, _render_prompt
+import agent.llm as _llm
+from agent.llm import LLMAuthError
+import agent.dates as _dates
+from agent.dates import _extract_iso_date_from_text, _extract_iso_date_range_from_text, _normalize_date_args, _normalize_trend_date_range, _seconds_to_hhmmss
+from agent.knowledge import _build_athlete_knowledge_context, _load_athlete_knowledge_chunks, _resolve_kb_paths, _retrieve_athlete_knowledge
+from agent.tool_results import _compact_personal_records, _compact_tool_result, _extract_activities_list, _flatten_garmin_activity, _is_no_data_result, _strip_garmin_object
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
@@ -355,10 +347,10 @@ class TestResolveRunningThresholdFromProfile:
 
 class TestImpossibleDateAndUnknownTool:
     def test_impossible_dates_are_detected_and_valid_ones_pass(self):
-        assert ta._find_impossible_date("¿Qué actividades hice el 31/02/2026?") == "31/02/2026"
-        assert ta._find_impossible_date("¿y el 29/02/2027?") == "29/02/2027"
+        assert _dates._find_impossible_date("¿Qué actividades hice el 31/02/2026?") == "31/02/2026"
+        assert _dates._find_impossible_date("¿y el 29/02/2027?") == "29/02/2027"
         for ok in ("29/02/2028", "RPE 7/10", "semana del 05/10 al 11/10", "ritmo 3:55/km", "45/60 min"):
-            assert ta._find_impossible_date(ok) is None, ok
+            assert _dates._find_impossible_date(ok) is None, ok
 
     @pytest.mark.asyncio
     async def test_chat_answers_impossible_date_without_tools_or_llm(self):
@@ -757,9 +749,7 @@ class TestLlmKey:
         return agent
 
     def test_rejected_key_sets_the_flag_and_raises_a_runtime_error(self, monkeypatch):
-        from agent.trainer_agent import (
-            LLMAuthError,
-        )
+        pass
 
         agent = self._agent(monkeypatch, self._Unauthorized("Error code: 401 - Unauthorized"))
         with pytest.raises(LLMAuthError) as exc:
@@ -786,23 +776,21 @@ class TestLlmKey:
         (Exception("403 Forbidden: Zscaler"), "error"), (TimeoutError("lento"), "error"),
     ])
     def test_probe_classifies(self, monkeypatch, error, status):
-        from agent import trainer_agent as ta
 
         client = MagicMock()
         client.chat.completions.create = AsyncMock(side_effect=error)
         patch_everywhere(monkeypatch, "_build_llm_client", lambda c: (client, "m", "k"))
-        assert asyncio.run(ta.probe_llm_key(NVIDIA))[0] == status
+        assert asyncio.run(_llm.probe_llm_key(NVIDIA))[0] == status
 
     def test_client_uses_the_athlete_config_and_key(self, monkeypatch):
-        from agent import trainer_agent as ta
 
         monkeypatch.setenv("PROVIDER_API_KEY", "clave")
         monkeypatch.delenv("KAIROS_MODEL", raising=False)
         config = {"provider": "Mi Proveedor", "base_url": "https://api.ejemplo.com/v1", "model": "modelo-x"}
-        client, model, key = ta._build_llm_client(config)
+        client, model, key = _llm._build_llm_client(config)
         assert (str(client.base_url), model, key) == ("https://api.ejemplo.com/v1/", "modelo-x", "clave")
         monkeypatch.setenv("KAIROS_MODEL", "otro")  # batería con --modelo
-        assert ta._build_llm_client(config)[1] == "otro"
+        assert _llm._build_llm_client(config)[1] == "otro"
 
     def test_set_provider_without_config_fails_clearly(self):
         from agent import trainer_agent as ta
@@ -912,9 +900,7 @@ class TestConcatenatedJsonFromMcp:
         assert "| Medio Maratón | 01:31:23 |" in out
 
     def test_flatten_garmin_activity_lifts_summary_dto(self):
-        from agent.trainer_agent import (
-            _flatten_garmin_activity,
-        )
+        pass
 
         act = {"activityName": "X", "activityTypeDTO": {"typeKey": "trail_running"},
                "summaryDTO": {"duration": 3600.0, "distance": 10000.0, "averageHR": 140}}
@@ -2202,8 +2188,8 @@ class TestStartupProactive:
             "load_metrics": {"formula_version": ta._TSS_FORMULA_VERSION},
         }
 
-        with patch_all("call_tool", side_effect=_fake_call_tool), patch(
-            "agent.trainer_agent._save_user_profile"
+        with patch_all("call_tool", side_effect=_fake_call_tool), patch_all(
+            "_save_user_profile"
         ):
             await TrainerAgent.collect_startup_snapshot_48h(agent)
 
@@ -3612,8 +3598,8 @@ class TestPlanStatusChatRoute:
             "status": "active",
             "source": "agent_structured_plan",
             "plan_data": {"target_race": "10K", "target_race_date": "2026-11-22"},
-        }) as mocked_update, patch("agent.trainer_agent._storage.create_training_plan") as mocked_create, patch(
-            "agent.trainer_agent._save_user_profile"
+        }) as mocked_update, patch("agent.trainer_agent._storage.create_training_plan") as mocked_create, patch_all(
+            "_save_user_profile"
         ), patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Ajusta mi plan de esta semana")
 
@@ -3643,8 +3629,8 @@ class TestPlanStatusChatRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=None), patch(
-            "agent.trainer_agent._validate_structured_plan", return_value=["Error de validación de prueba"]
+        with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=None), patch_all(
+            "_validate_structured_plan", return_value=["Error de validación de prueba"]
         ), patch("agent.trainer_agent._storage.create_training_plan") as mocked_create, patch(
             "agent.trainer_agent._storage.update_training_plan"
         ) as mocked_update, patch_all("_save_history_entries"):
@@ -3989,8 +3975,8 @@ class TestGoalStatusDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch_all("_build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cuánto TSS llevo esta semana?")
 
@@ -4020,8 +4006,8 @@ class TestGoalStatusDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch_all("_build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_current_week_tss_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(
                 agent,
@@ -4050,8 +4036,8 @@ class TestGoalStatusDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch_all("_build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cuales son mis actividades de la semana del 10 de agosto 2026?")
 
@@ -4081,8 +4067,8 @@ class TestGoalStatusDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch_all("_build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_week_activities_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (sin inferencias del LLM para nombres/tipos de actividad).")) as weekly_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(
                 agent,
@@ -4639,8 +4625,8 @@ class TestHrThresholdDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cual es mi FC umbral?")
 
@@ -4670,8 +4656,8 @@ class TestHrThresholdDeterministicRoute:
                 return {"userData": {"lactateThresholdHeartRate": 169}}
             raise AssertionError(f"Unexpected tool: {tool_name}")
 
-        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch_all(
+            "_save_history_entry"
         ), patch_all("call_tool", _fake_call_tool), patch_all("_save_user_profile"):
             out = await TrainerAgent.chat(agent, "puedes consultar a garmin connect cual es mi FC umbral?")
 
@@ -4705,8 +4691,8 @@ class TestHrThresholdDeterministicRoute:
                 return {"userData": {"lactateThresholdHeartRate": 169}}
             raise AssertionError(f"Unexpected tool: {tool_name}")
 
-        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch_all(
+            "_save_history_entry"
         ), patch_all("call_tool", _fake_call_tool), patch_all("_save_user_profile"):
             out = await TrainerAgent.chat(agent, "mi frecuencia cardiaca umbral")
 
@@ -4741,8 +4727,8 @@ class TestHrThresholdDeterministicRoute:
                 return {"userData": {"lactateThresholdHeartRate": 169}}
             raise AssertionError(f"Unexpected tool: {tool_name}")
 
-        with patch_all("_load_user_profile", return_value=agent.user_profile), patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_load_user_profile", return_value=agent.user_profile), patch_all(
+            "_save_history_entry"
         ), patch_all("call_tool", _fake_call_tool), patch_all("_save_user_profile"):
             out = await TrainerAgent.chat(agent, "cual es mi FC umbral?")
 
@@ -4943,11 +4929,11 @@ class TestPostActivityGenericRescue:
                 return json.dumps([])
             return json.dumps({})
 
-        with patch_all("call_tool", new=AsyncMock(side_effect=_fake_call_tool)), patch(
-            "agent.trainer_agent._build_activity_analysis_block",
+        with patch_all("call_tool", new=AsyncMock(side_effect=_fake_call_tool)), patch_all(
+            "_build_activity_analysis_block",
             return_value="RESUMEN DE ACTIVIDAD PRECOMPUTADO",
-        ), patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=None)), patch(
-            "agent.trainer_agent._save_history_entry"
+        ), patch.object(TrainerAgent, "_get_or_refresh_cycling_ftp", new=AsyncMock(return_value=None)), patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "¿que opinión tienes de mi entrenamiento de ayer?")
 
@@ -5547,8 +5533,8 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "¿Qué TSS hice ayer?")
 
@@ -5578,8 +5564,8 @@ class TestMcpFactualDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "¿Qué TSS hice ayer y qué me recomiendas para mañana?")
 
@@ -5604,8 +5590,8 @@ class TestMcpFactualDeterministicRoute:
         agent.client.chat.completions = MagicMock()
         agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
 
-        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Examina mi entrenamiento del martes")
 
@@ -5635,8 +5621,8 @@ class TestMcpFactualDeterministicRoute:
         llm_response.usage = None
         agent.client.chat.completions.create = AsyncMock(return_value=llm_response)
 
-        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_build_mcp_factual_query_markdown", new=AsyncMock(return_value="## 🧭 Resumen\nok\n\n## 🎯 Próximo paso\n- Fuente: respuesta determinista (datos factuales MCP, sin inferencias numéricas del LLM).")) as factual_mock, patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Examina mi entrenamiento del martes y recomiéndame qué hacer mañana")
 
@@ -5675,8 +5661,8 @@ class TestMcpFactualDeterministicRoute:
         }
 
         stored = {601: {"activity_id": 601, "start_date": target_iso, "tss": 70.5, "method": "TSS"}}
-        with patch_all("call_tool", _fake_call_tool), patch(
-            "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
+        with patch_all("call_tool", _fake_call_tool), patch_all(
+            "_resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
         ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
             out = await ta._build_mcp_factual_query_markdown(
                 mcp_session=object(),
@@ -5702,8 +5688,8 @@ class TestMcpFactualDeterministicRoute:
             return {}
 
         profile = {}
-        with patch_all("_load_metrics_series", return_value=[{"date": target_iso, "tss": 62.3}]),                 patch_all("call_tool", _fake_call_tool), patch(
-            "agent.trainer_agent._resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
+        with patch_all("_load_metrics_series", return_value=[{"date": target_iso, "tss": 62.3}]),                 patch_all("call_tool", _fake_call_tool), patch_all(
+            "_resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
         ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value={}):
             out = await ta._build_mcp_factual_query_markdown(
                 mcp_session=object(), profile=profile, user_message="¿Qué hice el 18/10?"
@@ -5751,8 +5737,8 @@ class TestRunningThresholdDeterministicRoute:
             }
         }
 
-        with patch_all("_load_user_profile", return_value=latest_profile), patch(
-            "agent.trainer_agent._save_history_entry"
+        with patch_all("_load_user_profile", return_value=latest_profile), patch_all(
+            "_save_history_entry"
         ):
             out = await TrainerAgent.chat(agent, "Cual es mi ritmo umbral actual?")
 
@@ -5779,8 +5765,8 @@ class TestCyclingFtpRefreshDatePolicy:
         }
         agent.mcp_session = MagicMock()
 
-        with patch_all("call_tool", new=AsyncMock(return_value='{"functionalThresholdPower": 250}')), patch(
-            "agent.trainer_agent._save_user_profile"
+        with patch_all("call_tool", new=AsyncMock(return_value='{"functionalThresholdPower": 250}')), patch_all(
+            "_save_user_profile"
         ):
             out = await TrainerAgent._get_or_refresh_cycling_ftp(agent, force_refresh=True)
 
@@ -6991,7 +6977,7 @@ class TestPeriodAndSleepRoutes:
         assert "media 6 h 40 min, puntuación 70/100; 1 por debajo de 6 h. Sin datos en 1 noche(s)." in out
         assert "-80 min de sueño y -15 puntos" in out
         assert "- jue 22/10: sin datos" in out
-        assert ta._signed(-0.3) == "0" and ta._signed(4.6) == "+5"
+        assert _dates._signed(-0.3) == "0" and _dates._signed(4.6) == "+5"
 
 
 class TestResolveLastActivity:
