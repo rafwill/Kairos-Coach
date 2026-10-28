@@ -32,7 +32,6 @@ load_dotenv(ROOT / ".env", encoding="utf-8")
 from agent import load_metrics as lm  # noqa: E402
 from agent import sensors  # noqa: E402
 from agent import storage  # noqa: E402
-from agent import trainer_agent as ta  # noqa: E402
 import agent.data_access as _data_access
 import agent.garmin_data as _garmin_data
 import agent.hr_profile as _hr_profile
@@ -115,7 +114,7 @@ def _call_mcp_tool(name: str, args: dict | None = None):
                 return "".join(getattr(c, "text", "") for c in res.content)
 
     text = asyncio.run(_run())
-    parsed = ta._try_parse_json(text)
+    parsed = _load_metrics._try_parse_json(text)
     return parsed if parsed is not None else []
 
 class Truth:
@@ -153,11 +152,11 @@ class Truth:
     def family(self, sport_key: str) -> str | None:
         if _load_metrics._is_trail_activity(sport_key):
             return "trail"
-        if ta._is_running_non_trail_activity(sport_key):
+        if _load_metrics._is_running_non_trail_activity(sport_key):
             return "running"
-        if ta._is_strength_activity(sport_key):
+        if _load_metrics._is_strength_activity(sport_key):
             return "fuerza"
-        if ta._is_cycling_activity(sport_key):
+        if _load_metrics._is_cycling_activity(sport_key):
             return "ciclismo"
         return None
 

@@ -22,9 +22,6 @@ import agent.trainer_agent as ta
 from agent.load_metrics import _extract_threshold_pace_sec_per_km
 
 from agent.trainer_agent import (
-    _resolve_running_threshold_pace_sec_per_km,
-    _resolve_hr_profile_values,
-    _strip_simulated_user_turn,
     TrainerAgent,
 )
 from tests.agent_patch import patch_all, patch_everywhere
@@ -61,6 +58,8 @@ from agent.router import ToolRouter, _detect_personal_records_sport_intent, _is_
 import agent.routes.day_data as _routes_day_data
 from agent.routes.day_data import _build_recovery_fallback_snapshot
 import agent.coaching as _coaching
+from agent.load_metrics import _resolve_hr_profile_values, _resolve_running_threshold_pace_sec_per_km, _try_parse_json
+from agent.sensors import strip_simulated_user_turn as _strip_simulated_user_turn
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
@@ -859,9 +858,7 @@ class TestConcatenatedJsonFromMcp:
     )
 
     def test_try_parse_json_reads_concatenated_objects_as_list(self):
-        from agent.trainer_agent import (
-            _try_parse_json,
-        )
+        pass
 
         data = _try_parse_json(self.RAW)
         assert isinstance(data, list) and [d["typeId"] for d in data] == [3, 5]
@@ -2668,7 +2665,6 @@ class TestComputeAndPersistLoadMetrics:
 
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_keeps_incremental_path(self):
-        import agent.trainer_agent as trainer_mod
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -2689,7 +2685,7 @@ class TestComputeAndPersistLoadMetrics:
         agent.mcp_session = MagicMock()
         agent.user_profile = {
             "load_metrics": {
-                "formula_version": trainer_mod._TSS_FORMULA_VERSION,
+                "formula_version": _data_access._TSS_FORMULA_VERSION,
             }
         }
 
@@ -2710,7 +2706,6 @@ class TestComputeAndPersistLoadMetrics:
 
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_refreshes_today_when_new_activity_detected(self):
-        import agent.trainer_agent as trainer_mod
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -2730,7 +2725,7 @@ class TestComputeAndPersistLoadMetrics:
 
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
-        agent.user_profile = {"load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION}}
+        agent.user_profile = {"load_metrics": {"formula_version": _data_access._TSS_FORMULA_VERSION}}
 
         async def _fake_fetch(_session, start_date, end_date):
             if start_date == today_iso and end_date == today_iso:
@@ -2808,7 +2803,6 @@ class TestComputeAndPersistLoadMetrics:
 
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_refreshes_from_yesterday_when_missing_activity(self):
-        import agent.trainer_agent as trainer_mod
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -2846,7 +2840,7 @@ class TestComputeAndPersistLoadMetrics:
 
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
-        agent.user_profile = {"load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION}}
+        agent.user_profile = {"load_metrics": {"formula_version": _data_access._TSS_FORMULA_VERSION}}
 
         async def _fake_fetch(_session, start_date, end_date):
             if start_date == today_iso and end_date == today_iso:
@@ -2911,7 +2905,6 @@ class TestActivityAnalysisMarkdownFormatting:
 
     @pytest.mark.asyncio
     async def test_recent_refresh_from_yesterday_bypasses_effective_date_clamp(self):
-        import agent.trainer_agent as trainer_mod
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -2933,7 +2926,7 @@ class TestActivityAnalysisMarkdownFormatting:
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
         agent.user_profile = {
-            "load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION},
+            "load_metrics": {"formula_version": _data_access._TSS_FORMULA_VERSION},
             "performance": {"performance_params_updated_at": today_iso},
         }
 
@@ -3000,7 +2993,6 @@ class TestActivityAnalysisMarkdownFormatting:
 
     @pytest.mark.asyncio
     async def test_up_to_date_checks_from_last_trained_day_not_fixed_recent_window(self):
-        import agent.trainer_agent as trainer_mod
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -3030,7 +3022,7 @@ class TestActivityAnalysisMarkdownFormatting:
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
         agent.user_profile = {
-            "load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION}
+            "load_metrics": {"formula_version": _data_access._TSS_FORMULA_VERSION}
         }
 
         async def _fake_fetch(_session, start_date, end_date):
@@ -3076,7 +3068,6 @@ class TestActivityAnalysisMarkdownFormatting:
 
     @pytest.mark.asyncio
     async def test_existing_user_up_to_date_refreshes_from_two_days_ago_when_missing_activity(self):
-        import agent.trainer_agent as trainer_mod
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -3124,7 +3115,7 @@ class TestActivityAnalysisMarkdownFormatting:
         agent = object.__new__(TrainerAgent)
         agent.mcp_session = MagicMock()
         agent.user_profile = {
-            "load_metrics": {"formula_version": trainer_mod._TSS_FORMULA_VERSION},
+            "load_metrics": {"formula_version": _data_access._TSS_FORMULA_VERSION},
             "performance": {"performance_params_updated_at": today_iso},
         }
 
