@@ -2,6 +2,11 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-28
+
+### Docs (purga de los commits viejos en GitHub)
+- Ticket de GitHub Support 4918285 para purgar las vistas en caché de los 80 commits del tramo reescrito el 27/10 (de `eeee21b` a la antigua cabeza `716cd0c`, sacados con la API de GitHub: `compare/048fe2c...716cd0c`) y los eventos de push del 23 al 27/10. El repositorio no tiene forks ni pull requests. El ordenador 1 ya está alineado con el historial nuevo y sin los commits viejos en local.
+
 ## 2026-10-27
 
 ### Changed (historial de GitHub reescrito, decisión del usuario)
