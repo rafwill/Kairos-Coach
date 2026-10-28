@@ -135,15 +135,16 @@ from agent.storage import (
 )
 
 
-async def _sync_from_garmin(agent) -> list[str]:
+async def _sync_from_garmin(agent, profile_raw: str | None = None) -> list[str]:
     """
     Siempre se ejecuta al arrancar.
     Obtiene nombre, edad, género, peso y altura desde Garmin Connect
     y actualiza el perfil local sin hacer ninguna pregunta.
+    profile_raw: get_user_profile ya pedido al comprobar el acceso a Garmin (no se pide dos veces).
     """
     console.print("[dim]Sincronizando datos personales desde Garmin Connect...[/]")
     try:
-        garmin_data = await agent.fetch_garmin_personal_data()
+        garmin_data = await agent.fetch_garmin_personal_data(profile_raw=profile_raw)
     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
         log.debug("_sync_from_garmin: error leyendo datos MCP: %s", exc)
         garmin_data = {}
@@ -1340,13 +1341,14 @@ def _ask_ia_provider(current: dict | None = None) -> dict:
             return {"provider": provider, "base_url": base_url, "model": model}
 
 
-async def _ensure_ia_provider() -> dict:
+async def _ensure_ia_provider(network_probe: "asyncio.Future | None" = None) -> dict:
     """Proveedor de IA del atleta (26/10): se pregunta la primera vez y queda en ia_provider; la clave, en .env.
 
     Siguientes veces, sin preguntas; si este ordenador no tiene la clave, solo se pide la clave.
+    network_probe: el sondeo de Zscaler lanzado al empezar el arranque (si no, se hace aquí).
     """
     console.print("[dim]Detectando entorno de red...[/]")
-    on_vpn = _detect_zscaler()
+    on_vpn = await network_probe if network_probe is not None else _detect_zscaler()
     config = get_ia_provider()
     first_time = not _ia_provider.is_valid(config)
     if first_time:
@@ -1517,6 +1519,11 @@ class _StartupTimer:
     def __init__(self) -> None:
         self.t0 = self.last = time.perf_counter()
         _storage.reset_db_stats()
+        _storage.open_read_cache()  # lecturas de Supabase del arranque; se cierra con done()
+
+    def done(self) -> None:
+        self.mark("resumen_inicial")
+        _storage.close_read_cache()
 
     def mark(self, step: str) -> None:
         now = time.perf_counter()
@@ -1531,6 +1538,8 @@ async def main() -> None:
     global log, _DEBUG_CONSOLE
     log, _DEBUG_CONSOLE = _configure_logging()
     timer = _StartupTimer()
+    # El sondeo de Zscaler (~0,5 s, solo para el aviso del entorno) va en un hilo mientras se conecta (8c, 28/10).
+    network_probe = asyncio.ensure_future(asyncio.to_thread(_detect_zscaler))
 
     # Fail-fast de infraestructura: evita pedir credenciales si la DB no está lista.
     _check_and_migrate_supabase()
@@ -1541,7 +1550,7 @@ async def main() -> None:
     _check_garmin_env()
     timer.mark("sesion")
 
-    provider = await _ensure_ia_provider()
+    provider = await _ensure_ia_provider(network_probe)
     timer.mark("proveedor_ia")
 
     console.print(Panel.fit(
@@ -1556,8 +1565,19 @@ async def main() -> None:
         timer.mark("mcp_y_agente")
 
         console.print("[dim]Cargando herramientas de Garmin...[/]")
-        await agent.initialize()
-        timer.mark("initialize")
+
+        async def _garmin_user_profile() -> tuple[str | None, bool]:
+            try:
+                from agent.mcp.client import call_tool
+                return await call_tool(session, "get_user_profile", {}), True
+            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError) as exc:
+                log.debug("Verificación inicial de Garmin falló (no bloqueante): %s", exc)
+                return None, False
+
+        # Herramientas y zonas de FC (initialize) a la vez que el perfil de Garmin, que sirve para comprobar el
+        # acceso y para los datos personales: antes, una cosa detrás de otra y el perfil pedido dos veces (8c).
+        _, (test_raw, garmin_checked) = await asyncio.gather(agent.initialize(), _garmin_user_profile())
+        timer.mark("initialize_y_perfil_garmin")
         # Las de Garmin (servidor MCP) y las internas de Kairos (kairos_*, sin servidor).
         n_internal = sum(1 for t in agent.tools_schema if str(((t or {}).get("function") or {}).get("name", "")).startswith("kairos_"))
         console.print(f"[green]✓[/] {len(agent.tools_schema)} herramientas disponibles "
@@ -1565,9 +1585,10 @@ async def main() -> None:
 
         # ── Verificación de acceso a Garmin ───────────────────────────────
         # Detectar si la contraseña ha cambiado en Garmin Connect antes de continuar.
+        garmin_auth_failed = False
         try:
-            from agent.mcp.client import call_tool
-            test_raw = await call_tool(session, "get_user_profile", {})
+            if not garmin_checked:
+                raise RuntimeError("sin respuesta de get_user_profile")
             garmin_auth_failed = (
                 test_raw is None
                 or (isinstance(test_raw, str) and any(
@@ -1588,7 +1609,9 @@ async def main() -> None:
         timer.mark("verificacion_garmin")
 
         # Sincronizar datos personales desde Garmin
-        profile_changes = await _sync_from_garmin(agent)
+        profile_changes = await _sync_from_garmin(
+            agent, profile_raw=test_raw if garmin_checked and not garmin_auth_failed else None
+        )
         agent.user_profile = _load_user_profile()
         timer.mark("sync_garmin")
 
@@ -1634,6 +1657,13 @@ async def main() -> None:
         # Usuario nuevo: backfill completo desde Garmin (ventana histórica del modelo)
         # para poblar DB antes del primer flujo de coaching.
         # Usuario existente: cálculo incremental desde último registro persistido.
+        # El resumen inicial empieza a la vez (8c, 28/10): pide a Garmin sus datos mientras se calcula la carga y
+        # espera a que termine solo para leer la serie.
+        load_task = asyncio.ensure_future(agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user))
+        skip_startup_status = str(os.environ.get("KAIROS_SKIP_STARTUP_STATUS", "")).strip().lower() in {"1", "true", "yes", "on"}
+        status_task = None if skip_startup_status else asyncio.ensure_future(
+            agent.build_startup_status_markdown(profile_changes=profile_changes, load_ready=load_task)
+        )
         try:
             saved_formula_v = int(((agent.user_profile or {}).get("load_metrics") or {}).get("formula_version") or 0)
             if not is_new_user and saved_formula_v and saved_formula_v != _TSS_FORMULA_VERSION:
@@ -1644,9 +1674,7 @@ async def main() -> None:
             _load_start = time.time()
 
             async def _compute_with_counter() -> None:
-                task = asyncio.create_task(
-                    agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user)
-                )
+                task = load_task
                 while not task.done():
                     elapsed = int(time.time() - _load_start)
                     console.print(
@@ -1689,18 +1717,17 @@ async def main() -> None:
 
         timer.mark("carga")
         # Estado proactivo al arranque (especialmente para usuario existente).
-        skip_startup_status = str(os.environ.get("KAIROS_SKIP_STARTUP_STATUS", "")).strip().lower() in {"1", "true", "yes", "on"}
-        if skip_startup_status:
+        if status_task is None:
             console.print("[dim]Resumen inicial omitido por KAIROS_SKIP_STARTUP_STATUS.[/]")
         else:
             try:
                 with console.status("[dim]Kairos está pensando y preparando tu resumen inicial...[/]"):
-                    proactive_status = await agent.build_startup_status_markdown(profile_changes=profile_changes)
+                    proactive_status = await status_task
                 console.print(Markdown(proactive_status))
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as status_exc:
                 console.print(f"[dim yellow]No se pudo generar el estado proactivo inicial: {status_exc}[/]")
 
-        timer.mark("resumen_inicial")
+        timer.done()
         _debug_console("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
         
         _debug_console(f"[dim dimgray][debug] Tokens consumidos hoy con tu proveedor de IA: {agent.today_ia_tokens():,}[/]")

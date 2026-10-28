@@ -9690,19 +9690,20 @@ class TrainerAgent:
 
         return round(cached_ftp, 1) if cached_ftp else None
 
-    async def fetch_garmin_personal_data(self) -> dict:
+    async def fetch_garmin_personal_data(self, profile_raw: str | None = None) -> dict:
         """
         Obtiene datos personales del usuario directamente desde Garmin Connect.
         Estructura real de get_user_profile:
           { "userData": { "gender", "weight"(g), "height"(cm), "birthDate" }, ... }
         El nombre no está disponible en este endpoint.
+        profile_raw: respuesta de get_user_profile ya pedida (el arranque la usa también para comprobar el acceso).
         """
         result = {}
         today = date.today().isoformat()
 
         # --- get_user_profile ---
         try:
-            raw = await call_tool(self.mcp_session, "get_user_profile", {})
+            raw = profile_raw if profile_raw is not None else await call_tool(self.mcp_session, "get_user_profile", {})
             data = json.loads(raw) if raw and raw.strip().startswith("{") else {}
             if isinstance(data, dict):
                 ud = data.get("userData", {})
@@ -10471,8 +10472,13 @@ class TrainerAgent:
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
             log.debug("No se pudo guardar formula_version en el perfil: %s", exc)
 
-    async def collect_startup_snapshot_48h(self, prefetch_today: dict | None = None) -> dict:
-        """Recoge un snapshot operativo de 48h para briefing de arranque."""
+    async def collect_startup_snapshot_48h(self, prefetch_today: dict | None = None,
+                                           load_ready: "asyncio.Future | None" = None) -> dict:
+        """Recoge un snapshot operativo de 48h para briefing de arranque.
+
+        load_ready: el cálculo de la carga del arranque, que corre a la vez (28/10, pendiente 8c). Las llamadas a
+        Garmin no lo esperan; la lectura de la serie de carga, sí, para no leerla antes de que se guarde.
+        """
         today_iso = date.today().isoformat()
         yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
         two_days_ago_iso = (date.today() - timedelta(days=2)).isoformat()
@@ -10731,6 +10737,8 @@ class TrainerAgent:
         # el TSS en vivo, sin el detalle de las actividades, o se usaba una copia del perfil que podía ser vieja).
         _load_debug: str = "sin serie en load_metrics_daily"
         load_fatigue = None
+        if load_ready is not None:
+            await asyncio.wait([load_ready])  # sin propagar su error: el arranque ya lo avisa por su cuenta
         canonical_series = _load_metrics_series()
         if canonical_series:
             load_fatigue = _load_metrics_view(getattr(self, "user_profile", {}), canonical_series) or None
@@ -10789,11 +10797,12 @@ class TrainerAgent:
             "trainings": recent_trainings[:5],
         }
 
-    async def build_startup_status_markdown(self, profile_changes: list[str] | None = None) -> str:
-        """Construye el mensaje proactivo mostrado al arrancar la sesion."""
+    async def build_startup_status_markdown(self, profile_changes: list[str] | None = None,
+                                            load_ready: "asyncio.Future | None" = None) -> str:
+        """Construye el mensaje proactivo mostrado al arrancar la sesion (load_ready: ver collect_startup_snapshot_48h)."""
         _t0 = time.perf_counter()
         log.info("[STARTUP] ▶ build_startup_status_markdown inicio")
-        snapshot = await self.collect_startup_snapshot_48h()
+        snapshot = await self.collect_startup_snapshot_48h(load_ready=load_ready)
         log.info("[STARTUP] ⏱ collect_snapshot=%.1fs", time.perf_counter() - _t0)
         snapshot["profile_changes"] = profile_changes or []
         active_plan = _get_active_training_plan(self.user_profile)

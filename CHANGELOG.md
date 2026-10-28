@@ -6,6 +6,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, cobertura, lint ampliado y tiempos de `agent.log`); de ella salen los tres cambios siguientes. Lo que queda, en `docs/proximos_pasos.md` (Pendiente E).
 
+### Changed (arranque en paralelo; pendiente 8c)
+- Señal (`[ARRANQUE]`, tres pasadas: 12,0, 11,8 y 11,2 s): todo en serie. El sondeo de Zscaler (0,5 s, una petición a Google solo para el aviso del entorno; `main` ya usa el almacén de certificados del sistema siempre), las zonas de FC, la comprobación del acceso a Garmin y los datos personales (`get_user_profile` pedido dos veces) y el resumen inicial detrás del cálculo de la carga, aunque sus llamadas a Garmin no dependen de él. 19 consultas a Supabase.
+- Qué se hizo: el sondeo va en un hilo y `storage` ya no lo usa para decidir los certificados; `initialize()` y `get_user_profile` a la vez, y esa respuesta sirve también para los datos personales (`fetch_garmin_personal_data(profile_raw=)`); el resumen inicial empieza a la vez que la carga y la espera solo antes de leer la serie (`load_ready`); caché de lecturas de Supabase durante el arranque.
+- Criterio fijado antes: arranque al menos un 15 % más corto, con el resumen inicial igual. Resultado: 9,6 y 9,0 s (−20 %); 10 consultas a Supabase; resumen idéntico (mismas cifras de carga y de las 48 h), solo cambia el contador "Consultando Garmin…" (1 s más, porque la carga comparte Garmin con el resumen). Tests: 803.
+- Queda fuera: importar los módulos (≈ 2,2 s, `openai` 0,9 s y `mcp` 0,6 s) y arrancar el servidor MCP (≈ 1,6 s).
+
 ### Changed (lecturas de Supabase por pregunta; pendiente 8b)
 - Medición nueva en `agent.log`: `[TURNO]` por pregunta (ruta, tiempo total, consultas a Supabase, segundos y cuántas salieron de la caché, por función), `[ARRANQUE]` por paso del arranque y `[TOOL] iter=N pide: …` (qué tools pide el LLM en cada vuelta). Las cuenta `storage` con `@_db_read` / `@_db_write`.
 - Señal (batería base, 25 preguntas): 79 consultas y 7,81 s bloqueados en Supabase; la serie de carga se leía 2–3 veces por pregunta y el plan activo hasta 3, y todas las preguntas, también las de rutas deterministas, leían la serie para el prompt del LLM aunque no lo usaran.

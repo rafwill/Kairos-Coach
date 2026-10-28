@@ -52,13 +52,17 @@ main.py → run_agent()
   ├─ login con Supabase Auth (sesión guardada o email + contraseña) y proveedor de IA del atleta (se pregunta la primera vez)
   ├─ MCP propio: python -m garmin_mcp (mismo Python que Kairos)
   │     tokens de Garmin reutilizados en ~/.garminconnect/kairos/<hash del email>
-  ├─ TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
-  │     get_heart_rate_zones; escribe en el perfil solo si las zonas cambian
-  ├─ TrainerAgent.compute_and_persist_load_metrics()
-  │     incremental (normal) · incremental_refresh (actividad nueva) · full_recalc (usuario nuevo / cambio de fórmula)
-  └─ TrainerAgent.build_startup_status_markdown()
-        snapshot de 48 h (body battery, HRV, sueño, entrenamientos) + estado de carga + plan activo
+  ├─ a la vez: TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
+  │            (get_heart_rate_zones; escribe en el perfil solo si las zonas cambian)
+  │          · get_user_profile (comprueba el acceso a Garmin y da los datos personales)
+  ├─ a la vez: TrainerAgent.compute_and_persist_load_metrics()
+  │            incremental (normal) · incremental_refresh (actividad nueva) · full_recalc (usuario nuevo / cambio de fórmula)
+  │          · TrainerAgent.build_startup_status_markdown(load_ready=…)
+  │            snapshot de 48 h (body battery, HRV, sueño, entrenamientos); espera a la carga solo para leer la serie
+  │            + estado de carga + plan activo
 ```
+
+Desde el 28/10 (pendiente 8c) lo independiente va en paralelo, el sondeo de Zscaler (solo para el aviso del entorno) va en un hilo y las lecturas de Supabase del arranque pasan por la caché de `storage`. Tiempos por paso en `agent.log` (`[ARRANQUE]`): de 11,7 s a 9,3 s de media.
 
 ## Zonas de FC
 

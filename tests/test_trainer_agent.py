@@ -6939,3 +6939,48 @@ class TestReadCacheLifetime:
             await agent.chat("falla")
         assert ta._storage._read_cache is None
         assert seen == [True, True]
+
+
+class TestStartupInParallel:
+    """Arranque (8c, 28/10): el resumen inicial va a la vez que la carga y el perfil de Garmin se pide una vez."""
+
+    @pytest.mark.asyncio
+    async def test_snapshot_reads_the_load_series_only_after_the_load_is_computed(self, monkeypatch):
+        agent = ta.TrainerAgent.__new__(ta.TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {}
+        order = []
+
+        async def garmin(_session, name, _args):
+            order.append(name)
+            return "{}"
+
+        async def load():
+            await asyncio.sleep(0.05)
+            order.append("carga guardada")
+
+        def series(*_a, **_k):
+            order.append("serie leída")
+            return []
+
+        monkeypatch.setattr(ta, "call_tool", garmin)
+        monkeypatch.setattr(ta, "_load_metrics_series", series)
+        monkeypatch.setattr(ta._storage, "upsert_wellness_daily", lambda *a, **k: None)
+        load_task = asyncio.ensure_future(load())
+        await agent.collect_startup_snapshot_48h(load_ready=load_task)
+
+        assert order.index("carga guardada") < order.index("serie leída")
+        assert order.index("carga guardada") > 0  # Garmin no esperó a la carga
+
+    @pytest.mark.asyncio
+    async def test_personal_data_reuses_the_profile_already_read(self, monkeypatch):
+        agent = ta.TrainerAgent.__new__(ta.TrainerAgent)
+        agent.mcp_session = MagicMock()
+        garmin = AsyncMock(return_value="{}")
+        monkeypatch.setattr(ta, "call_tool", garmin)
+        raw = json.dumps({"userData": {"gender": "MALE", "weight": 67000.0, "height": 178}})
+
+        out = await agent.fetch_garmin_personal_data(profile_raw=raw)
+
+        assert out == {"gender": "hombre", "height_cm": 178, "weight_kg": 67.0}
+        garmin.assert_not_called()

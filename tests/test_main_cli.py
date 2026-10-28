@@ -547,6 +547,17 @@ class TestMainLoop:
         assert agent.conversation_history == ["¿Cómo estoy?", "error"]  # el turno fallido se quita
         assert out().count("Respuesta de Kairos") == 1
 
+    def test_startup_reads_the_garmin_profile_once_and_overlaps_status_with_load(self, monkeypatch, out):
+        # 8c (28/10): el perfil de Garmin sirve para comprobar el acceso y para los datos personales, y el
+        # resumen inicial recibe el cálculo de la carga para esperarlo solo al leer la serie.
+        mocks = _run_main(["salir"], monkeypatch=monkeypatch)
+        call_tool, sync = mocks[10], mocks[11]
+        assert [c.args[1] for c in call_tool.await_args_list] == ["get_user_profile"]
+        assert sync.await_args.kwargs == {"profile_raw": '{"displayName": "x"}'}
+        agent = _MainAgent.instances[0]
+        assert agent.build_startup_status_markdown.await_args.kwargs["load_ready"] is not None
+        assert "Listo" in out()
+
     def test_ctrl_c_ends_the_session(self, monkeypatch, out):
         _run_main(KeyboardInterrupt(), monkeypatch=monkeypatch)
         assert "Sesión finalizada" in out()

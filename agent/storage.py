@@ -201,10 +201,11 @@ def _supabase():
         return None
 
     try:
-        if is_zscaler_network():
-            import truststore
+        # Almacén de certificados del sistema siempre (sirve con y sin Zscaler, como hace main al importar). Antes
+        # se decidía con is_zscaler_network(), un sondeo de red de ~0,5 s en el arranque (28/10, pendiente 8c).
+        import truststore
 
-            truststore.inject_into_ssl()
+        truststore.inject_into_ssl()
         from supabase import ClientOptions, create_client
 
         # La sesión de Supabase Auth se guarda en local: con ella las consultas llevan el token del

@@ -45,7 +45,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15 y los totales del periodo (CHANGELOG).
 
 7. **Dividir `agent/trainer_agent.py`** (12.200 líneas; `chat()` ≈ 1.070 con 20 ramas `if route_key == …`): tabla `{ruta: función}` y módulos `routes/` (por familia), `prefetch.py`, `coaching.py`, `llm.py` (proveedor, clave, reintento de sensores), `kairos_tools.py` y `startup.py`; poco a poco, con los tests en verde en cada paso (`tests/test_trainer_agent.py` se divide igual).
-8. **Rendimiento.** (a) Precargar los datos que el LLM siempre pide para bajar las 3–5 vueltas del bucle con tools (cada una reenvía ≈ 13.000 tokens; 17 s de media por llamada). (b) Hecho el 28/10 (caché por pregunta; ver CHANGELOG). (c) Arranque en serie (sincronizar Garmin, zonas, carga, estado): medir y paralelizar lo independiente. El recorte del prompt de sistema ya está en el punto 2a.
+8. **Rendimiento.** (a) Precargar los datos que el LLM siempre pide para bajar las 3–5 vueltas del bucle con tools (cada una reenvía ≈ 13.000 tokens; 17 s de media por llamada). (b) Hecho el 28/10 (caché por pregunta; ver CHANGELOG). (c) Hecho el 28/10 (arranque en paralelo; ver CHANGELOG). El recorte del prompt de sistema ya está en el punto 2a.
 
 ## Descartado
 
