@@ -2912,6 +2912,8 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
     last_named_markers = (
         "ultima salida", "última salida", "ultima carrera", "última carrera",
         "ultimo rodaje", "último rodaje", "ultima tirada", "última tirada",
+        # 28/10: "¿qué tal mi último trail?" y "feedback de mi último entreno" caían en la precarga de chat().
+        "ultimo trail", "último trail", "ultimo entreno", "último entreno",
     )
     detail_markers = (
         "datos",
@@ -2934,6 +2936,9 @@ def _is_activity_details_query_intent(user_message: str) -> bool:
         "cómo fue",
         "que tal",
         "qué tal",
+        "feedback",
+        "valora",
+        "opinas",
     )
     has_month_name_date = re.search(
         r"\b\d{1,2}\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:\s+de\s+\d{2,4})?\b",
@@ -8402,6 +8407,57 @@ def _parse_activities_response(raw: str | None) -> tuple[list[dict], bool, int]:
     return [], False, 0
 
 
+_LAST_ACTIVITY_RE = re.compile(
+    r"\b(última|ultima|último|ultimo|reciente|mas reciente|más reciente)\s*"
+    r"(actividad|entreno|entrenamiento|salida|sesión|sesion|trail|carrera|running|bici)\b"
+)
+
+
+def _last_activity_sport(text: str) -> str | None:
+    """Deporte que pide "mi último trail / mi última carrera / mi última salida en bici", o None."""
+    if re.search(r"\btrail\b", text):
+        return "trail"
+    if re.search(r"\brunning\b|\bcarrera\b", text):
+        return "running"
+    if re.search(r"\bbici\b|\bciclismo\b|\bcycling\b", text):
+        return "cycling"
+    return None
+
+
+async def _resolve_last_activity(mcp_session, user_message: str) -> tuple[str | None, int | None]:
+    """(fecha ISO, activityId) de "mi última actividad", "mi último trail"… sin fecha; (None, None) si no aplica.
+
+    La más reciente de las 20 últimas de Garmin, del deporte pedido. Con deporte y sin ninguna de él, (None, None):
+    el LLM busca con sus tools. Sin deporte y sin Garmin, el último día con actividad de la serie de carga, y si
+    no, hoy. Antes (hasta el 28/10) el texto de get_activities no se leía como JSON, así que nunca encontraba nada:
+    "mi último trail" analizaba la primera actividad de hoy, fuera del deporte que fuera.
+    """
+    text = (user_message or "").lower()
+    if not _LAST_ACTIVITY_RE.search(text):
+        return None, None
+    sport = _last_activity_sport(text)
+    acts: list[dict] = []
+    try:
+        raw = await call_tool(mcp_session, "get_activities", {"start": "0", "limit": "20"})
+        parsed = _try_parse_json(raw)
+        acts = _extract_activities_list(parsed if parsed is not None else raw)
+    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError) as exc:
+        log.debug("pre_fetch última actividad: get_activities falló: %s", exc)
+    match = next((a for a in acts if sport is None or _activity_matches_sport(a, sport)), None)
+    if match is not None:
+        act_id = match.get("activityId") or match.get("id") or match.get("activity_id")
+        iso = _extract_activity_date_iso(match)
+        log.info("pre_fetch: última actividad %s → id=%s fecha=%s", sport or "", act_id, iso)
+        return iso, (int(act_id) if act_id else None)
+    if sport:
+        log.info("pre_fetch: ninguna de %s entre las 20 últimas; sin precarga", sport)
+        return None, None
+    for row in reversed(_load_metrics_series()):
+        if float(row.get("tss") or 0) > 0 or int(row.get("activities_count") or 0) > 0:
+            return str(row.get("date") or ""), None
+    return date.today().isoformat(), None
+
+
 async def _find_activity_id_by_date(mcp_session: ClientSession, target_date_iso: str) -> int | None:
     """Busca en actividades recientes el activity_id correspondiente a una fecha ISO."""
     # Intento rápido: endpoint específico de día.
@@ -11531,80 +11587,15 @@ class TrainerAgent:
         user_date = _extract_iso_date_from_text(user_message)
         is_week_range_query = bool(re.search(r"\b(semana|week)\b", (user_message or "").lower()))
 
-        # "última/ultimo actividad/entreno" sin fecha → buscar en serie DB el último día con actividad
-        _last_act_query = bool(re.search(
-            r'\b(última|ultima|último|ultimo|reciente|mas reciente|más reciente)\s*(actividad|entreno|entrenamiento|salida|sesión|sesion|trail|carrera|running|bici)\b',
-            (user_message or "").lower()
-        ))
-
-        # Detectar filtro de deporte explícito: "de trail", "de running", etc.
-        _sport_filter: str | None = None
-        _msg_low = (user_message or "").lower()
-        if _last_act_query:
-            if re.search(r'\btrail\b', _msg_low):
-                _sport_filter = "trail"
-            elif re.search(r'\brunning\b|\bcarrera\b', _msg_low):
-                _sport_filter = "running"
-            elif re.search(r'\bbici\b|\bciclismo\b|\bcycling\b', _msg_low):
-                _sport_filter = "cycling"
-
-        if _last_act_query and not user_date and not is_week_range_query:
-            if _sport_filter:
-                # Buscar en Garmin las actividades recientes filtradas por deporte
-                try:
-                    _raw_acts = await call_tool(self.mcp_session, "get_activities", {"start": "0", "limit": "20"})
-                    _acts = _extract_activities_list(_raw_acts)
-                    for _act in _acts:
-                        _tk = str(
-                            (_act.get("activityTypeDTO") or {}).get("typeKey", "")
-                            or (_act.get("activityType") or {}).get("typeKey", "")
-                            or _act.get("type", "")
-                        ).lower()
-                        _match = (
-                            (_sport_filter == "trail" and "trail" in _tk)
-                            or (_sport_filter == "running" and "running" in _tk and "trail" not in _tk)
-                            or (_sport_filter == "cycling" and "cycl" in _tk)
-                        )
-                        if _match:
-                            user_date = _extract_activity_date_iso(_act)
-                            _act_id = _act.get("activityId") or _act.get("id") or _act.get("activity_id")
-                            if _act_id:
-                                _prefetch_sport_id = int(_act_id)
-                                log.info("pre_fetch: última actividad %s → id=%s fecha=%s", _sport_filter, _prefetch_sport_id, user_date)
-                            break
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
-                    log.debug("pre_fetch sport-filter %s falló: %s", _sport_filter, _e)
-            else:
-                try:
-                    _raw_acts = await call_tool(self.mcp_session, "get_activities", {"start": "0", "limit": "20"})
-                    _acts = _extract_activities_list(_raw_acts)
-                    if _acts:
-                        _first = _acts[0]
-                        user_date = _extract_activity_date_iso(_first)
-                        _act_id = _first.get("activityId") or _first.get("id") or _first.get("activity_id")
-                        if _act_id:
-                            _prefetch_sport_id = int(_act_id)
-                        log.info("pre_fetch: última actividad detectada en Garmin recientes → user_date=%s", user_date)
-                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _e:
-                    log.debug("pre_fetch recent activities falló: %s", _e)
-
-                if not user_date:
-                    _series = _load_metrics_series()
-                    for _row in reversed(_series):
-                        if float(_row.get("tss") or 0) > 0 or int(_row.get("activities_count") or 0) > 0:
-                            user_date = str(_row.get("date") or "")
-                            log.info("pre_fetch: última actividad detectada en DB → user_date=%s", user_date)
-                            break
-            if not user_date:
-                user_date = date.today().isoformat()
+        # "Mi última actividad / mi último trail…" sin fecha: la actividad concreta (28/10, `_resolve_last_activity`).
+        last_activity_id = None
+        if not user_date and not is_week_range_query:
+            user_date, last_activity_id = await _resolve_last_activity(self.mcp_session, user_message)
 
         if user_date and not is_week_range_query:
             # Intento 1: get_activities_fordate para la fecha exacta
-            pre_id = None
-            # Si ya tenemos el ID por sport-filter, usarlo directamente
-            if _sport_filter and "_prefetch_sport_id" in dir():
-                pre_id = _prefetch_sport_id  # type: ignore[name-defined]
-            else:
+            pre_id = last_activity_id
+            if pre_id is None:
                 try:
                     _raw_date_acts = await call_tool(
                         self.mcp_session, "get_activities_fordate",

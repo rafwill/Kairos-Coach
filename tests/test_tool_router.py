@@ -89,6 +89,8 @@ class TestToolRouter:
         ("¿Cómo fue mi entreno de hoy?", None),
         ("¿Cuántas actividades tengo en la base de datos?", None),
         ("Analiza mi entrenamiento de ayer", "activity_details"),
+        ("¿Qué tal mi último trail?", "activity_details"),
+        ("Dame feedback de mi último entreno", "activity_details"),
     ]
 
     def test_phrase_bank(self):

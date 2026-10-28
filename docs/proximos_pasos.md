@@ -21,6 +21,7 @@ Se reescribe al final de cada sesión.
 
 1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`.** Usar Kairos unos días con preguntas reales y revisar juntos cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7). En concreto:
    - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales, y si con las guías G13 (calendario) y G14 (HRV calculada) del 26/10 bajan los saltos de S25, S27 y S28.
+   - **S27, falsos positivos vistos el 28/10** (batería 20261028_141326, preguntas 8 y 9): "mañana" dicho desde otro día del texto ("Dom 01 · … Revisa HRV mañana lunes" en una fila de plan; "Mañana (viernes 30)" después de la sesión del jueves 29). S27 lo mide siempre desde hoy y el reintento no lo arregla porque no hay error. Idea: no juzgar "mañana" en una línea o fila que empieza por otro día o fecha.
    - Enrutado: cada pregunta real mal enrutada va al banco de frases (`PHRASE_BANK` en `tests/test_tool_router.py`) antes de tocar los detectores. Mirar también si salta `[G15]` (marco de hoy en el bucle con tools) y si S15 lo hace cumplir.
 
 ### B. Chat y LLM
@@ -45,7 +46,6 @@ De la revisión completa del proyecto del 28/10; ya hechos los fallos del provee
 
 7. **Dividir `agent/trainer_agent.py`** (12.200 líneas; `chat()` ≈ 1.070 con 20 ramas `if route_key == …`): tabla `{ruta: función}` y módulos `routes/` (por familia), `prefetch.py`, `coaching.py`, `llm.py` (proveedor, clave, reintento de sensores), `kairos_tools.py` y `startup.py`; poco a poco, con los tests en verde en cada paso (`tests/test_trainer_agent.py` se divide igual).
 8. **Rendimiento.** (a) Precargar los datos que el LLM siempre pide para bajar las 3–5 vueltas del bucle con tools (cada una reenvía ≈ 13.000 tokens; 17 s de media por llamada). (b) Supabase es síncrono dentro de código asíncrono (37 `.execute()`; perfil y serie leídos desde 19 sitios): caché por pregunta o `asyncio.to_thread`. (c) Arranque en serie (sincronizar Garmin, zonas, carga, estado): medir y paralelizar lo independiente. El recorte del prompt de sistema ya está en el punto 2a.
-10. **Precarga de "mi último trail/carrera/bici"** (`chat`): si no hay ninguna de ese deporte entre las 20 últimas, analiza la primera actividad de hoy, sea del deporte que sea; además usa `"_prefetch_sport_id" in dir()`. Unas 360 líneas casi sin tests: sacarla a una función probada al dividir el fichero (punto 7).
 
 ## Descartado
 

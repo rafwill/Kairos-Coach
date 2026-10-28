@@ -6870,3 +6870,49 @@ class TestPeriodAndSleepRoutes:
         assert "-80 min de sueño y -15 puntos" in out
         assert "- jue 22/10: sin datos" in out
         assert ta._signed(-0.3) == "0" and ta._signed(4.6) == "+5"
+
+
+class TestResolveLastActivity:
+    """Precarga de "mi última actividad / mi último trail…" en chat() (28/10, pendiente 10)."""
+
+    ACTS = [
+        {"activityId": 30, "startTimeLocal": "2026-10-27 18:00:00", "activityType": {"typeKey": "strength_training"}},
+        {"activityId": 20, "startTimeLocal": "2026-10-25 09:00:00", "activityType": {"typeKey": "road_biking"}},
+        {"activityId": 10, "startTimeLocal": "2026-10-09 22:00:00", "activityType": {"typeKey": "trail_running"}},
+    ]
+
+    @staticmethod
+    def _garmin(monkeypatch, acts=None, fail=False):
+        async def fake_call(_session, name, args):
+            assert name == "get_activities"
+            if fail:
+                return "Error al llamar a 'get_activities': Connection closed"
+            return json.dumps(acts)  # call_tool devuelve texto: antes no se leía como JSON y nunca encontraba nada
+
+        monkeypatch.setattr(ta, "call_tool", fake_call)
+
+    @pytest.mark.asyncio
+    async def test_finds_latest_of_requested_sport(self, monkeypatch):
+        self._garmin(monkeypatch, self.ACTS)
+        assert await ta._resolve_last_activity(None, "¿Qué tal fue mi último trail?") == ("2026-10-09", 10)
+        # road_biking también es bici (el filtro anterior solo miraba "cycl").
+        assert await ta._resolve_last_activity(None, "Analiza mi última salida en bici") == ("2026-10-25", 20)
+        assert await ta._resolve_last_activity(None, "Analiza mi última actividad") == ("2026-10-27", 30)
+
+    @pytest.mark.asyncio
+    async def test_no_activity_of_that_sport_means_no_prefetch(self, monkeypatch):
+        # Antes analizaba la primera actividad de hoy, fuera del deporte que fuera.
+        self._garmin(monkeypatch, self.ACTS[:2])
+        assert await ta._resolve_last_activity(None, "¿Cómo fue mi último trail?") == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_without_garmin_uses_last_day_with_load(self, monkeypatch):
+        self._garmin(monkeypatch, fail=True)
+        monkeypatch.setattr(ta, "_load_metrics_series", lambda: [
+            {"date": "2026-10-26", "tss": 55.0}, {"date": "2026-10-27", "tss": 0.0, "activities_count": 0}])
+        assert await ta._resolve_last_activity(None, "Feedback de mi último entreno") == ("2026-10-26", None)
+
+    @pytest.mark.asyncio
+    async def test_other_questions_do_not_prefetch(self, monkeypatch):
+        self._garmin(monkeypatch, self.ACTS)
+        assert await ta._resolve_last_activity(None, "¿Cuál es mi FC umbral?") == (None, None)
