@@ -110,6 +110,7 @@ from agent.trainer_agent import (
     TrainerAgent, _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile,
     _session_intensity_label, probe_llm_key,
 )
+from agent import storage as _storage
 from agent.storage import (
     activate_training_plan,
     check_supabase_connection,
@@ -1510,18 +1511,38 @@ def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
     return False
 
 
+class _StartupTimer:
+    """Marcas del arranque en agent.log (28/10, pendiente 8c): tiempo y consultas a Supabase de cada paso."""
+
+    def __init__(self) -> None:
+        self.t0 = self.last = time.perf_counter()
+        _storage.reset_db_stats()
+
+    def mark(self, step: str) -> None:
+        now = time.perf_counter()
+        db = _storage.db_stats()
+        log.info("[ARRANQUE] %s %.1fs (supabase=%d %.2fs) acumulado=%.1fs", step, now - self.last, db["calls"], db["seconds"],
+                 now - self.t0)
+        self.last = now
+        _storage.reset_db_stats()
+
+
 async def main() -> None:
     global log, _DEBUG_CONSOLE
     log, _DEBUG_CONSOLE = _configure_logging()
+    timer = _StartupTimer()
 
     # Fail-fast de infraestructura: evita pedir credenciales si la DB no está lista.
     _check_and_migrate_supabase()
+    timer.mark("supabase")
 
     username, credentials, is_new_user, app_password = _authenticate_or_register_user()
     _ensure_garmin_credentials(credentials, app_password=app_password)
     _check_garmin_env()
+    timer.mark("sesion")
 
     provider = await _ensure_ia_provider()
+    timer.mark("proveedor_ia")
 
     console.print(Panel.fit(
         f"[bold green]Kairos Coach[/] — Tu entrenador personal con IA\n"
@@ -1532,9 +1553,11 @@ async def main() -> None:
 
     async with garmin_mcp_session() as session:
         agent = TrainerAgent(mcp_session=session, provider=provider)
+        timer.mark("mcp_y_agente")
 
         console.print("[dim]Cargando herramientas de Garmin...[/]")
         await agent.initialize()
+        timer.mark("initialize")
         # Las de Garmin (servidor MCP) y las internas de Kairos (kairos_*, sin servidor).
         n_internal = sum(1 for t in agent.tools_schema if str(((t or {}).get("function") or {}).get("name", "")).startswith("kairos_"))
         console.print(f"[green]✓[/] {len(agent.tools_schema)} herramientas disponibles "
@@ -1562,10 +1585,12 @@ async def main() -> None:
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
             log.debug("Verificación inicial de Garmin falló (no bloqueante): %s", exc)
             pass  # No bloquear el arranque si el test de verificación falla
+        timer.mark("verificacion_garmin")
 
         # Sincronizar datos personales desde Garmin
         profile_changes = await _sync_from_garmin(agent)
         agent.user_profile = _load_user_profile()
+        timer.mark("sync_garmin")
 
         # Umbral de running: se solicita una vez al usuario y se guarda por perfil.
         # A partir de aquí, el cálculo de TSS de carrera usa este valor persistido.
@@ -1598,6 +1623,7 @@ async def main() -> None:
             if "db:athlete_knowledge" not in agent.knowledge_sources:
                 agent.knowledge_sources.append("db:athlete_knowledge")
 
+        timer.mark("perfil_y_conocimiento")
         active = get_active_user()
         console.print(
             f"[dim]Usuario activo: {active.get('username') or username}"
@@ -1661,6 +1687,7 @@ async def main() -> None:
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _load_exc:
             console.print(f"[dim yellow]⚠ Carga/fatiga no calculada: {_load_exc}[/]")
 
+        timer.mark("carga")
         # Estado proactivo al arranque (especialmente para usuario existente).
         skip_startup_status = str(os.environ.get("KAIROS_SKIP_STARTUP_STATUS", "")).strip().lower() in {"1", "true", "yes", "on"}
         if skip_startup_status:
@@ -1673,6 +1700,7 @@ async def main() -> None:
             except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as status_exc:
                 console.print(f"[dim yellow]No se pudo generar el estado proactivo inicial: {status_exc}[/]")
 
+        timer.mark("resumen_inicial")
         _debug_console("[dim dimgray][debug] Inicio de la sesión. Tokens gastados: 0[/]")
         
         _debug_console(f"[dim dimgray][debug] Tokens consumidos hoy con tu proveedor de IA: {agent.today_ia_tokens():,}[/]")

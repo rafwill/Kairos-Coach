@@ -1,0 +1,17 @@
+Batería del bucle con tools (28/10, pendiente 8a)
+
+Preguntas que no tienen ruta determinista y llegan al LLM con tools. Sirven para medir vueltas, tokens y tiempo
+del bucle antes y después de un cambio (agent.log: [TOOL] iter=N pide, [LLM] ◀ y [TURNO]). Se lanza con
+tools/run_bateria.py --preguntas docs/bateria_bucle_preguntas.txt y se juzga con tools/juez_bateria.py.
+
+Pruebas
+Compara mi HRV de esta semana con la de la semana pasada
+¿Cómo fue mi entreno de hoy?
+¿Cómo ha evolucionado mi VO2max en los últimos meses?
+¿Qué tal mi estrés esta semana?
+¿Qué predicción de tiempo tengo para un 10k?
+¿Ha mejorado mi frecuencia cardiaca en reposo este mes?
+¿Cómo ha ido mi carga de entrenamiento en septiembre comparado con agosto?
+¿Qué minutos de intensidad llevo esta semana?
+¿Qué efecto de entrenamiento tuvo mi última carrera?
+¿Debería bajar el volumen la semana que viene?

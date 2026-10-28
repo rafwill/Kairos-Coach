@@ -6916,3 +6916,26 @@ class TestResolveLastActivity:
     async def test_other_questions_do_not_prefetch(self, monkeypatch):
         self._garmin(monkeypatch, self.ACTS)
         assert await ta._resolve_last_activity(None, "¿Cuál es mi FC umbral?") == (None, None)
+
+
+class TestReadCacheLifetime:
+    """La caché de lecturas de Supabase vive lo que dura una pregunta, también si la pregunta falla (8b, 28/10)."""
+
+    @pytest.mark.asyncio
+    async def test_cache_is_closed_after_an_answer_and_after_an_error(self, monkeypatch):
+        agent = ta.TrainerAgent.__new__(ta.TrainerAgent)
+        seen = []
+
+        async def answer(_msg):
+            seen.append(ta._storage._read_cache is not None)
+            if _msg == "falla":
+                raise RuntimeError("boom")
+            return "ok"
+
+        monkeypatch.setattr(agent, "_answer", answer)
+        assert await agent.chat("hola") == "ok"
+        assert ta._storage._read_cache is None
+        with pytest.raises(RuntimeError):
+            await agent.chat("falla")
+        assert ta._storage._read_cache is None
+        assert seen == [True, True]

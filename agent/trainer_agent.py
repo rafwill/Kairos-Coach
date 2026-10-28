@@ -114,17 +114,22 @@ def _load_session_context() -> dict:
 
 
 def _save_history_entry(role: str, content: str) -> None:
-    """Añade una entrada al historial de conversación persistente.
+    """Añade una entrada al historial de conversación persistente."""
+    _save_history_entries([(role, content)])
 
-    Si Supabase falla, se pierde esa entrada, no la respuesta: el 26/10 un "JWT expired" aquí cerró Kairos
+
+def _save_history_entries(entries: list[tuple[str, str]]) -> None:
+    """Añade entradas al historial persistente con una sola lectura y escritura (pregunta y respuesta, 28/10).
+
+    Si Supabase falla, se pierden esas entradas, no la respuesta: el 26/10 un "JWT expired" aquí cerró Kairos
     con la respuesta ya generada.
     """
     if not _session_memory_enabled():
         return
     try:
-        _storage.save_history_entry(role, content)
+        _storage.save_history_entries(entries)
     except Exception as exc:  # noqa: BLE001 — cualquier fallo de red o de Supabase
-        log.warning("No se pudo guardar el historial (%s): %s", role, exc)
+        log.warning("No se pudo guardar el historial (%s): %s", "/".join(role for role, _ in entries), exc)
 
 
 def _load_session_summaries() -> list[dict]:
@@ -11048,9 +11053,18 @@ class TrainerAgent:
 
         self.conversation_history.append({"role": "user", "content": user_message})
         self.conversation_history.append({"role": "assistant", "content": assistant_reply})
-        _save_history_entry("user", user_message)
-        _save_history_entry("assistant", assistant_reply)
+        _save_history_entries([("user", user_message), ("assistant", assistant_reply)])
+        self._log_turn_stats(route)
         return assistant_reply
+
+    def _log_turn_stats(self, route: str) -> None:
+        """Una línea por pregunta en agent.log: tiempo total y consultas a Supabase (28/10, pendiente 8)."""
+        db = _storage.db_stats()
+        started = getattr(self, "_turn_started", None)
+        total = f"{time.perf_counter() - started:.1f}s" if started else "?"
+        detail = ", ".join(f"{name}×{n}" for name, n in sorted(db["by_function"].items(), key=lambda kv: -kv[1]))
+        log.info("[TURNO] ruta=%s total=%s supabase=%d consultas %.2fs, %d desde la caché (%s)", route, total, db["calls"],
+                 db["seconds"], db["cache_hits"], detail)
 
     def _log_chat_error(self, stage: str, error: Exception, extra: dict | None = None) -> None:
         """Registra un error de una etapa del chat (planificación, LLM, tool…) sin interrumpir la respuesta."""
@@ -11270,7 +11284,20 @@ class TrainerAgent:
         """
         Procesa un mensaje del usuario y devuelve la respuesta del agente.
         Gestiona automáticamente las llamadas a herramientas de Garmin.
+
+        Las lecturas de Supabase de la pregunta pasan por una caché que se abre aquí y se cierra al terminar,
+        también si la pregunta falla (pendiente 8b, 28/10).
         """
+        self._turn_started = time.perf_counter()
+        _storage.reset_db_stats()
+        _storage.open_read_cache()
+        try:
+            return await self._answer(user_message)
+        finally:
+            _storage.close_read_cache()
+
+    async def _answer(self, user_message: str) -> str:
+        """Responde una pregunta: rutas deterministas, rutas mixtas o bucle con tools (lo llama `chat`)."""
         if not hasattr(self, "tool_router") or not isinstance(getattr(self, "tool_router", None), ToolRouter):
             self.tool_router = ToolRouter()
 
@@ -11283,7 +11310,6 @@ class TrainerAgent:
             )
 
         reset_tool_transparency_events()
-        messages = self._build_messages(user_message)
         _prefetch_cache: dict = {}  # poblado por el pre-fetch si user_date == hoy
         route_key = self.tool_router.route_key(
             user_message,
@@ -11579,6 +11605,10 @@ class TrainerAgent:
                     error=exc,
                     extra={"user_message": user_message},
                 )
+
+        # Mensajes del LLM con su prompt de sistema (perfil, carga, plan…): solo las preguntas que llegan aquí los
+        # usan; antes se construían también para las rutas deterministas, con una lectura de Supabase de más (8b).
+        messages = self._build_messages(user_message)
 
         # Pre-fetch proactivo: si el usuario menciona una fecha explícita,
         # resolver y cargar la actividad + contexto completo ANTES del bucle LLM.
@@ -11990,8 +12020,10 @@ class TrainerAgent:
 
             # Debug: muestra si el modelo llama herramientas
             if message.tool_calls:
-                tool_names = [tc.function.name for tc in message.tool_calls]
-                log.debug(f"Iteracion {iteration}: llamando tools -> {tool_names}")
+                # Qué pide el LLM en cada vuelta (28/10, pendiente 8a): lo que siempre pide en la primera se puede
+                # precargar y ahorrar esa vuelta.
+                log.info("[TOOL] iter=%d pide: %s", iteration,
+                         "; ".join(f"{tc.function.name}({(tc.function.arguments or '')[:120]})" for tc in message.tool_calls))
             else:
                 log.debug(f"Iteración {iteration}: respuesta directa (sin tool calls)")
                 log.debug(f"finish_reason: {response.choices[0].finish_reason}")

@@ -811,3 +811,84 @@ def test_get_ia_provider_explains_a_missing_table(monkeypatch):
     monkeypatch.setattr(storage, "_require_supabase", lambda: _Sb())
     with pytest.raises(RuntimeError, match="schema.sql"):
         storage.get_ia_provider()
+
+
+# ─── Caché de lecturas de una pregunta (28/10, pendiente 8b) ────────────────
+
+class _RowsTable(_DummyTable):
+    """Tabla con filas guardadas: select devuelve las filas, upsert las sustituye; cuenta las idas y vueltas."""
+
+    def upsert(self, payload):
+        self._mode = "upsert"
+        self._payload = payload
+        return self
+
+    def execute(self):
+        self.parent.executes.append((self.name, self._mode))
+        if self._mode == "upsert":
+            self.parent.rows[self.name] = [self._payload]
+            return _DummyResult([])
+        return _DummyResult([dict(r) for r in self.parent.rows.get(self.name, [])])
+
+
+class _RowsSupabase(_DummySupabase):
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = rows
+        self.executes = []
+
+    def table(self, name):
+        return _RowsTable(self, name)
+
+
+def _rows_db(monkeypatch, rows):
+    fake = _RowsSupabase(rows)
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_require_supabase", lambda: fake)
+    storage.reset_db_stats()
+    return fake
+
+
+def test_read_cache_serves_a_repeated_read_without_going_back_to_supabase(monkeypatch):
+    fake = _rows_db(monkeypatch, {"user_profile": [{"data": {"personal": {"weight_kg": 70}}}]})
+    storage.open_read_cache()
+    try:
+        first = storage.load_user_profile()
+        first["personal"]["weight_kg"] = 99  # el llamador modifica lo que lee: la caché no puede cambiar
+        second = storage.load_user_profile()
+    finally:
+        storage.close_read_cache()
+    assert second == {"personal": {"weight_kg": 70}}
+    assert fake.executes == [("user_profile", "select")]
+    assert storage.db_stats()["calls"] == 1 and storage.db_stats()["cache_hits"] == 1
+
+
+def test_a_write_drops_the_cached_reads_of_its_table_only(monkeypatch):
+    fake = _rows_db(monkeypatch, {"user_profile": [{"data": {"v": 1}}], "athlete_knowledge": [{"content": "kb"}]})
+    storage.open_read_cache()
+    try:
+        storage.load_user_profile()
+        storage.load_athlete_knowledge()
+        storage.save_user_profile({"v": 2})
+        assert storage.load_user_profile() == {"v": 2}  # vuelve a Supabase y ve lo escrito
+        assert storage.load_athlete_knowledge() == "kb"  # otra tabla: sigue en la caché
+    finally:
+        storage.close_read_cache()
+    assert [t for t, mode in fake.executes if mode == "select"] == ["user_profile", "athlete_knowledge", "user_profile"]
+
+
+def test_without_an_open_cache_every_read_goes_to_supabase(monkeypatch):
+    fake = _rows_db(monkeypatch, {"user_profile": [{"data": {"v": 1}}]})
+    storage.open_read_cache()
+    storage.load_user_profile()
+    storage.close_read_cache()
+    storage.load_user_profile()
+    storage.load_user_profile()
+    assert len(fake.executes) == 3
+
+
+def test_history_question_and_answer_are_saved_with_one_read_and_one_write(monkeypatch):
+    fake = _rows_db(monkeypatch, {"session_context": [{"history": [{"role": "user", "content": "antes"}]}]})
+    storage.save_history_entries([("user", "¿Qué tal ayer?"), ("assistant", "Bien.")])
+    assert fake.executes == [("session_context", "select"), ("session_context", "upsert")]
+    assert [e["content"] for e in fake.rows["session_context"][0]["history"]] == ["antes", "¿Qué tal ayer?", "Bien."]

@@ -10,10 +10,13 @@ Este módulo usa Supabase como fuente de verdad para:
 - ia_provider
 """
 
+import copy
+import functools
 import json
 import logging
 import os
 import time
+from collections import Counter
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,6 +34,88 @@ _sb_ready = False
 _sb_token_check_at = 0.0  # hora (time.time) de la próxima comprobación de caducidad del token
 _active_user_id: str | None = None
 _active_username: str | None = None
+
+# Consultas a Supabase de la pregunta en curso (28/10, pendiente 8): cuántas, cuáles y cuánto tiempo bloquean.
+# Cada función con @_db_read / @_db_write es una ida y vuelta (salvo las que anidan otra); el tiempo se suma solo
+# en la más externa, para no contarlo dos veces. Las lecturas servidas desde la caché no cuentan como consulta.
+_db_calls: Counter = Counter()
+_db_hits = 0
+_db_seconds = 0.0
+_db_depth = 0
+
+# Caché de lecturas de una pregunta (pendiente 8b): mientras está abierta, una lectura repetida con los mismos
+# argumentos no vuelve a Supabase. Cualquier escritura en una tabla borra lo guardado de esa tabla, y la caché se
+# vacía al empezar y al terminar cada pregunta: nunca sirve datos de otra pregunta. Devuelve copias, porque los
+# llamadores modifican lo que leen (el perfil se edita y se guarda).
+_read_cache: dict | None = None
+
+
+def reset_db_stats() -> None:
+    global _db_seconds, _db_hits
+    _db_calls.clear()
+    _db_hits = 0
+    _db_seconds = 0.0
+
+
+def db_stats() -> dict:
+    return {"calls": sum(_db_calls.values()), "cache_hits": _db_hits, "seconds": round(_db_seconds, 3),
+            "by_function": dict(_db_calls)}
+
+
+def open_read_cache() -> None:
+    global _read_cache
+    _read_cache = {}
+
+
+def close_read_cache() -> None:
+    global _read_cache
+    _read_cache = None
+
+
+def _timed(fn, args, kwargs):
+    global _db_depth, _db_seconds
+    _db_calls[fn.__name__] += 1
+    _db_depth += 1
+    t0 = time.perf_counter()
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _db_depth -= 1
+        if _db_depth == 0:
+            _db_seconds += time.perf_counter() - t0
+
+
+def _db_read(table: str):
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            global _db_hits
+            if _read_cache is None:
+                return _timed(fn, args, kwargs)
+            key = (fn.__name__, _active_user_id, args, tuple(sorted(kwargs.items())))
+            if key in _read_cache:
+                _db_hits += 1
+                return copy.deepcopy(_read_cache[key][1])
+            value = _timed(fn, args, kwargs)
+            if _read_cache is not None:
+                _read_cache[key] = (table, copy.deepcopy(value))
+            return value
+        return wrapper
+    return decorator
+
+
+def _db_write(*tables: str):
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return _timed(fn, args, kwargs)
+            finally:
+                if _read_cache:
+                    for key in [k for k, (table, _) in _read_cache.items() if table in tables]:
+                        del _read_cache[key]
+        return wrapper
+    return decorator
 
 
 def set_active_user(user_id: str | None, username: str | None = None) -> None:
@@ -397,6 +482,7 @@ def sign_out() -> None:
     set_active_user(None)
 
 
+@_db_write("app_user")
 def update_user_credentials(credentials: dict) -> None:
     """Actualiza credenciales auxiliares del usuario activo."""
     uid = _require_active_user_id()
@@ -404,6 +490,7 @@ def update_user_credentials(credentials: dict) -> None:
     sb.table("app_user").update({"credentials": _sanitize_credentials_for_storage(credentials)}).eq("id", uid).execute()
 
 
+@_db_read("user_profile")
 def load_user_profile() -> dict:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -413,6 +500,7 @@ def load_user_profile() -> dict:
     return res.data[0].get("data") or {}
 
 
+@_db_write("user_profile")
 def save_user_profile(profile: dict) -> None:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -436,6 +524,7 @@ def save_user_profile(profile: dict) -> None:
             time.sleep(delay_s)
 
 
+@_db_read("session_context")
 def load_session_context() -> dict:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -455,6 +544,7 @@ def load_session_context() -> dict:
     }
 
 
+@_db_write("session_context")
 def save_session_context(ctx: dict) -> None:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -468,8 +558,15 @@ def save_session_context(ctx: dict) -> None:
 
 
 def save_history_entry(role: str, content: str) -> None:
+    save_history_entries([(role, content)])
+
+
+def save_history_entries(entries: list[tuple[str, str]]) -> None:
+    """Añade varias entradas al historial con una lectura y una escritura (pregunta y respuesta juntas, 28/10)."""
+    if not entries:
+        return
     ctx = load_session_context()
-    ctx.setdefault("history", []).append({"role": role, "content": content})
+    ctx.setdefault("history", []).extend({"role": role, "content": content} for role, content in entries)
     ctx["history"] = ctx["history"][-50:]
     save_session_context(ctx)
 
@@ -502,6 +599,7 @@ def persist_session_summary_daily(summary: str) -> None:
     save_session_context(ctx)
 
 
+@_db_read("athlete_knowledge")
 def load_athlete_knowledge() -> str:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -511,6 +609,7 @@ def load_athlete_knowledge() -> str:
     return (res.data[0].get("content") or "").strip()
 
 
+@_db_write("athlete_knowledge")
 def save_athlete_knowledge(content: str) -> None:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -577,6 +676,7 @@ def _insert_training_plan_session_rows(sb, session_rows: list[dict]) -> None:
         sb.table("training_plan_session").insert(session_rows).execute()
 
 
+@_db_read("training_plan")
 def list_training_plans(include_archived: bool = False) -> list[dict]:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -593,6 +693,7 @@ def list_training_plans(include_archived: bool = False) -> list[dict]:
     return list(res.data or [])
 
 
+@_db_read("training_plan")
 def get_training_plan(plan_id: str) -> dict | None:
     uid = _require_active_user_id()
     if not plan_id:
@@ -615,6 +716,7 @@ def get_training_plan(plan_id: str) -> dict | None:
     return res.data[0] if res.data else None
 
 
+@_db_read("training_plan")
 def get_active_training_plan() -> dict | None:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -635,6 +737,7 @@ def get_active_training_plan() -> dict | None:
     return res.data[0] if res.data else None
 
 
+@_db_read("training_plan_session")
 def list_training_plan_sessions(plan_id: str) -> list[dict]:
     if not plan_id:
         return []
@@ -671,6 +774,7 @@ def _next_training_plan_version_number(plan_id: str) -> int:
     return _to_int(res.data[0].get("version_number"), 0) + 1
 
 
+@_db_write("training_plan", "training_plan_session")
 def save_training_plan_version(plan_id: str, snapshot: dict, change_reason: str = "updated") -> dict:
     if not plan_id:
         raise ValueError("plan_id es obligatorio")
@@ -687,6 +791,7 @@ def save_training_plan_version(plan_id: str, snapshot: dict, change_reason: str 
     return row
 
 
+@_db_write("training_plan", "training_plan_session")
 def create_training_plan(plan: dict, sessions: list[dict] | None = None, change_reason: str = "created") -> dict:
     uid = _require_active_user_id()
     sb = _require_supabase()
@@ -709,6 +814,7 @@ def create_training_plan(plan: dict, sessions: list[dict] | None = None, change_
     return plan_row
 
 
+@_db_write("training_plan", "training_plan_session")
 def update_training_plan(
     plan_id: str,
     patch: dict,
@@ -752,6 +858,7 @@ def update_training_plan(
     return plan_row
 
 
+@_db_write("training_plan", "training_plan_session")
 def activate_training_plan(plan_id: str, change_reason: str = "activated") -> dict:
     uid = _require_active_user_id()
     if not get_training_plan(plan_id):
@@ -777,6 +884,7 @@ def activate_training_plan(plan_id: str, change_reason: str = "activated") -> di
 _IA_TOKENS_DAYS = 90  # días de consumo que se conservan en ia_provider.daily_tokens
 
 
+@_db_read("ia_provider")
 def get_ia_provider() -> dict | None:
     """Proveedor de IA del atleta (26/10): {provider, base_url, model, daily_tokens}; None si aún no lo ha dado."""
     uid = _require_active_user_id()
@@ -790,6 +898,7 @@ def get_ia_provider() -> dict | None:
     return res.data[0] if res.data else None
 
 
+@_db_write("ia_provider")
 def save_ia_provider(provider: str, base_url: str, model: str) -> None:
     """Guarda (o cambia) el proveedor de IA del atleta; el consumo acumulado se conserva."""
     uid = _require_active_user_id()
@@ -799,6 +908,7 @@ def save_ia_provider(provider: str, base_url: str, model: str) -> None:
     ).execute()
 
 
+@_db_write("ia_provider")
 def add_ia_tokens(tokens: int) -> int:
     """Suma tokens al consumo de hoy (ia_provider.daily_tokens, fecha ISO → tokens) y devuelve el total del día.
 
@@ -842,6 +952,7 @@ def check_supabase_connection() -> dict:
 
 # ─── load_metrics_daily ────────────────────────────────────────────────────────
 
+@_db_read("load_metrics_daily")
 def get_load_metrics_series(days: int = 120) -> list[dict]:
     """Carga la serie TSS/ATL (Fatiga)/CTL (Estado físico)/TSB (Forma) desde load_metrics_daily (últimos N días)."""
     from datetime import date, timedelta
@@ -875,6 +986,7 @@ def get_load_metrics_series(days: int = 120) -> list[dict]:
         return []
 
 
+@_db_read("load_metrics_daily")
 def get_load_metrics_last_date() -> str | None:
     """Devuelve la fecha ISO del último registro en load_metrics_daily, o None."""
     sb = _supabase()
@@ -897,6 +1009,7 @@ def get_load_metrics_last_date() -> str | None:
         return None
 
 
+@_db_write("load_metrics_daily")
 def upsert_load_metrics_series(series: list[dict]) -> None:
     """Persiste (upsert) filas TSS/ATL (Fatiga)/CTL (Estado físico)/TSB (Forma) en load_metrics_daily."""
     sb = _supabase()
@@ -929,6 +1042,7 @@ def upsert_load_metrics_series(series: list[dict]) -> None:
         log.warning("upsert_load_metrics_series: %s", exc)
 
 
+@_db_read("load_metrics_daily")
 def get_load_metrics_row(metric_date: str) -> dict | None:
     """Devuelve la fila de load_metrics_daily de un día concreto (semilla del EWMA), o None."""
     sb = _supabase()
@@ -961,6 +1075,7 @@ def get_load_metrics_row(metric_date: str) -> dict | None:
         return None
 
 
+@_db_read("activity_tss")
 def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
     """TSS ya guardados por actividad desde start_date.
 
@@ -1001,6 +1116,7 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
         return None
 
 
+@_db_write("activity_tss")
 def upsert_activity_tss_rows(rows: list[dict]) -> None:
     """Persiste una fila por actividad con el TSS calculado para trazabilidad."""
     sb = _supabase()
@@ -1083,6 +1199,7 @@ def _to_float_or_none(value) -> float | None:
         return None
 
 
+@_db_read("wellness_daily")
 def get_wellness_daily(metric_date: str) -> dict | None:
     """Carga snapshot diario de wellness para el usuario activo."""
     sb = _supabase()
@@ -1108,6 +1225,7 @@ def get_wellness_daily(metric_date: str) -> dict | None:
         return None
 
 
+@_db_write("wellness_daily")
 def upsert_wellness_daily(
     metric_date: str,
     *,
