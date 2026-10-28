@@ -25,8 +25,10 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
+import sys
+from contextlib import ExitStack
+
 from dotenv import load_dotenv
-import agent.data_access as _data_access
 
 ROOT = Path(__file__).resolve().parents[1]
 CALL_DELAY_SECONDS = 0.25
@@ -42,10 +44,29 @@ def _is_error_text(raw) -> bool:
     return text.startswith("error") or "429" in text[:200] or "too many requests" in text[:200]
 
 
+def _patch_everywhere(stack: ExitStack, name: str, **kwargs):
+    """Sustituye `name` en todos los módulos de agent/ que lo usan. Desde que trainer_agent.py se dividió (28/10),
+    sustituirlo solo allí dejaría sin interceptar las llamadas a Garmin y la escritura del perfil de la prueba."""
+    modules = [m for n, m in list(sys.modules.items()) if m is not None and n.startswith("agent.") and name in vars(m)]
+    if not modules:
+        raise SystemExit(f"rebuild_tss_baseline: ningún módulo de agent/ tiene {name}; no se puede interceptar")
+    original = vars(modules[0])[name]
+    mock = None
+    for module in modules:
+        if vars(module)[name] is not original:
+            continue
+        if mock is None:
+            mock = stack.enter_context(patch.object(module, name, **kwargs))
+        else:
+            stack.enter_context(patch.object(module, name, mock))
+    return mock
+
+
 async def _compute(username: str, start: str) -> dict:
     from agent import storage as st
     from agent import trainer_agent as ta
-    from agent.mcp.client import garmin_mcp_session
+    from agent.data_access import _load_user_profile
+    from agent.mcp.client import call_tool, garmin_mcp_session
 
     # Sesión de Supabase Auth guardada por Kairos (supabase/README.md): con RLS, sin ella no se ve nada.
     row = st.restore_session(username)
@@ -57,7 +78,7 @@ async def _compute(username: str, start: str) -> dict:
     tool_counts: Counter = Counter()
     tool_errors: Counter = Counter()
     tool_retries: Counter = Counter()
-    original_call_tool = ta.call_tool
+    original_call_tool = call_tool
 
     async def _throttled_call_tool(session, tool_name, args):
         raw = None
@@ -77,12 +98,13 @@ async def _compute(username: str, start: str) -> dict:
 
     async with garmin_mcp_session() as session:
         agent = ta.TrainerAgent(mcp_session=session)
-        agent.user_profile = _data_access._load_user_profile()
-        with patch.object(ta, "call_tool", side_effect=_throttled_call_tool), \
-             patch.object(ta._storage, "upsert_load_metrics_series", side_effect=lambda r: series.extend(r)), \
-             patch.object(ta._storage, "upsert_activity_tss_rows", side_effect=lambda r: rows.extend(r)), \
-             patch.object(ta, "_save_user_profile"), \
-             patch.object(ta.TrainerAgent, "_apply_series_to_profile"):
+        agent.user_profile = _load_user_profile()
+        with ExitStack() as stack:
+            _patch_everywhere(stack, "call_tool", side_effect=_throttled_call_tool)
+            _patch_everywhere(stack, "_save_user_profile")
+            stack.enter_context(patch.object(ta._storage, "upsert_load_metrics_series", side_effect=lambda r: series.extend(r)))
+            stack.enter_context(patch.object(ta._storage, "upsert_activity_tss_rows", side_effect=lambda r: rows.extend(r)))
+            stack.enter_context(patch.object(ta.TrainerAgent, "_apply_series_to_profile"))
             await agent.compute_and_persist_load_metrics(force_full_recalc=True, rebuild_from=start)
         profile = agent.user_profile
 
@@ -186,10 +208,11 @@ def main() -> None:
         raise SystemExit("No se aplica: la tabla activity_tss no existe (ejecuta supabase/schema.sql en el SQL Editor de Supabase).")
 
     from agent import storage as st
+    from agent.data_access import _save_user_profile
 
     st.upsert_activity_tss_rows(result["rows"])
     st.upsert_load_metrics_series(result["series"])
-    _data_access._save_user_profile(result["profile"])
+    _save_user_profile(result["profile"])
     stored = st.get_activity_tss_map(args.start) or {}
     print(f"APLICADO: activity_tss={len(stored)}/{len(result['rows'])} filas, load_metrics_daily={len(result['series'])} días")
 

@@ -101,6 +101,16 @@ class TestToolRouter:
                  if router.route_key(q, [], {}) != want]
         assert wrong == []
 
+    def test_every_route_has_its_handler(self):
+        # Tabla de rutas (28/10, al dividir trainer_agent.py): una ruta sin método caería al LLM sin avisar.
+        from agent.routes.handlers import FIRST_ROUTES, ROUTE_HANDLERS, RoutesMixin
+
+        routes = {want for _, want in self.PHRASE_BANK if want} | {"db_count", "plan_status", "goal_status",
+                                                                     "config_options", "hr_threshold"}
+        assert routes <= set(ROUTE_HANDLERS)
+        assert all(callable(getattr(RoutesMixin, name, None)) for name in ROUTE_HANDLERS.values())
+        assert FIRST_ROUTES <= set(ROUTE_HANDLERS) and "db_count" not in FIRST_ROUTES
+
     def test_last_named_activity_goes_to_activity_details(self):
         router = ToolRouter()
         # 24/10: el LLM dijo que la última bici era "anterior a agosto" (fue el 12/08).

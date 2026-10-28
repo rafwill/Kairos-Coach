@@ -10,10 +10,10 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 28/10/2026** (ordenador 1). 806 tests; batería 25/25; batería del bucle 10/10.
+**Sesión del 28/10/2026** (ordenador 1). 807 tests; batería 25/25; batería del bucle 10/10.
 
-- Hecho: ordenador 1 alineado con el historial reescrito; ticket de GitHub Support **4918285** abierto (purga de los 80 commits viejos, de `eeee21b` a `716cd0c`; cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API); revisión completa del proyecto y sus arreglos: errores del proveedor que cerraban Kairos, G15, totales del periodo y récords, tests de los lectores y del cliente MCP (11), avisos de Garmin (9), precarga de "mi último trail" (10) y rendimiento (8b caché de Supabase, 8c arranque en paralelo, 8a bucle con tools con `get_rhr_trend` y `kairos_load_trends` sin poda). Último commit: el del 8a ("perf: bucle con tools…"). Commits sin subir a GitHub hasta orden expresa. En el ordenador 2, al empezar: `git pull` (cuando estén subidos).
-- **Siguiente paso:** el punto 7 (dividir `trainer_agent.py`), si el usuario lo pide; si no, **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1, 2 y 8, con las preguntas mal enrutadas al banco de frases. Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
+- Hecho: ordenador 1 alineado con el historial reescrito; ticket de GitHub Support **4918285** abierto (purga de los 80 commits viejos, de `eeee21b` a `716cd0c`; cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API); revisión completa del proyecto y sus arreglos: errores del proveedor que cerraban Kairos, G15, totales del periodo y récords, tests de los lectores y del cliente MCP (11), avisos de Garmin (9), precarga de "mi último trail" (10) rendimiento (8b caché de Supabase, 8c arranque en paralelo, 8a bucle con tools con `get_rhr_trend` y `kairos_load_trends` sin poda) y `trainer_agent.py` dividido en módulos (7; de 12.363 a 200 líneas, mapa en `docs/arquitectura.md`). Último commit: el del punto 7 ("refactor: _answer en tabla de rutas…"); lo del 8a y anteriores ya está en GitHub, lo del 7 sin subir hasta orden expresa. En el ordenador 2, al empezar: `git pull`.
+- **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1, 2 y 8, con las preguntas mal enrutadas al banco de frases. Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
 ## Pendiente
 
@@ -44,7 +44,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15, los totales del periodo, los puntos 9 a 11 y el rendimiento (CHANGELOG).
 
-7. **Dividir `agent/trainer_agent.py`** (12.200 líneas; `chat()` ≈ 1.070 con 20 ramas `if route_key == …`): tabla `{ruta: función}` y módulos `routes/` (por familia), `prefetch.py`, `coaching.py`, `llm.py` (proveedor, clave, reintento de sensores), `kairos_tools.py` y `startup.py`; poco a poco, con los tests en verde en cada paso (`tests/test_trainer_agent.py` se divide igual).
+7. **Dividir `tests/test_trainer_agent.py`** (≈ 7.000 líneas) como se dividió `agent/trainer_agent.py` el 28/10 (un fichero de tests por módulo), cuando haga falta tocarlo; sin prisa: los tests ya importan cada función de su módulo.
 8. **Bucle con tools, lo que queda tras el 28/10** (rendimiento 8a, 8b y 8c hechos; CHANGELOG). Medir con `docs/bateria_bucle_preguntas.txt` y `[TOOL] iter=N pide:`. (a) El estrés de la semana se sigue pidiendo día a día (`get_stress_summary`, 3–4 vueltas): una tool de rango como `get_rhr_trend`, si `garminconnect` tiene el endpoint. (b) El juez da por buena la respuesta de tope del bucle ("la consulta requirió demasiadas llamadas… reformula"): debería contar como fallo (cambio de rúbrica: decidirlo antes). (c) Lo que queda del arranque (≈ 2,2 s de importar `openai` y `mcp`, ≈ 1,6 s del servidor MCP) no se ha tocado.
 
 ## Descartado

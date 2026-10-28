@@ -80,7 +80,24 @@ Con `make` disponible: `make setup` y `make serve`. Los comandos de pruebas y di
 ```
 agent/
   main.py                CLI: login, proveedor de IA, comandos y chat
-  trainer_agent.py       agente: rutas deterministas, coaching LLM, planes, carga
+  trainer_agent.py       TrainerAgent: compone los mixins de abajo; chat() y la tabla de rutas
+  router.py              enrutado sin LLM: detectores de intención y ToolRouter
+  routes/                respuestas de las rutas deterministas por familia (carga, periodo, sueño, récords,
+                         perfil, datos del día, conteo) y tabla ROUTE_HANDLERS (handlers.py)
+  tool_loop.py           bucle con tools (LLM + Garmin), G15, rescates y sensores de su respuesta
+  prefetch.py            precarga de una actividad (y su análisis) antes del bucle
+  llm_calls.py           proveedor de IA, capa de coaching y reintento de los sensores
+  context.py             prompt de sistema y mensajes del LLM
+  startup.py             arranque, foto de 48 h y resumen inicial (startup_status.py)
+  load_compute.py        TSS de las actividades nuevas y serie de carga en Supabase
+  daily_engine.py        motor diario: plan de hoy, ajuste por HRV/sueño/body battery, zonas
+  plans.py               motor de planes: generación, validación y estado
+  activity_analysis.py   localizar una actividad y su análisis precalculado
+  hr_profile.py · wellness.py · garmin_data.py · tool_results.py · kairos_tools.py · dates.py ·
+  data_access.py · knowledge.py · prompts.py · llm.py · coaching.py · replies.py
+                         zonas y umbrales; sueño/HRV/body battery; lectura de Garmin; compactación de tools;
+                         tools kairos_*; fechas; Supabase del chat; base de conocimiento; prompts; cliente LLM;
+                         horizonte y calendario; avisos de Garmin
   load_metrics.py        TSS por deporte y PMC (CTL/ATL/TSB)
   running_tss.py         pipeline físico de running (NGP con pendiente, rTSS)
   storage.py             persistencia multiusuario en Supabase

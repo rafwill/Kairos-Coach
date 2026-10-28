@@ -5810,7 +5810,6 @@ class TestMcpTransparencyAndLatencyRegression:
 
     @pytest.mark.asyncio
     async def test_build_week_activities_markdown_does_not_use_asyncio_wait_for(self, monkeypatch):
-        import agent.trainer_agent as ta
         from datetime import date as _Date
 
         today = _Date.today().isoformat()
@@ -5831,7 +5830,7 @@ class TestMcpTransparencyAndLatencyRegression:
                 ]
             }
 
-        monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
+        monkeypatch.setattr(_hr_profile.asyncio, "wait_for", _boom_wait_for)
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await _routes_load._build_week_activities_markdown(object(), "¿Qué actividades hice esta semana?")
@@ -5876,7 +5875,7 @@ class TestMcpTransparencyAndLatencyRegression:
         }
 
         patch_everywhere(monkeypatch, "date", _FakeDate)
-        monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
+        monkeypatch.setattr(_hr_profile.asyncio, "wait_for", _boom_wait_for)
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
@@ -5886,7 +5885,6 @@ class TestMcpTransparencyAndLatencyRegression:
 
     @pytest.mark.asyncio
     async def test_build_mcp_factual_query_markdown_does_not_use_asyncio_wait_for(self, monkeypatch):
-        import agent.trainer_agent as ta
 
         async def _boom_wait_for(*_args, **_kwargs):
             raise AssertionError("wait_for no debe usarse en mcp_factual/activity_details")
@@ -5916,7 +5914,7 @@ class TestMcpTransparencyAndLatencyRegression:
                 }
             return {}
 
-        monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
+        monkeypatch.setattr(_hr_profile.asyncio, "wait_for", _boom_wait_for)
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
         out = await _routes_day_data._build_mcp_factual_query_markdown(

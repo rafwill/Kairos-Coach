@@ -8,7 +8,7 @@ Con la terminología del estándar MCP: Kairos es el **host** (la aplicación co
 
 ```
 ┌─────────────────────── HOST: Kairos (agent/) ────────────────────────┐
-│  CLI (main.py) · TrainerAgent (trainer_agent.py)                     │
+│  CLI (main.py) · TrainerAgent (trainer_agent.py + mixins)            │
 │  Rutas deterministas · coaching LLM · motor de planes                │
 │  TSS/PMC (load_metrics.py, running_tss.py) · Supabase (storage.py)   │
 │                                                                      │
@@ -25,6 +25,21 @@ Con la terminología del estándar MCP: Kairos es el **host** (la aplicación co
 ```
 
 El servidor no importa nada de `agent/` (lo comprueba `test_server_package_does_not_import_the_host`): cualquier cliente MCP puede usarlo (Kairos, el Inspector MCP, `tools/healthcheck_mcp.py`, el juez de la batería).
+
+### Módulos del host (desde el 28/10)
+
+`trainer_agent.py` (≈ 200 líneas) solo compone `TrainerAgent` con sus mixins y responde cada pregunta en `chat()` → `_answer`: `ToolRouter` (`router.py`) da la ruta; si está en la tabla `ROUTE_HANDLERS` (`routes/handlers.py`, un método `_route_<ruta>` por ruta) se responde allí; si no, `_build_messages` (`context.py`), `_prefetch_activity_context` (`prefetch.py`) y `_run_tool_loop` (`tool_loop.py`). Antes era un fichero de 12.300 líneas con `chat()` de ≈ 1.000 y 20 ramas `if route_key == …`.
+
+Capas, de abajo arriba (cada una importa solo de las de debajo, nunca de `trainer_agent`):
+
+| Capa | Módulos |
+| --- | --- |
+| Utilidades | `prompts`, `dates`, `llm`, `knowledge`, `tool_results`, `garmin_data`, `data_access` |
+| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans`, `activity_analysis`, `startup_status`, `replies`, `coaching` |
+| Rutas | `routes/` (load, period, sleep, records, profile, day_data, db_count) y `router` |
+| Mixins del agente | `load_compute` (LoadMixin), `startup` (StartupMixin), `context` (ContextMixin), `llm_calls` (LLMMixin), `routes/handlers` (RoutesMixin), `prefetch` (PrefetchMixin), `tool_loop` (ToolLoopMixin) |
+
+Tests: `tests/agent_patch.py` (`patch_all`, `patch_everywhere`) sustituye una función en todos los módulos que la usan; sustituirla solo en uno dejaría a los demás con la de verdad.
 
 - **Datos (Python):** Garmin aporta las señales base y las zonas de FC del reloj; Kairos calcula en Python todo lo derivado (TSS, CTL/ATL/TSB, ritmos, hidratación) antes de entregarlo al LLM.
 - **Coaching (LLM):** interpreta los datos ya calculados con el perfil del atleta. Nunca hace aritmética ni inventa métricas.
