@@ -162,7 +162,12 @@ def _step_text(s: dict, hr_zones: list | None) -> str:
     if hr_zones and 1 <= hz <= len(hr_zones):
         _, lo, hi = hr_zones[hz - 1]
         hr = f" · FC Z{hz} {lo}–{hi}"
-    text = f"{amount} @ {fmt_pace(rng[0])}–{fmt_pace(rng[1])}/km ({zone_label}{hr})" if rng else amount
+    if target.get("metric") == "hr_zone":  # plan del LLM por FC (trail, bici): la zona de Garmin es el objetivo
+        text = f"{amount} @ FC Z{hz}" + (f" {hr_zones[hz - 1][1]}–{hr_zones[hz - 1][2]} lpm" if hr else "")
+    elif rng and target.get("metric") == "pace":
+        text = f"{amount} @ {fmt_pace(rng[0])}–{fmt_pace(rng[1])}/km ({zone_label}{hr})"
+    else:
+        text = amount
     if s.get("note"):
         text += f", {s['note']}"
     return text
@@ -487,7 +492,7 @@ def build_run_plan(*, race: str, race_date: date, target_time: str, threshold_pa
 
 def week_header(week_index: int, start: date, phase: str, deload: bool, sessions: list[dict]) -> str:
     monday = start + timedelta(weeks=week_index - 1)
-    names = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento"}
+    names = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento", "race": "Carrera"}
     minutes = sum(float(((s.get("structured_workout") or {}).get("summary") or {}).get("duration_min") or 0) for s in sessions)
     km = sum(float(((s.get("structured_workout") or {}).get("summary") or {}).get("distance_km") or 0) for s in sessions)
     tss = sum(float(((s.get("structured_workout") or {}).get("summary") or {}).get("tss") or 0) for s in sessions)
@@ -511,6 +516,7 @@ def session_lines(session: dict, day: date, hr_zones: list | None = None) -> lis
     if summary.get("tss"):
         head += f" · {float(summary['tss']):.0f} TSS"
     steps = wk.get("steps") or []
-    detail = describe_steps(steps, hr_zones) if any((s.get("target") or {}).get("metric") == "pace" for s in steps) else \
+    detail = describe_steps(steps, hr_zones) if any((s.get("target") or {}).get("metric") in ("pace", "hr_zone")
+                                                    for s, _ in _leaf_steps(steps)) else \
         [str(wk.get("notes") or session.get("notes") or "")]
     return [head, *[f"  {line}" for line in detail if line]]

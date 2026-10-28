@@ -150,7 +150,8 @@ class TestPlanStatusChatRoute:
         assert len(agent.conversation_history) == 2
 
     @pytest.mark.asyncio
-    async def test_chat_planning_generates_structured_plan_without_llm(self):
+    async def test_chat_planning_falls_back_to_kairos_engine_when_the_llm_fails(self):
+        """El plan lo construye el LLM (28/10); si el proveedor falla, el motor de Kairos hace uno de respaldo y se avisa."""
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -172,7 +173,7 @@ class TestPlanStatusChatRoute:
         agent.client = MagicMock()
         agent.client.chat = MagicMock()
         agent.client.chat.completions = MagicMock()
-        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+        agent.client.chat.completions.create = AsyncMock(side_effect=RuntimeError("proveedor caído"))
 
         with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=None), patch("agent.trainer_agent._storage.create_training_plan", return_value={
             "id": "plan-db-1",
@@ -190,6 +191,7 @@ class TestPlanStatusChatRoute:
 
         assert "Resumen" in out
         assert "Plan activo: Plan hacia 10K" in out
+        assert "no consiguió un plan" in out and "plan de respaldo del motor de Kairos" in out
         mocked_create.assert_called_once()
         assert agent.user_profile["training_plan"]["id"] == "plan-db-1"
 
@@ -273,7 +275,7 @@ class TestPlanStatusChatRoute:
         agent.client = MagicMock()
         agent.client.chat = MagicMock()
         agent.client.chat.completions = MagicMock()
-        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("LLM should not be called"))
+        agent.client.chat.completions.create = AsyncMock(side_effect=RuntimeError("proveedor caído"))
 
         with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=None), patch_all(
             "_validate_structured_plan", return_value=["Error de validación de prueba"]

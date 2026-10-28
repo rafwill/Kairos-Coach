@@ -1175,11 +1175,18 @@ def _plan_detail_markdown(plan: dict, sessions: list[dict], profile: dict | None
     current = max(1, (date.today() - start).days // 7 + 1)
     weeks = weeks or [w for w in (current, current + 1) if w in by_week]
     zones, _ = _resolve_hr_zones(profile or {}, "running")
-    lines = [f"## 🗓️ {plan.get('title') or 'Plan'}",
-             f"{plan.get('objective') or ''} · ritmo umbral {_run_plan.fmt_pace(float(pd.get('threshold_pace_sec_per_km') or 0))}/km"
-             f" · ritmo de carrera {_run_plan.fmt_pace(float(pd.get('race_pace_sec_per_km') or 0))}/km", "",
-             "| Semana | Fechas | Fase | Tiempo | km | TSS |", "|---|---|---|---|---:|---:|"]
-    names = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento"}
+    head = str(plan.get("objective") or "")
+    if pd.get("threshold_pace_sec_per_km"):
+        head += f" · ritmo umbral {_run_plan.fmt_pace(float(pd['threshold_pace_sec_per_km']))}/km"
+    if pd.get("race_pace_sec_per_km"):
+        head += f" · ritmo de carrera {_run_plan.fmt_pace(float(pd['race_pace_sec_per_km']))}/km"
+    focus = list(pd.get("focus") or [])  # plan del LLM: enfoque de cada semana
+    lines = [f"## 🗓️ {plan.get('title') or 'Plan'}", head, ""]
+    if pd.get("rationale"):
+        lines += [str(pd["rationale"]), ""]
+    lines += ["| Semana | Fechas | Fase | Tiempo | km | TSS |" + (" Enfoque |" if focus else ""),
+              "|---|---|---|---|---:|---:|" + ("---|" if focus else "")]
+    names = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento", "race": "Carrera"}
     for wi in sorted(by_week):
         rows = by_week[wi]
         monday = start + timedelta(weeks=wi - 1)
@@ -1188,7 +1195,8 @@ def _plan_detail_markdown(plan: dict, sessions: list[dict], profile: dict | None
         label = names.get(phase, phase) + (" · descarga" if wi in deloads else "")
         lines.append(f"| {wi}{' (actual)' if wi == current else ''} | {monday.strftime('%d/%m')}–{(monday + timedelta(days=6)).strftime('%d/%m')} | "
                      f"{label} | {_run_plan.fmt_duration(sum(float(x.get('duration_min') or 0) for x in summ))} | "
-                     f"{sum(float(x.get('distance_km') or 0) for x in summ):.0f} | {sum(float(x.get('tss') or 0) for x in summ):.0f} |")
+                     f"{sum(float(x.get('distance_km') or 0) for x in summ):.0f} | {sum(float(x.get('tss') or 0) for x in summ):.0f} |"
+                     + (f" {focus[wi - 1] if wi - 1 < len(focus) else ''} |" if focus else ""))
     for wi in weeks:
         rows = sorted(by_week.get(wi, []), key=lambda r: int(r.get("day_index") or 1))
         if not rows:
@@ -1415,7 +1423,10 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
         if _is_block_plan(plan) and wi == max(by_week):
             min_quality_sessions = 0  # semana de carrera: la carrera es la sesión clave
         elif _is_block_plan(plan) and wi in set((plan.get("plan_data") or {}).get("deload_weeks") or []):
-            min_quality_sessions = 1  # descarga: una sola sesión de calidad
+            # descarga: una sola sesión de calidad (el LLM puede quitarla del todo)
+            min_quality_sessions = 0 if (plan.get("plan_data") or {}).get("author") == "llm" else 1
+        elif (plan.get("plan_data") or {}).get("author") == "llm":
+            min_quality_sessions = 1  # plan del LLM: el reparto de la calidad lo decide el entrenador
         if len(quality_days) > max_quality_sessions:
             errors.append(f"La semana {wi} excede el máximo de sesiones de calidad ({max_quality_sessions}).")
             break

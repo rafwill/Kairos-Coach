@@ -4,6 +4,31 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-28
 
+### Changed (el plan lo construye y lo revisa el LLM del atleta; decisión del usuario)
+- Señal (el usuario, al saber que el plan por bloques lo generaba código escrito por Claude y no su LLM): "hemos hecho trampas… esto no nos valdría para producción". Kairos está pensado para que cualquier atleta conecte su LLM y que ese LLM, con los datos y el código de Kairos, construya el plan y lo revise a diario según lo que cuente el atleta y sus datos de Garmin. Los prompts decían lo contrario ("los crea el motor de planes de Kairos (determinista)… Tú no guardas planes"), y así se había hecho.
+- Decisión: el LLM decide como entrenador; el código aporta los datos, calcula y comprueba.
+- Qué se hizo:
+  - `agent/plan_llm.py` (mixin `PlanLLMMixin`) y `prompts/plan/`: una llamada para la estructura (fase, descarga, minutos, tirada larga y enfoque de cada semana) y, con ella aprobada, el detalle de los días por tandas de semanas en paralelo (13 semanas → 4+3+3+3). Formato compacto: tipo de día y tramos (tiempo o distancia + zona Z1…Z5c o RP de ritmo, o FC1…FC5).
+  - `agent/plan_builder.py`: datos del atleta para el prompt (fechas de cada semana, zonas de ritmo con sus rangos, zonas de FC, carga real, disponibilidad, reglas con sus números) y tramos → sesiones `kairos-workout-v1` con ritmos, km y TSS planificado (rTSS de TP; hrTSS con `TP_HRTSS_RATES`).
+  - Reglas comprobadas por el código: progresión ≤ 10 % desde el volumen real, descarga tras ≤ 3 semanas de carga, afinamiento ≥ 15 % por debajo del pico, tirada ≤ 40 % y +15 min como mucho, disponibilidad, descanso, calidad no en días seguidos, carrera en su fecha y variedad. La progresión se comprueba también con lo que suman de verdad los días: la semana que la rompe vuelve a su tanda (2 rondas). Cada fallo vuelve al LLM con su texto, el tramo afectado y, en las sumas, los minutos de cada día y cuánto añadir o quitar (3 intentos por llamada).
+  - El LLM no suma: el tramo continuo de los rodajes y de la tirada larga va con `"min": "auto"` y el código le da la duración. Así la semana suma sus minutos y la tirada dura lo previsto.
+  - Si el LLM no consigue un plan válido, el motor determinista (`run_plan.py` o el genérico) hace uno de respaldo y la respuesta lo avisa.
+  - Revisión diaria (`_route_plan_revision`): con un plan del LLM activo, una petición de cambio en el chat va al LLM con lo hecho los últimos 7 días (Garmin + `activity_tss`) frente a lo planificado. Cambia días desde hoy hasta el final de la semana siguiente, con las mismas reglas y sin subir una semana más de un 10 %, y se guarda como versión nueva. El texto para el atleta se escribe con los días ya guardados.
+  - Documentación: prompts, `docs/arquitectura.md`, README y CLAUDE.md dicen ya que el plan lo construye el LLM.
+- Criterio fijado antes: el código calcula ritmos, km y TSS de los tramos; cada regla detecta su fallo; los fallos vuelven al LLM y la versión corregida se acepta; sin plan válido no hay plan; la revisión solo cambia días desde hoy y respeta las reglas; plan real válido con el LLM del usuario.
+- Resultado:
+  - Tests de cada punto (`tests/test_plan_llm.py`, 21).
+  - En vivo con nemotron, 12 pasadas sin escribir; cada fallo dio un cambio de diseño:
+    - Con las primeras reglas, 1 de 5 planes válidos. Ese plan rompía el 10 % con sus sumas reales (+16 %), porque la estructura se comparaba con ±12 %. De ahí la comprobación con las sumas reales.
+    - El modelo no cuadraba las sumas aunque se le diera cuánto le faltaba. De ahí `"auto"`.
+    - Una semana de carrera sola en su tanda le hacía escribir el plan entero. De ahí el reparto 4+3+3+3.
+    - Ignoraba el día de descanso hasta tener las reglas junto al formato.
+    - Los límites de `"auto"` cambiaron tras ver resultados: de 10-75 min (número sin base) a "al menos 20 min y menos que la tirada larga de la semana".
+  - Con el diseño final, 3 de 5 válidos, en 90 s, 122 s y 5 min (46-85 mil tokens de entrada).
+  - Revisión en vivo ("molestia en el gemelo"): 10-14 s, válida al primer intento, cuestas y fartlek cambiados por rodajes suaves en llano. La primera versión del texto describía cambios que no eran los guardados; de ahí que el texto se escriba con los días guardados.
+- Batería 25/25 (el prompt de sistema cambió en la parte de planes). Tests: 848.
+- Pendiente (`docs/proximos_pasos.md`, B2.9): revisión del usuario; distribución de la intensidad sin comprobar (una semana salió con ≈ 42 % en Z3+); días dobles; ritmo o FC en asfalto; fiabilidad con otros modelos.
+
 ### Changed (plan de carrera en asfalto por bloques; petición del usuario)
 - Señal (el usuario, con el primer plan generado): "demasiado genérico": sin series ni fartlek visibles, sin la fecha de cada día y sin la estructura de un día de TrainingPeaks; "los planes son para atletas competitivos: claridad, objetividad, ciencia y estructura". Al revisarlo: la estructura por pasos contradecía la descripción (6×400 m en el texto, 8×(3' Z3 + 2' Z1) en los pasos), los ritmos no tenían base (400 m a 4:06 con umbral 4:00 y ritmo objetivo 3:56), el fartlek y las tiradas se repetían igual semanas seguidas, no había descargas ni TSS planificado.
 - Decisiones del usuario: objetivos por ritmo con la FC de Garmin como referencia; bloques con descarga; contenido y presentación juntos.

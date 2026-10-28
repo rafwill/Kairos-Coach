@@ -1037,18 +1037,20 @@ def _activate_training_plan_cli(plan_ref: str, agent: TrainerAgent) -> None:
 
 
 async def _create_training_plan_cli(agent: TrainerAgent) -> None:
-    """Crea y activa un plan estructurado con el motor de planes (28/10).
+    """Crea y activa un plan: lo construye el LLM del atleta y Kairos lo comprueba (28/10).
 
     Antes guardaba solo lo del formulario (título, objetivo, semanas) sin ninguna sesión: Kairos no tenía nada que
-    leer y "¿qué me toca mañana?" acababa en "no puedo leer el plan". Ahora usa el mismo motor que el chat
-    (`_route_planning`): semanas y sesiones a partir del objetivo del perfil, del volumen real y de lo que se le
-    diga aquí, validadas y guardadas.
+    leer y "¿qué me toca mañana?" acababa en "no puedo leer el plan". Ahora va por la misma ruta que el chat
+    (`_route_planning`): estructura y sesiones a partir del objetivo del perfil, del volumen real y de lo que se le
+    diga aquí, comprobadas y guardadas; si el modelo no consigue un plan válido, el motor de Kairos hace uno de
+    respaldo y se avisa.
     """
     goals = (_load_user_profile() or {}).get("goals", {}) or {}
     race = goals.get("target_race") or "sin objetivo (plan genérico de 8 semanas)"
     race_date = goals.get("target_race_date") or "—"
     console.print(Panel.fit(
-        "Genero un plan estructurado por semanas a partir de tu objetivo, tu volumen reciente y tu estado de carga.\n\n"
+        "Tu entrenador construye el plan por semanas a partir de tu objetivo, tu volumen reciente y tu estado de carga; "
+        "Kairos lo comprueba (progresión, descargas, disponibilidad) y calcula ritmos, km y TSS.\n\n"
         f"[bold]Objetivo:[/] {race}\n[bold]Fecha:[/] {race_date}\n"
         f"[bold]Tiempo objetivo:[/] {goals.get('target_time') or '—'} · "
         f"[bold]Horas/semana:[/] {goals.get('weekly_training_hours') or '—'}\n\n"
@@ -1061,7 +1063,7 @@ async def _create_training_plan_cli(agent: TrainerAgent) -> None:
         default="",
     ).strip()
     message = "Crea un plan nuevo" + (f". A tener en cuenta: {notes}" if notes else "")
-    with console.status("[dim]Generando el plan…[/]"):
+    with console.status(f"[dim]Tu entrenador ({getattr(agent, 'model', 'LLM')}) construye el plan; tarda unos minutos…[/]"):
         result = await agent._route_planning(message, force_new=True)
     reply = result[0] if isinstance(result, tuple) else result
     console.print(Markdown(str(reply or "")))

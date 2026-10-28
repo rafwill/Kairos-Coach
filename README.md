@@ -2,13 +2,13 @@
 
 Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos reales de Garmin Connect. Calcula la carga de cada sesión como TrainingPeaks (TSS, Estado físico CTL, Fatiga ATL y Forma TSB), recuerda tu perfil y tus conversaciones y genera planes de entrenamiento versionados a partir de tu objetivo y de lo que realmente has entrenado.
 
-**Los números los calcula Python; el LLM solo interpreta.** Las preguntas de datos (TSS de una semana, umbrales, plan activo, récords) se responden por rutas deterministas sin LLM. Las de coaching ("¿qué me toca hoy?", "¿puedo entrenar fuerte mañana?") muestran primero los datos y después la interpretación del LLM, limitada a esos datos.
+**Los números los calcula Python; el LLM interpreta y entrena.** El LLM decide como entrenador (el plan y sus cambios, la lectura de los datos) y Python calcula y comprueba (TSS, carga, ritmos, reglas del plan). Las preguntas de datos (TSS de una semana, umbrales, plan activo, récords) se responden por rutas deterministas sin LLM. Las de coaching ("¿qué me toca hoy?", "¿puedo entrenar fuerte mañana?") muestran primero los datos y después la interpretación del LLM, limitada a esos datos.
 
 ## Qué hace
 
 - **Briefing al arrancar:** Body Battery, HRV, sueño, entrenamientos de las últimas 48 h, estado de carga por zonas de Forma (Joe Friel, relativas a tu CTL) y plan del día.
 - **Carga como TrainingPeaks:** un TSS por actividad con el método de su deporte, guardado una vez; PMC 42/7. Validado contra el export de TP del atleta (tabla abajo).
-- **Planes de entrenamiento:** motor determinista multisemana (base → build → peak → taper) que parte del volumen real de las últimas 4 semanas, nunca sube más de un 10 % por semana y guarda cada versión.
+- **Planes de entrenamiento:** los construye y revisa el LLM del atleta como su entrenador (por bloques con descarga, cada día con su fecha y sus tramos); Kairos le da los datos (objetivo, zonas de ritmo y FC, carga real, disponibilidad, lo hecho los últimos días), calcula ritmos, km y TSS planificado y comprueba las reglas (nunca más de un 10 % por semana sobre el volumen real, descargas, afinamiento, disponibilidad) antes de guardar cada versión. Si el modelo no consigue un plan válido, el motor determinista hace uno de respaldo y se avisa.
 - **Coaching con contexto:** perfil, salud (protocolo de diabetes con o sin insulina según la medicación; lesiones aparte), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
 - **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`.
@@ -91,7 +91,9 @@ agent/
   startup.py             arranque, foto de 48 h y resumen inicial (startup_status.py)
   load_compute.py        TSS de las actividades nuevas y serie de carga en Supabase
   daily_engine.py        motor diario: plan de hoy, ajuste por HRV/sueño/body battery, zonas
-  plans.py               motor de planes: generación, validación y estado
+  plan_llm.py            el LLM construye (estructura + semanas en paralelo) y revisa el plan, con reintentos
+  plan_builder.py        datos del atleta para el plan, tramos → ritmos, km y TSS, reglas de estructura y semana
+  plans.py               motor determinista de respaldo, validación y estado del plan
   run_plan.py            plan de carrera en asfalto por bloques: ritmos de Friel, fases, descargas, tramos y rTSS
   activity_analysis.py   localizar una actividad y su análisis precalculado
   hr_profile.py · wellness.py · garmin_data.py · tool_results.py · kairos_tools.py · dates.py ·

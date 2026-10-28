@@ -10,6 +10,7 @@ Desde el 28/10 (pendiente 7) la lógica vive en sus módulos y aquí solo se com
 - LLMMixin (agent/llm_calls.py): proveedor, capa de coaching y sensores con su reintento.
 - RoutesMixin (agent/routes/handlers.py): rutas deterministas y mixtas.
 - PrefetchMixin (agent/prefetch.py) y ToolLoopMixin (agent/tool_loop.py): precarga de una actividad y bucle con tools.
+- PlanLLMMixin (agent/plan_llm.py): el LLM construye y revisa el plan; el código lo comprueba.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from agent.knowledge import _load_athlete_knowledge_chunks
 from agent.llm_calls import LLMMixin
 from agent.load_compute import LoadMixin
 from agent.mcp.client import consume_tool_transparency_events, reset_tool_transparency_events
+from agent.plan_llm import PlanLLMMixin
 from agent.prefetch import PrefetchMixin
 from agent.prompts import _load_system_prompt
 from agent.replies import _build_mcp_error_warning_markdown, _build_mcp_transparency_markdown
@@ -47,7 +49,8 @@ from agent.tool_loop import ToolLoopMixin
 log = logging.getLogger(__name__)
 
 
-class TrainerAgent(LoadMixin, StartupMixin, ContextMixin, LLMMixin, RoutesMixin, PrefetchMixin, ToolLoopMixin):
+class TrainerAgent(LoadMixin, StartupMixin, ContextMixin, LLMMixin, RoutesMixin, PrefetchMixin, ToolLoopMixin,
+                   PlanLLMMixin):
     """Agente entrenador: historial de la conversación, perfil del atleta, cliente del LLM y sesión MCP."""
 
     # Preguntas del usuario en la sesión anterior (se rellena en initialize); tupla: no se comparte mutable.

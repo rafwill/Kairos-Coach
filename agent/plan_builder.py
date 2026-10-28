@@ -1,0 +1,630 @@
+"""
+agent/plan_builder.py
+Plan que construye el LLM del atleta (28/10, decisión del usuario: Kairos es el entrenador; el código aporta los
+datos y comprueba, el LLM decide).
+
+El LLM escribe el plan en un formato compacto: estructura de semanas (fase, descarga, minutos, tirada larga, enfoque)
+y, para cada día, su tipo y sus tramos (tiempo o distancia + zona). Este módulo:
+
+- prepara los datos del atleta para el prompt (`PlanFrame`, `frame_text`): fechas de cada semana, zonas de ritmo de
+  Friel sobre su umbral y ritmo de carrera, zonas de FC de Garmin, carga real, disponibilidad y salud;
+- convierte los tramos en sesiones `kairos-workout-v1` (`expand_week`): rangos de ritmo, km y TSS planificado
+  (rTSS de TrainingPeaks con ritmo; hrTSS de TP con FC). El LLM nunca calcula ritmos, km ni TSS;
+- comprueba la estructura y cada semana (`check_macro`, `check_week`): progresión ≤ 10 %, descargas, afinamiento,
+  disponibilidad, descanso, calidad, carrera en su fecha. Los fallos vuelven al LLM para que los corrija.
+
+Sin dependencias del chat ni de la red: las llamadas al LLM están en agent/plan_llm.py.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+
+from agent import run_plan as rp
+from agent.load_metrics import TP_HRTSS_RATE_ABOVE_THRESHOLD, TP_HRTSS_RATES
+
+# Tipo de día del formato compacto → session_type del plan guardado.
+DAY_TYPES = {
+    "rest": "rest", "easy": "running_z2", "recovery": "recovery", "long": "long_run", "quality": "running_quality",
+    "strength": "strength", "race": "race_run", "cross": "cross_training",
+}
+PHASES = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento", "race": "Carrera"}
+STEP_KINDS = {"warmup", "steady", "work", "recovery", "cooldown"}
+AUTO_DAY_TYPES = {"easy", "recovery", "long"}  # días cuyo tramo continuo puede ir con "min": "auto"
+_STEP_NAMES = {"warmup": "Calentamiento", "cooldown": "Vuelta a la calma", "work": "Trabajo", "recovery": "Recuperación",
+               "steady": "Continuo"}
+_HR_INTENSITY = {1: "recovery", 2: "endurance", 3: "tempo", 4: "threshold", 5: "vo2"}
+_STRENGTH_TSS_PER_HOUR = 35.0  # el mismo que la fuerza del plan por bloques (run_plan.strength_session)
+
+
+@dataclass
+class PlanFrame:
+    """Datos del atleta con los que el LLM construye el plan y con los que el código lo comprueba."""
+
+    start: date  # lunes de la semana 1
+    weeks: int
+    race: str
+    race_date: date
+    distance_km: float | None
+    target_time: str
+    threshold_pace: float | None  # s/km
+    race_pace: float | None  # s/km
+    hr_zones: list = field(default_factory=list)  # [(nombre, lo, hi)] de Garmin
+    hr_threshold_tp: float | None = None  # umbral con el que TP calcula su hrTSS
+    weekly_hours: float = 8.0
+    recent_weekly_minutes: float | None = None
+    longest_recent_min: float | None = None
+    load: dict = field(default_factory=dict)  # ctl, atl, tsb, status
+    available_days: list = field(default_factory=lambda: list(range(1, 8)))
+    max_minutes_per_day: dict = field(default_factory=dict)
+    min_rest_days: int = 1
+    max_quality: int = 2
+    primary_sport: str = ""
+    note: str = ""  # lo que el atleta pide al crear el plan
+
+    @property
+    def paces(self) -> rp.Paces | None:
+        if not self.threshold_pace:
+            return None
+        return rp.Paces(self.threshold_pace, self.race_pace or self.threshold_pace)
+
+    @property
+    def training_days(self) -> int:
+        """Días de entrenamiento por semana: los disponibles menos el descanso mínimo."""
+        return 7 - max(self.min_rest_days, 7 - len(self.available_days))
+
+    @property
+    def race_week(self) -> int:
+        return (self.race_date - self.start).days // 7 + 1
+
+    def monday(self, week: int) -> date:
+        return self.start + timedelta(weeks=week - 1)
+
+
+def weeks_until(start: date, race_date: date) -> int:
+    race_monday = race_date - timedelta(days=race_date.weekday())
+    return max(1, min(24, (race_monday - start).days // 7 + 1))
+
+
+# ─── Datos para el prompt ─────────────────────────────────────────────────────
+
+def frame_text(f: PlanFrame) -> str:
+    """Bloque de datos del atleta para el LLM: todo lo que necesita, ya calculado (no hace cuentas)."""
+    lines = ["## Carrera objetivo",
+             f"- {f.race}: {rp._DAY_NAMES[f.race_date.isoweekday()]} {f.race_date.strftime('%d/%m/%Y')} "
+             f"(semana {f.race_week} del plan)" + (f", distancia {f.distance_km:g} km" if f.distance_km else "")
+             + (f", tiempo objetivo {f.target_time}" if f.target_time else "")]
+    lines += ["", "## Semanas del plan (lunes a domingo)"]
+    for w in range(1, f.weeks + 1):
+        m = f.monday(w)
+        lines.append(f"- Semana {w}: {m.strftime('%d/%m/%Y')} – {(m + timedelta(days=6)).strftime('%d/%m/%Y')}")
+    p = f.paces
+    lines += ["", "## Zonas que puedes usar en los tramos"]
+    if p:
+        lines.append(f"Ritmo umbral vigente: {rp.fmt_pace(f.threshold_pace)}/km. Zonas de ritmo de Friel (TrainingPeaks):")
+        for key in rp.ZONE_ORDER:
+            fast, slow = p.zone(key)
+            lines.append(f"- {key} ({rp.PACE_ZONES[key][0]}): {rp.fmt_pace(fast)}–{rp.fmt_pace(slow)}/km")
+        if f.race_pace:
+            fast, slow = p.race_range()
+            lines.append(f"- RP (ritmo de carrera): {rp.fmt_pace(fast)}–{rp.fmt_pace(slow)}/km")
+    else:
+        lines.append("Sin ritmo umbral en el perfil: usa solo zonas de FC.")
+    if f.hr_zones:
+        lines.append("Zonas de FC de Garmin:")
+        for i, (name, lo, hi) in enumerate(f.hr_zones, 1):
+            lines.append(f"- FC{i} ({name}): {lo}–{hi} lpm")
+    lines += ["", "## Carga real del atleta"]
+    if f.recent_weekly_minutes:
+        lines.append(f"- Volumen sostenido: {f.recent_weekly_minutes:.0f} min/semana (media de las últimas 4 semanas)")
+    if f.longest_recent_min:
+        lines.append(f"- Sesión de carrera o trail más larga de las últimas 6 semanas: {f.longest_recent_min:.0f} min")
+    load = f.load or {}
+    if load.get("ctl") is not None:
+        lines.append(f"- CTL {load['ctl']}, ATL {load.get('atl')}, TSB {load.get('tsb')}, estado {load.get('status') or 'n/d'}")
+    lines.append(f"- Horas disponibles declaradas: {f.weekly_hours:g} h/semana")
+    lines += ["", "## Disponibilidad"]
+    names = [rp._DAY_NAMES[d] for d in sorted(f.available_days)]
+    lines.append(f"- Días disponibles: {', '.join(names)}")
+    unavailable = [rp._DAY_NAMES[d] for d in range(1, 8) if d not in f.available_days]
+    if unavailable:
+        lines.append(f"- Días sin entrenar (descanso obligatorio): {', '.join(unavailable)}")
+    for d, cap in sorted(f.max_minutes_per_day.items()):
+        lines.append(f"- {rp._DAY_NAMES[int(d)]}: como mucho {cap} min")
+    lines.append(f"- Descanso: al menos {f.min_rest_days} día(s) por semana; calidad: como mucho {f.max_quality} sesiones por semana")
+    if f.primary_sport:
+        lines.append(f"- Deporte principal del atleta: {f.primary_sport}")
+    if f.note:
+        lines += ["", "## Lo que pide el atleta", f.note]
+    return "\n".join(lines)
+
+
+def rules_text(f: PlanFrame) -> str:
+    """Las reglas que comprueba `check_week`, con los números del atleta: el LLM las tiene delante al escribir."""
+    unavailable = [rp._DAY_NAMES[d].lower() for d in range(1, 8) if d not in f.available_days]
+    lines = [f"- Cada semana: al menos {f.min_rest_days} día(s) \"rest\" (sin entrenar)"
+             + (f", y el {', el '.join(unavailable)} siempre \"rest\"" if unavailable else "") + ".",
+             f"- Como mucho {f.max_quality} sesiones \"quality\" por semana, nunca en días seguidos.",
+             "- Una tirada larga (\"long\") por semana, salvo en la de la carrera.",
+             f"- La carrera (\"race\") solo el {rp._DAY_NAMES[f.race_date.isoweekday()].lower()} "
+             f"{f.race_date.strftime('%d/%m/%Y')}; después, solo descanso o recuperación.",
+             "- Un rodaje con \"auto\" dura al menos 20 min y menos que la tirada larga de la semana: si la semana "
+             "necesita más, añade un rodaje o alarga otras sesiones; si necesita menos, quita uno o pon sus minutos."]
+    lines += [f"- El {rp._DAY_NAMES[int(d)].lower()}, como mucho {cap} min." for d, cap in sorted(f.max_minutes_per_day.items())]
+    return "\n".join(lines)
+
+
+def macro_text(macro: dict) -> str:
+    """La estructura aprobada, para los prompts del detalle de las semanas y de la revisión."""
+    lines = []
+    for w in macro.get("weeks") or []:
+        lines.append(f"- Semana {w.get('week')}: {PHASES.get(str(w.get('phase')), w.get('phase'))}"
+                     + (" · descarga" if w.get("deload") else "")
+                     + f" · {w.get('minutes')} min · tirada larga {w.get('long_min')} min · {w.get('focus') or ''}")
+    return "\n".join(lines)
+
+
+def parse_json(text: str) -> dict:
+    """El objeto JSON de la respuesta del LLM (con o sin bloque ```json). ValueError si no hay uno válido."""
+    raw = str(text or "")
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.S)
+    if fenced:
+        raw = fenced.group(1)
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("La respuesta no contiene un objeto JSON.")
+    try:
+        data = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON no válido: {exc.msg} (línea {exc.lineno}).") from exc
+    if not isinstance(data, dict):
+        raise ValueError("La respuesta debe ser un objeto JSON.")
+    return data
+
+
+# ─── Estructura (macro) ───────────────────────────────────────────────────────
+
+def _num(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def check_macro(macro: dict, f: PlanFrame) -> list[str]:
+    """Reglas de la estructura del plan (las mismas para cualquier modelo): ninguna se calibra con el resultado."""
+    errors: list[str] = []
+    weeks = macro.get("weeks")
+    if not str(macro.get("title") or "").strip():
+        errors.append("Falta \"title\".")
+    if not isinstance(weeks, list) or [int(_num(w.get("week"))) for w in weeks if isinstance(w, dict)] != list(range(1, f.weeks + 1)):
+        return errors + [f"\"weeks\" debe tener las semanas 1 a {f.weeks} en orden, una por semana."]
+    goal_min = f.weekly_hours * 60
+    last_load = f.recent_weekly_minutes or 0.0
+    last_long = 0.0
+    peak = 0.0
+    streak = 0
+    for w in weeks:
+        n = int(w["week"])
+        phase = str(w.get("phase") or "")
+        minutes = _num(w.get("minutes"))
+        long_min = _num(w.get("long_min"))
+        deload = bool(w.get("deload"))
+        if phase not in PHASES:
+            errors.append(f"Semana {n}: fase \"{phase}\" no válida (usa {', '.join(PHASES)}).")
+            continue
+        if (phase == "race") != (n == f.race_week):
+            errors.append(f"Semana {n}: la fase \"race\" es solo la semana {f.race_week}, la de la carrera.")
+        if minutes <= 0:
+            errors.append(f"Semana {n}: \"minutes\" debe ser mayor que 0.")
+            continue
+        if minutes > goal_min * 1.10:
+            errors.append(f"Semana {n}: {minutes:.0f} min superan las horas disponibles ({goal_min:.0f} min + 10 %).")
+        if long_min > minutes * 0.40:
+            errors.append(f"Semana {n}: la tirada larga ({long_min:.0f} min) supera el 40 % de la semana ({minutes:.0f} min).")
+        if phase in ("taper", "race"):
+            if peak and minutes > peak * 0.85:
+                errors.append(f"Semana {n}: el afinamiento debe bajar al menos un 15 % sobre la semana más alta "
+                              f"({peak:.0f} min); como mucho {peak * 0.85:.0f} min.")
+            continue
+        if deload:
+            if last_load and minutes > last_load * 0.85:
+                errors.append(f"Semana {n}: la descarga debe bajar al menos un 15 % sobre la última semana de carga "
+                              f"({last_load:.0f} min); como mucho {last_load * 0.85:.0f} min.")
+            streak = 0
+            continue
+        if last_load and minutes > last_load * 1.10 + 1:
+            what = "el volumen que sostiene el atleta" if n == 1 or not peak else "la semana de carga anterior"
+            errors.append(f"Semana {n}: {minutes:.0f} min suben más de un 10 % sobre {what} ({last_load:.0f} min); "
+                          f"como mucho {last_load * 1.10:.0f} min.")
+        if last_long and long_min > last_long + 15:
+            errors.append(f"Semana {n}: la tirada larga sube más de 15 min sobre la anterior de carga ({last_long:.0f} min).")
+        streak += 1
+        if streak > 3:
+            errors.append(f"Semana {n}: más de 3 semanas de carga seguidas; pon una descarga (método por bloques con descarga).")
+            streak = 0
+        last_load = minutes
+        last_long = long_min
+        peak = max(peak, minutes)
+    return errors
+
+
+# ─── Días y tramos ────────────────────────────────────────────────────────────
+
+def _zone_key(raw: str) -> str:
+    z = str(raw or "").strip().upper().replace(" ", "")
+    if z == "RP":
+        return "RP"
+    if z.startswith("FC") and z[2:].isdigit():
+        return z
+    m = re.fullmatch(r"Z([1-5])([ABC]?)", z)
+    return f"Z{m.group(1)}{m.group(2).lower()}" if m else z
+
+
+def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict | None:
+    if "repeat" in raw:
+        reps = int(_num(raw.get("repeat")))
+        inner = [s for s in (_expand_step(x, f, errors, where) for x in (raw.get("steps") or []) if isinstance(x, dict)) if s]
+        if reps < 1 or not inner:
+            errors.append(f"{where}: un bloque \"repeat\" necesita repeat ≥ 1 y sus \"steps\".")
+            return None
+        return rp.block(reps, *inner, name=str(raw.get("name") or "Series"))
+    where = f"{where}, tramo {json.dumps(raw, ensure_ascii=False)}"  # el LLM ve qué tramo corregir
+    kind = str(raw.get("kind") or "").strip().lower()
+    if kind not in STEP_KINDS:
+        errors.append(f"{where}: \"kind\" \"{kind}\" no válido (usa {', '.join(sorted(STEP_KINDS))}).")
+        return None
+    zone = _zone_key(raw.get("zone"))
+    auto = str(raw.get("min") or "").strip().lower() == "auto"
+    if auto:
+        # La duración la pone el código para que la semana sume sus minutos (expand_week): el LLM no suma.
+        if kind != "steady" or raw.get("m") or raw.get("km") or raw.get("sec"):
+            errors.append(f"{where}: \"min\": \"auto\" solo va en un tramo \"steady\" sin distancia.")
+            return None
+        raw = {**raw, "min": 1}
+    minutes = _num(raw.get("min")) + _num(raw.get("sec")) / 60
+    meters = _num(raw.get("m")) + _num(raw.get("km")) * 1000
+    if minutes <= 0 and meters <= 0:
+        errors.append(f"{where}: el tramo no tiene duración (o es 0); dale \"min\", \"sec\", \"m\" o \"km\", o quítalo.")
+        return None
+    if minutes > 0 and meters > 0:
+        errors.append(f"{where}: el tramo lleva tiempo y distancia; deja solo uno de los dos.")
+        return None
+    name = str(raw.get("name") or "") or None
+    note = str(raw.get("note") or "")
+    if zone.startswith("FC"):
+        n = int(zone[2:])
+        if not 1 <= n <= max(5, len(f.hr_zones)):
+            errors.append(f"{where}: zona \"{zone}\" no existe (FC1 a FC5).")
+            return None
+        if meters:
+            errors.append(f"{where}: un tramo por FC va por tiempo, no por distancia.")
+            return None
+        out = {"name": name or _STEP_NAMES[kind], "type": kind, "duration_min": round(minutes, 2), "reps": 1,
+               "intensityClass": _HR_INTENSITY[n],
+               "target": {"metric": "hr_zone", "zone": n, "zone_to": n, "intensityClass": _HR_INTENSITY[n]}}
+        if note:
+            out["note"] = note
+        if auto:
+            out["auto"] = True
+        return out
+    p = f.paces
+    if p is None:
+        errors.append(f"{where}: el atleta no tiene ritmo umbral; usa zonas de FC (FC1 a FC5).")
+        return None
+    if zone == "RP" and not f.race_pace:
+        errors.append(f"{where}: no hay ritmo de carrera (falta tiempo objetivo o distancia); usa una zona de ritmo.")
+        return None
+    if zone != "RP" and zone not in rp.PACE_ZONES:
+        errors.append(f"{where}: zona \"{raw.get('zone')}\" no válida (usa {', '.join(rp.ZONE_ORDER)}, RP o FC1-FC5).")
+        return None
+    out = rp.step(p, kind, zone, minutes or None, meters=meters or None, name=name, note=note)
+    if auto:
+        out["auto"] = True
+    return out
+
+
+def workout_totals(steps: list[dict], f: PlanFrame) -> tuple[float, float, float]:
+    """(minutos, km, TSS planificado): rTSS de TP con ritmo; hrTSS de TP (tabla por FC/umbral) con FC."""
+    minutes = km = tss = 0.0
+    for s, times in rp._leaf_steps(steps):
+        dur = _num(s.get("duration_min")) * times
+        target = s.get("target") or {}
+        minutes += dur
+        if target.get("metric") == "pace":
+            mid = sum(target["range"]) / 2
+            km += dur * 60 / mid
+            tss += dur / 60 * (f.threshold_pace / mid) ** 2 * 100
+        elif target.get("metric") == "hr_zone" and f.hr_zones and f.hr_threshold_tp:
+            _, lo, hi = f.hr_zones[int(target["zone"]) - 1]
+            ratio = (lo + hi) / 2 / f.hr_threshold_tp
+            rate = next((r for upper, r in TP_HRTSS_RATES if ratio < upper), TP_HRTSS_RATE_ABOVE_THRESHOLD)
+            tss += dur / 60 * rate
+    return round(minutes, 1), round(km, 1), round(tss, 1)
+
+
+def _main_target(steps: list[dict]) -> dict:
+    order = ["recovery", "endurance", "tempo", "threshold", "vo2"]
+    leaves = [s for s, _ in rp._leaf_steps(steps) if s.get("type") not in ("warmup", "cooldown")] or \
+        [s for s, _ in rp._leaf_steps(steps)]
+    best = max(leaves, key=lambda s: (order.index(s.get("intensityClass") or "endurance"), _num(s.get("duration_min"))))
+    return dict(best.get("target") or {})
+
+
+def expand_day(day: dict, f: PlanFrame, week: int) -> tuple[dict | None, list[str]]:
+    """Un día del formato compacto → fila de sesión con su structured_workout. Devuelve (sesión, fallos)."""
+    errors: list[str] = []
+    d = int(_num(day.get("day")))
+    where = f"Semana {week}, día {d}"
+    kind = str(day.get("type") or "").strip().lower()
+    if kind not in DAY_TYPES:
+        return None, [f"{where}: \"type\" \"{kind}\" no válido (usa {', '.join(DAY_TYPES)})."]
+    title = str(day.get("title") or "").strip()
+    if kind == "rest":
+        wk = rp.rest_session()
+        if title:
+            wk["title"] = title
+    elif kind in ("strength", "cross") and not day.get("steps"):
+        minutes = _num(day.get("minutes"))
+        if minutes <= 0:
+            return None, [f"{where}: una sesión de {kind} sin tramos necesita \"minutes\"."]
+        note = str(day.get("note") or "")
+        rpe = str(day.get("rpe") or "5-6")
+        lo, hi = (int(_num(x, 5)) for x in (rpe.split("-") + [rpe])[:2])
+        wk = {"schema": "kairos-workout-v1", "sessionType": DAY_TYPES[kind], "title": title or "Fuerza",
+              "summary": {"duration_min": minutes, "distance_km": 0.0, "tss": round(minutes / 60 * _STRENGTH_TSS_PER_HOUR, 1),
+                          "intensityClass": "tempo"},
+              "targets": {"intensityClass": "tempo", "primary": {"metric": "rpe", "range": [lo, hi]}},
+              "steps": [{"name": "Calentamiento", "type": "warmup", "duration_min": min(10.0, minutes / 4), "reps": 1,
+                         "intensityClass": "endurance", "target": {"metric": "rpe", "range": [3, 4]}},
+                        {"name": title or "Principal", "type": "steady", "duration_min": minutes - min(10.0, minutes / 4) - 5,
+                         "reps": 1, "intensityClass": "tempo", "target": {"metric": "rpe", "range": [lo, hi]},
+                         **({"note": note} if note else {})},
+                        {"name": "Movilidad", "type": "cooldown", "duration_min": 5.0, "reps": 1, "intensityClass": "recovery",
+                         "target": {"metric": "rpe", "range": [2, 3]}}],
+              "notes": f"{title}: {note} (RPE {rpe})" if note else f"{title} (RPE {rpe})"}
+    else:
+        raw_steps = [s for s in (day.get("steps") or []) if isinstance(s, dict)]
+        steps = [s for s in (_expand_step(s, f, errors, where) for s in raw_steps) if s]
+        if errors:
+            return None, errors
+        if not steps:
+            return None, [f"{where}: una sesión de {kind} necesita \"steps\"."]
+        if steps[0].get("type") != "warmup" or steps[-1].get("type") != "cooldown":
+            return None, [f"{where}: el primer tramo debe ser \"warmup\" y el último \"cooldown\"."]
+        autos = [s for s in steps if s.get("auto")]
+        nested_auto = any(c.get("auto") for s in steps if s.get("steps") for c, _ in rp._leaf_steps(s["steps"]))
+        if nested_auto or len(autos) > 1 or (autos and kind not in AUTO_DAY_TYPES):
+            return None, [f"{where}: \"min\": \"auto\" va en un solo tramo \"steady\" de un rodaje (easy, recovery) "
+                          "o de la tirada larga (long), fuera de las series."]
+        wk = {"schema": "kairos-workout-v1", "sessionType": DAY_TYPES[kind], "title": title or DAY_TYPES[kind],
+              "secondary_label": f"RPE {day['rpe']}" if day.get("rpe") else "",
+              "threshold_pace": f.threshold_pace,
+              "steps": steps}
+    wk["plan_day"] = {k: v for k, v in day.items()}  # lo que escribió el LLM: la revisión parte de aquí
+    session = {"week_index": week, "day_index": d, "session_type": wk["sessionType"], "structured_workout": wk}
+    return refresh_session(session, f), []
+
+
+def refresh_session(session: dict, f: PlanFrame) -> dict:
+    """Duración, km, TSS, objetivo principal y descripción de una sesión a partir de sus tramos."""
+    wk = session["structured_workout"]
+    if "secondary_label" in wk:  # sesión con tramos de ritmo o FC
+        steps = wk["steps"]
+        minutes, km, tss = workout_totals(steps, f)
+        main = _main_target(steps)
+        wk["summary"] = {"duration_min": minutes, "distance_km": km, "tss": tss,
+                         "intensityClass": main.get("intensityClass") or "endurance"}
+        wk["targets"] = {"intensityClass": main.get("intensityClass") or "endurance", "primary": main,
+                         "secondary": {"metric": "rpe", "label": wk["secondary_label"]}}
+        wk["notes"] = " · ".join(rp.describe_steps(steps))
+    rpe_label = ((wk.get("targets") or {}).get("secondary") or {}).get("label") or ""
+    session.update({"duration_min": int(round(float(wk["summary"]["duration_min"]))), "intensity": rpe_label,
+                    "exercises": [wk["title"]], "notes": wk["notes"]})
+    return session
+
+
+def _auto_step(session: dict) -> dict | None:
+    return next((s for s in session["structured_workout"].get("steps") or [] if s.get("auto")), None)
+
+
+def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_minutes: float) -> list[str]:
+    """Da duración a los tramos "auto": la tirada larga dura lo previsto y los rodajes reparten lo que falta para que
+    la semana sume sus minutos (con los días que no cambian, `kept_minutes`). Fuera de límites, fallo para el LLM."""
+    autos = [s for s in sessions if _auto_step(s)]
+    if not autos:
+        return []
+    target = _num(planned.get("minutes"))
+    if not target:
+        return [f"Semana {n}: sin minutos en la estructura no se puede usar \"auto\"; pon los minutos."]
+    errors: list[str] = []
+    for s in [s for s in autos if s["session_type"] == "long_run"]:
+        long_min = _num(planned.get("long_min"))
+        rest = float(s["structured_workout"]["summary"]["duration_min"]) - 1
+        if long_min - rest < 10:
+            errors.append(f"Semana {n}: la tirada larga ya dura {rest:.0f} min sin el tramo \"auto\" y la estructura dice "
+                          f"{long_min:.0f}; quita \"auto\" o acorta los otros tramos.")
+            continue
+        _auto_step(s)["duration_min"] = float(round(long_min - rest))
+        refresh_session(s, f)
+    easy = [s for s in autos if s["session_type"] != "long_run"]
+    if easy and not errors:
+        fixed = kept_minutes + sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions) - len(easy)
+        each = (target - fixed) / len(easy)  # minutos del tramo "auto" de cada rodaje
+        others = max(float(s["structured_workout"]["summary"]["duration_min"]) - 1 for s in easy)
+        longs = [float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions if s["session_type"] == "long_run"]
+        # Un rodaje dura al menos 20 min y nunca tanto como la tirada larga de la semana (sin tirada: 90 min).
+        low, high = max(1.0, 20 - others), (longs[0] if longs else 90.0) - others - 1
+        if not low <= each <= high:
+            verb = "quita" if each < low else "añade"
+            errors.append(f"Semana {n}: para que la semana sume {target:.0f} min, cada rodaje \"auto\" duraría "
+                          f"{each + others:.0f} min (entre 20 y {high + others:.0f}, menos que la tirada larga); {verb} un "
+                          "rodaje o cambia la duración de otras sesiones.")
+        else:
+            for s in easy:
+                _auto_step(s)["duration_min"] = float(round(each))
+                refresh_session(s, f)
+    if not errors:
+        for s in autos:
+            _auto_step(s).pop("auto")
+    return errors
+
+
+def expand_week(week: dict, f: PlanFrame, planned: dict | None = None,
+                kept_minutes: float = 0.0) -> tuple[list[dict], list[str]]:
+    """Los días de una semana → sesiones, con los tramos "auto" ya con su duración (ver `_fill_auto`)."""
+    n = int(_num(week.get("week")))
+    sessions: list[dict] = []
+    errors: list[str] = []
+    for day in week.get("days") or []:
+        if not isinstance(day, dict):
+            continue
+        session, errs = expand_day(day, f, n)
+        errors += errs
+        if session:
+            sessions.append(session)
+    if not errors:
+        errors = _fill_auto(n, sessions, planned or {}, f, kept_minutes)
+    return sessions, errors
+
+
+def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_days: int = 0) -> list[str]:
+    """Reglas de una semana frente a su estructura y a la disponibilidad del atleta.
+
+    `past_days`: días ya pasados de la semana (revisión), que no se comprueban contra la estructura.
+    """
+    errors: list[str] = []
+    days = sorted(int(s["day_index"]) for s in sessions)
+    if days != list(range(1, 8)):
+        return [f"Semana {n}: debe tener los 7 días (1 = lunes … 7 = domingo), uno por día; tiene {days}."]
+    by_day = {int(s["day_index"]): s for s in sessions}
+    for d, s in by_day.items():
+        st = s["session_type"]
+        if d not in f.available_days and st != "rest":
+            errors.append(f"Semana {n}: el {rp._DAY_NAMES[d].lower()} el atleta no entrena; debe ser \"rest\".")
+        cap = f.max_minutes_per_day.get(d)
+        if cap is not None and s["duration_min"] > cap:
+            errors.append(f"Semana {n}: el {rp._DAY_NAMES[d].lower()} admite como mucho {cap} min.")
+    rest = sum(1 for s in sessions if s["session_type"] == "rest")
+    if rest < f.min_rest_days:
+        errors.append(f"Semana {n}: necesita al menos {f.min_rest_days} día(s) de descanso ({{\"type\": \"rest\"}}, sin tramos; "
+                      "\"recovery\" es un rodaje regenerativo, no descanso).")
+    quality = sorted(d for d, s in by_day.items() if s["session_type"] == "running_quality")
+    if len(quality) > f.max_quality:
+        errors.append(f"Semana {n}: {len(quality)} sesiones de calidad; como mucho {f.max_quality}.")
+    if any(b - a < 2 for a, b in zip(quality, quality[1:])):
+        errors.append(f"Semana {n}: dos sesiones de calidad en días seguidos; deja al menos un día entre ellas.")
+    races = [d for d, s in by_day.items() if s["session_type"] == "race_run"]
+    if n == f.race_week:
+        if races != [f.race_date.isoweekday()]:
+            errors.append(f"Semana {n}: la carrera (\"race\") va el {rp._DAY_NAMES[f.race_date.isoweekday()].lower()} "
+                          f"{f.race_date.strftime('%d/%m/%Y')}, una sola vez.")
+        after = [d for d in range(f.race_date.isoweekday() + 1, 8) if by_day[d]["session_type"] not in ("rest", "recovery")]
+        if after:
+            errors.append(f"Semana {n}: después de la carrera solo descanso o recuperación.")
+    elif races:
+        errors.append(f"Semana {n}: \"race\" solo en la semana de la carrera ({f.race_week}).")
+    if past_days:
+        return errors
+    total = sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions)
+    target = _num(planned.get("minutes"))
+    # Semana de la carrera: la carrera es fija y su volumen lo limita el afinamiento (check_macro con las sumas reales).
+    if target and n != f.race_week and abs(total - target) > target * 0.12:
+        # Las sumas son del código: el LLM recibe cuánto dura cada día y cuánto quitar o añadir.
+        per_day = ", ".join(f"{rp._DAY_NAMES[d][:2]} {float(by_day[d]['structured_workout']['summary']['duration_min']):.0f}"
+                            for d in range(1, 8))
+        verb = "quita" if total > target else "añade"
+        errors.append(f"Semana {n}: los días suman {total:.0f} min ({per_day}) y la estructura dice {target:.0f} min "
+                      f"(±12 %: entre {target * 0.88:.0f} y {target * 1.12:.0f}); {verb} unos {abs(total - target):.0f} min.")
+    long_min = _num(planned.get("long_min"))
+    longs = [s for s in sessions if s["session_type"] == "long_run"]
+    if long_min and n != f.race_week:
+        if len(longs) != 1:
+            errors.append(f"Semana {n}: debe tener una tirada larga (\"long\").")
+        elif abs(float(longs[0]["structured_workout"]["summary"]["duration_min"]) - long_min) > max(10.0, long_min * 0.15):
+            got = float(longs[0]["structured_workout"]["summary"]["duration_min"])
+            errors.append(f"Semana {n}: la tirada larga dura {got:.0f} min y la estructura dice {long_min:.0f} min; "
+                          f"{'quita' if got > long_min else 'añade'} unos {abs(got - long_min):.0f} min.")
+    return errors
+
+
+def chunk_weeks(weeks: int, per_call: int) -> list[list[int]]:
+    """Tandas de semanas para detallar en paralelo, repartidas por igual (13 → 4+3+3+3, no 4+4+4+1: una semana de
+    carrera sola confundía al modelo, que escribía el plan entero)."""
+    n = -(-weeks // per_call)
+    sizes = [weeks // n + (1 if i < weeks % n else 0) for i in range(n)]
+    out, first = [], 1
+    for size in sizes:
+        out.append(list(range(first, first + size)))
+        first += size
+    return out
+
+
+def actual_macro(macro: dict, expanded: dict[int, list[dict]]) -> dict:
+    """La estructura con lo que suman de verdad los días de cada semana (minutos y tirada larga)."""
+    weeks = []
+    for w in macro.get("weeks") or []:
+        sessions = expanded.get(int(w["week"])) or []
+        longs = [float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions if s["session_type"] == "long_run"]
+        weeks.append({**w, "minutes": round(sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions)),
+                      "long_min": round(longs[0]) if longs else 0})
+    return {**macro, "weeks": weeks}
+
+
+def week_of_error(error: str) -> int | None:
+    m = re.match(r"Semana (\d+)", error)
+    return int(m.group(1)) if m else None
+
+
+def check_quality_variety(sessions: list[dict]) -> list[str]:
+    """Las sesiones de calidad progresan: en una tanda de semanas no se repite la misma una y otra vez."""
+    notes = [s["notes"] for s in sessions if s["session_type"] == "running_quality"]
+    if len(set(notes)) < min(3, len(notes)):
+        return ["Las sesiones de calidad se repiten casi iguales; haz que progresen de una semana a otra (repeticiones, "
+                "duración de los tramos, recuperación o zona)."]
+    return []
+
+
+def plan_data(macro: dict, sessions: list[dict], f: PlanFrame) -> dict:
+    """plan_data del plan guardado: lo que necesitan /plan ver, el contexto del LLM y el motor diario."""
+    weeks = macro["weeks"]
+    week_minutes = []
+    for w in range(1, f.weeks + 1):
+        week_minutes.append(round(sum(float(s["structured_workout"]["summary"]["duration_min"])
+                                      for s in sessions if s["week_index"] == w), 1))
+    phases = [str(w.get("phase")) for w in weeks]
+    return {
+        "method": "bloques_con_descarga",
+        "author": "llm",
+        "phases": phases,
+        "deload_weeks": [int(w["week"]) for w in weeks if w.get("deload")],
+        "focus": [str(w.get("focus") or "") for w in weeks],
+        "planned_week_minutes": [_num(w.get("minutes")) for w in weeks],
+        "long_minutes": [_num(w.get("long_min")) for w in weeks],
+        "week_minutes": week_minutes,
+        "phase_weeks": {ph: phases.count(ph) for ph in PHASES},
+        "race_distance_km": f.distance_km,
+        "race_pace_sec_per_km": round(f.race_pace, 1) if f.race_pace else None,
+        "threshold_pace_sec_per_km": round(f.threshold_pace, 1) if f.threshold_pace else None,
+        "start_date": f.start.isoformat(),
+        "target_race": f.race,
+        "target_race_date": f.race_date.isoformat(),
+        "target_time": f.target_time,
+        "weekly_training_hours": f.weekly_hours,
+        "rationale": str(macro.get("rationale") or ""),
+    }
+
+
+def compact_week(sessions: list[dict], week: int) -> list[dict]:
+    """Días de una semana en el formato compacto (lo que escribió el LLM), para la revisión."""
+    out = []
+    for s in sorted((s for s in sessions if int(s.get("week_index") or 0) == week), key=lambda s: int(s.get("day_index") or 0)):
+        day = dict(((s.get("structured_workout") or {}).get("plan_day")) or {})
+        if not day:
+            day = {"day": int(s.get("day_index") or 0), "type": "rest" if s.get("session_type") == "rest" else "easy",
+                   "title": ((s.get("structured_workout") or {}).get("title")) or s.get("session_type")}
+        out.append(day)
+    return out

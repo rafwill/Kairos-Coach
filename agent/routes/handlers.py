@@ -7,12 +7,17 @@ devuelve la respuesta (o la respuesta y otro nombre de ruta para agent.log, o No
 
 import logging
 import json
+from datetime import timedelta
 
 
 from agent.mcp.client import (
     call_tool,
 )
+from agent import run_plan as _run_plan
 from agent import storage as _storage
+from agent.hr_profile import _resolve_hr_zones
+from agent.llm import LLMAuthError
+from agent.llm_calls import _provider_error
 from agent.tool_results import (
     _compact_tool_result,
     _is_no_data_result,
@@ -32,6 +37,7 @@ from agent.plans import (
     _build_structured_plan_markdown,
     _build_training_plan_status_markdown,
     _generate_structured_plan_payload,
+    _plan_start,
     _summarize_plan_changes,
     _validate_structured_plan,
     _wants_new_plan_intent,
@@ -190,7 +196,8 @@ class RoutesMixin:
         )
         return assistant_reply
     async def _route_planning(self, user_message: str, force_new: bool = False):
-        """Ruta funcional de planificación: generación/actualización estructurada, persistida y versionada en DB sin depender del LLM."""
+        """Planificación: el LLM construye el plan nuevo (agent/plan_llm.py) y el código lo comprueba; si no lo consigue, el
+        motor de Kairos hace uno de respaldo y se avisa. Se guarda versionado en la base de datos."""
         try:
             previous_plan_row = None
             previous_plan = None
@@ -204,12 +211,34 @@ class RoutesMixin:
                 previous_plan = _get_active_training_plan(self.user_profile)
                 previous_sessions = []
 
-            new_plan, new_sessions = _generate_structured_plan_payload(
-                self.user_profile,
-                user_message,
-                base_plan=previous_plan,
-                load_context=await self._build_plan_load_context(),
-            )
+            load_context = await self._build_plan_load_context()
+            # force_new: `/plan crear` (28/10) siempre crea uno nuevo; en el chat, solo si se pide.
+            wants_new = force_new or _wants_new_plan_intent(user_message)
+            new_plan = None
+            notice = ""
+            if not wants_new and previous_plan and previous_plan.get("id") and \
+                    (previous_plan.get("plan_data") or {}).get("author") == "llm":
+                return await self._route_plan_revision(user_message, previous_plan, previous_sessions, load_context)
+            if wants_new or not (previous_plan and previous_plan.get("id")):
+                # El plan lo construye el LLM del atleta (28/10); el código lo comprueba y calcula ritmos, km y TSS.
+                try:
+                    new_plan, new_sessions, llm_errors = await self._build_plan_with_llm(user_message, load_context)
+                except LLMAuthError:
+                    raise
+                except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
+                    new_plan, llm_errors = None, [f"{type(exc).__name__}: {exc}"]
+                if new_plan is None:
+                    log.warning("[PLAN] el LLM no consiguió un plan válido: %s", " | ".join(llm_errors[:6]))
+                    notice = (f"> ⚠️ Tu modelo ({getattr(self, 'model', '')}) no consiguió un plan que cumpla las reglas "
+                              f"de Kairos ({len(llm_errors)} fallo(s); el primero: {llm_errors[0] if llm_errors else 'n/d'}). "
+                              "Este es el plan de respaldo del motor de Kairos.\n\n")
+            if new_plan is None:
+                new_plan, new_sessions = _generate_structured_plan_payload(
+                    self.user_profile,
+                    user_message,
+                    base_plan=previous_plan,
+                    load_context=load_context,
+                )
             validation_errors = _validate_structured_plan(new_plan, new_sessions, self.user_profile)
             if validation_errors:
                 assistant_reply = (
@@ -218,8 +247,6 @@ class RoutesMixin:
                     + "\n\nAjusta perfil/objetivo con `/perfil editar objetivo` y lo regenero."
                 )
             else:
-                # force_new: `/plan crear` (28/10) siempre crea uno nuevo; en el chat, solo si se pide.
-                wants_new = force_new or _wants_new_plan_intent(user_message)
                 if previous_plan and previous_plan.get("id") and not wants_new:
                     persisted = _storage.update_training_plan(
                         str(previous_plan.get("id")),
@@ -251,7 +278,7 @@ class RoutesMixin:
                     previous_sessions,
                     new_sessions,
                 )
-                assistant_reply = _build_structured_plan_markdown(
+                assistant_reply = notice + _build_structured_plan_markdown(
                     persisted_plan,
                     new_sessions,
                     change_summary,
@@ -275,6 +302,54 @@ class RoutesMixin:
             )
             assistant_reply = _build_goal_plan_fallback(self.user_profile)
             return assistant_reply, "planning_fallback"
+    async def _route_plan_revision(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict) -> str:
+        """Revisión del plan del LLM con lo que cuenta el atleta (28/10): cambia días desde hoy hasta el final de la
+        semana siguiente, el código los comprueba y se guarda una versión nueva. Si no pasa las reglas, no se toca."""
+        try:
+            new_sessions, reply, errors, messages = await self._revise_plan_with_llm(
+                user_message, plan, sessions, load_context)
+        except LLMAuthError:
+            raise
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
+            new_sessions, reply, errors, messages = None, "", [f"{type(exc).__name__}: {exc}"], []
+        if errors:
+            log.warning("[PLAN] revisión sin plan válido: %s", " | ".join(errors[:6]))
+            return ("## ⚠️ No pude revisar el plan\n\n" + "\n".join(f"- {e}" for e in errors[:8])
+                    + "\n\nEl plan sigue como estaba.")
+        if reply:
+            reply = await self._apply_output_sensors(reply, messages, "plan_revision")
+        if new_sessions is None:
+            return reply or "No hace falta cambiar el plan."
+        old = {(int(s.get("week_index") or 0), int(s.get("day_index") or 0)):
+               (s.get("structured_workout") or {}).get("plan_day") for s in sessions}
+        changed = [s for s in new_sessions
+                   if old.get((s["week_index"], s["day_index"])) != (s.get("structured_workout") or {}).get("plan_day")]
+        pd = dict(plan.get("plan_data") or {})
+        weeks = int(plan.get("duration_weeks") or 0)
+        pd["week_minutes"] = [round(sum(float(s.get("duration_min") or 0) for s in new_sessions
+                                        if int(s.get("week_index") or 0) == w), 1) for w in range(1, weeks + 1)]
+        persisted = _storage.update_training_plan(
+            str(plan["id"]),
+            {k: plan.get(k) for k in ("title", "description", "objective", "difficulty", "duration_weeks")}
+            | {"status": "active", "source": "agent_llm_plan", "plan_data": pd},
+            sessions=new_sessions,
+            change_reason="llm_revision",
+        )
+        persisted_plan = _normalize_storage_plan_row(persisted) or {**plan, "plan_data": pd}
+        self.user_profile["training_plan"] = persisted_plan
+        _save_user_profile(self.user_profile)
+        self.__dict__.pop("_active_plan_cache", None)  # el bloque "Plan activo" se recarga
+        start = _plan_start(persisted_plan) or _plan_start(plan)
+        zones, _ = _resolve_hr_zones(self.user_profile, "running")
+        lines = []
+        for s in changed:
+            day = start + timedelta(weeks=s["week_index"] - 1, days=s["day_index"] - 1)
+            sl = _run_plan.session_lines(s, day, zones)
+            lines.append(f"- **{sl[0]}**")
+            lines += [f"  - {x.strip()}" for x in sl[1:]]
+        return (reply + "\n\n" if reply else "") + "## 🗓️ Cambios en el plan\n" + "\n".join(lines) + \
+            "\n\nGuardado como una versión nueva del plan (`/plan ver` para verlo entero)."
+
     async def _route_personal_records(self, user_message: str):
         """Récords personales: distancia y marca desde la primera respuesta; si Garmin no los da, sigue el LLM."""
         try:
