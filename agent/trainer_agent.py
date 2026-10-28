@@ -52,7 +52,6 @@ from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _parse_hr_zones_list,
     _resolve_hr_profile_values,
     _resolve_running_threshold_pace_sec_per_km,
-    _resolve_sport_model_cfg,
     _try_parse_json,
 )
 from agent.prompts import (
@@ -100,6 +99,31 @@ from agent.tool_results import (
     _is_no_data_result,
     _parse_activities_response,
 )
+from agent.data_access import (
+    _TSS_FORMULA_VERSION,
+    _add_ia_tokens,
+    _load_metrics_series,
+    _load_metrics_view,
+    _load_session_context,
+    _load_session_summaries,
+    _load_stored_activity_tss,
+    _load_user_profile,
+    _save_history_entries,
+    _save_user_profile,
+    _session_memory_enabled,
+    _tss_unit_for_stored_row,
+)
+from agent.garmin_data import (
+    HR_ZONE_NAMES_ES,
+    _GARMIN_ZONE_NAMES_ES,
+    _activity_family,
+    _activity_matches_sport,
+    _extract_activity_date_iso,
+    _first_value,
+    _get_activity_name_es,
+    _is_activity_in_last_48h,
+    _key_candidates,
+)
 
 log = logging.getLogger(__name__)
 
@@ -108,65 +132,6 @@ log = logging.getLogger(__name__)
 # Thin wrappers sobre agent.storage para mantener compatibilidad con imports
 # existentes en main.py y los tests. Toda la lógica de persistencia
 # vive en agent/storage.py.
-
-def _load_user_profile() -> dict:
-    """Carga el perfil del usuario (datos personales, objetivos, salud)."""
-    return _storage.load_user_profile()
-
-
-def _save_user_profile(profile: dict) -> None:
-    """Guarda el perfil del usuario."""
-    _storage.save_user_profile(profile)
-
-
-def _load_session_context() -> dict:
-    """Carga el contexto de sesiones (historial de mensajes y resúmenes)."""
-    return _storage.load_session_context()
-
-
-def _save_history_entry(role: str, content: str) -> None:
-    """Añade una entrada al historial de conversación persistente."""
-    _save_history_entries([(role, content)])
-
-
-def _save_history_entries(entries: list[tuple[str, str]]) -> None:
-    """Añade entradas al historial persistente con una sola lectura y escritura (pregunta y respuesta, 28/10).
-
-    Si Supabase falla, se pierden esas entradas, no la respuesta: el 26/10 un "JWT expired" aquí cerró Kairos
-    con la respuesta ya generada.
-    """
-    if not _session_memory_enabled():
-        return
-    try:
-        _storage.save_history_entries(entries)
-    except Exception as exc:  # noqa: BLE001 — cualquier fallo de red o de Supabase
-        log.warning("No se pudo guardar el historial (%s): %s", "/".join(role for role, _ in entries), exc)
-
-
-def _load_session_summaries() -> list[dict]:
-    """Carga los resúmenes de sesiones anteriores."""
-    return _storage.load_session_summaries()
-
-
-def _add_ia_tokens(tokens: int) -> None:
-    """Suma el consumo de una llamada al LLM en ia_provider (26/10). Un fallo al apuntarlo nunca corta el chat."""
-    try:
-        _storage.add_ia_tokens(tokens)
-    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
-        log.debug("No se pudo apuntar el consumo de tokens: %s", exc)
-
-
-def _session_memory_enabled() -> bool:
-    """Memoria entre sesiones (historial y resumen del día en `session_context`). La apaga solo la batería
-    (`KAIROS_SESSION_MEMORY=false`, 26/10): sus preguntas llenaban la memoria del atleta y el LLM las recibía
-    como temas suyos; además, sin leerla, cada pasada no depende de la anterior."""
-    raw = str(os.environ.get("KAIROS_SESSION_MEMORY", "true")).strip().lower()
-    return raw not in {"0", "false", "no", "off"}
-
-
-# Versión de la fórmula TSS. Incrementar cuando cambie _estimate_session_tss
-# para forzar recálculo automático de la serie histórica en el próximo arranque.
-_TSS_FORMULA_VERSION = _load_metrics.TSS_FORMULA_VERSION
 
 
 class ToolRouter:
@@ -355,33 +320,6 @@ async def _build_recent_tss_by_sport_markdown(mcp_session, user_message: str) ->
     return "\n".join(lines)
 
 
-def _tss_unit_for_stored_row(row: dict | None) -> str:
-    """Unidad de TSS (rTSS, hrTSS o TSS) de una fila de activity_tss a partir de su modelo."""
-    model = str((row or {}).get("model") or "").strip().lower()
-    method = str((row or {}).get("method") or "").strip()
-    if model.startswith("running:") or model == "trail:fast_rtss":
-        return "rTSS"
-    if model == "cycling:power_ftp" or model.startswith("walk_hike:metabolico"):
-        return "TSS"
-    if model or method.lower() == "hrtss":
-        return "hrTSS" if (method.lower() == "hrtss" or not method) else method
-    return method or "TSS"
-
-
-def _load_stored_activity_tss(start_iso: str) -> dict[int, dict]:
-    """TSS guardados en activity_tss desde start_iso; {} si no hay o no se pueden leer.
-
-    Es la única fuente de TSS por actividad para el chat: nunca se recalcula al vuelo
-    ni se sustituye por la carga nativa de Garmin.
-    """
-    try:
-        stored = _storage.get_activity_tss_map(start_iso)
-    except RuntimeError as exc:
-        log.debug("_load_stored_activity_tss: %s", exc)
-        stored = None
-    return stored or {}
-
-
 def _extract_cycling_ftp_watts(payload: Any) -> float | None:
     """Extrae FTP de ciclismo (vatios) desde respuestas MCP heterogéneas."""
     if payload is None:
@@ -428,21 +366,6 @@ def _extract_cycling_ftp_watts(payload: Any) -> float | None:
                 if ftp:
                     return ftp
     return None
-
-
-def _is_activity_in_last_48h(activity: dict, now: datetime | None = None) -> bool:
-    """Comprueba si una actividad cae en la ventana de últimas 48h."""
-    now_day = now.date() if now is not None else datetime.now(tz=timezone.utc).date()
-    act_iso = _extract_activity_date_iso(activity)
-    if not act_iso:
-        return False
-    try:
-        act_date = date.fromisoformat(act_iso)
-    except ValueError:
-        return False
-
-    delta = now_day - act_date
-    return timedelta(days=0) <= delta <= timedelta(days=2)
 
 
 def _pick_day_payload(payload: Any, target_date: str) -> dict | None:
@@ -2447,11 +2370,6 @@ def _resolve_tp_hr_threshold_for_date(profile: dict | None, d_iso: str) -> float
     return _resolve_profile_history_value(profile, "hr_threshold_tp_history", "bpm", d_iso, (120, 230))
 
 
-# Nombres de zona de FC: los de TrainingPeaks, en español. Los mismos en el contexto del LLM, en los
-# análisis de actividad y en el juez (antes convivían los de Garmin, "Suave" para Z2, y los de Kairos).
-HR_ZONE_NAMES_ES = {1: "Recuperación", 2: "Aeróbica", 3: "Tempo", 4: "Subumbral", 5: "Supraumbral"}
-
-
 def _zones_from_floors(floors: list[int], top: int) -> list[tuple[str, int, int]]:
     """Zonas contiguas: cada una va de su suelo al de la siguiente menos 1; la última, hasta `top`."""
     uppers = [floors[i + 1] - 1 for i in range(len(floors) - 1)] + [top]
@@ -2510,25 +2428,6 @@ def _normalize_garmin_hr_zones(payload: Any) -> dict | None:
 def _resolve_running_threshold_pace_for_date(profile: dict | None, d_iso: str) -> float | None:
     """Ritmo umbral (s/km) vigente en la fecha (performance.running_threshold_pace_history)."""
     return _resolve_profile_history_value(profile, "running_threshold_pace_history", "sec_per_km", d_iso, (150, 600))
-
-
-def _key_candidates(raw_key: Any) -> set[str]:
-    """Formas de una clave para compararla sin mirar mayúsculas ni separadores: snake_case y todo junto."""
-    key = str(raw_key or "").strip().lower()
-    if not key:
-        return set()
-    snake = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
-    compact = re.sub(r"[^a-z0-9]", "", key)
-    return {snake, compact}
-
-
-def _first_value(source: dict, *keys: str) -> Any:
-    """Valor de la primera clave que exista (no None) en `source`."""
-    for key in keys:
-        value = source.get(key)
-        if value is not None:
-            return value
-    return None
 
 
 def _extract_hr_threshold_from_payload(payload: Any) -> float | None:
@@ -3495,27 +3394,6 @@ def _resolve_activity_period(user_message: str, today: date | None = None) -> tu
     return None
 
 
-# Familias de deporte para agrupar (por typeKey de Garmin) y lo que pide la pregunta.
-def _activity_family(act: dict) -> str:
-    key = str((act.get("activityType") or {}).get("typeKey") if isinstance(act.get("activityType"), dict)
-              else act.get("activityType") or "").lower()
-    if "trail" in key:
-        return "Trail"
-    if "run" in key:
-        return "Carrera"
-    if "cycl" in key or "bik" in key:
-        return "Ciclismo"
-    if "swim" in key:
-        return "Natación"
-    if "walk" in key or "hik" in key:
-        return "Caminar / senderismo"
-    if "strength" in key:
-        return "Fuerza"
-    if "elliptical" in key:
-        return "Elíptica"
-    return key.replace("_", " ").capitalize() or "Otra"
-
-
 _SPORT_REQUESTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"\btrail\b", ("Trail",)),
     (r"\bcorr(?:id[oa]|er|o)\b|\bcarreras?\b|\brunning\b|\btiradas?\b|\brodajes?\b", ("Carrera", "Trail")),
@@ -3892,24 +3770,6 @@ async def _build_sleep_trend_markdown(mcp_session, window: int) -> str:
                 lines.append(f"- {when}: sin datos")
     return "\n".join(lines + ["", "## 🎯 Próximo paso",
                               "- Fuente: sueño de Garmin calculado por Kairos (sin LLM); la interpretación va debajo."])
-
-
-def _activity_matches_sport(act: dict, sport_filter: str) -> bool:
-    """Actividad de Garmin del deporte pedido (trail, running sin trail, cycling)."""
-    if not isinstance(act, dict):
-        return False
-    type_key = str(
-        (act.get("activityTypeDTO") or {}).get("typeKey", "")
-        or (act.get("activityType") or {}).get("typeKey", "")
-        or act.get("type", "")
-    ).lower()
-    if sport_filter == "trail":
-        return "trail" in type_key
-    if sport_filter == "running":
-        return "running" in type_key and "trail" not in type_key
-    if sport_filter == "cycling":
-        return "cycl" in type_key or "bike" in type_key or "biking" in type_key
-    return True
 
 
 async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_message: str) -> str:
@@ -7028,58 +6888,6 @@ async def _build_recovery_fallback_snapshot(
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def _extract_activity_date_iso(activity: dict) -> str | None:
-    """Obtiene la fecha ISO de una actividad Garmin a partir de sus campos de inicio.
-    Soporta:
-    - ISO strings: '2026-07-02T08:30:00' o '2026-07-02 08:30:00'
-    - Solo fecha: '2026-07-02'
-    - Epoch en milisegundos (int o string): 1751414400000
-    - Epoch en segundos (int o string): 1751414400
-    """
-    if not isinstance(activity, dict):
-        return None
-
-    for key in (
-                "startTimeLocal", "startTimeGMT", "startTimeUTC",
-                "start_time_local", "start_time_gmt", "start_time_utc",
-                "startTime", "start_time",
-                "calendarDate", "beginTimestamp", "activitySummary"):
-        value = activity.get(key)
-        if value is None:
-            continue
-
-        # String con fecha ISO o similar
-        if isinstance(value, str):
-            s = value.strip()
-            if len(s) >= 10:
-                date_str = s[:10].replace(" ", "-")  # '2026 07 02' -> '2026-07-02'
-                try:
-                    return date.fromisoformat(date_str).isoformat()
-                except ValueError:
-                    pass
-            # Epoch como string
-            if s.isdigit() and len(s) >= 10:
-                try:
-                    ts = int(s)
-                    if ts > 10_000_000_000:   # milisegundos
-                        ts //= 1000
-                    return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
-                except (ValueError, OSError, OverflowError):
-                    pass
-
-        # Epoch numérico
-        if isinstance(value, (int, float)) and value > 0:
-            try:
-                ts = int(value)
-                if ts > 10_000_000_000:   # milisegundos
-                    ts //= 1000
-                return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
-            except (ValueError, OSError, OverflowError):
-                pass
-
-    return None
-
-
 _LAST_ACTIVITY_RE = re.compile(
     r"\b(última|ultima|último|ultimo|reciente|mas reciente|más reciente)\s*"
     r"(actividad|entreno|entrenamiento|salida|sesión|sesion|trail|carrera|running|bici)\b"
@@ -7251,85 +7059,6 @@ async def _find_activity_id_by_name(mcp_session: ClientSession, name_hint: str) 
         start = next_start_val if next_start_val > start else start + limit
 
     return None
-
-
-# Nombres de las zonas en los análisis de actividad: los mismos que en el resto de Kairos.
-_GARMIN_ZONE_NAMES_ES = HR_ZONE_NAMES_ES
-
-# Mapeo de typeKey de actividades Garmin → nombre en español
-_GARMIN_ACTIVITY_NAMES_ES: dict[str, str] = {
-    "trail_running":           "Trail Running",
-    "running":                 "Running",
-    "indoor_running":          "Running Indoor (Cinta)",
-    "road_biking":             "Ciclismo de Carretera",
-    "mountain_biking":         "Ciclismo MTB",
-    "cycling":                 "Ciclismo",
-    "indoor_cycling":          "Ciclismo Indoor",
-    "virtual_ride":            "Ciclismo Virtual",
-    "gravel_cycling":          "Ciclismo Gravel",
-    "e_bike_mountain":         "E-Bike MTB",
-    "e_bike_fitness":          "E-Bike Carretera",
-    "strength_training":       "Entrenamiento de Fuerza",
-    "functional_strength_training": "Fuerza Funcional",
-    "swimming":                "Natación",
-    "lap_swimming":            "Natación en Piscina",
-    "open_water_swimming":     "Natación Aguas Abiertas",
-    "hiking":                  "Senderismo",
-    "walking":                 "Caminata",
-    "yoga":                    "Yoga",
-    "pilates":                 "Pilates",
-    "cardio_training":         "Cardio",
-    "fitness_equipment":       "Máquinas Fitness",
-    "elliptical":              "Elíptica",
-    "stair_climbing":          "Escaleras/Step",
-    "rowing":                  "Remo",
-    "paddleboarding":          "Paddle Surf",
-    "kayaking":                "Kayak",
-    "skiing":                  "Esquí",
-    "snowboarding":            "Snowboard",
-    "cross_country_skiing":    "Esquí de Fondo",
-    "triathlon":               "Triatlón",
-    "multi_sport":             "Multideporte",
-    "tennis":                  "Tenis",
-    "soccer":                  "Fútbol",
-    "basketball":              "Baloncesto",
-    "golf":                    "Golf",
-    "breathwork":              "Respiración/Mindfulness",
-}
-
-
-def _get_activity_name_es(act_type) -> str:
-    """Devuelve el nombre en español del tipo de actividad Garmin."""
-    if isinstance(act_type, dict):
-        key = str(act_type.get("typeKey") or act_type.get("typeName") or "").lower()
-    else:
-        key = str(act_type or "").lower()
-    # Buscar coincidencia exacta primero
-    if key in _GARMIN_ACTIVITY_NAMES_ES:
-        return _GARMIN_ACTIVITY_NAMES_ES[key]
-    # Coincidencia parcial por palabras clave
-    if "trail" in key:
-        return "Trail Running"
-    if "mountain_bik" in key or "mtb" in key:
-        return "Ciclismo MTB"
-    if "bik" in key or "cycl" in key or "cicl" in key:
-        return "Ciclismo"
-    if "run" in key or "corr" in key:
-        return "Running"
-    if "strength" in key or "fuerza" in key or "weight" in key:
-        return "Entrenamiento de Fuerza"
-    if "swim" in key or "natac" in key:
-        return "Natación"
-    if "hik" in key or "trek" in key:
-        return "Senderismo"
-    if "walk" in key:
-        return "Caminata"
-    if "yoga" in key:
-        return "Yoga"
-    # Fallback: formatear el typeKey si está disponible
-    if key:
-        return key.replace("_", " ").title()
-    return ""
 
 
 def _format_activity_analysis_for_markdown(analysis_block: str) -> str:
@@ -8144,26 +7873,6 @@ async def _fetch_activities_for_load_calc(
         log.debug("sample activity keys: %s", list(sample.keys())[:30])
         log.debug("sample tss_fields=%s  dur_fields=%s  hr_fields=%s", tss_fields, dur_fields, hr_fields)
     return result
-
-
-def _load_metrics_series(days: int = 120) -> list[dict]:
-    """Serie diaria de `load_metrics_daily`, la única fuente de la carga (27/10: antes 11 sitios leían una copia
-    guardada en el perfil, que podía quedarse vieja). Sin sesión o sin base de datos, lista vacía."""
-    try:
-        return _storage.get_load_metrics_series(days=days) or []
-    except (RuntimeError, ValueError, TypeError, OSError) as exc:
-        log.debug("load_metrics_daily no disponible: %s", exc)
-        return []
-
-
-def _load_metrics_view(profile: dict | None, series: list[dict] | None = None) -> dict:
-    """Carga actual (latest, ranges, weekly, series…) calculada desde `load_metrics_daily`; {} sin serie."""
-    series = _load_metrics_series() if series is None else series
-    if not series:
-        return {}
-    model_cfg = _resolve_sport_model_cfg(profile)
-    model_cfg["_sport"] = str(((profile or {}).get("goals") or {}).get("primary") or "running").strip().lower()
-    return _load_metrics.load_fatigue_from_series(series, model_cfg) or {}
 
 
 def _build_mcp_transparency_markdown(events: list[dict]) -> str:

@@ -74,7 +74,6 @@ from agent.trainer_agent import (
     _resolve_load_parameters_effective_date,
     _resolve_activity_id_from_query,
     _summarize_plan_changes,
-    _is_activity_in_last_48h,
     _normalize_get_activity_args,
     _validate_structured_plan,
     TrainerAgent,
@@ -88,6 +87,8 @@ import agent.dates as _dates
 from agent.dates import _extract_iso_date_from_text, _extract_iso_date_range_from_text, _normalize_date_args, _normalize_trend_date_range, _seconds_to_hhmmss
 from agent.knowledge import _build_athlete_knowledge_context, _load_athlete_knowledge_chunks, _resolve_kb_paths, _retrieve_athlete_knowledge
 from agent.tool_results import _compact_personal_records, _compact_tool_result, _extract_activities_list, _flatten_garmin_activity, _is_no_data_result, _strip_garmin_object
+import agent.data_access as _data_access
+from agent.garmin_data import _is_activity_in_last_48h
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
@@ -1156,7 +1157,7 @@ class TestPreviousSessionContext:
         agent.conversation_history = [{"role": "user", "content": "¿Dime los TSS de mis 20 últimas actividades?"}]
 
         agent._restore_previous_session()
-        ta._save_history_entry("user", "¿Dime los TSS?")
+        _data_access._save_history_entry("user", "¿Dime los TSS?")
         agent.save_session_summary_checkpoint()
 
         assert agent.previous_session_questions == ()
@@ -2159,7 +2160,6 @@ class TestStartupProactive:
 
     @pytest.mark.asyncio
     async def test_collect_startup_snapshot_preserves_formula_version_in_profile_cache(self):
-        import agent.trainer_agent as ta
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -2185,7 +2185,7 @@ class TestStartupProactive:
         agent.mcp_session = MagicMock()
         agent.user_profile = {
             "goals": {"primary": "running"},
-            "load_metrics": {"formula_version": ta._TSS_FORMULA_VERSION},
+            "load_metrics": {"formula_version": _data_access._TSS_FORMULA_VERSION},
         }
 
         with patch_all("call_tool", side_effect=_fake_call_tool), patch_all(
@@ -2195,7 +2195,7 @@ class TestStartupProactive:
 
         assert (
             (agent.user_profile.get("load_metrics") or {}).get("formula_version")
-            == ta._TSS_FORMULA_VERSION
+            == _data_access._TSS_FORMULA_VERSION
         )
 
     @pytest.mark.asyncio

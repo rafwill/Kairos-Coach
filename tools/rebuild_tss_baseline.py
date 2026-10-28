@@ -26,6 +26,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dotenv import load_dotenv
+import agent.data_access as _data_access
 
 ROOT = Path(__file__).resolve().parents[1]
 CALL_DELAY_SECONDS = 0.25
@@ -76,7 +77,7 @@ async def _compute(username: str, start: str) -> dict:
 
     async with garmin_mcp_session() as session:
         agent = ta.TrainerAgent(mcp_session=session)
-        agent.user_profile = ta._load_user_profile()
+        agent.user_profile = _data_access._load_user_profile()
         with patch.object(ta, "call_tool", side_effect=_throttled_call_tool), \
              patch.object(ta._storage, "upsert_load_metrics_series", side_effect=lambda r: series.extend(r)), \
              patch.object(ta._storage, "upsert_activity_tss_rows", side_effect=lambda r: rows.extend(r)), \
@@ -185,11 +186,10 @@ def main() -> None:
         raise SystemExit("No se aplica: la tabla activity_tss no existe (ejecuta supabase/schema.sql en el SQL Editor de Supabase).")
 
     from agent import storage as st
-    from agent import trainer_agent as ta
 
     st.upsert_activity_tss_rows(result["rows"])
     st.upsert_load_metrics_series(result["series"])
-    ta._save_user_profile(result["profile"])
+    _data_access._save_user_profile(result["profile"])
     stored = st.get_activity_tss_map(args.start) or {}
     print(f"APLICADO: activity_tss={len(stored)}/{len(result['rows'])} filas, load_metrics_daily={len(result['series'])} días")
 

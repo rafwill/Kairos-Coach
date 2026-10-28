@@ -6,6 +6,7 @@ Router determinista: intenciones que se responden sin LLM (docs/Harness.md, G5).
 from agent.trainer_agent import (
     ToolRouter,
 )
+import agent.garmin_data as _garmin_data
 
 
 class TestToolRouter:
@@ -111,9 +112,8 @@ class TestToolRouter:
         assert router.route_key(q, [], {}) == "daily_readiness"
 
     def test_activity_sport_filter_knows_road_biking(self):
-        import agent.trainer_agent as ta
 
-        assert ta._activity_matches_sport({"activityType": {"typeKey": "road_biking"}}, "cycling")
-        assert ta._activity_matches_sport({"activityType": {"typeKey": "gravel_cycling"}}, "cycling")
-        assert not ta._activity_matches_sport({"activityType": {"typeKey": "trail_running"}}, "running")
-        assert ta._activity_matches_sport({"activityType": {"typeKey": "trail_running"}}, "trail")
+        assert _garmin_data._activity_matches_sport({"activityType": {"typeKey": "road_biking"}}, "cycling")
+        assert _garmin_data._activity_matches_sport({"activityType": {"typeKey": "gravel_cycling"}}, "cycling")
+        assert not _garmin_data._activity_matches_sport({"activityType": {"typeKey": "trail_running"}}, "running")
+        assert _garmin_data._activity_matches_sport({"activityType": {"typeKey": "trail_running"}}, "trail")

@@ -108,10 +108,6 @@ from agent import ia_provider as _ia_provider
 from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import (
     TrainerAgent,
-    _TSS_FORMULA_VERSION,
-    _load_metrics_view,
-    _load_user_profile,
-    _save_user_profile,
     _session_intensity_label,
 )
 from agent import storage as _storage
@@ -137,6 +133,7 @@ from agent.storage import (
     update_login_password,
     update_user_credentials,
 )
+from agent.data_access import _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile
 from agent.llm import probe_llm_key
 
 

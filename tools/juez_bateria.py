@@ -33,6 +33,8 @@ from agent import load_metrics as lm  # noqa: E402
 from agent import sensors  # noqa: E402
 from agent import storage  # noqa: E402
 from agent import trainer_agent as ta  # noqa: E402
+import agent.data_access as _data_access
+import agent.garmin_data as _garmin_data
 
 TOL = 0.1          # TSS, CTL, ATL, TSB (se muestran con un decimal)
 TOL_BPM = sensors.TOL_BPM        # rangos de FC (definidas en agent/sensors.py)
@@ -124,7 +126,7 @@ class Truth:
         self.series = storage.get_load_metrics_series(days=400)
         self.by_date = {r["date"]: r for r in self.series}
         self.acts = list((storage.get_activity_tss_map("2000-01-01") or {}).values())
-        self.profile = ta._load_user_profile()
+        self.profile = _data_access._load_user_profile()
         self.perf = (self.profile or {}).get("performance") or {}
         self.plan = storage.get_active_training_plan()
         lthr, _, _ = ta._resolve_hr_threshold_bpm(self.profile)
@@ -298,7 +300,7 @@ def check_activity_analysis(v: Verdict, body: str, t: Truth, which: str) -> None
 def check_activity_count(v: Verdict, body: str, t: Truth) -> None:
     m = re.search(r"Actividades con TSS\s+(\d+)", body)
     v.check(bool(m) and int(m.group(1)) == len(t.acts), f"total {m.group(1) if m else '?'} ≠ {len(t.acts)}")
-    expected = Counter(ta._get_activity_name_es(str(a["sport"])) or str(a["sport"]) for a in t.acts)
+    expected = Counter(_garmin_data._get_activity_name_es(str(a["sport"])) or str(a["sport"]) for a in t.acts)
     for label, n in expected.items():
         found = re.search(rf"^\s*{re.escape(label)}\s+(\d+)\s*$", body, re.M)
         v.check(bool(found) and int(found.group(1)) == n, f"{label}: {found.group(1) if found else 'falta'} ≠ {n}")

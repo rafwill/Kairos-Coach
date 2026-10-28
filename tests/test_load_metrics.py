@@ -14,7 +14,6 @@ from agent.trainer_agent import (
     _build_activity_analysis_block,
     _build_load_trend_table,
     _estimate_session_tss,
-    _resolve_sport_model_cfg,
     _infer_tss_model_tag,
     _infer_tss_source_tag,
 )
@@ -32,6 +31,7 @@ from agent.load_metrics import (
 )
 import agent.load_metrics as lm
 from tests.agent_patch import patch_all
+from agent.load_metrics import _resolve_sport_model_cfg
 
 
 def _compute_load_fatigue_metrics(activities, trend_payload=None, profile=None, days_window=56, reference_day=None):
