@@ -30,6 +30,7 @@ from agent.mcp.client import (
     call_tool,
     reset_tool_transparency_events,
     consume_tool_transparency_events,
+    record_tool_failure,
 )
 from agent import storage as _storage
 from agent import load_metrics as _load_metrics
@@ -12106,6 +12107,7 @@ class TrainerAgent:
                             )
                     except asyncio.TimeoutError as tool_exc:
                         tool_timeouts += 1
+                        record_tool_failure(tool_name, f"sin respuesta en {_tool_timeout_seconds():.0f} s")
                         self._log_chat_error(
                             stage="tool_call_timeout",
                             error=tool_exc,

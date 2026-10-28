@@ -271,3 +271,36 @@ def test_server_params_use_zscaler_certificate_when_present(garmin_creds, monkey
     env = mcp_client._get_server_params().env
     pem = str(tmp_path / "zscaler-ca.pem")
     assert env["REQUESTS_CA_BUNDLE"] == env["CURL_CA_BUNDLE"] == env["SSL_CERT_FILE"] == pem
+
+
+@pytest.mark.asyncio
+async def test_failures_in_parallel_calls_reach_the_reply():
+    # 28/10: con asyncio.gather cada llamada corre en una tarea con copia del contexto; el aviso se guardaba en
+    # una lista nueva de la tarea y la respuesta no lo veía (sueño, datos del día y tools del LLM en paralelo).
+    import asyncio
+
+    class FakeSession:
+        async def call_tool(self, name: str, _arguments: dict):
+            return SimpleNamespace(content=[SimpleNamespace(text=f"Error executing tool {name}: HTTP 503")], isError=True)
+
+    mcp_client.reset_tool_transparency_events()
+    await asyncio.gather(*(mcp_client.call_tool(FakeSession(), "get_sleep_summary", {"date": d})
+                           for d in ("2026-10-26", "2026-10-27", "2026-10-28")))
+    assert len(mcp_client.consume_tool_transparency_events()) == 3
+
+
+@pytest.mark.asyncio
+async def test_client_side_failure_is_recorded_too():
+    # 28/10: si el servidor no contesta, la ruta decía "sin datos" sin ningún aviso.
+    class FakeSession:
+        async def call_tool(self, _name: str, _arguments: dict):
+            raise RuntimeError("Connection closed")
+
+    mcp_client.reset_tool_transparency_events()
+    await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
+    mcp_client.record_tool_failure("get_hrv_data", "sin respuesta en 8 s")
+    events = mcp_client.consume_tool_transparency_events()
+    assert [(e["tool"], e["mode"], e["reason"]) for e in events] == [
+        ("get_user_profile", "mcp_error", "cliente=RuntimeError"),
+        ("get_hrv_data", "mcp_error", "sin respuesta en 8 s"),
+    ]

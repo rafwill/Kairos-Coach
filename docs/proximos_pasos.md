@@ -45,7 +45,6 @@ De la revisión completa del proyecto del 28/10; ya hechos los fallos del provee
 
 7. **Dividir `agent/trainer_agent.py`** (12.200 líneas; `chat()` ≈ 1.070 con 20 ramas `if route_key == …`): tabla `{ruta: función}` y módulos `routes/` (por familia), `prefetch.py`, `coaching.py`, `llm.py` (proveedor, clave, reintento de sensores), `kairos_tools.py` y `startup.py`; poco a poco, con los tests en verde en cada paso (`tests/test_trainer_agent.py` se divide igual).
 8. **Rendimiento.** (a) Precargar los datos que el LLM siempre pide para bajar las 3–5 vueltas del bucle con tools (cada una reenvía ≈ 13.000 tokens; 17 s de media por llamada). (b) Supabase es síncrono dentro de código asíncrono (37 `.execute()`; perfil y serie leídos desde 19 sitios): caché por pregunta o `asyncio.to_thread`. (c) Arranque en serie (sincronizar Garmin, zonas, carga, estado): medir y paralelizar lo independiente. El recorte del prompt de sistema ya está en el punto 2a.
-9. **Errores de Garmin como texto.** `call_tool` devuelve "Error al llamar a…" como si fuera el resultado de la tool; las rutas que hacen `json.loads` lo ven como "sin datos". Comprobar ruta por ruta y decir "Garmin no responde" cuando sea eso.
 10. **Precarga de "mi último trail/carrera/bici"** (`chat`): si no hay ninguna de ese deporte entre las 20 últimas, analiza la primera actividad de hoy, sea del deporte que sea; además usa `"_prefetch_sport_id" in dir()`. Unas 360 líneas casi sin tests: sacarla a una función probada al dividir el fichero (punto 7).
 
 ## Descartado

@@ -36,9 +36,15 @@ def reset_tool_transparency_events() -> None:
 
 
 def _record_tool_transparency_event(tool_name: str, mode: str, reason: str | None = None) -> None:
-    """Registra que una tool de Garmin falló, para avisarlo en la respuesta."""
-    current = _MCP_TRANSPARENCY_EVENTS.get()
-    events = list(current) if isinstance(current, list) else []
+    """Registra que una tool de Garmin falló, para avisarlo en la respuesta.
+
+    Se añade a la lista del turno en su sitio: las llamadas en paralelo (asyncio.gather) corren en tareas con
+    una copia del contexto, y una lista nueva con .set() se quedaba en la tarea y no llegaba a la respuesta (28/10).
+    """
+    events = _MCP_TRANSPARENCY_EVENTS.get()
+    if not isinstance(events, list):
+        events = []
+        _MCP_TRANSPARENCY_EVENTS.set(events)
     events.append(
         {
             "tool": str(tool_name or "").strip(),
@@ -47,14 +53,19 @@ def _record_tool_transparency_event(tool_name: str, mode: str, reason: str | Non
             "timestamp": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         }
     )
-    _MCP_TRANSPARENCY_EVENTS.set(events)
+
+
+def record_tool_failure(tool_name: str, reason: str) -> None:
+    """Una llamada a Garmin que no llegó a responder (tiempo agotado en el host): mismo aviso que un error."""
+    _record_tool_transparency_event(tool_name, mode="mcp_error", reason=reason)
 
 
 def consume_tool_transparency_events() -> list[dict]:
     """Devuelve y limpia eventos de transparencia capturados en el turno."""
     current = _MCP_TRANSPARENCY_EVENTS.get()
     out = list(current) if isinstance(current, list) else []
-    _MCP_TRANSPARENCY_EVENTS.set([])
+    if isinstance(current, list):
+        current.clear()
     return out
 
 
@@ -329,4 +340,7 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
         return "Sin datos disponibles."
     except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, McpError) as e:
         # McpError: error de protocolo del servidor (28/10: antes se escapaba hasta la CLI y cerraba Kairos).
+        # El fallo del lado del cliente (servidor caído, sin respuesta) también se avisa: si no, la ruta decía
+        # "sin datos" como si Garmin no tuviera nada (28/10).
+        _record_tool_transparency_event(tool_name, mode="mcp_error", reason=f"cliente={type(e).__name__}")
         return f"Error al llamar a '{tool_name}': {str(e)}"
