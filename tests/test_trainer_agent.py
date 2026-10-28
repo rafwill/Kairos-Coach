@@ -577,6 +577,38 @@ class TestOutputSensors:
         assert "Comprobación de Kairos" in out and "rango 160–175 lpm" in out
         assert "LLM:" not in out
 
+    @staticmethod
+    def _provider_errors():
+        """Caída, 429 y 503 del proveedor: excepciones de openai que no son RuntimeError ni OSError."""
+        import httpx
+        import openai
+
+        req = httpx.Request("POST", "https://proveedor")
+        return [
+            openai.APIConnectionError(request=req),
+            openai.RateLimitError("rate", response=httpx.Response(429, request=req), body=None),
+            openai.InternalServerError("down", response=httpx.Response(503, request=req), body=None),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_provider_error_in_retry_keeps_text_and_notice(self, monkeypatch):
+        # 28/10: antes estas excepciones se escapaban de la capa de sensores y cerraban Kairos.
+        for exc in self._provider_errors():
+            agent = self._agent(monkeypatch, [])
+            agent.client.chat.completions.create = AsyncMock(side_effect=exc)
+            out = await agent._apply_output_sensors("- Series Z4–Z5 (160–175 lpm).", [], "coaching")
+            assert out.startswith("- Series Z4–Z5 (160–175 lpm).")
+            assert "Comprobación de Kairos" in out
+
+    @pytest.mark.asyncio
+    async def test_provider_error_in_coaching_keeps_deterministic_block(self, monkeypatch):
+        for exc in self._provider_errors():
+            agent = self._agent(monkeypatch, [])
+            agent.client.chat.completions.create = AsyncMock(side_effect=exc)
+            out = await agent._augment_with_llm_coaching_if_needed("¿Cómo he dormido?", "TABLA", "sleep_trend", always=True)
+            assert out.startswith("TABLA")
+            assert "No pude generar una recomendación de coaching" in out
+
     @pytest.mark.asyncio
     async def test_clean_text_needs_no_extra_call(self, monkeypatch):
         agent = self._agent(monkeypatch, [])
@@ -6238,6 +6270,32 @@ class TestStructuredPlanEngine:
         assert "MARCO-DE-HOY" in today_user
         assert "MARCO-DE-HOY" not in week_user
 
+    def test_today_training_question_for_loop_g15(self):
+        yes = ["¿Me conviene hacer la tirada larga hoy?", "¿Hoy debería correr suave?", "¿Qué sesión me recomiendas hoy?",
+               "¿Puedo hacer cuestas hoy o mejor descanso?"]
+        no = ["¿Cómo fue mi entreno de hoy?", "Analiza la carrera de hoy", "¿Qué hice hoy?",
+              "¿Me conviene descansar mañana?", "¿Cuántos pasos llevo hoy?"]
+        assert [q for q in yes if not ta._is_today_training_question(q)] == []
+        assert [q for q in no if ta._is_today_training_question(q)] == []
+
+    @pytest.mark.asyncio
+    async def test_today_frame_for_loop_uses_daily_engine(self, monkeypatch):
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.collect_startup_snapshot_48h = AsyncMock(return_value={"dates": {}})
+        monkeypatch.setattr(ta, "_get_active_training_plan", lambda profile: None)
+        monkeypatch.setattr(ta, "_compute_daily_plan_adjustment",
+                            lambda snapshot, plan: {"decision": "easy", "resulting_session": "rodaje suave 30-45 min"})
+        monkeypatch.setattr(ta, "_build_today_session_frame", lambda decision, profile: "MARCO " + decision["decision"])
+
+        frame, decision = await agent._today_frame_for_loop({"hrv_today": "{}"})
+        assert (frame, decision) == ("MARCO easy", "easy")
+        agent.collect_startup_snapshot_48h.assert_awaited_once_with(prefetch_today={"hrv_today": "{}"})
+
+        # Si los datos de hoy fallan, el bucle sigue sin marco.
+        agent.collect_startup_snapshot_48h = AsyncMock(side_effect=RuntimeError("Garmin caído"))
+        assert await agent._today_frame_for_loop() == ("", None)
+
     @pytest.mark.asyncio
     async def test_sleep_trend_always_gets_its_own_prompt_and_period(self, monkeypatch):
         agent = object.__new__(ta.TrainerAgent)
@@ -6714,6 +6772,22 @@ class TestPeriodAndSleepRoutes:
         assert calls == [0, 1]
         assert "50.04 km en 2 actividades" in out  # carrera + trail; ni fuerza ni la de octubre
         assert "Fuerza" not in out and "Fuera de rango" not in out
+
+    @pytest.mark.asyncio
+    async def test_period_totals_give_rest_days_and_filter_strength(self, monkeypatch):
+        async def fake_call(_session, name, args):
+            return json.dumps({"activities": self.ACTS, "has_more": False})
+
+        monkeypatch.setattr(ta, "call_tool", fake_call)
+        monkeypatch.setattr(ta, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
+        # 28/10: días sin entrenar y horas los sumaba el LLM.
+        out = await ta._build_period_activities_markdown(None, "¿Cuántos días he descansado en septiembre?")
+        assert "Días con actividad: 3 de 30; sin actividad: 27." in out
+        assert "en 3 actividades (08:06:25)" in out
+        strength = await ta._build_period_activities_markdown(None, "¿Cuántas sesiones de fuerza hice en septiembre?")
+        assert "Fuerza en septiembre de 2026: 1 actividad (01:04:40)." in strength
+        assert "| Fuerza | 1 | — | 01:04:40 |" in strength
+        assert "Días con actividad: 1 de 30" in strength and "Trail largo" not in strength
 
     @pytest.mark.asyncio
     async def test_period_longest_activity(self, monkeypatch):

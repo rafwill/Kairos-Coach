@@ -191,3 +191,17 @@ async def test_call_tool_returns_error_text_when_the_server_fails():
 
     out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
     assert "Error al llamar a 'get_user_profile': mcp down" == out
+
+
+@pytest.mark.asyncio
+async def test_call_tool_returns_error_text_on_protocol_error():
+    # 28/10: McpError no es RuntimeError; antes llegaba hasta la CLI y cerraba Kairos.
+    from mcp.shared.exceptions import McpError
+    from mcp.types import ErrorData
+
+    class FakeSession:
+        async def call_tool(self, _name: str, _arguments: dict):
+            raise McpError(ErrorData(code=-32001, message="Request timed out"))
+
+    out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
+    assert out == "Error al llamar a 'get_user_profile': Request timed out"

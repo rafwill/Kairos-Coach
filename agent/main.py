@@ -1715,9 +1715,11 @@ async def main() -> None:
                 console.print(Markdown(_format_coach_markdown(response)))
                 # Checkpoint incremental del resumen para no bloquear el cierre.
                 agent.save_session_summary_checkpoint()
-            except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as e:
+            except Exception as e:
+                # Red general (28/10): un fallo en una pregunta (proveedor caído, error de MCP o de Supabase, un
+                # bug) no cierra la sesión; queda en agent.log con su traza y se puede seguir preguntando.
                 log.exception("Error en chat del agente")
-                console.print(f"\n[bold red]Error en el Agente:[/] {e}")
+                console.print(f"\n[bold red]Error en el Agente:[/] {e or type(e).__name__}")
 
         # Al salir de la sesión, guardar checkpoint ligero sin llamada al LLM.
         if agent.conversation_history:

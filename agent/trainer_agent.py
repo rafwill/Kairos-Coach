@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable
 
-from openai import AsyncOpenAI
+from openai import APIError, AsyncOpenAI
 from mcp import ClientSession
 
 from agent import sensors as _sensors
@@ -742,7 +742,8 @@ class ToolRouter:
         if _is_goal_status_intent(user_message):
             return "goal_status"
         # Periodo (km, la más larga) y sueño de anoche: Python, no el LLM (punto 3 de producción, 25/10).
-        if _is_period_distance_intent(user_message) or _is_period_longest_intent(user_message):
+        if (_is_period_distance_intent(user_message) or _is_period_totals_intent(user_message)
+                or _is_period_longest_intent(user_message)):
             return "period_activities"
         if _is_sleep_night_intent(user_message):
             return "sleep_night"
@@ -3717,6 +3718,20 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         "puedo correr mañana",
         "estoy para entrenar hoy",
         "estoy para entrenar mañana",
+        # 28/10: estas iban al LLM libre sin la decisión del motor (misma pregunta, otro consejo).
+        "listo para entrenar",
+        "lista para entrenar",
+        "entreno o descanso",
+        "entreno hoy o descanso",
+        "entrenar o descansar",
+        "entreno hago hoy",
+        "entrenamiento hago hoy",
+        "sesion hago hoy",
+        "sesión hago hoy",
+        "estoy cansado",
+        "estoy cansada",
+        "estoy fatigado",
+        "estoy fatigada",
         "necesito recuperar",
         "necesito descansar",
         "training readiness",
@@ -3764,6 +3779,26 @@ def _is_daily_readiness_intent(user_message: str) -> bool:
         return True
 
     return False
+
+
+_TODAY_TRAINING_WORDS = re.compile(
+    r"\b(entren\w*|sesi[oó]n|series|rodaje|tirada|correr|corro|calidad|intensidad|fuerte|suave|descans\w*|"
+    r"recuper\w*|cansad[oa]|fatigad[oa]|apretar|recomiend\w*|conviene|deber[ií]a|hago|toca)\b"
+)
+# Lo que ya pasó hoy (análisis de una sesión hecha) no es "qué hago hoy".
+_TODAY_PAST_WORDS = re.compile(r"\b(hice|he hecho|hecho|fue|hizo|he corrido|corr[ií]|he entrenado|entren[eé]|analiza\w*)\b")
+
+
+def _is_today_training_question(user_message: str) -> bool:
+    """Pregunta de qué entrenar hoy que va al bucle con tools (G15, 28/10).
+
+    El LLM libre recibe entonces la decisión del motor diario y el marco de la sesión, como la capa de
+    coaching: "¿Qué entreno hago hoy?" y "¿Qué hago hoy?" no pueden recibir consejos distintos.
+    """
+    text = (user_message or "").lower()
+    if not re.search(r"\bhoy\b", text):
+        return False
+    return bool(_TODAY_TRAINING_WORDS.search(text)) and not _TODAY_PAST_WORDS.search(text)
 
 
 def _format_iso_date_es(value: Any) -> str:
@@ -4362,6 +4397,7 @@ _SPORT_REQUESTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"\bbici\b|\bciclismo\b|\bpedale", ("Ciclismo",)),
     (r"\bnad(?:ado|ar)\b|\bnataci[oó]n\b", ("Natación",)),
     (r"\bcamin(?:ado|ar)\b|\bandado\b|\bsenderismo\b", ("Caminar / senderismo",)),
+    (r"\bfuerza\b|\bpesas\b|\bgimnasio\b", ("Fuerza",)),
 )
 
 
@@ -4377,6 +4413,13 @@ _DISTANCE_Q_RE = re.compile(
     r"cu[aá]nt[oa]s?\s+(?:km|kil[oó]metros|distancia)|qu[eé]\s+distancia|kil[oó]metros\s+(?:he|llevo|hice)|"
     r"km\s+(?:he|llevo|hice)|distancia\s+total|total\s+de\s+(?:km|kil[oó]metros)"
 )
+# Totales del periodo que el LLM sumaba él (28/10): horas, actividades, desnivel, días entrenados o sin entrenar.
+_TOTALS_Q_RE = re.compile(
+    r"cu[aá]nt[oa]s?\s+(?:horas|tiempo|actividades|sesiones|entrenos|entrenamientos|salidas|desnivel)\b|"
+    r"cu[aá]nto\s+(?:he\s+|hice\s+)?(?:entrenado|corrido|nadado|pedaleado|caminado|andado|rodado)\b|"
+    r"horas\s+(?:he|llevo|hice)\b|tiempo\s+total|desnivel\s+(?:total|acumulado)|"
+    r"d[ií]as\s+(?:he\s+|llevo\s+)?(?:entrenado|descansado|sin\s+entrenar|de\s+descanso)"
+)
 _LONGEST_Q_RE = re.compile(r"m[aá]s\s+larg[oa]s?|mayor\s+distancia|m[aá]s\s+kil[oó]metros")
 _ACTIVITY_NOUN_RE = re.compile(r"actividad|salida|carrera|tirada|entreno|entrenamiento|sesi[oó]n|rodaje|ruta")
 
@@ -4384,6 +4427,11 @@ _ACTIVITY_NOUN_RE = re.compile(r"actividad|salida|carrera|tirada|entreno|entrena
 def _is_period_distance_intent(user_message: str) -> bool:
     text = (user_message or "").lower()
     return bool(_DISTANCE_Q_RE.search(text)) and _resolve_activity_period(text) is not None
+
+
+def _is_period_totals_intent(user_message: str) -> bool:
+    text = (user_message or "").lower()
+    return bool(_TOTALS_Q_RE.search(text)) and _resolve_activity_period(text) is not None
 
 
 def _is_period_longest_intent(user_message: str) -> bool:
@@ -4415,7 +4463,8 @@ async def _period_activities(mcp_session, start: date, end: date) -> list[dict]:
 
 
 async def _build_period_activities_markdown(mcp_session, user_message: str) -> str:
-    """Kilómetros de un periodo o su actividad más larga, por deporte, con los datos de Garmin."""
+    """Totales de un periodo (km, tiempo, actividades, desnivel, días con y sin actividad) o su actividad más
+    larga, por deporte, con los datos de Garmin."""
     start, end, label = _resolve_activity_period(user_message)  # el router solo entra con periodo
     families = _requested_families(user_message)
     acts = [a for a in await _period_activities(mcp_session, start, end)
@@ -4442,7 +4491,8 @@ async def _build_period_activities_markdown(mcp_session, user_message: str) -> s
                 f"{_fmt_km(dist) if dist > 0 else 'sin distancia'} · {_seconds_to_hhmmss(_num(act, 'duration'))}"
                 + (f" · +{_num(act, 'elevationGain'):.0f} m" if _num(act, 'elevationGain') > 0 else ""))
 
-    if _is_period_longest_intent(user_message) and not _is_period_distance_intent(user_message):
+    if (_is_period_longest_intent(user_message) and not _is_period_distance_intent(user_message)
+            and not _is_period_totals_intent(user_message)):
         by_distance = max(acts, key=lambda a: (_num(a, "distance"), _num(a, "duration")))
         by_time = max(acts, key=lambda a: (_num(a, "duration"), _num(a, "distance")))
         lines = ["## 🧭 Resumen"]
@@ -4461,13 +4511,18 @@ async def _build_period_activities_markdown(mcp_session, user_message: str) -> s
     for act in acts:
         by_family.setdefault(_activity_family(act), []).append(act)
     total_dist = sum(_num(a, "distance") for a in acts)
+    period_days = (end - start).days + 1
+    active_days = len({_extract_activity_date_iso(a) for a in acts})
+    n_acts = f"{len(acts)} actividad" + ("es" if len(acts) != 1 else "")
     lines = ["## 🧭 Resumen",
-             f"{sport_label.capitalize()} en {label}: {_fmt_km(total_dist)} en {len(acts)} actividades "
-             f"({_seconds_to_hhmmss(sum(_num(a, 'duration') for a in acts))}).",
+             f"{sport_label.capitalize()} en {label}: " + (f"{_fmt_km(total_dist)} en " if total_dist > 0 else "")
+             + f"{n_acts} ({_seconds_to_hhmmss(sum(_num(a, 'duration') for a in acts))}).",
+             f"Días con actividad: {active_days} de {period_days}; sin actividad: {period_days - active_days}.",
              "", "## 📊 Métricas clave",
              "| Deporte | Actividades | Distancia | Tiempo | Desnivel + |", "|---|---:|---:|---:|---:|"]
     for fam, items in sorted(by_family.items(), key=lambda kv: -sum(_num(a, "distance") for a in kv[1])):
-        lines.append(f"| {fam} | {len(items)} | {_fmt_km(sum(_num(a, 'distance') for a in items))} | "
+        fam_dist = sum(_num(a, "distance") for a in items)
+        lines.append(f"| {fam} | {len(items)} | {_fmt_km(fam_dist) if fam_dist > 0 else '—'} | "
                      f"{_seconds_to_hhmmss(sum(_num(a, 'duration') for a in items))} | "
                      f"{sum(_num(a, 'elevationGain') for a in items):.0f} m |")
     if len(by_family) > 1:
@@ -5247,7 +5302,15 @@ def _is_personal_records_intent(user_message: str) -> bool:
         "mejores marcas",
         "marcas personales",
     ]
-    return any(marker in text for marker in markers)
+    if any(marker in text for marker in markers):
+        return True
+    # Récord o mejor tiempo de una distancia (28/10): "¿mi récord de 10k?", "¿mi mejor tiempo en media maratón?",
+    # "¿cuál fue mi mejor 10k?". Iban al LLM libre.
+    distance = r"(?:\d+(?:[.,]\d+)?\s*(?:k|km|kms|kilometros)|maraton|media(?:\s+maraton)?|milla)\b"
+    return bool(
+        re.search(rf"\b(?:record|mejor\s+tiempo|mejor\s+marca|pb)\b.{{0,25}}?\b{distance}", text_ascii)
+        or re.search(rf"\bmejor(?:es)?\s+{distance}", text_ascii)
+    )
 
 
 def _is_personal_records_followup_intent(user_message: str, history: list[dict]) -> bool:
@@ -11002,7 +11065,9 @@ class TrainerAgent:
                 self.total_completion_tokens += c_toks
                 _add_ia_tokens(p_toks + c_toks)
             fixed = _strip_simulated_user_turn(str(response.choices[0].message.content or "").strip())
-        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, KeyError, IndexError) as exc:
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, KeyError, IndexError,
+                APIError) as exc:
+            # APIError: caída, 429 o 503 del proveedor (28/10: antes se escapaba y cerraba Kairos).
             self._log_chat_error(stage=f"sensor_retry_{kind}", error=exc)
             fixed = ""
         if fixed:
@@ -11017,6 +11082,21 @@ class TrainerAgent:
                 f"> - {_sensors.user_notice(f)}" for f in findings
             )
         return text
+
+    async def _today_frame_for_loop(self, prefetch_today: dict | None = None) -> tuple[str, str | None]:
+        """Marco de la sesión de hoy y decisión del motor para el bucle con tools (G15).
+
+        Los mismos datos y el mismo motor que la ruta de estado del día. Si algo falla, el bucle sigue sin marco.
+        """
+        try:
+            snapshot = await self.collect_startup_snapshot_48h(prefetch_today=prefetch_today)
+            decision = _compute_daily_plan_adjustment(snapshot, _get_active_training_plan(self.user_profile)) or {}
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError) as exc:
+            self._log_chat_error(stage="today_frame_for_loop", error=exc)
+            return "", None
+        frame = _build_today_session_frame(decision, self.user_profile)
+        log.info("[G15] marco de hoy para el bucle: decision=%s", decision.get("decision") or "—")
+        return frame, (decision.get("decision") if frame else None)
 
     async def _augment_with_llm_coaching_if_needed(
         self,
@@ -11118,7 +11198,9 @@ class TrainerAgent:
                 + coaching_text
                 + "\n\n_Fase coaching por LLM sobre datos deterministas (sin recalcular métricas)._"
             )
-        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError) as exc:
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError,
+                APIError) as exc:
+            # APIError: caída, 429 o 503 del proveedor (28/10: antes se escapaba y cerraba Kairos).
             log.warning("No se pudo completar capa LLM de coaching (route=%s): %s", route, exc or type(exc).__name__)
             return (
                 deterministic_reply
@@ -11802,6 +11884,14 @@ class TrainerAgent:
             else:
                 log.debug(f"Pre-fetch {user_date}: no se encontro actividad")
 
+        # G15 (28/10): qué entrenar hoy, preguntado de forma que no llega a la ruta de estado del día. El LLM
+        # recibe la decisión del motor y el marco de la sesión, y S15 comprueba que lo respeta.
+        loop_decision = None
+        if not analysis_block_for_rescue and _is_today_training_question(user_message):
+            frame, loop_decision = await self._today_frame_for_loop(_prefetch_cache)
+            if frame:
+                messages.insert(len(messages) - 1, {"role": "system", "content": frame})
+
         _MAX_TOOL_ITER = 15
         # Metatooling (26/10): solo los grupos de tools que pide la pregunta; el LLM puede pedir más.
         self._turn_tool_groups = _tool_groups.groups_for(user_message)
@@ -12073,7 +12163,7 @@ class TrainerAgent:
                 continue
 
             # Respuesta final del agente
-            assistant_reply = await self._apply_output_sensors(message.content or "", messages, "llm")
+            assistant_reply = await self._apply_output_sensors(message.content or "", messages, "llm", decision=loop_decision)
 
             # Fallback para récords personales cuando el modelo responde
             # con "sin acceso" pese a tener herramientas MCP activas.

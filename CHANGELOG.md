@@ -4,6 +4,24 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-28
 
+Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, cobertura, lint ampliado y tiempos de `agent.log`); de ella salen los tres cambios siguientes. Lo que queda, en `docs/proximos_pasos.md` (Pendiente E).
+
+### Fixed (ningún error de una pregunta cierra Kairos)
+- Señal: la capa de coaching y el reintento de los sensores solo capturaban `RuntimeError`, `ValueError`, `OSError`…; las excepciones de `openai` (`APIConnectionError`, `RateLimitError` 429, `InternalServerError` 503) no lo son, y el bucle de la CLI tampoco las capturaba: un 503 del proveedor durante una ruta mixta (sueño, carga, estado del día) cerraba Kairos. Comprobado simulando las tres. Igual con `McpError` en `call_tool` y con cualquier fallo de programación (`AttributeError`, `IndexError`).
+- Qué se hizo: las dos capas capturan `openai.APIError` (queda el bloque determinista o el texto con su aviso); `call_tool` devuelve `McpError` como texto de error, como el resto; el bucle de la CLI captura `Exception`, lo deja en `agent.log` con su traza y sigue.
+- Lección: en un bucle interactivo, la red general va en el bucle; las listas cerradas de excepciones solo sirven en las capas que saben qué hacer con cada una.
+
+### Added (G15: la decisión del motor también en el bucle con tools)
+- Señal: "¿Qué hago hoy?" iba a la ruta de estado del día (motor diario, marco de la sesión, S15); "¿Qué entreno hago hoy?", "¿Entreno hoy o descanso?" o "¿Estoy listo para entrenar hoy?" iban al LLM libre sin la decisión: la misma pregunta podía recibir otro consejo.
+- Qué se hizo: (1) esas frases y "estoy cansado/fatigado" van a la ruta de estado del día; (2) guía G15: cualquier otra pregunta de qué entrenar hoy que llegue al bucle con tools (habla de hoy y de entrenar, y no de una sesión ya hecha: `_is_today_training_question`) recibe la decisión del motor y el marco de la sesión (`_today_frame_for_loop`, los mismos datos y motor que la ruta), y S15 comprueba la respuesta. En `agent.log`: `[G15]`.
+- En vivo: "¿Me conviene hacer la tirada larga hoy?" → `[G15] decision=maintain`; el LLM propone la calidad de hoy y deja la tirada para el fin de semana.
+
+### Changed (totales del periodo y récords de una distancia, sin LLM)
+- Señal: "¿Cuántas horas he entrenado en octubre?", "¿Cuánto he entrenado esta semana?" o "¿Cuántos días he descansado este mes?" iban al LLM, que sumaba él (el tipo de error de G14); "¿Cuántas actividades he hecho este mes?" caía en la ruta de conteo de la base de datos y daba el total de todo el histórico, sin el mes. "¿Mi récord de 10k?" o "¿mi mejor tiempo en media maratón?" no llegaban a la ruta de récords.
+- Qué se hizo: la ruta de periodo reconoce horas, tiempo, actividades, sesiones, desnivel y días entrenados o de descanso (`_is_period_totals_intent`), da los días con y sin actividad y filtra fuerza; récord, mejor tiempo o mejor marca de una distancia van a la ruta de récords. Sin distancia, la fila sale con "—" y "1 actividad" en singular.
+- Banco de frases (`PHRASE_BANK` en `tests/test_tool_router.py`): 23 frases con su ruta, incluidas las que no deben cambiar. Se amplía con las preguntas reales de `agent.log`.
+- Criterio fijado antes: tests nuevos y existentes en verde, sin cambios de ruta en las frases que ya funcionaban y batería 25/25. Resultado: 777 tests; batería 25/25 (20261028_130050); las 6 frases nuevas en vivo, correctas (octubre: 15 actividades, 22:04:14, 14 de 28 días sin actividad; 10K 35:54). Único cambio de ruta en frases antiguas: "¿Cuántas actividades llevo esta semana?" pasa de la lista de la semana a los totales del periodo (cuenta y lista).
+
 ### Docs (purga de los commits viejos en GitHub)
 - Ticket de GitHub Support 4918285 para purgar las vistas en caché de los 80 commits del tramo reescrito el 27/10 (de `eeee21b` a la antigua cabeza `716cd0c`, sacados con la API de GitHub: `compare/048fe2c...716cd0c`) y los eventos de push del 23 al 27/10. El repositorio no tiene forks ni pull requests. El ordenador 1 ya está alineado con el historial nuevo y sin los commits viejos en local.
 

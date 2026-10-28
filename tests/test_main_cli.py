@@ -448,6 +448,8 @@ class _MainAgent(_Agent):
         self.conversation_history.append(text)
         if "rompe" in text:
             raise RuntimeError("fallo del LLM")
+        if "raro" in text:
+            raise AttributeError("'NoneType' object has no attribute 'get'")
         return "Respuesta de Kairos"
 
 
@@ -508,6 +510,16 @@ class TestMainLoop:
         assert "42 herramientas disponibles" in text and "CTL (Estado físico)=60.4" in text
         assert "Respuesta de Kairos" in text and "Error en el Agente" in text and "fallo del LLM" in text
         assert "refrescó días recientes" in text and "Sesión finalizada" in text
+
+    def test_any_error_in_a_question_keeps_the_session(self, monkeypatch, out):
+        # 28/10: antes solo se capturaban RuntimeError, OSError…; un AttributeError, un McpError o un 503 de
+        # openai cerraban Kairos. Ahora se avisa y se sigue preguntando.
+        _run_main(["fallo raro", "¿Cómo estoy hoy?", "salir"], monkeypatch=monkeypatch, skip_status=True)
+        agent = _MainAgent.instances[0]
+        assert [c.args[0] for c in agent.chat.call_args_list] == ["fallo raro", "¿Cómo estoy hoy?"]
+        text = out()
+        assert "Error en el Agente" in text and "no attribute 'get'" in text
+        assert "Respuesta de Kairos" in text and "Sesión finalizada" in text
 
     def test_modelo_switches_provider(self, monkeypatch, out):
         with patch.object(m, "_switch_provider", AsyncMock(return_value=GROQ)) as switch:

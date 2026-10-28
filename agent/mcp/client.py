@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import McpError
 from agent.mcp.contracts import normalize_tool_invocation, validate_min_input_contract
 
 # Raíz del repositorio (este fichero vive en agent/mcp/).
@@ -326,5 +327,6 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
                 )
             return response_text
         return "Sin datos disponibles."
-    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError) as e:
+    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, McpError) as e:
+        # McpError: error de protocolo del servidor (28/10: antes se escapaba hasta la CLI y cerraba Kairos).
         return f"Error al llamar a '{tool_name}': {str(e)}"

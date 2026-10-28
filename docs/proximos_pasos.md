@@ -10,11 +10,10 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 28/10/2026** (ordenador 1). Todo subido a GitHub, sin cambios a medias. 769 tests.
+**Sesión del 28/10/2026** (ordenador 1). 777 tests; batería 25/25.
 
-- Hecho: el ordenador 1 está alineado con el historial reescrito el 27/10 (`git reset --hard origin/main`, commits viejos borrados con `reflog expire` y `gc`, dependencias con los topes nuevos, Kairos arranca). En el ordenador 2, al empezar: `git pull`.
-- **Purga de los commits viejos en GitHub:** ticket de GitHub Support **4918285** abierto el 28/10 ("Clear Cached Views"), con los 80 commits del tramo reescrito (de `eeee21b` a la antigua cabeza `716cd0c`) y los eventos de push del 23 al 27/10. El 28/10 los dos extremos aún se veían (200 en la web y en la API). Cuando GitHub responda, comprobar solo los códigos HTTP: resuelto si dan 404 en la web y 422 en la API, como un hash inventado.
-- **Siguiente paso:** nada pendiente de la revisión del 27/10. **Aparcado hasta ~09/11/2026** (decisión del usuario): el resto se verifica con el uso diario de Kairos. Después, revisar juntos `agent.log` (`[SENSOR]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
+- Hecho: ordenador 1 alineado con el historial reescrito; ticket de GitHub Support **4918285** abierto (purga de los 80 commits viejos, de `eeee21b` a `716cd0c`; cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API); revisión completa del proyecto y sus tres primeros arreglos (errores del proveedor que cerraban Kairos, G15, totales del periodo y récords; CHANGELOG). En el ordenador 2, al empezar: `git pull`.
+- **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] el LLM pide el grupo`, `[LLM] ◀`) para los puntos 1 y 2, con las preguntas mal enrutadas al banco de frases. El resto de la revisión del 28/10 (dividir `trainer_agent.py`, rendimiento, errores de Garmin como texto, precarga de "mi último trail", tests) queda en Pendiente E; los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
 ## Pendiente
 
@@ -22,6 +21,7 @@ Se reescribe al final de cada sesión.
 
 1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`.** Usar Kairos unos días con preguntas reales y revisar juntos cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7). En concreto:
    - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales, y si con las guías G13 (calendario) y G14 (HRV calculada) del 26/10 bajan los saltos de S25, S27 y S28.
+   - Enrutado: cada pregunta real mal enrutada va al banco de frases (`PHRASE_BANK` en `tests/test_tool_router.py`) antes de tocar los detectores. Mirar también si salta `[G15]` (marco de hoy en el bucle con tools) y si S15 lo hace cumplir.
 
 ### B. Chat y LLM
 
@@ -38,6 +38,16 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 ### D. Futuro (sin prioridad, cuando haga falta)
 
 6. **Peso con báscula.** Kairos toma el peso al arrancar de la configuración de usuario de Garmin (`get_user_profile`, `userData.weight`) y solo si falta, del registro de hoy de `get_body_composition` (`fetch_garmin_personal_data`). Comprobado el 28/10 en vivo: al cambiarlo en la configuración, Garmin guarda también un registro con fecha de hoy y las dos fuentes coinciden (65,0 kg). Sin comprobar: si un pesaje de báscula actualiza también la configuración. Si un atleta usa báscula y `/perfil` no refleja su último pesaje, invertir el orden: primero el último registro de `get_body_composition` (rango reciente, no solo hoy) y la configuración como respaldo. El peso no se edita en `/perfil editar salud`: Garmin manda y el arranque lo sobrescribiría.
+
+### E. Revisión del 28/10 (estructura y rendimiento)
+
+De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15 y los totales del periodo (CHANGELOG).
+
+7. **Dividir `agent/trainer_agent.py`** (12.200 líneas; `chat()` ≈ 1.070 con 20 ramas `if route_key == …`): tabla `{ruta: función}` y módulos `routes/` (por familia), `prefetch.py`, `coaching.py`, `llm.py` (proveedor, clave, reintento de sensores), `kairos_tools.py` y `startup.py`; poco a poco, con los tests en verde en cada paso (`tests/test_trainer_agent.py` se divide igual).
+8. **Rendimiento.** (a) Precargar los datos que el LLM siempre pide para bajar las 3–5 vueltas del bucle con tools (cada una reenvía ≈ 13.000 tokens; 17 s de media por llamada). (b) Supabase es síncrono dentro de código asíncrono (37 `.execute()`; perfil y serie leídos desde 19 sitios): caché por pregunta o `asyncio.to_thread`. (c) Arranque en serie (sincronizar Garmin, zonas, carga, estado): medir y paralelizar lo independiente. El recorte del prompt de sistema ya está en el punto 2a.
+9. **Errores de Garmin como texto.** `call_tool` devuelve "Error al llamar a…" como si fuera el resultado de la tool; las rutas que hacen `json.loads` lo ven como "sin datos". Comprobar ruta por ruta y decir "Garmin no responde" cuando sea eso.
+10. **Precarga de "mi último trail/carrera/bici"** (`chat`): si no hay ninguna de ese deporte entre las 20 últimas, analiza la primera actividad de hoy, sea del deporte que sea; además usa `"_prefetch_sport_id" in dir()`. Unas 360 líneas casi sin tests: sacarla a una función probada al dividir el fichero (punto 7).
+11. **Tests de lo que más pesa y menos se prueba:** lectores de `activity_details` en `load_metrics` (muestras de FC y de marcha, que alimentan el TSS; módulo al 70 %) y `agent/mcp/client.py` (54 %), con fixtures pequeñas y anonimizadas sacadas de `fixtures/real_payloads`.
 
 ## Descartado
 

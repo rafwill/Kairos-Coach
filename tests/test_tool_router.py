@@ -59,6 +59,44 @@ class TestToolRouter:
         assert router.route_key("¿Cuánto TSS hice esta semana?", [], profile) == "week_tss"
         assert router.route_key("¿Qué actividades hice esta semana?", [], profile) == "week_activities"
 
+    # Banco de frases (28/10): cada frase con la ruta que le toca. Se amplía con las preguntas reales de agent.log;
+    # una frase nueva mal enrutada se añade aquí antes de tocar los detectores.
+    PHRASE_BANK = [
+        # Qué entrenar hoy: misma pregunta, mismo motor (antes las cuatro primeras iban al LLM libre).
+        ("¿Qué entreno hago hoy?", "daily_readiness"),
+        ("¿Entreno hoy o descanso?", "daily_readiness"),
+        ("¿Estoy listo para entrenar hoy?", "daily_readiness"),
+        ("¿Estoy cansado?", "daily_readiness"),
+        ("¿Qué hago hoy?", "daily_readiness"),
+        ("¿Cómo estoy hoy?", "daily_readiness"),
+        # Totales de un periodo: los suma Python (antes el LLM; "actividades este mes" daba el total de la base).
+        ("¿Cuántas horas he entrenado en octubre?", "period_activities"),
+        ("¿Cuánto he entrenado esta semana?", "period_activities"),
+        ("¿Cuántas horas llevo esta semana?", "period_activities"),
+        ("¿Cuántos días he descansado este mes?", "period_activities"),
+        ("¿Cuántas actividades he hecho este mes?", "period_activities"),
+        ("¿Cuántas sesiones de fuerza hice en octubre?", "period_activities"),
+        ("¿Cuánto desnivel he hecho este año?", "period_activities"),
+        # Récords de una distancia.
+        ("¿Cuál es mi récord de 10k?", "personal_records"),
+        ("¿Cuál fue mi mejor 10k?", "personal_records"),
+        ("¿Cuál es mi mejor tiempo en media maratón?", "personal_records"),
+        ("¿Mis mejores marcas?", "personal_records"),
+        # Lo que no debe cambiar.
+        ("¿Cuántos días he dormido mal este mes?", "sleep_trend"),
+        ("¿Qué actividades hice esta semana?", "week_activities"),
+        ("¿Cuánto TSS hice la semana pasada?", "week_tss"),
+        ("¿Cómo fue mi entreno de hoy?", None),
+        ("¿Cuántas actividades tengo en la base de datos?", None),
+        ("Analiza mi entrenamiento de ayer", "activity_details"),
+    ]
+
+    def test_phrase_bank(self):
+        router = ToolRouter()
+        wrong = [(q, router.route_key(q, [], {}), want) for q, want in self.PHRASE_BANK
+                 if router.route_key(q, [], {}) != want]
+        assert wrong == []
+
     def test_last_named_activity_goes_to_activity_details(self):
         router = ToolRouter()
         # 24/10: el LLM dijo que la última bici era "anterior a agosto" (fue el 12/08).
