@@ -46,6 +46,7 @@ from agent.daily_engine import (
     _extract_activity_duration_minutes,
     _get_active_training_plan,
     _get_planned_session_for_date,
+    _get_planned_sessions_for_date,
     _session_intensity_label,
 )
 from agent.routes.load import (
@@ -221,10 +222,12 @@ class ContextMixin:
                 continue
             session_type = str(row.get("session_type") or "sesión")
             if _is_block_plan(plan) and session_type != "rest":
-                # Plan por bloques (28/10): la sesión con su título, duración, km, TSS y tramos (ritmo y FC).
+                # Plan por bloques (28/10): la sesión con su título, duración, km, TSS y tramos (ritmo y FC); con
+                # día doble (29/10), las dos.
                 zones, _ = _resolve_hr_zones(self.user_profile, "running")
-                detail = _run_plan.session_lines(row, d, zones)
-                lines.append(f"- {label}: " + " · ".join(x.strip() for x in detail))
+                for i, item in enumerate(_get_planned_sessions_for_date(plan, d.isoformat())):
+                    detail = _run_plan.session_lines(item, d, zones)
+                    lines.append(f"- {label}{' (doble)' if i else ''}: " + " · ".join(x.strip() for x in detail))
                 continue
             if session_type == "rest" or int(row.get("duration_min") or 0) <= 0:
                 desc = "descanso"

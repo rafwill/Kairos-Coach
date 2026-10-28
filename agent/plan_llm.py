@@ -32,7 +32,7 @@ from agent.prompts import _load_coaching_rules, _render_prompt
 
 log = logging.getLogger(__name__)
 
-_PLAN_ATTEMPTS = 3  # primera respuesta + 2 correcciones
+_PLAN_ATTEMPTS = 4  # primera respuesta + 3 correcciones (29/10: con el 20 % en Z3+, la 3.ª aún se quedaba a 3 min)
 _WEEKS_PER_CALL = 4
 _PROGRESSION_ROUNDS = 2  # rondas para corregir la progresión con las sumas reales de los días
 
@@ -72,6 +72,7 @@ class PlanLLMMixin:
         threshold = _resolve_running_threshold_pace_for_date(profile, today.isoformat())
         zones, _ = _resolve_hr_zones(profile, "running")
         constraints = _resolve_training_constraints(goals, health, user_message)
+        prefs = goals.get("plan_preferences") or {}
         return _pb.PlanFrame(
             start=start, weeks=_pb.weeks_until(start, race_date), race=race, race_date=race_date, distance_km=distance,
             target_time=target_time, threshold_pace=threshold,
@@ -87,6 +88,10 @@ class PlanLLMMixin:
             max_quality=int(constraints.get("max_quality_sessions_per_week") or 2),
             primary_sport=str(goals.get("primary") or ""),
             note=str(user_message or "").strip(),
+            # Preferencias de /plan crear (29/10): dobles, distribución de la intensidad y progresión de la carga.
+            doubles=bool(prefs.get("doubles")),
+            intensity=str(prefs.get("intensity") or ""),
+            max_load_weeks=2 if prefs.get("progression") == "2+1" else 3,
         )
 
     def _plan_system_message(self) -> dict:
@@ -141,7 +146,8 @@ class PlanLLMMixin:
         t0 = time.perf_counter()
         macro, errors, _ = await self._plan_llm_json(
             [system, {"role": "user", "content": _render_prompt("plan/macro", datos=datos, semanas=f.weeks,
-                                                                 semana_carrera=f.race_week, dias_entreno=f.training_days)}],
+                                                                 semana_carrera=f.race_week,
+                                                                 dias_entreno=_pb.training_days_text(f))}],
             lambda m: _pb.check_macro(m, f), "estructura",
         )
         if macro is None:
@@ -241,16 +247,17 @@ class PlanLLMMixin:
             name = str(act.get("activityName") or act.get("name") or "actividad")
             done.setdefault(_extract_activity_date_iso(act) or "", []).append(
                 f"{name} {_extract_activity_duration_minutes(act):.0f} min" + (f" (TSS {tss:.0f})" if tss else ""))
-        by_key = {(int(s.get("week_index") or 0), int(s.get("day_index") or 0)): s for s in sessions}
+        by_day: dict[tuple[int, int], list[dict]] = {}
+        for s in sorted(sessions, key=_pb.session_key):
+            by_day.setdefault((int(s.get("week_index") or 0), int(s.get("day_index") or 0)), []).append(s)
         lines = []
         for i in range(7, 0, -1):
             d = today - timedelta(days=i)
-            planned = by_key.get(((d - start).days // 7 + 1, d.isoweekday())) or {}
-            title = (planned.get("structured_workout") or {}).get("title") or planned.get("session_type") or "sin plan"
-            minutes = planned.get("duration_min")
-            lines.append(f"- {_run_plan._DAY_NAMES[d.isoweekday()]} {d.strftime('%d/%m')}: planificado {title}"
-                         + (f" {minutes} min" if minutes else "") + " · realizado: "
-                         + ("; ".join(done.get(d.isoformat(), [])) or "nada"))
+            planned = by_day.get(((d - start).days // 7 + 1, d.isoweekday())) or []
+            text = " + ".join(f"{(p.get('structured_workout') or {}).get('title') or p.get('session_type')}"
+                              + (f" {p.get('duration_min')} min" if p.get("duration_min") else "") for p in planned)
+            lines.append(f"- {_run_plan._DAY_NAMES[d.isoweekday()]} {d.strftime('%d/%m')}: planificado {text or 'sin plan'}"
+                         " · realizado: " + ("; ".join(done.get(d.isoformat(), [])) or "nada"))
         return "\n".join(lines)
 
     async def _revise_plan_with_llm(self, user_message: str, plan: dict, sessions: list[dict],
@@ -306,7 +313,7 @@ class PlanLLMMixin:
                 if day_errs:
                     errs += day_errs
                     continue
-                week = sorted(week + new, key=lambda s: int(s.get("day_index") or 0))
+                week = sorted(week + new, key=_pb.session_key)
                 # Una revisión puede bajar el volumen (molestia, viaje); lo que no puede es subirlo más de un 10 %.
                 errs += _pb.check_week(n, week, planned.get(n, {}), f, past_days=max(1, first_day[n] - 1))
                 total = sum(float(s.get("duration_min") or 0) for s in week)
@@ -324,14 +331,13 @@ class PlanLLMMixin:
             return None, reply, [], messages
         new_sessions = [s for s in sessions if int(s.get("week_index") or 0) not in result]
         new_sessions += [s for n in sorted(result) for s in result[n]]
-        new_sessions.sort(key=lambda s: (int(s.get("week_index") or 0), int(s.get("day_index") or 0)))
+        new_sessions.sort(key=_pb.session_key)
         # Lo que lee el atleta sale de los días guardados (con la duración final de los "auto"), no del borrador:
         # en vivo, el primer texto describía cambios que no eran los que quedaban (28/10).
-        old = {(int(s.get("week_index") or 0), int(s.get("day_index") or 0)): (s.get("structured_workout") or {}).get("plan_day")
-               for s in sessions}
+        old = {_pb.session_key(s): (s.get("structured_workout") or {}).get("plan_day") for s in sessions}
         cambios = []
         for s in new_sessions:
-            if old.get((s["week_index"], s["day_index"])) != (s.get("structured_workout") or {}).get("plan_day"):
+            if old.get(_pb.session_key(s)) != (s.get("structured_workout") or {}).get("plan_day"):
                 day = f.start + timedelta(weeks=s["week_index"] - 1, days=s["day_index"] - 1)
                 cambios += _run_plan.session_lines(s, day, f.hr_zones)
         if cambios:

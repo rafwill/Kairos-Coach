@@ -164,6 +164,8 @@ def _step_text(s: dict, hr_zones: list | None) -> str:
         hr = f" · FC Z{hz} {lo}–{hi}"
     if target.get("metric") == "hr_zone":  # plan del LLM por FC (trail, bici): la zona de Garmin es el objetivo
         text = f"{amount} @ FC Z{hz}" + (f" {hr_zones[hz - 1][1]}–{hr_zones[hz - 1][2]} lpm" if hr else "")
+    elif rng and target.get("metric") == "pace" and target.get("pace_fixed"):  # ritmo fijado por el entrenador
+        text = f"{amount} @ {fmt_pace(sum(rng) / 2)}/km ({zone}{hr})"
     elif rng and target.get("metric") == "pace":
         text = f"{amount} @ {fmt_pace(rng[0])}–{fmt_pace(rng[1])}/km ({zone_label}{hr})"
     else:

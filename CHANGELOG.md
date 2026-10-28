@@ -2,6 +2,28 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-29
+
+### Added (preferencias del atleta en el plan del LLM; decisiones del usuario)
+- Decisiones del usuario sobre lo que quedó abierto el 28/10:
+  - Como mucho un 20 % del tiempo en Z3 o más.
+  - Días dobles: "si un atleta quiere hacer 2h15 en maratón igual le toca doblar".
+  - Un buen plan admite ritmo ("4×1000 a 4:00/km") o zonas ("60 min en Z2 de FC").
+  - `/plan crear` tiene que preguntar como un entrenador: disponibilidad, distribución 80/20 o piramidal, progresión de la carga.
+- Qué se hizo:
+  - **Intensidad:** regla en `check_week`. Como mucho un 20 % del tiempo de la semana (sin la fuerza) en Z3 o más: zonas de ritmo Z3–Z5c, RP, ritmo fijado o FC3–FC5. La semana de la carrera queda fuera. El fallo dice cuántos minutos intensos tiene cada sesión y dónde quitar ("jueves: 80 → 67 min").
+  - **Dobles:** un día puede llevar dos sesiones si el atleta dobla (el LLM repite el "day"; orden en `structured_workout.slot`; el descanso no se dobla; el límite de minutos del día suma las dos). Kairos las enseña en `/plan ver`, en el contexto del LLM (`_get_planned_sessions_for_date`), en la revisión y en lo realizado frente a lo planificado.
+  - **Ritmo o zona:** cada tramo lleva zona de ritmo, RP, ritmo concreto (`"pace": "4:00"`, rango ±3 s, se muestra "1000 m @ 4:00/km") o zona de FC. Un rango de zonas ("Z1-Z2", "FC1-FC2") da un fallo claro; antes rompía el análisis del tramo.
+  - **Preguntas de `/plan crear`:** días disponibles (L,M,X,J,V,S,D o rangos), tiempo máximo por día ("L-V 75, S 180"), dobles, distribución de la intensidad (polarizada, piramidal o la decide el entrenador) y progresión (3+1, 2+1 o la decide el entrenador). Se guardan en `goals.availability` y `goals.plan_preferences`, salen por defecto la vez siguiente, el LLM las recibe y las reglas las aplican (descanso, dobles, semanas de carga seguidas).
+  - 4 intentos por llamada en vez de 3.
+- Criterio fijado antes: cada regla detecta su fallo y las preferencias llegan al LLM y a las reglas (tests); plan real válido con preferencias distintas.
+- Resultado:
+  - Tests: 854. Batería 25/25.
+  - En vivo con nemotron, la primera pasada con el 20 % falló 3 veces por 2–12 min de más. Con "quita al menos N min (martes: 47 → 45)", 2 de 2 válidos:
+    - Dobles, polarizada y 3+1: 5,5 min. Dobla los lunes (rodaje + gimnasio).
+    - Sin dobles, piramidal y 2+1: menos de 3 min. Descargas en las semanas 3, 6, 9 y 12.
+  - Ninguno usó ritmo fijado ni FC: el modelo eligió zonas de ritmo.
+
 ## 2026-10-28
 
 ### Changed (el plan lo construye y lo revisa el LLM del atleta; decisión del usuario)

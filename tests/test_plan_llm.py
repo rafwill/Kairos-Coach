@@ -327,7 +327,69 @@ class TestTheLLMRevisesThePlan:
         monkeypatch.setattr("agent.plan_llm._fetch_activities_for_load_calc", no_activities)
         monkeypatch.setattr("agent.plan_llm._storage.get_activity_tss_map", lambda start: {})
         big = {"reply": "más", "weeks": [{"week": 2, "days": [{"day": 5, **_easy(120)}]}]}
-        agent = _Agent(_FakeLLM(revisions=[big, big, big]))
+        agent = _Agent(_FakeLLM(revisions=[big] * 4))  # una por intento
         plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
         new, _, errors, _ = await agent._revise_plan_with_llm("Quiero más", plan, sessions, {})
         assert new is None and any("como mucho" in e for e in errors)
+
+
+class TestCoachPreferences:
+    """29/10, decisiones del usuario: 20 % en Z3 o más, días dobles, ritmo concreto o zona, progresión 3+1 o 2+1."""
+
+    def _week(self, mutate=None, **frame):
+        days = _week_days(MACRO["weeks"][4])
+        if mutate:
+            mutate(days)
+        f = _frame(**frame)
+        sessions, errors = pb.expand_week({"week": 5, "days": days}, f)
+        assert errors == []
+        return pb.check_week(5, sessions, MACRO["weeks"][4], f)
+
+    def test_at_most_20_percent_of_the_week_in_z3_or_above(self):
+        assert self._week() == []
+        hard = {"type": "quality", "title": "Umbral largo", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "Z2"}, {"kind": "work", "min": 80, "zone": "Z4"},
+            {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
+        errors = self._week(lambda d: d.__setitem__(3, {"day": 4, **hard}))
+        assert any("en Z3 o más (RP incluido: martes 15, jueves 80); como mucho el 20 %" in e and "jueves: 80 → 67 min" in e for e in errors), errors
+
+    def test_doubles_only_if_the_athlete_doubles_and_never_on_a_rest_day(self):
+        gym = {"day": 3, "type": "strength", "title": "Gimnasio", "minutes": 40}
+        assert any("no dobla" in e for e in self._week(lambda d: d.append(gym)))
+        assert not any("sesiones" in e for e in self._week(lambda d: d.append(gym), doubles=True))
+        rest_double = {"day": 5, "type": "strength", "title": "Gimnasio", "minutes": 40}
+        assert any("es descanso" in e for e in self._week(lambda d: d.append(rest_double), doubles=True))
+        capped = self._week(lambda d: d.append(gym), doubles=True, max_minutes_per_day={3: 60})
+        assert any("sumando sus sesiones" in e for e in capped)
+
+    def test_double_day_sessions_keep_their_order(self):
+        f = _frame(doubles=True)
+        days = _week_days(MACRO["weeks"][4]) + [{"day": 3, "type": "strength", "title": "Gimnasio", "minutes": 40}]
+        sessions, _ = pb.expand_week({"week": 5, "days": days}, f)
+        wednesday = [s for s in sessions if s["day_index"] == 3]
+        assert [s["structured_workout"]["slot"] for s in wednesday] == [1, 2]
+        assert len({pb.session_key(s) for s in sessions}) == len(sessions)
+
+    def test_a_segment_can_go_by_exact_pace_or_by_hr_zone(self):
+        f = _frame()
+        day = {"day": 2, "type": "quality", "title": "4×1000 m a 4:00", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "FC2"},
+            {"repeat": 4, "steps": [{"kind": "work", "m": 1000, "pace": "4:00"}, {"kind": "recovery", "min": 2, "zone": "Z1"}]},
+            {"kind": "cooldown", "min": 10, "zone": "FC1"}]}
+        session, errors = pb.expand_day(day, f, 1)
+        assert errors == []
+        work = session["structured_workout"]["steps"][1]["steps"][0]
+        assert work["target"]["range"] == [237, 243] and work["duration_min"] == 4.0
+        lines = rp.session_lines(session, START, ZONES)
+        assert any("1000 m @ 4:00/km" in x for x in lines) and any("FC Z2 135–145 lpm" in x for x in lines)
+        _, errors = pb.expand_day({**day, "steps": [{"kind": "warmup", "min": 10, "pace": "rápido"}]}, f, 1)
+        assert any("m:ss" in e for e in errors)
+
+    def test_progression_2_plus_1_needs_a_deload_after_two_load_weeks(self):
+        assert pb.check_macro(MACRO, _frame(max_load_weeks=3)) == []
+        assert any("más de 2 semanas de carga seguidas" in e for e in pb.check_macro(MACRO, _frame(max_load_weeks=2)))
+
+    def test_preferences_reach_the_llm(self):
+        text = pb.frame_text(_frame(doubles=True, intensity="piramidal", max_load_weeks=2))
+        assert "Dobles: sí" in text and "piramidal" in text and "bloques de 2 semanas de carga" in text
+        assert "Como mucho un 20 %" in pb.rules_text(_frame())

@@ -10,7 +10,7 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 28/10/2026** (ordenador 1). 848 tests; batería 25/25; batería del bucle 10/10. Último cambio: el plan lo construye y lo revisa el LLM del atleta (B2.9); su revisión por el usuario es lo siguiente en planes. Lo hecho, en `CHANGELOG.md` (28/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull`.
+**Sesión del 28-29/10/2026** (ordenador 1). 854 tests; batería 25/25; batería del bucle 10/10. Últimos cambios: el plan lo construye y lo revisa el LLM del atleta (28/10) y `/plan crear` pregunta las preferencias del atleta, con la regla del 20 % en Z3+, días dobles y ritmo o zona por tramo (29/10). Lo siguiente en planes: que el usuario cree su plan con `/plan crear` y lo revise (B2.9). Lo hecho, en `CHANGELOG.md` (28/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull`.
 
 - **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1 y 2. Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
@@ -30,11 +30,8 @@ Se reescribe al final de cada sesión.
 
 ### B2. Planes
 
-9. **Plan construido por el LLM** (28/10; CHANGELOG). Con nemotron, 3 de 5 planes válidos con el diseño final (90 s a 5 min); si falla, plan de respaldo del motor determinista con aviso. Pendiente:
+9. **Plan construido por el LLM** (28-29/10; CHANGELOG). Con nemotron, 3 de 5 planes válidos el 28/10 y 2 de 2 con preferencias el 29/10 (3 a 5,5 min); si falla, plan de respaldo del motor determinista con aviso. Pendiente:
    - **Revisión del usuario** de un plan real (`/plan crear`) y de una revisión en el chat ("ajusta el plan: …").
-   - **Distribución de la intensidad (decisión del usuario):** el prompt pide distribución polarizada o piramidal, pero el código no lo comprueba. En una prueba, la semana 10 tenía ≈ 42 % del tiempo en Z3 o más (4×5 km a RP + 2×20' umbral + 50' a RP en la tirada). Propuesta: regla de tiempo en Z3+ (incluido RP) ≤ 20-25 % de la semana; fijar el número antes de medir.
-   - **Días dobles:** el formato admite una sesión por día. Con 1 día de descanso y semanas de 475-560 min, las sesiones elegidas no caben (la prueba 12 falló así: o 7 días, o rodajes de 130-200 min). Permitir fuerza + rodaje el mismo día.
-   - **Ritmo o FC en asfalto:** en una prueba, una semana de descarga de un plan de asfalto salió entera por FC (sin km). Decidir si en carrera de asfalto con ritmo umbral los rodajes deben ir por ritmo.
    - **Fiabilidad con otros modelos:** medir con 2-3 modelos más (batería de planes) antes de producción.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)

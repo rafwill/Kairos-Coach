@@ -13,4 +13,4 @@ Formato (JSON):
 - "phase": base, build, specific, taper o race ("race" solo la semana de la carrera, la {{semana_carrera}}).
 - La semana 1 no sube más de un 10 % sobre el volumen sostenido; cada semana de carga, como mucho un 10 % sobre la anterior de carga; la descarga baja al menos un 15 %; el afinamiento y la semana de la carrera, al menos un 15 % por debajo de la semana más alta.
 - La tirada larga no pasa del 40 % de la semana ni sube más de 15 min de una semana de carga a la siguiente.
-- Los minutos de cada semana tienen que caber en los días de entrenamiento: {{dias_entreno}} días por semana (el resto, descanso obligatorio), con rodajes de 90 min como mucho.
+- Los minutos de cada semana tienen que caber en los días de entrenamiento: {{dias_entreno}}.

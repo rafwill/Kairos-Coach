@@ -135,7 +135,7 @@ from agent.storage import (
 )
 from agent.routes.load import _build_load_trend_table
 from agent.daily_engine import _session_intensity_label, _session_type_label
-from agent.plans import _is_block_plan, _plan_detail_markdown
+from agent.plans import _DAY_LETTERS, _format_days, _is_block_plan, _parse_day_limits, _parse_day_list, _plan_detail_markdown
 from agent.data_access import _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile
 from agent.llm import probe_llm_key
 
@@ -1036,6 +1036,46 @@ def _activate_training_plan_cli(plan_ref: str, agent: TrainerAgent) -> None:
     console.print(f"[green]✓[/] Plan activado: [bold]{activated.get('title', plan_id)}[/]")
 
 
+_INTENSITY_CHOICES = {"1": "polarizada", "2": "piramidal", "3": ""}
+_PROGRESSION_CHOICES = {"1": "3+1", "2": "2+1", "3": ""}
+
+
+def _ask_plan_preferences(agent: TrainerAgent) -> None:
+    """Lo que un entrenador pregunta antes de hacer un plan (29/10, petición del usuario): días, límites de tiempo,
+    dobles, distribución de la intensidad y progresión de la carga. Se guarda en el perfil (goals.availability y
+    goals.plan_preferences) y lo usan el LLM y las reglas del plan; la próxima vez sale como respuesta por defecto."""
+    profile = getattr(agent, "user_profile", None) or _load_user_profile() or {}
+    goals = profile.setdefault("goals", {})
+    availability = dict(goals.get("availability") or {})
+    prefs = dict(goals.get("plan_preferences") or {})
+    days = _parse_day_list(Prompt.ask("¿Qué días puedes entrenar? (L,M,X,J,V,S,D, rangos como L-V, o «todos»)",
+                                      default=_format_days(list(availability.get("training_days") or []))))
+    limits_now = ", ".join(f"{_DAY_LETTERS[int(d)]} {m}" for d, m in sorted(
+        (int(k), v) for k, v in (availability.get("max_minutes_per_day") or {}).items()))
+    limits = _parse_day_limits(Prompt.ask("¿Tiempo máximo algún día? (p. ej. «L-V 75, S 180»; Enter si no hay límite)",
+                                          default=limits_now))
+    doubles = Confirm.ask("¿Puedes entrenar dos veces el mismo día (p. ej. rodaje por la mañana y gimnasio por la tarde)?",
+                          default=bool(prefs.get("doubles")))
+    intensity = Prompt.ask(
+        "Distribución de la intensidad: 1 polarizada 80/20 (casi todo suave y lo intenso muy intenso), 2 piramidal "
+        "(mucho suave, algo de tempo, poco muy intenso), 3 que decida el entrenador",
+        choices=list(_INTENSITY_CHOICES),
+        default=next((k for k, v in _INTENSITY_CHOICES.items() if v == prefs.get("intensity")), "1"))
+    progression = Prompt.ask(
+        "Progresión de la carga: 1 bloques 3+1 (tres semanas subiendo y una de descarga), 2 bloques 2+1 (más "
+        "descarga), 3 que decida el entrenador",
+        choices=list(_PROGRESSION_CHOICES),
+        default=next((k for k, v in _PROGRESSION_CHOICES.items() if v == prefs.get("progression")), "1"))
+    availability.update({"training_days": days or list(range(1, 8)),
+                         "max_minutes_per_day": {str(d): m for d, m in limits.items()}})
+    goals["availability"] = availability
+    goals["plan_preferences"] = {"doubles": bool(doubles), "intensity": _INTENSITY_CHOICES[intensity],
+                                 "progression": _PROGRESSION_CHOICES[progression]}
+    if hasattr(agent, "user_profile"):
+        agent.user_profile = profile
+    _save_user_profile(profile)
+
+
 async def _create_training_plan_cli(agent: TrainerAgent) -> None:
     """Crea y activa un plan: lo construye el LLM del atleta y Kairos lo comprueba (28/10).
 
@@ -1058,8 +1098,9 @@ async def _create_training_plan_cli(agent: TrainerAgent) -> None:
         title="[bold blue]Kairos Coach — Crear plan[/]",
         border_style="blue",
     ))
+    _ask_plan_preferences(agent)
     notes = Prompt.ask(
-        "¿Algo que deba tener en cuenta? (días disponibles, lesiones, sesiones que no puedes hacer… Enter si nada)",
+        "¿Algo más que deba tener en cuenta? (lesiones, sesiones que no puedes hacer, superficie… Enter si nada)",
         default="",
     ).strip()
     message = "Crea un plan nuevo" + (f". A tener en cuenta: {notes}" if notes else "")

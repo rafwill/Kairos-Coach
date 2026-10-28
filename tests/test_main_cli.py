@@ -316,13 +316,20 @@ class TestPlanScreens:
         assert "Uso: /plan activar" in text and "Error activando plan" in text and "No se pudo activar" in text
         assert "Plan activado: Base" in text
 
-    def test_create_plan_uses_the_plan_engine_and_shows_the_plan(self, out):
-        # 28/10: antes guardaba solo el formulario (sin sesiones) y Kairos no tenía nada que leer del plan.
+    def test_create_plan_asks_like_a_coach_saves_preferences_and_shows_the_plan(self, out):
+        # 28/10: antes guardaba solo el formulario (sin sesiones). 29/10: pregunta días, límites, dobles, distribución
+        # de la intensidad y progresión, y lo guarda en el perfil para el LLM y las reglas del plan.
         agent = _Agent()
+        agent.user_profile = {"goals": {"target_race": "Santa Pola"}}
         agent._route_planning = AsyncMock(return_value="## 🧭 Resumen\nPlan activo: Hacia Santa Pola\n- Semana 1: ~380 min")
-        with patch.object(m, "_load_user_profile", return_value={"goals": {"target_race": "Santa Pola"}}), \
-             patch.object(m.Prompt, "ask", return_value="no puedo los martes"):
+        answers = iter(["L,M,X,J,S,D", "L-V 75, S 180", "2", "1", "no puedo los martes"])
+        with patch.object(m, "_load_user_profile", return_value=agent.user_profile),              patch.object(m.Prompt, "ask", side_effect=lambda *a, **k: next(answers)),              patch.object(m.Confirm, "ask", return_value=True), patch.object(m, "_save_user_profile") as save:
             asyncio.run(m._create_training_plan_cli(agent))
+        goals = agent.user_profile["goals"]
+        assert goals["availability"]["training_days"] == [1, 2, 3, 4, 6, 7]
+        assert goals["availability"]["max_minutes_per_day"] == {"1": 75, "2": 75, "3": 75, "4": 75, "5": 75, "6": 180}
+        assert goals["plan_preferences"] == {"doubles": True, "intensity": "piramidal", "progression": "3+1"}
+        save.assert_called_once()
         message = agent._route_planning.await_args.args[0]
         assert agent._route_planning.await_args.kwargs == {"force_new": True}
         assert "plan nuevo" in message.lower() and "no puedo los martes" in message
@@ -331,10 +338,13 @@ class TestPlanScreens:
 
     def test_create_plan_fallback_reply_is_shown(self, out):
         agent = _Agent()
+        agent.user_profile = {}
         agent._route_planning = AsyncMock(return_value=("Plan genérico de respaldo", "planning_fallback"))
-        with patch.object(m, "_load_user_profile", return_value={}), patch.object(m.Prompt, "ask", return_value=""):
+        answers = iter(["todos", "", "1", "1", ""])
+        with patch.object(m, "_load_user_profile", return_value={}),              patch.object(m.Prompt, "ask", side_effect=lambda *a, **k: next(answers)),              patch.object(m.Confirm, "ask", return_value=False), patch.object(m, "_save_user_profile"):
             asyncio.run(m._create_training_plan_cli(agent))
         assert agent._route_planning.await_args.args[0] == "Crea un plan nuevo"
+        assert agent.user_profile["goals"]["plan_preferences"]["doubles"] is False
         assert "Plan genérico de respaldo" in out()
 
     def test_plan_refs_by_number_short_id_or_full_id(self):

@@ -27,5 +27,6 @@ Formato (JSON):
 - "type": rest, easy, recovery, long, quality, strength, race o cross. "rest" es el día sin entrenar (sin tramos); "recovery", un rodaje regenerativo con tramos; "race" solo el día de la carrera; "long", la tirada larga de la semana.
 - "min": "auto" va en un solo tramo "steady" de cada rodaje (easy, recovery) y de la tirada larga (long), nunca dentro de las series. Las sesiones de calidad, la fuerza y la carrera llevan sus minutos o distancias exactos.
 - Cada sesión que no sea rest lleva "steps" que empiezan con "warmup" y acaban con "cooldown" (fuerza y cross pueden ir solo con "minutes", "rpe" y "note").
-- Cada tramo: "kind" (warmup, steady, work, recovery, cooldown), tiempo ("min" o "sec") o distancia ("m" o "km", solo con zonas de ritmo) y "zone". Las series van en un bloque {"repeat": n, "steps": [...]}.
+- Cada tramo: "kind" (warmup, steady, work, recovery, cooldown), tiempo ("min" o "sec") o distancia ("m" o "km", solo por ritmo) y su objetivo: "zone" (Z1…Z5c, RP o FC1…FC5) o "pace" con un ritmo concreto ("pace": "4:00"). Las series van en un bloque {"repeat": n, "steps": [...]}.
+- Día doble (si el atleta dobla): repite el "day" con la segunda sesión, p. ej. {"day": 3, "type": "easy", …} y {"day": 3, "type": "strength", …}; primero la principal.
 - "title" dice la sesión como la diría un entrenador (p. ej. "Umbral 3×10'", "Tirada larga con 2×15' a RP"); "note" da la indicación técnica que haga falta (cuesta del 6-8 %, superficie, cadencia, nutrición).

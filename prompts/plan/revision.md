@@ -21,6 +21,6 @@ Revisa el plan como su entrenador. Cambia solo lo necesario (por una molestia, u
 Formato (JSON):
 {"reply": "lo que le dices al atleta: qué cambias y por qué, en 2-5 frases", "weeks": [ {"week": 3, "days": [ {"day": 4, "type": "easy", "title": "…", "steps": [ … ] } ] } ] }
 
-- En "weeks" van solo los días que cambian, con el mismo formato de días y tramos del plan ("type", "title", "steps" o "minutes"); un día que pasa a descanso es {"day": n, "type": "rest"}.
+- En "weeks" van solo los días que cambian, con el mismo formato de días y tramos del plan ("type", "title", "steps" o "minutes"); un día que pasa a descanso es {"day": n, "type": "rest"}. Un día que devuelves sustituye a todas sus sesiones: en un día doble, devuelve las dos (o solo la que quede).
 - Las mismas reglas de zonas: solo las del bloque "Zonas que puedes usar"; no calcules ritmos, km ni TSS.
 - "min": "auto" en el tramo continuo de un rodaje o de la tirada larga hace que Kairos le dé la duración para que la semana sume lo previsto en la estructura. Si quieres que la semana tenga menos volumen (molestia, cansancio, viaje), pon los minutos tú.

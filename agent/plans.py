@@ -30,6 +30,11 @@ from agent.daily_engine import (
 _DAY_NAMES_ES = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves", 5: "Viernes", 6: "Sábado", 7: "Domingo"}
 
 
+def _day_slot(session: dict) -> tuple[int, int]:
+    """Orden de las sesiones de una semana: día y, en un día doble (29/10), primero la principal."""
+    return int(session.get("day_index") or 1), int(((session.get("structured_workout") or {}).get("slot")) or 1)
+
+
 def _plan_week_lines(plan: dict, profile: dict, monday: date | None = None) -> list[str]:
     """Sesiones del plan de una semana de calendario (por defecto esta), una fila por día con su fecha (28/10).
 
@@ -43,8 +48,7 @@ def _plan_week_lines(plan: dict, profile: dict, monday: date | None = None) -> l
         monday = monday or (date.today() - timedelta(days=date.today().weekday()))
         start = _plan_start(plan)
         week_index = (monday - start).days // 7 + 1
-        rows = sorted([s for s in plan["sessions"] if int(s.get("week_index") or 0) == week_index],
-                      key=lambda s: int(s.get("day_index") or 1))
+        rows = sorted([s for s in plan["sessions"] if int(s.get("week_index") or 0) == week_index], key=_day_slot)
         if not rows:
             return ["", "## 🗓️ Esta semana", "Esta semana queda fuera de las fechas del plan."]
         zones, _ = _resolve_hr_zones(profile or {}, "running")
@@ -202,7 +206,42 @@ _DAY_TOKEN_TO_INDEX = {
     "5": 5, "viernes": 5, "vie": 5, "friday": 5, "fri": 5,
     "6": 6, "sabado": 6, "sábado": 6, "sab": 6, "saturday": 6, "sat": 6,
     "7": 7, "domingo": 7, "dom": 7, "sunday": 7, "sun": 7,
+    # Iniciales del calendario español (/plan crear, 29/10): L M X J V S D.
+    "l": 1, "m": 2, "x": 3, "j": 4, "v": 5, "s": 6, "d": 7,
 }
+_DAY_LETTERS = {1: "L", 2: "M", 3: "X", 4: "J", 5: "V", 6: "S", 7: "D"}
+
+
+def _parse_day_list(text: str) -> list[int]:
+    """"L,M,X,J,V,S,D", "lunes, miércoles", "L-V" o "todos" → días 1-7 (vacío si no se entiende)."""
+    t = str(text or "").strip().lower()
+    if t in ("", "todos", "todos los días", "toda la semana"):
+        return list(range(1, 8)) if t else []
+    days: set[int] = set()
+    for part in re.split(r"[,;\s]+", t):
+        if "-" in part:
+            a, _, b = part.partition("-")
+            lo, hi = _DAY_TOKEN_TO_INDEX.get(a.strip()), _DAY_TOKEN_TO_INDEX.get(b.strip())
+            if lo and hi and lo <= hi:
+                days.update(range(lo, hi + 1))
+        elif part in _DAY_TOKEN_TO_INDEX:
+            days.add(_DAY_TOKEN_TO_INDEX[part])
+    return sorted(days)
+
+
+def _parse_day_limits(text: str) -> dict[int, int]:
+    """"L-V 75, S 180" → {1: 75, …, 5: 75, 6: 180}: minutos máximos por día."""
+    out: dict[int, int] = {}
+    for part in re.split(r"[,;]+", str(text or "")):
+        m = re.match(r"^\s*([a-záéíóú\-\s]+?)\s+(\d{1,3})\s*(?:min)?\s*$", part.strip().lower())
+        if m:
+            for d in _parse_day_list(m.group(1).replace(" ", "")):
+                out[d] = int(m.group(2))
+    return out
+
+
+def _format_days(days: list[int]) -> str:
+    return ",".join(_DAY_LETTERS[d] for d in sorted(days)) if days and len(days) < 7 else "todos"
 
 
 def _parse_day_indexes(value: Any) -> set[int]:
@@ -1198,7 +1237,7 @@ def _plan_detail_markdown(plan: dict, sessions: list[dict], profile: dict | None
                      f"{sum(float(x.get('distance_km') or 0) for x in summ):.0f} | {sum(float(x.get('tss') or 0) for x in summ):.0f} |"
                      + (f" {focus[wi - 1] if wi - 1 < len(focus) else ''} |" if focus else ""))
     for wi in weeks:
-        rows = sorted(by_week.get(wi, []), key=lambda r: int(r.get("day_index") or 1))
+        rows = sorted(by_week.get(wi, []), key=_day_slot)
         if not rows:
             continue
         phase = phases[wi - 1] if wi - 1 < len(phases) else ""

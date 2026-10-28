@@ -13,6 +13,7 @@ from datetime import timedelta
 from agent.mcp.client import (
     call_tool,
 )
+from agent import plan_builder as _plan_builder
 from agent import run_plan as _run_plan
 from agent import storage as _storage
 from agent.hr_profile import _resolve_hr_zones
@@ -320,10 +321,9 @@ class RoutesMixin:
             reply = await self._apply_output_sensors(reply, messages, "plan_revision")
         if new_sessions is None:
             return reply or "No hace falta cambiar el plan."
-        old = {(int(s.get("week_index") or 0), int(s.get("day_index") or 0)):
-               (s.get("structured_workout") or {}).get("plan_day") for s in sessions}
+        old = {_plan_builder.session_key(s): (s.get("structured_workout") or {}).get("plan_day") for s in sessions}
         changed = [s for s in new_sessions
-                   if old.get((s["week_index"], s["day_index"])) != (s.get("structured_workout") or {}).get("plan_day")]
+                   if old.get(_plan_builder.session_key(s)) != (s.get("structured_workout") or {}).get("plan_day")]
         pd = dict(plan.get("plan_data") or {})
         weeks = int(plan.get("duration_weeks") or 0)
         pd["week_minutes"] = [round(sum(float(s.get("duration_min") or 0) for s in new_sessions

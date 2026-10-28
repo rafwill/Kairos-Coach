@@ -135,6 +135,18 @@ def _session_type_label(session_type: str | None) -> str:
     return _SESSION_TYPE_LABELS.get(code) or (code.replace("_", " ").capitalize() if code else "Sesión")
 
 
+def _get_planned_sessions_for_date(plan: dict, target_date_iso: str) -> list[dict]:
+    """Todas las sesiones de una fecha: con días dobles (29/10) hay dos; la primera es la principal."""
+    first = _get_planned_session_for_date(plan, target_date_iso)
+    if not first:
+        return []
+    same = [s for s in list(plan.get("sessions") or []) if isinstance(s, dict)
+            and int(s.get("week_index") or 1) == int(first.get("week_index") or 1)
+            and int(s.get("day_index") or 0) == int(first.get("day_index") or 0)]
+    same.sort(key=lambda s: int(((s.get("structured_workout") or {}).get("slot")) or 1))
+    return same or [first]
+
+
 def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | None:
     """Obtiene la sesión planificada para una fecha.
 
@@ -394,6 +406,7 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
                     if lower != key:
                         new = _run_plan._target(_run_plan.Paces(threshold, threshold), lower)
                         target.update({k: new[k] for k in ("range", "pace_zone", "zone", "intensityClass")})
+                        target.pop("pace_fixed", None)  # un ritmo fijado (4:00/km) pasa al rango de la zona
                         step["intensityClass"] = new["intensityClass"]
                         trace.append(f"ritmo {key}->{lower} en {stype}")
             elif isinstance(target, dict) and str(target.get("metric") or "") == "hr_zone":
