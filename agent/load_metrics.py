@@ -1287,10 +1287,12 @@ def _extract_hr_samples_from_activity_details(
             desc_by_key[key] = d
 
         hr_keys = ("directHeartRate", "heartRate", "hr", "bpm")
+        # Sin directTimestamp, el reloj que lo sigue es sumElapsedDuration (incluye las pausas, como el
+        # timestamp); sumDuration es el cronómetro sin pausas (28/10).
         time_keys = (
             "directTimestamp",
-            "sumDuration",
             "sumElapsedDuration",
+            "sumDuration",
             "sumMovingDuration",
             "elapsedDuration",
             "timerDurationInSeconds",
@@ -1341,15 +1343,9 @@ def _extract_hr_samples_from_activity_details(
                 if t_raw is None:
                     continue
 
-                if key == "directTimestamp":
-                    time_seconds = (t_raw / 1000.0) if t_raw > 10_000_000_000 else t_raw
-                else:
-                    unit = td.get("unit") if isinstance(td.get("unit"), dict) else {}
-                    factor = _to_float(unit.get("factor")) if isinstance(unit, dict) else None
-                    if factor and factor > 0:
-                        time_seconds = t_raw / factor
-                    else:
-                        time_seconds = t_raw
+                # Los sum*Duration ya vienen en segundos: el "factor" 1000 del descriptor no es para dividir
+                # (dividía la actividad entera en ~18 s y el hrTSS salía None; 28/10, payloads reales).
+                time_seconds = (t_raw / 1000.0) if t_raw > 10_000_000_000 else t_raw
                 break
 
             if time_seconds is None:
@@ -1406,10 +1402,10 @@ def _extract_walk_samples_from_activity_details(
         if key:
             by_key[key] = idx
 
-    time_keys = (
+    time_keys = (  # mismo orden que el lector de FC: sin timestamp, el reloj con pausas (28/10)
         "directTimestamp",
-        "sumDuration",
         "sumElapsedDuration",
+        "sumDuration",
         "sumMovingDuration",
         "elapsedDuration",
         "timerDurationInSeconds",

@@ -47,7 +47,6 @@ De la revisión completa del proyecto del 28/10; ya hechos los fallos del provee
 8. **Rendimiento.** (a) Precargar los datos que el LLM siempre pide para bajar las 3–5 vueltas del bucle con tools (cada una reenvía ≈ 13.000 tokens; 17 s de media por llamada). (b) Supabase es síncrono dentro de código asíncrono (37 `.execute()`; perfil y serie leídos desde 19 sitios): caché por pregunta o `asyncio.to_thread`. (c) Arranque en serie (sincronizar Garmin, zonas, carga, estado): medir y paralelizar lo independiente. El recorte del prompt de sistema ya está en el punto 2a.
 9. **Errores de Garmin como texto.** `call_tool` devuelve "Error al llamar a…" como si fuera el resultado de la tool; las rutas que hacen `json.loads` lo ven como "sin datos". Comprobar ruta por ruta y decir "Garmin no responde" cuando sea eso.
 10. **Precarga de "mi último trail/carrera/bici"** (`chat`): si no hay ninguna de ese deporte entre las 20 últimas, analiza la primera actividad de hoy, sea del deporte que sea; además usa `"_prefetch_sport_id" in dir()`. Unas 360 líneas casi sin tests: sacarla a una función probada al dividir el fichero (punto 7).
-11. **Tests de lo que más pesa y menos se prueba:** lectores de `activity_details` en `load_metrics` (muestras de FC y de marcha, que alimentan el TSS; módulo al 70 %) y `agent/mcp/client.py` (54 %), con fixtures pequeñas y anonimizadas sacadas de `fixtures/real_payloads`.
 
 ## Descartado
 

@@ -205,3 +205,69 @@ async def test_call_tool_returns_error_text_on_protocol_error():
 
     out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
     assert out == "Error al llamar a 'get_user_profile': Request timed out"
+
+
+# ─── Errores de Garmin, avisos de transparencia y cierre (28/10) ─────────────
+
+def test_classify_mcp_error_text_kinds_and_retry_after():
+    c = mcp_client._classify_mcp_error_text
+    assert c("Rate limited (429), Retry-After: 30") == {"kind": "rate_limit", "http_code": "429", "retry_after_seconds": "30"}
+    assert c("HTTP 403 Forbidden")["kind"] == "auth_or_session"
+    assert c("Login failed: all login strategies exhausted")["kind"] == "auth_or_session"
+    assert c("HTTP 403 forbidden, too many requests")["kind"] == "mixed_auth_and_rate_limit"
+    assert c("timeout leyendo la respuesta") == {"kind": "unknown", "http_code": "", "retry_after_seconds": ""}
+
+
+@pytest.mark.asyncio
+async def test_tool_error_is_recorded_for_the_reply_and_consumed_once():
+    class FakeSession:
+        async def call_tool(self, _name: str, _arguments: dict):
+            return SimpleNamespace(content=[SimpleNamespace(text="HTTP 429 Too Many Requests")], isError=True)
+
+    mcp_client.reset_tool_transparency_events()
+    out = await mcp_client.call_tool(FakeSession(), "get_user_profile", {})
+    assert out == "HTTP 429 Too Many Requests"  # el texto del error llega igual al llamador
+    events = mcp_client.consume_tool_transparency_events()
+    assert [(e["tool"], e["mode"]) for e in events] == [("get_user_profile", "mcp_error")]
+    assert events[0]["reason"] == "kind=rate_limit;http=429;retry_after="
+    assert mcp_client.consume_tool_transparency_events() == []  # se vacía al leerlo
+
+
+@pytest.mark.asyncio
+async def test_call_tool_without_content_says_no_data():
+    class FakeSession:
+        async def call_tool(self, _name: str, _arguments: dict):
+            return SimpleNamespace(content=[])
+
+    assert await mcp_client.call_tool(FakeSession(), "get_user_profile", {}) == "Sin datos disponibles."
+
+
+def test_benign_shutdown_errors_only_when_all_are_benign():
+    import anyio
+
+    benign = mcp_client._is_benign_mcp_shutdown_error
+    assert benign(BaseExceptionGroup("cierre", [anyio.ClosedResourceError(), anyio.BrokenResourceError()]))
+    assert benign(RuntimeError("Attempted to exit cancel scope in a different task than it was entered in"))
+    assert not benign(BaseExceptionGroup("cierre", [anyio.ClosedResourceError(), ValueError("de verdad")]))
+    assert not benign(OSError("pipe rota en mitad de una llamada"))
+
+
+@pytest.mark.asyncio
+async def test_list_available_tools_maps_schema():
+    tool = SimpleNamespace(name="get_stats", description="Resumen diario", inputSchema={"type": "object"})
+
+    class FakeSession:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[tool])
+
+    assert await mcp_client.list_available_tools(FakeSession()) == [
+        {"name": "get_stats", "description": "Resumen diario", "input_schema": {"type": "object"}}
+    ]
+
+
+def test_server_params_use_zscaler_certificate_when_present(garmin_creds, monkeypatch, tmp_path):
+    (tmp_path / "zscaler-ca.pem").write_text("cert", encoding="utf-8")
+    monkeypatch.setattr(mcp_client, "PROJECT_ROOT", tmp_path)
+    env = mcp_client._get_server_params().env
+    pem = str(tmp_path / "zscaler-ca.pem")
+    assert env["REQUESTS_CA_BUNDLE"] == env["CURL_CA_BUNDLE"] == env["SSL_CERT_FILE"] == pem

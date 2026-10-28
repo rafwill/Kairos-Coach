@@ -6,6 +6,16 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, cobertura, lint ampliado y tiempos de `agent.log`); de ella salen los tres cambios siguientes. Lo que queda, en `docs/proximos_pasos.md` (Pendiente E).
 
+### Tests (lectores de activity_details y cliente MCP; pendiente 11)
+- Fixture `tests/fixtures/activity_details_trail.json`: trail real de 5 h (30/08) anonimizado (sin latitud, longitud, trazado ni identificadores; tiempo desplazado al 01/01/2026; elevación relativa), en el formato de `get_activity_details`. Con ella, `_estimate_hr_tss_tp_zones` da 228.511, el TSS guardado en `activity_tss` para esa actividad (trail:tp_zones, umbral TP 166): golden de producción del modelo de trail y bici sin potencia.
+- Tests de `_extract_hr_samples_from_activity_details`, `_extract_walk_samples_from_activity_details` y `_estimate_hr_tss_from_activity_details_lthr` sobre la fixture, y del cliente MCP (clasificación de errores de Garmin, avisos de transparencia, cierre benigno, listado de tools, certificado de Zscaler). Cobertura: `load_metrics` 70 % → 76 %, `agent/mcp/client.py` 51 % → 95 %. Tests: 789.
+
+### Fixed (reloj de las muestras sin directTimestamp)
+- Señal (al escribir los tests): sin `directTimestamp`, el lector de FC tomaba `sumDuration` y lo dividía por el `factor` 1000 de su descriptor, pero el valor ya viene en segundos (18.045 s en un trail de 5 h): las 1.793 muestras quedaban en 19, dentro de 18 s, y el hrTSS salía None. Además prefería `sumDuration` (cronómetro sin pausas) a `sumElapsedDuration` (con pausas, como el timestamp).
+- Qué se hizo: sin dividir por el factor y con `sumElapsedDuration` antes que `sumDuration`, también en el lector de marcha.
+- Criterio fijado antes: con `directTimestamp` (los 9 payloads reales lo traen en todas sus filas), salida idéntica en los 17 ficheros de `fixtures/real_payloads` (muestras de FC y de marcha, hrTSS de TP y de LTHR); sin él, el mismo TSS que con él. Resultado: idéntica, y 228.511 en los dos casos. Ningún TSS guardado cambia.
+- Lección: el "factor" de los descriptores de Garmin no es una conversión para el valor bruto; comprobar las unidades con datos reales antes de aplicarlo.
+
 ### Fixed (ningún error de una pregunta cierra Kairos)
 - Señal: la capa de coaching y el reintento de los sensores solo capturaban `RuntimeError`, `ValueError`, `OSError`…; las excepciones de `openai` (`APIConnectionError`, `RateLimitError` 429, `InternalServerError` 503) no lo son, y el bucle de la CLI tampoco las capturaba: un 503 del proveedor durante una ruta mixta (sueño, carga, estado del día) cerraba Kairos. Comprobado simulando las tres. Igual con `McpError` en `call_tool` y con cualquier fallo de programación (`AttributeError`, `IndexError`).
 - Qué se hizo: las dos capas capturan `openai.APIError` (queda el bloque determinista o el texto con su aviso); `call_tool` devuelve `McpError` como texto de error, como el resto; el bucle de la CLI captura `Exception`, lo deja en `agent.log` con su traza y sigue.

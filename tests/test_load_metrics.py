@@ -4,6 +4,7 @@ duración de actividad, modelo metabólico de caminar/senderismo y etiquetado de
 
 import json
 from datetime import date, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -2154,3 +2155,65 @@ def test_hr_zones_read_garmin_concatenated_objects():
     zones = lm._parse_hr_zones_list(raw)
     assert zones is not None
     assert [round(z["secsInZone"], 3) for z in zones] == [9.001, 10.017, 927.974, 672.851]
+
+
+# ─── Lectores de activity_details con datos reales (28/10) ──────────────────
+# tests/fixtures/activity_details_trail.json: trail real de 5 h anonimizado (ver su "_nota"). Las cifras salen de
+# ejecutar el código; 228.511 es además el TSS guardado en activity_tss para esa actividad (trail:tp_zones).
+
+_TRAIL_FIXTURE = Path(__file__).parent / "fixtures" / "activity_details_trail.json"
+_TRAIL_HOURS = 18045.02 / 3600  # duration del resumen de Garmin
+
+
+def _trail_details(drop: tuple[str, ...] = ()) -> dict:
+    data = json.loads(_TRAIL_FIXTURE.read_text(encoding="utf-8"))
+    data["metricDescriptors"] = [d for d in data["metricDescriptors"] if d["key"] not in drop]
+    return data
+
+
+class TestActivityDetailsReaders:
+    def test_trail_tp_zones_matches_production(self):
+        tss = lm._estimate_hr_tss_tp_zones({}, hours=_TRAIL_HOURS, activity_details_raw=json.dumps(_trail_details()),
+                                           hr_threshold_bpm=166)
+        assert round(tss, 3) == 228.511
+
+    def test_hr_samples_real_format(self):
+        samples = lm._extract_hr_samples_from_activity_details(_trail_details(), 0.0)
+        assert len(samples) == 1793
+        assert samples[0] == (0.0, 70.0) and samples[-1] == (21254.0, 146.0)  # reloj con pausas, como el timestamp
+        assert all(b[0] > a[0] for a, b in zip(samples, samples[1:]))
+        assert all(30 <= hr <= 235 for _, hr in samples)
+
+    def test_without_timestamp_uses_elapsed_seconds(self):
+        # Antes se dividía sumDuration por el "factor" 1000 del descriptor: 19 muestras en 18 s y hrTSS None.
+        samples = lm._extract_hr_samples_from_activity_details(_trail_details(drop=("directTimestamp",)), 0.0)
+        assert len(samples) == 1793 and samples[-1][0] > 21_000
+        tss = lm._estimate_hr_tss_tp_zones({}, hours=_TRAIL_HOURS, activity_details_raw=_trail_details(drop=("directTimestamp",)),
+                                           hr_threshold_bpm=166)
+        assert round(tss, 3) == 228.511
+
+    def test_walk_samples_real_format(self):
+        samples = lm._extract_walk_samples_from_activity_details(_trail_details())
+        assert len(samples) == 1793
+        assert samples[0] == (0.0, 1.157, 30.4, 0.0)
+        assert samples[-1] == (21254.0, 3.163, 32.6, 29007.211)  # metros: el "factor" 100 tampoco se aplica
+        assert min(s[2] for s in samples) == 0.0  # elevación relativa en la fixture
+        # Sin velocidad no hay muestras de marcha.
+        assert lm._extract_walk_samples_from_activity_details(_trail_details(drop=("directSpeed",))) == []
+
+    def test_lthr_stream_tss_and_coverage_gate(self):
+        raw = json.dumps(_trail_details())
+        tss = lm._estimate_hr_tss_from_activity_details_lthr({}, hours=_TRAIL_HOURS, activity_details_raw=raw,
+                                                             hr_threshold_bpm=169, hr_rest_bpm=48,
+                                                             attenuate_sustained_low_if=True)
+        assert round(tss, 3) == 210.166
+        # Si las muestras cubren menos de lo pedido, no hay TSS (cae al siguiente modelo).
+        assert lm._estimate_hr_tss_from_activity_details_lthr({}, hours=_TRAIL_HOURS, activity_details_raw=raw,
+                                                              hr_threshold_bpm=169, min_coverage_ratio=1.5) is None
+        assert lm._estimate_hr_tss_from_activity_details_lthr({}, hours=1, activity_details_raw=None,
+                                                              hr_threshold_bpm=169) is None
+
+    def test_readers_ignore_payloads_without_metrics(self):
+        for raw in ("no es json", "{}", json.dumps({"metricDescriptors": [], "activityDetailMetrics": []})):
+            assert lm._extract_hr_samples_from_activity_details(raw, 3600) == []
+            assert lm._extract_walk_samples_from_activity_details(raw) == []
