@@ -132,6 +132,7 @@ from agent.storage import (
     update_login_password,
     update_user_credentials,
 )
+from agent.routes.load import _build_load_trend_table
 from agent.daily_engine import _session_intensity_label
 from agent.data_access import _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile
 from agent.llm import probe_llm_key
@@ -1091,9 +1092,7 @@ def _create_training_plan_cli(agent: TrainerAgent) -> None:
 
 def _show_load_trend_cli(agent: "TrainerAgent", cmd: str = "/carga") -> None:
     """Muestra la tabla de tendencia de carga/fatiga (semanal o mensual)."""
-    from agent.trainer_agent import (
-        _build_load_trend_table,
-    )
+    pass
 
     parts = cmd.strip().lower().split()
     mode = "months" if len(parts) > 1 and parts[1] in {"meses", "mensual", "months", "month"} else "weeks"

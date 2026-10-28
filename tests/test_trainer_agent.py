@@ -22,44 +22,9 @@ import agent.trainer_agent as ta
 from agent.load_metrics import _extract_threshold_pace_sec_per_km
 
 from agent.trainer_agent import (
-    _build_mcp_error_warning_markdown,
-    _build_mcp_transparency_markdown,
-    _build_goal_status_markdown,
-    _build_personal_records_markdown,
-    _build_activity_candidates_payload,
-    _build_proactive_status_markdown,
-    _build_post_activity_section_spec,
-    _format_activity_analysis_for_markdown,
-    _build_load_trend_table,
-    _format_load_fatigue_summary,
-    _build_recovery_fallback_snapshot,
-    _fetch_activities_for_load_calc,
     _resolve_running_threshold_pace_sec_per_km,
     _resolve_hr_profile_values,
-    _detect_personal_records_sport_intent,
-    _is_coaching_recommendation_intent,
     _strip_simulated_user_turn,
-    _is_personal_records_intent,
-    _is_generic_needs_more_info_reply,
-    _is_personal_records_followup_intent,
-    _is_plan_status_intent,
-    _is_goal_status_intent,
-    _is_daily_readiness_intent,
-    _is_hr_threshold_query_intent,
-    _is_mcp_factual_query_intent,
-    _is_activity_details_query_intent,
-    _is_today_load_status_intent,
-    _is_running_threshold_query_intent,
-    _is_config_options_intent,
-    _is_week_tss_intent,
-    _is_week_tss_followup_intent,
-    _is_week_activities_intent,
-    _is_load_trend_intent,
-    _is_planning_intent,
-    _resolve_week_window,
-    _resolve_load_parameters_effective_date,
-    _resolve_activity_id_from_query,
-    _normalize_get_activity_args,
     TrainerAgent,
 )
 from tests.agent_patch import patch_all, patch_everywhere
@@ -81,6 +46,21 @@ import agent.kairos_tools as _kairos_tools
 import agent.daily_engine as _daily_engine
 from agent.daily_engine import _build_startup_plan_recommendation, _compute_daily_plan_adjustment, _compute_plan_execution_feedback, _get_active_training_plan, _get_planned_session_for_date
 from agent.plans import _build_goal_plan_fallback, _build_training_plan_status_markdown, _generate_structured_plan_payload, _has_goal_in_profile, _summarize_plan_changes, _validate_structured_plan
+import agent.routes.load as _routes_load
+from agent.routes.load import _build_load_trend_table, _fetch_activities_for_load_calc, _format_load_fatigue_summary, _resolve_load_parameters_effective_date, _resolve_week_window
+from agent.routes.records import _build_personal_records_markdown
+from agent.routes.profile import _build_goal_status_markdown
+import agent.routes.period as _routes_period
+import agent.routes.sleep as _routes_sleep
+import agent.activity_analysis as _activity_analysis
+from agent.activity_analysis import _build_activity_candidates_payload, _build_post_activity_section_spec, _format_activity_analysis_for_markdown, _normalize_get_activity_args, _resolve_activity_id_from_query
+from agent.startup_status import _build_proactive_status_markdown
+from agent.replies import _build_mcp_error_warning_markdown, _build_mcp_transparency_markdown, _is_generic_needs_more_info_reply
+import agent.router as _router
+from agent.router import ToolRouter, _detect_personal_records_sport_intent, _is_activity_details_query_intent, _is_coaching_recommendation_intent, _is_config_options_intent, _is_daily_readiness_intent, _is_goal_status_intent, _is_hr_threshold_query_intent, _is_load_trend_intent, _is_mcp_factual_query_intent, _is_personal_records_followup_intent, _is_personal_records_intent, _is_plan_status_intent, _is_planning_intent, _is_running_threshold_query_intent, _is_today_load_status_intent, _is_week_activities_intent, _is_week_tss_followup_intent, _is_week_tss_intent
+import agent.routes.day_data as _routes_day_data
+from agent.routes.day_data import _build_recovery_fallback_snapshot
+import agent.coaching as _coaching
 
 
 # ─── _seconds_to_hhmmss ───────────────────────────────────────────────────────
@@ -475,23 +455,23 @@ class TestCoachingHorizon:
         patch_everywhere(monkeypatch, "date", FixedDate)
 
     def test_next_week_is_not_this_week(self):
-        out = ta._coaching_horizon("¿Y la semana que viene qué me recomiendas?")
+        out = _coaching._coaching_horizon("¿Y la semana que viene qué me recomiendas?")
         assert out.startswith("PRÓXIMA SEMANA: del lunes 26/10 al domingo 01/11")
-        assert ta._coaching_horizon("¿Qué hago la próxima semana?").startswith("PRÓXIMA SEMANA")
+        assert _coaching._coaching_horizon("¿Qué hago la próxima semana?").startswith("PRÓXIMA SEMANA")
 
     def test_this_week_lists_remaining_days(self):
-        out = ta._coaching_horizon("¿Qué hago esta semana?")
+        out = _coaching._coaching_horizon("¿Qué hago esta semana?")
         assert "sábado 24/10, domingo 25/10" in out and "lunes" not in out
 
     def test_day_after_tomorrow_is_not_tomorrow(self):
-        assert ta._coaching_horizon("¿Qué hago pasado mañana?") == "PASADO MAÑANA (lunes 26/10): la sesión de ese día"
-        assert ta._coaching_horizon("¿Y mañana?") == "MAÑANA (domingo 25/10): la sesión de mañana"
-        assert ta._coaching_horizon("¿Qué me toca?").startswith("HOY")
-        assert ta._coaching_horizon("¿Qué me toca?") == "HOY (sábado 24/10): la sesión de hoy"
+        assert _coaching._coaching_horizon("¿Qué hago pasado mañana?") == "PASADO MAÑANA (lunes 26/10): la sesión de ese día"
+        assert _coaching._coaching_horizon("¿Y mañana?") == "MAÑANA (domingo 25/10): la sesión de mañana"
+        assert _coaching._coaching_horizon("¿Qué me toca?").startswith("HOY")
+        assert _coaching._coaching_horizon("¿Qué me toca?") == "HOY (sábado 24/10): la sesión de hoy"
 
     def test_calendar_gives_the_llm_days_and_dates(self):
         # 24/10/2026 es sábado: el LLM llamaba "mañana" al lunes 26/10 (S27) y ponía días que no tocaban (S28).
-        cal = ta._calendar_block()
+        cal = _coaching._calendar_block()
         assert "- Hoy: sábado 24/10/2026" in cal and "- Ayer: viernes 23/10/2026" in cal
         assert "- Mañana: domingo 25/10/2026" in cal and "- Pasado mañana: lunes 26/10/2026" in cal
         assert "lun 19/10, mar 20/10, mié 21/10, jue 22/10, vie 23/10, sáb 24/10, dom 25/10" in cal
@@ -3751,9 +3731,7 @@ class TestWeekTssDeterministicRoute:
             "content": "## 🧭 Resumen\nEstado de hoy.\n\n## 🧠 Interpretación de coaching\n"
                        "- Si el TSS acumulado del lunes a miércoles supera ~130, reduce.",
         }]
-        from agent.trainer_agent import (
-            ToolRouter,
-        )
+        pass
 
         message = "¿Qué tipo de sesión me recomiendas para esta semana dado mi estado?"
         assert not _is_week_tss_followup_intent(message, history)
@@ -3776,9 +3754,8 @@ class TestWeekTssDeterministicRoute:
         )
 
     def test_tool_router_routes_week_tss_followup_without_tss_word(self):
-        import agent.trainer_agent as ta
 
-        router = ta.ToolRouter()
+        router = _router.ToolRouter()
         history = [
             {
                 "role": "assistant",
@@ -3789,9 +3766,8 @@ class TestWeekTssDeterministicRoute:
         assert route == "week_tss"
 
     def test_tool_router_routes_week_tss_for_comparative_weekly_query(self):
-        import agent.trainer_agent as ta
 
-        router = ta.ToolRouter()
+        router = _router.ToolRouter()
         route = router.route_key(
             "Compárame esta semana vs la semana pasada: TSS total, diferencia porcentual y si hay spike >20%",
             [],
@@ -3800,9 +3776,8 @@ class TestWeekTssDeterministicRoute:
         assert route == "week_tss"
 
     def test_tool_router_routes_week_tss_for_weekly_tss_contribution_query(self):
-        import agent.trainer_agent as ta
 
-        router = ta.ToolRouter()
+        router = _router.ToolRouter()
         route = router.route_key(
             "¿Qué actividades han contribuido al TSS de esta semana? Dame día, actividad y TSS estimado por sesión",
             [],
@@ -3811,9 +3786,8 @@ class TestWeekTssDeterministicRoute:
         assert route == "week_tss"
 
     def test_tool_router_routes_single_day_tss_to_mcp_factual(self):
-        import agent.trainer_agent as ta
 
-        router = ta.ToolRouter()
+        router = _router.ToolRouter()
         route = router.route_key(
             "Dime los TSSs del domingo 20 de septiembre",
             [],
@@ -3827,9 +3801,8 @@ class TestWeekTssDeterministicRoute:
         )
 
     def test_tool_router_routes_load_trend_query(self):
-        import agent.trainer_agent as ta
 
-        router = ta.ToolRouter()
+        router = _router.ToolRouter()
         route = router.route_key(
             "Muéstrame la tendencia de los últimos 14 días de ATL, CTL y TSB, y dime si voy hacia fatiga o disponibilidad",
             [],
@@ -4120,7 +4093,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile)
+        out = await _routes_load._build_current_week_tss_markdown(mcp_session=object(), profile=profile)
 
         assert "| TSS acumulado | 342.9 |" in out
         assert "sábado 15/08: 82.5" in out
@@ -4211,7 +4184,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="Dime los entrenamientos y Tss de la semana del 10 de agosto 2026",
@@ -4272,7 +4245,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="Dime los TSSs de esta semana",
@@ -4318,7 +4291,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="Dime los TSSs de esta semana",
@@ -4365,7 +4338,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="Compárame esta semana vs la semana pasada: TSS total, diferencia porcentual y si hay spike >20%",
@@ -4421,7 +4394,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="Dime los TSS de esta semana y actividades",
@@ -4492,7 +4465,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="cuales fueron mis actividades y TSS de la semana pasada?",
@@ -4557,7 +4530,7 @@ class TestGoalStatusDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="Dime los TSSs de esta semana",
@@ -5129,12 +5102,11 @@ class TestMcpFactualDeterministicRoute:
     def test_trend_questions_go_to_llm_not_single_day_route(self):
         # Caso real (22/10): "¿Cómo ha evolucionado mi HRV en las últimas dos semanas?" iba a la ruta
         # factual de un día y respondía con los datos de hoy. Las tendencias van al LLM (get_hrv_trend…).
-        import agent.trainer_agent as ta
 
-        router = ta.ToolRouter()
+        router = _router.ToolRouter()
         for q in ("¿Cómo ha evolucionado mi HRV en las últimas dos semanas?", "¿Cómo ha ido mi HRV este mes?",
                   "Evolución de mi FC en reposo este mes"):
-            assert not ta._is_mcp_factual_query_intent(q), q
+            assert not _router._is_mcp_factual_query_intent(q), q
             assert router.route_key(q, [], {}) is None, q
         for q in ("¿Cómo está mi HRV hoy?", "¿Qué HRV tuve ayer?", "¿Cuál fue mi FC en reposo ayer?"):
             assert router.route_key(q, [], {}) == "mcp_factual", q
@@ -5159,9 +5131,8 @@ class TestMcpFactualDeterministicRoute:
         )
 
     def test_tool_router_routes_today_load_status_query(self):
-        import agent.trainer_agent as ta
 
-        router = ta.ToolRouter()
+        router = _router.ToolRouter()
         route = router.route_key(
             "Dame mi estado de carga/fatiga de hoy con TSS, ATL, CTL y TSB, e indica la regla aplicada",
             [],
@@ -5287,7 +5258,6 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_build_mcp_factual_query_markdown_resolves_last_trail_activity_without_explicit_date(self):
-        import agent.trainer_agent as ta
 
         async def _fake_call_tool(_session, tool_name, args):
             if tool_name == "get_activities":
@@ -5334,7 +5304,7 @@ class TestMcpFactualDeterministicRoute:
         stored = {123: {"activity_id": 123, "start_date": "2026-08-30", "tss": 140.0, "method": "hrTSS"}}
         with patch_all("call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
-            out = await ta._build_mcp_factual_query_markdown(
+            out = await _routes_day_data._build_mcp_factual_query_markdown(
                 mcp_session=object(),
                 profile={"load_metrics": {"series": []}},
                 user_message="Analiza mi ultima actividad de trail",
@@ -5406,7 +5376,7 @@ class TestMcpFactualDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="cuanto tss hice esta semana?",
@@ -5455,7 +5425,7 @@ class TestMcpFactualDeterministicRoute:
             ]
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
-        out = await ta._build_current_week_tss_markdown(mcp_session=object(), profile=profile, user_message="cuanto tss hice esta semana?")
+        out = await _routes_load._build_current_week_tss_markdown(mcp_session=object(), profile=profile, user_message="cuanto tss hice esta semana?")
         assert "rTSS: 50.0" in out
         assert "hrTSS: 30.0" in out
         assert "TSS (potencia o metabólico): 160.0" in out
@@ -5498,7 +5468,7 @@ class TestMcpFactualDeterministicRoute:
 
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_current_week_tss_markdown(
+        out = await _routes_load._build_current_week_tss_markdown(
             mcp_session=object(),
             profile=profile,
             user_message="cuanto tss hice esta semana?",
@@ -5623,7 +5593,6 @@ class TestMcpFactualDeterministicRoute:
 
     @pytest.mark.asyncio
     async def test_build_mcp_factual_query_markdown_falls_back_to_activity_tss_when_series_is_zero(self):
-        import agent.trainer_agent as ta
 
         target_iso = "2026-08-17"
 
@@ -5655,7 +5624,7 @@ class TestMcpFactualDeterministicRoute:
         with patch_all("call_tool", _fake_call_tool), patch_all(
             "_resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
         ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
-            out = await ta._build_mcp_factual_query_markdown(
+            out = await _routes_day_data._build_mcp_factual_query_markdown(
                 mcp_session=object(),
                 profile=profile,
                 user_message="Cuales son los TSS de la actividad del 17/08/26?",
@@ -5669,7 +5638,6 @@ class TestMcpFactualDeterministicRoute:
     @pytest.mark.asyncio
     async def test_daily_tss_comes_from_kairos_not_garmin_trend(self):
         # Antes: "TSS del día" se tomaba primero de get_training_load_trend (carga nativa de Garmin).
-        import agent.trainer_agent as ta
 
         target_iso = "2026-10-18"
 
@@ -5682,7 +5650,7 @@ class TestMcpFactualDeterministicRoute:
         with patch_all("_load_metrics_series", return_value=[{"date": target_iso, "tss": 62.3}]),                 patch_all("call_tool", _fake_call_tool), patch_all(
             "_resolve_target_date_from_message", return_value=date.fromisoformat(target_iso)
         ), patch("agent.trainer_agent._storage.get_activity_tss_map", return_value={}):
-            out = await ta._build_mcp_factual_query_markdown(
+            out = await _routes_day_data._build_mcp_factual_query_markdown(
                 mcp_session=object(), profile=profile, user_message="¿Qué hice el 18/10?"
             )
 
@@ -5875,7 +5843,7 @@ class TestMcpTransparencyAndLatencyRegression:
         monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_week_activities_markdown(object(), "¿Qué actividades hice esta semana?")
+        out = await _routes_load._build_week_activities_markdown(object(), "¿Qué actividades hice esta semana?")
         assert "Actividades detectadas | 1" in out
 
     @pytest.mark.asyncio
@@ -5921,7 +5889,7 @@ class TestMcpTransparencyAndLatencyRegression:
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
         monkeypatch.setattr(ta._storage, "get_load_metrics_series", lambda days=120: profile["load_metrics"]["series"])
 
-        out = await ta._build_current_week_tss_markdown(object(), profile, "¿Cuánto TSS hice esta semana?")
+        out = await _routes_load._build_current_week_tss_markdown(object(), profile, "¿Cuánto TSS hice esta semana?")
         assert "TSS acumulado" in out
         assert "Actividades:" in out
 
@@ -5960,7 +5928,7 @@ class TestMcpTransparencyAndLatencyRegression:
         monkeypatch.setattr(ta.asyncio, "wait_for", _boom_wait_for)
         patch_everywhere(monkeypatch, "call_tool", _fake_call_tool)
 
-        out = await ta._build_mcp_factual_query_markdown(
+        out = await _routes_day_data._build_mcp_factual_query_markdown(
             object(),
             {"load_metrics": {"series": []}},
             "Analiza mi última actividad",
@@ -5974,21 +5942,18 @@ class TestRecentTssBySportRoute:
     )
 
     def test_original_question_routes_to_recent_tss_with_three_sports(self):
-        import agent.trainer_agent as ta
 
-        assert ta.ToolRouter().route_key(self.QUESTION, [], {}) == "recent_tss_by_sport"
-        sports, n = ta._parse_recent_tss_sports_request(self.QUESTION)
+        assert _router.ToolRouter().route_key(self.QUESTION, [], {}) == "recent_tss_by_sport"
+        sports, n = _routes_load._parse_recent_tss_sports_request(self.QUESTION)
         assert set(sports) == {"trail", "strength", "running"}
         assert n == 20
 
     def test_single_sport_activities_phrasing_still_routes(self):
-        import agent.trainer_agent as ta
 
-        assert ta.ToolRouter().route_key("TSS de mis 10 últimas actividades de trail", [], {}) == "recent_tss_by_sport"
+        assert _router.ToolRouter().route_key("TSS de mis 10 últimas actividades de trail", [], {}) == "recent_tss_by_sport"
 
     @pytest.mark.asyncio
     async def test_lists_stored_tss_with_garmin_load_apart(self):
-        import agent.trainer_agent as ta
 
         activities = [
             {"activityId": 1, "activityName": "Rodaje", "activityType": "running", "startTimeLocal": "2026-10-18 08:00:00", "activityTrainingLoad": 256.2},
@@ -6012,7 +5977,7 @@ class TestRecentTssBySportRoute:
         with patch_all("call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored), \
              patch_all("_estimate_session_tss") as estimate_mock:
-            out = await ta._build_recent_tss_by_sport_markdown(object(), self.QUESTION)
+            out = await _routes_load._build_recent_tss_by_sport_markdown(object(), self.QUESTION)
 
         estimate_mock.assert_not_called()
         assert "| Fecha | Deporte | Actividad | TSS | Carga Garmin |" in out
@@ -6029,7 +5994,6 @@ class TestRecentTssBySportRoute:
     async def test_power_ride_shows_garmin_load_not_garmin_tss(self):
         # Caso real (juez, 22/10): con potenciómetro Garmin envía también su TSS
         # (trainingStressScore) y salía en "Carga Garmin" en lugar de activityTrainingLoad.
-        import agent.trainer_agent as ta
 
         activities = [{
             "activityId": 7, "activityName": "Road. Un poquito de CDC", "activityType": "road_biking",
@@ -6042,7 +6006,7 @@ class TestRecentTssBySportRoute:
 
         with patch_all("call_tool", _fake_call_tool), \
              patch("agent.trainer_agent._storage.get_activity_tss_map", return_value=stored):
-            out = await ta._build_recent_tss_by_sport_markdown(object(), "¿Dime los TSS de mis 20 ultimas actividades de Ciclismo?")
+            out = await _routes_load._build_recent_tss_by_sport_markdown(object(), "¿Dime los TSS de mis 20 ultimas actividades de Ciclismo?")
 
         assert "| 28/07/2026 | ciclismo | Road. Un poquito de CDC | 102.4 | 257.0 |" in out
         assert "101.3" not in out
@@ -6370,8 +6334,8 @@ class TestStructuredPlanEngine:
                "¿Puedo hacer cuestas hoy o mejor descanso?"]
         no = ["¿Cómo fue mi entreno de hoy?", "Analiza la carrera de hoy", "¿Qué hice hoy?",
               "¿Me conviene descansar mañana?", "¿Cuántos pasos llevo hoy?"]
-        assert [q for q in yes if not ta._is_today_training_question(q)] == []
-        assert [q for q in no if ta._is_today_training_question(q)] == []
+        assert [q for q in yes if not _router._is_today_training_question(q)] == []
+        assert [q for q in no if _router._is_today_training_question(q)] == []
 
     @pytest.mark.asyncio
     async def test_today_frame_for_loop_uses_daily_engine(self, monkeypatch):
@@ -6827,7 +6791,7 @@ class TestPeriodAndSleepRoutes:
     TODAY = date(2026, 10, 25)
 
     def test_resolve_activity_period(self):
-        r = ta._resolve_activity_period
+        r = _routes_period._resolve_activity_period
         assert r("¿Cuántos km este mes?", self.TODAY)[:2] == (date(2026, 10, 1), self.TODAY)
         assert r("¿Y el mes pasado?", self.TODAY)[:2] == (date(2026, 9, 1), date(2026, 9, 30))
         assert r("La más larga de septiembre", self.TODAY)[:2] == (date(2026, 9, 1), date(2026, 9, 30))
@@ -6861,7 +6825,7 @@ class TestPeriodAndSleepRoutes:
 
         patch_everywhere(monkeypatch, "call_tool", fake_call)
         patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
-        out = await ta._build_period_activities_markdown(None, "¿Cuántos kilómetros he corrido en septiembre?")
+        out = await _routes_period._build_period_activities_markdown(None, "¿Cuántos kilómetros he corrido en septiembre?")
         assert calls == [0, 1]
         assert "50.04 km en 2 actividades" in out  # carrera + trail; ni fuerza ni la de octubre
         assert "Fuerza" not in out and "Fuera de rango" not in out
@@ -6874,10 +6838,10 @@ class TestPeriodAndSleepRoutes:
         patch_everywhere(monkeypatch, "call_tool", fake_call)
         patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
         # 28/10: días sin entrenar y horas los sumaba el LLM.
-        out = await ta._build_period_activities_markdown(None, "¿Cuántos días he descansado en septiembre?")
+        out = await _routes_period._build_period_activities_markdown(None, "¿Cuántos días he descansado en septiembre?")
         assert "Días con actividad: 3 de 30; sin actividad: 27." in out
         assert "en 3 actividades (08:06:25)" in out
-        strength = await ta._build_period_activities_markdown(None, "¿Cuántas sesiones de fuerza hice en septiembre?")
+        strength = await _routes_period._build_period_activities_markdown(None, "¿Cuántas sesiones de fuerza hice en septiembre?")
         assert "Fuerza en septiembre de 2026: 1 actividad (01:04:40)." in strength
         assert "| Fuerza | 1 | — | 01:04:40 |" in strength
         assert "Días con actividad: 1 de 30" in strength and "Trail largo" not in strength
@@ -6889,7 +6853,7 @@ class TestPeriodAndSleepRoutes:
 
         patch_everywhere(monkeypatch, "call_tool", fake_call)
         patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
-        out = await ta._build_period_activities_markdown(None, "¿Cuál fue mi actividad más larga de septiembre?")
+        out = await _routes_period._build_period_activities_markdown(None, "¿Cuál fue mi actividad más larga de septiembre?")
         summary = out.split("## 📊")[0]
         assert "Trail largo · 33.52 km" in summary and "Fuera de rango" not in out
 
@@ -6904,17 +6868,17 @@ class TestPeriodAndSleepRoutes:
 
         patch_everywhere(monkeypatch, "call_tool", fake_call)
         patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
-        out = await ta._build_sleep_night_markdown(None)
+        out = await _routes_sleep._build_sleep_night_markdown(None)
         assert "aún no tiene el sueño de anoche" in out
         assert "La noche que terminó el sábado 24/10/2026 dormiste 6 h 49 min, puntuación 74/100" in out
         assert "Media de las 1 noches anteriores: 8 h 00 min" in out
         nights["2026-10-25"] = {"sleepTimeSeconds": 27000, "sleepScore": 85}
-        out = await ta._build_sleep_night_markdown(None)
+        out = await _routes_sleep._build_sleep_night_markdown(None)
         assert out.count("Anoche (noche que termina el domingo 25/10/2026) dormiste 7 h 30 min") == 1
         assert "aún no tiene" not in out
 
     def test_resolve_sleep_night_and_window(self):
-        r = ta._resolve_sleep_night
+        r = _routes_sleep._resolve_sleep_night
         assert r("¿Cómo dormí anoche?", self.TODAY) == self.TODAY
         assert r("¿Qué tal dormí ayer?", self.TODAY) == date(2026, 10, 24)
         assert r("¿Y anteayer?  sueño", self.TODAY) == date(2026, 10, 23)
@@ -6924,7 +6888,7 @@ class TestPeriodAndSleepRoutes:
         assert r("¿Cómo dormí el 30/12?", self.TODAY) == date(2025, 12, 30)  # sin año, nunca futura
         assert r("¿Cómo he dormido últimamente?", self.TODAY) is None
         assert r("Dormí mal, ¿puedo entrenar?", self.TODAY) is None
-        w = ta._resolve_sleep_window
+        w = _routes_sleep._resolve_sleep_window
         assert w("¿Cómo he dormido últimamente?") == 7
         assert w("¿Cómo he dormido las últimas 10 noches?") == 10
         assert w("Tendencia de mi sueño en las últimas semanas") == 14
@@ -6938,7 +6902,7 @@ class TestPeriodAndSleepRoutes:
 
         patch_everywhere(monkeypatch, "call_tool", fake_call)
         patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
-        out = await ta._build_sleep_night_markdown(None, date(2026, 10, 20))
+        out = await _routes_sleep._build_sleep_night_markdown(None, date(2026, 10, 20))
         assert "no tiene sueño registrado de la noche que termina el martes 20/10/2026" in out
 
     @pytest.mark.asyncio
@@ -6957,7 +6921,7 @@ class TestPeriodAndSleepRoutes:
 
         patch_everywhere(monkeypatch, "call_tool", fake_call)
         patch_everywhere(monkeypatch, "date", type("D", (date,), {"today": classmethod(lambda cls: self.TODAY)}))
-        out = await ta._build_sleep_trend_markdown(None, 7)
+        out = await _routes_sleep._build_sleep_trend_markdown(None, 7)
         # 6 noches con datos: 5 de 7 h y 1 de 5 h → 6 h 40 min; frente a 8 h → −80 min y −15 puntos.
         assert "media 6 h 40 min, puntuación 70/100; 1 por debajo de 6 h. Sin datos en 1 noche(s)." in out
         assert "-80 min de sueño y -15 puntos" in out
@@ -6987,28 +6951,28 @@ class TestResolveLastActivity:
     @pytest.mark.asyncio
     async def test_finds_latest_of_requested_sport(self, monkeypatch):
         self._garmin(monkeypatch, self.ACTS)
-        assert await ta._resolve_last_activity(None, "¿Qué tal fue mi último trail?") == ("2026-10-09", 10)
+        assert await _activity_analysis._resolve_last_activity(None, "¿Qué tal fue mi último trail?") == ("2026-10-09", 10)
         # road_biking también es bici (el filtro anterior solo miraba "cycl").
-        assert await ta._resolve_last_activity(None, "Analiza mi última salida en bici") == ("2026-10-25", 20)
-        assert await ta._resolve_last_activity(None, "Analiza mi última actividad") == ("2026-10-27", 30)
+        assert await _activity_analysis._resolve_last_activity(None, "Analiza mi última salida en bici") == ("2026-10-25", 20)
+        assert await _activity_analysis._resolve_last_activity(None, "Analiza mi última actividad") == ("2026-10-27", 30)
 
     @pytest.mark.asyncio
     async def test_no_activity_of_that_sport_means_no_prefetch(self, monkeypatch):
         # Antes analizaba la primera actividad de hoy, fuera del deporte que fuera.
         self._garmin(monkeypatch, self.ACTS[:2])
-        assert await ta._resolve_last_activity(None, "¿Cómo fue mi último trail?") == (None, None)
+        assert await _activity_analysis._resolve_last_activity(None, "¿Cómo fue mi último trail?") == (None, None)
 
     @pytest.mark.asyncio
     async def test_without_garmin_uses_last_day_with_load(self, monkeypatch):
         self._garmin(monkeypatch, fail=True)
         patch_everywhere(monkeypatch, "_load_metrics_series", lambda: [
             {"date": "2026-10-26", "tss": 55.0}, {"date": "2026-10-27", "tss": 0.0, "activities_count": 0}])
-        assert await ta._resolve_last_activity(None, "Feedback de mi último entreno") == ("2026-10-26", None)
+        assert await _activity_analysis._resolve_last_activity(None, "Feedback de mi último entreno") == ("2026-10-26", None)
 
     @pytest.mark.asyncio
     async def test_other_questions_do_not_prefetch(self, monkeypatch):
         self._garmin(monkeypatch, self.ACTS)
-        assert await ta._resolve_last_activity(None, "¿Cuál es mi FC umbral?") == (None, None)
+        assert await _activity_analysis._resolve_last_activity(None, "¿Cuál es mi FC umbral?") == (None, None)
 
 
 class TestReadCacheLifetime:

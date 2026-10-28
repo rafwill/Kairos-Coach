@@ -36,6 +36,7 @@ from agent import trainer_agent as ta  # noqa: E402
 import agent.data_access as _data_access
 import agent.garmin_data as _garmin_data
 import agent.hr_profile as _hr_profile
+import agent.load_metrics as _load_metrics
 
 TOL = 0.1          # TSS, CTL, ATL, TSB (se muestran con un decimal)
 TOL_BPM = sensors.TOL_BPM        # rangos de FC (definidas en agent/sensors.py)
@@ -150,7 +151,7 @@ class Truth:
         return round(sum(float(a["tss"] or 0) for a in self.acts if str(a["start_date"]) == d_iso), 1)
 
     def family(self, sport_key: str) -> str | None:
-        if ta._is_trail_activity(sport_key):
+        if _load_metrics._is_trail_activity(sport_key):
             return "trail"
         if ta._is_running_non_trail_activity(sport_key):
             return "running"
