@@ -10,10 +10,9 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 28/10/2026** (ordenador 1). 811 tests; batería 25/25; batería del bucle 10/10.
+**Sesión del 28/10/2026** (ordenador 1). 811 tests; batería 25/25; batería del bucle 10/10. Lo hecho, en `CHANGELOG.md` (28/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull`.
 
-- Hecho: ordenador 1 alineado con el historial reescrito; ticket de GitHub Support **4918285** abierto (purga de los 80 commits viejos, de `eeee21b` a `716cd0c`; cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API); revisión completa del proyecto y todos sus puntos (CHANGELOG del 28/10): errores del proveedor, G15, totales y récords, avisos de Garmin, precarga de "mi último trail", rendimiento (caché de Supabase, arranque en paralelo y con `openai`/`mcp` en un hilo, bucle con `get_rhr_trend`, `get_stress_trend` y `kairos_load_trends` sin poda), regla del juez para la respuesta de tope del bucle y `trainer_agent.py` y sus tests divididos en módulos (mapa en `docs/arquitectura.md`). Último commit: "test: tests/test_trainer_agent.py dividido…". En el ordenador 2, al empezar: `git pull`.
-- **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1 y 2, con las preguntas mal enrutadas al banco de frases y las cifras inventadas que aparezcan (punto 1). Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
+- **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1 y 2. Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
 ## Pendiente
 
@@ -27,7 +26,7 @@ Se reescribe al final de cada sesión.
 
 ### B. Chat y LLM
 
-2. **Metatooling, siguientes pasos** (grupos de tools hechos el 26/10: −22 % de tokens por llamada, mismas respuestas). Si hace falta más: (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
+2. **Metatooling, si hace falta más** (los grupos de tools ya están; CHANGELOG del 26/10): (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 
@@ -41,11 +40,11 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 6. **Peso con báscula.** Kairos toma el peso al arrancar de la configuración de usuario de Garmin (`get_user_profile`, `userData.weight`) y solo si falta, del registro de hoy de `get_body_composition` (`fetch_garmin_personal_data`). Comprobado el 28/10 en vivo: al cambiarlo en la configuración, Garmin guarda también un registro con fecha de hoy y las dos fuentes coinciden (65,0 kg). Sin comprobar: si un pesaje de báscula actualiza también la configuración. Si un atleta usa báscula y `/perfil` no refleja su último pesaje, invertir el orden: primero el último registro de `get_body_composition` (rango reciente, no solo hoy) y la configuración como respaldo. El peso no se edita en `/perfil editar salud`: Garmin manda y el arranque lo sobrescribiría.
 
-### E. Revisión del 28/10 (estructura y rendimiento)
+7. **Arranque del servidor MCP** (2,6–3,8 s: es otro proceso, que importa `garminconnect` y FastMCP, la API de servidor del SDK oficial `mcp`, no el paquete aparte `fastmcp`). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
 
-De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15, los totales del periodo, los puntos 9 a 11 y el rendimiento (CHANGELOG).
+### E. Fuera de nuestras manos
 
-7. **Arranque del servidor MCP** (2,6–3,8 s, otro proceso que importa `garminconnect` y FastMCP, la API de servidor del SDK oficial `mcp` (no el paquete aparte `fastmcp`); lo demás del rendimiento, hecho el 28/10: CHANGELOG). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
+8. **Ticket de GitHub Support 4918285** (abierto el 28/10): purga de las vistas en caché de los 80 commits viejos, de `eeee21b` a `716cd0c`. Cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API.
 
 ## Descartado
 
