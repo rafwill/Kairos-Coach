@@ -71,6 +71,17 @@ from agent.coaching import (
 
 log = logging.getLogger(__name__)
 
+# Respuestas fijas cuando el bucle no llega a responder (28/10, pendiente 8b): el juez de la batería las cuenta como
+# fallo (las de Kairos) o como fallo de entorno (las del proveedor), en vez de darlas por buenas.
+MAX_ITERATIONS_REPLY = ("[Lo siento, la consulta requirió demasiadas llamadas a herramientas. Por favor, reformula tu "
+                        "pregunta de forma más concreta.]")
+REQUEST_TOO_LARGE_TEXT = "La consulta es demasiado extensa para el modelo actual"
+PROVIDER_FAILURE_TEXTS = (
+    "La consulta ha excedido el tiempo máximo de respuesta del modelo",
+    "ha llegado a su fin de vida y ya no está disponible",
+    "El proveedor del modelo rechazó la petición",
+)
+
 
 class ToolLoopMixin:
     """La pregunta que no tiene ruta determinista."""
@@ -100,7 +111,7 @@ class ToolLoopMixin:
             iteration += 1
             if iteration > _MAX_TOOL_ITER:
                 log.debug(f"Límite de {_MAX_TOOL_ITER} iteraciones de herramientas alcanzado. Abortando.")
-                assistant_reply = "[Lo siento, la consulta requirió demasiadas llamadas a herramientas. Por favor, reformula tu pregunta de forma más concreta.]"
+                assistant_reply = MAX_ITERATIONS_REPLY
                 return await self._finalize_chat_reply(user_message, assistant_reply, route="max_tool_iterations")
             try:
                 _t0 = time.perf_counter()

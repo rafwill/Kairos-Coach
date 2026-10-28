@@ -32,6 +32,7 @@ load_dotenv(ROOT / ".env", encoding="utf-8")
 from agent import load_metrics as lm  # noqa: E402
 from agent import sensors  # noqa: E402
 from agent import storage  # noqa: E402
+from agent import tool_loop  # noqa: E402
 import agent.data_access as _data_access
 import agent.garmin_data as _garmin_data
 import agent.hr_profile as _hr_profile
@@ -186,6 +187,11 @@ def global_checks(v: Verdict, body: str, today: date | None = None) -> None:
     v.check(bool(body.strip()) and "(sin respuesta)" not in body and "SIN RESPUESTA" not in body,
             "G1: respuesta vacía")
     v.check("Traceback" not in body and "No pude generar" not in body, "G1: error o coaching no generado")
+    # El bucle con tools se rindió (28/10, decisión del usuario): antes "reformula tu pregunta" pasaba como respuesta.
+    v.check(tool_loop.MAX_ITERATIONS_REPLY not in body and tool_loop.REQUEST_TOO_LARGE_TEXT not in body,
+            "G1: el bucle con tools no llegó a responder (tope de llamadas o petición demasiado grande)")
+    if any(text in body for text in tool_loop.PROVIDER_FAILURE_TEXTS):
+        v.env_failures.append("G2: el proveedor de IA no respondió (tiempo agotado, modelo retirado o 403)")
     if "No se pudo consultar Garmin" in body:
         v.env_failures.append("G2: Garmin no accesible durante la pregunta")
     v.sense(sensors.find_iso_dates(body))
