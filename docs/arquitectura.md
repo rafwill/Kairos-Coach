@@ -9,7 +9,7 @@ Con la terminología del estándar MCP: Kairos es el **host** (la aplicación co
 ```
 ┌─────────────────────── HOST: Kairos (agent/) ────────────────────────┐
 │  CLI (main.py) · TrainerAgent (trainer_agent.py + mixins)            │
-│  Rutas deterministas · coaching LLM · motor de planes                │
+│  Rutas deterministas · coaching LLM · planes (LLM + reglas)          │
 │  TSS/PMC (load_metrics.py, running_tss.py) · Supabase (storage.py)   │
 │                                                                      │
 │  ┌── cliente MCP (agent/mcp/) ──┐                                    │
@@ -35,11 +35,11 @@ Capas, de abajo arriba (cada una importa solo de las de debajo, nunca de `traine
 | Capa | Módulos |
 | --- | --- |
 | Utilidades | `prompts`, `dates`, `llm`, `knowledge`, `tool_results`, `garmin_data`, `data_access` |
-| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans`, `run_plan` (plan de carrera por bloques), `activity_analysis`, `startup_status`, `replies`, `coaching` |
+| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans` (validación, estado y motor determinista de respaldo), `run_plan` (respaldo para asfalto: plan por bloques), `plan_builder` (datos del plan para el LLM, tramos → ritmos, km y TSS, reglas), `activity_analysis`, `startup_status`, `replies`, `coaching` |
 | Rutas | `routes/` (load, period, sleep, records, profile, day_data, db_count) y `router` |
-| Mixins del agente | `load_compute` (LoadMixin), `startup` (StartupMixin), `context` (ContextMixin), `llm_calls` (LLMMixin), `routes/handlers` (RoutesMixin), `prefetch` (PrefetchMixin), `tool_loop` (ToolLoopMixin) |
+| Mixins del agente | `load_compute` (LoadMixin), `startup` (StartupMixin), `context` (ContextMixin), `llm_calls` (LLMMixin), `routes/handlers` (RoutesMixin), `prefetch` (PrefetchMixin), `tool_loop` (ToolLoopMixin), `plan_llm` (PlanLLMMixin: el LLM construye y revisa el plan) |
 
-Tests: un fichero por módulo o familia (`test_routes.py`, `test_routes_load.py`, `test_tool_loop.py`, `test_load_compute.py`, `test_startup.py`, `test_context.py`, `test_llm_calls.py`, `test_plans.py`…; antes `test_trainer_agent.py`, 7.090 líneas). `tests/agent_patch.py` (`patch_all`, `patch_everywhere`) sustituye una función en todos los módulos que la usan (sustituirla solo en uno dejaría a los demás con la de verdad) y `tests/agent_fixtures.py` tiene el fixture que evita leer `activity_tss` real.
+Tests: un fichero por módulo o familia (`test_routes.py`, `test_routes_load.py`, `test_tool_loop.py`, `test_load_compute.py`, `test_startup.py`, `test_context.py`, `test_llm_calls.py`, `test_plans.py`, `test_run_plan.py`, `test_plan_llm.py`…; antes `test_trainer_agent.py`, 7.090 líneas). `tests/agent_patch.py` (`patch_all`, `patch_everywhere`) sustituye una función en todos los módulos que la usan (sustituirla solo en uno dejaría a los demás con la de verdad) y `tests/agent_fixtures.py` tiene el fixture que evita leer `activity_tss` real.
 
 - **Datos (Python):** Garmin aporta las señales base y las zonas de FC del reloj; Kairos calcula en Python todo lo derivado (TSS, CTL/ATL/TSB, ritmos, hidratación) antes de entregarlo al LLM.
 - **Coaching (LLM):** interpreta los datos ya calculados con el perfil del atleta. Nunca hace aritmética ni inventa métricas.

@@ -895,7 +895,7 @@ def _show_plan_help() -> None:
         "  [bold cyan]/plan listar[/bold cyan]          Lista planes (nº e id corto) y marca el activo\n"
         "  [bold cyan]/plan ver <nº o id>[/bold cyan]     Muestra el plan y sus sesiones (ej.: /plan ver 1)\n"
         "  [bold cyan]/plan activar <nº o id>[/bold cyan] Activa un plan y desactiva el anterior\n"
-        "  [bold cyan]/plan crear[/bold cyan]           Genera un plan por semanas con sus sesiones y lo activa",
+        "  [bold cyan]/plan crear[/bold cyan]           Tu LLM construye el plan (Kairos lo comprueba) y lo activa",
         title="[bold blue]Kairos Coach — Gestión de planes[/]",
         border_style="blue",
     ))
@@ -1203,7 +1203,7 @@ def _show_menu() -> None:
     table.add_row("Editar", "/perfil umbral fc <lpm>", "Actualizar FC umbral tras un test, la misma que en TrainingPeaks (ej. 169)")
     table.add_row("Editar", "/perfil fc <reposo> <max>", "Actualizar FC reposo/máxima (ej. 48 186)")
 
-    table.add_row("Plan", "/plan crear", "Crear plan base y activarlo")
+    table.add_row("Plan", "/plan crear", "Crear el plan con tu LLM y activarlo")
     table.add_row("Plan", "/plan activar <id>", "Activar plan por ID")
 
     table.add_row("Sistema", "/proveedor", "Cambiar de proveedor de IA, modelo o clave")
