@@ -46,7 +46,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 De la revisión completa del proyecto del 28/10; ya hechos los fallos del proveedor que cerraban Kairos, la G15, los totales del periodo, los puntos 9 a 11 y el rendimiento (CHANGELOG).
 
 7. **Dividir `tests/test_trainer_agent.py`** (≈ 7.000 líneas) como se dividió `agent/trainer_agent.py` el 28/10 (un fichero de tests por módulo), cuando haga falta tocarlo; sin prisa: los tests ya importan cada función de su módulo.
-8. **Arranque, lo que queda** (8c, en curso el 28/10): importar `openai` y `mcp` (≈ 1,5 s) y arrancar el servidor MCP (≈ 1,6 s). Hechos el 28/10: estrés de un rango en una llamada (`get_stress_trend`) y la regla del juez para la respuesta de tope del bucle (CHANGELOG).
+8. **Arranque del servidor MCP** (2,6–3,8 s, otro proceso que importa `garminconnect` y FastMCP; lo demás del rendimiento, hecho el 28/10: CHANGELOG). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
 
 ## Descartado
 

@@ -8,8 +8,6 @@ import asyncio
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
-
 from agent import ia_provider as _ia_provider
 
 
@@ -55,6 +53,8 @@ def _build_llm_client(config: dict) -> tuple[Any, str, str]:
     `config` = fila de ia_provider (provider, base_url, model); la clave sale del .env (`PROVIDER_API_KEY`).
     `KAIROS_MODEL` cambia el modelo solo para esta ejecución (batería con --modelo).
     """
+    from openai import AsyncOpenAI  # aquí y no arriba: importarlo cuesta ≈ 0,9 s y main lo precarga en un hilo (8c)
+
     api_key = os.environ[_ia_provider.KEY_VAR]
     client = AsyncOpenAI(base_url=config["base_url"], api_key=api_key)
     return client, os.environ.get("KAIROS_MODEL") or config["model"], api_key

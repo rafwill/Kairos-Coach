@@ -5,6 +5,8 @@ Interfaz de conversación en terminal.
 """
 
 import asyncio
+import importlib
+import threading
 import json
 import os
 import re
@@ -1516,6 +1518,15 @@ def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
     return False
 
 
+def _warm_imports() -> None:
+    """Importa por adelantado lo que el arranque necesitará más tarde: el cliente MCP y el del LLM."""
+    for name in ("mcp", "mcp.client.stdio", "mcp.shared.exceptions", "openai"):
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # noqa: BLE001 — si falla aquí, fallará igual (y con su error) al usarlo
+            log.debug("Precarga de %s: %s", name, exc)
+
+
 class _StartupTimer:
     """Marcas del arranque en agent.log (28/10, pendiente 8c): tiempo y consultas a Supabase de cada paso."""
 
@@ -1541,6 +1552,9 @@ async def main() -> None:
     global log, _DEBUG_CONSOLE
     log, _DEBUG_CONSOLE = _configure_logging()
     timer = _StartupTimer()
+    # openai y mcp (≈ 1,5 s de importar) se cargan en un hilo mientras el arranque espera a Supabase y al servidor
+    # MCP; el código los importa al usarlos y, si el hilo aún no ha terminado, espera a que acabe (8c, 28/10).
+    threading.Thread(target=_warm_imports, daemon=True, name="warm-imports").start()
     # El sondeo de Zscaler (~0,5 s, solo para el aviso del entorno) va en un hilo mientras se conecta (8c, 28/10).
     network_probe = asyncio.ensure_future(asyncio.to_thread(_detect_zscaler))
 

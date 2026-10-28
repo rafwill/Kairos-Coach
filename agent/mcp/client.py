@@ -5,6 +5,8 @@ Arranca el servidor MCP (`python -m garmin_mcp`, con el mismo Python que Kairos)
 abre la sesión y expone sus herramientas para que el agente las use.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import logging
@@ -14,9 +16,10 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.shared.exceptions import McpError
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # el paquete mcp tarda ≈ 0,6 s en importarse: se importa al usarlo (8c, 28/10)
+    from mcp import ClientSession, StdioServerParameters
 from agent.mcp.contracts import normalize_tool_invocation, validate_min_input_contract
 
 # Raíz del repositorio (este fichero vive en agent/mcp/).
@@ -215,6 +218,13 @@ KAIROS_INTERNAL_ESSENTIAL_TOOLS: tuple[str, ...] = (
 )
 
 
+def _mcp_error() -> type[Exception]:
+    """McpError (error de protocolo del servidor), importado al necesitarlo."""
+    from mcp.shared.exceptions import McpError
+
+    return McpError
+
+
 def _get_server_params() -> StdioServerParameters:
     """Construye los parámetros de arranque del servidor MCP propio de Kairos."""
     email = os.environ.get("GARMIN_EMAIL")
@@ -241,6 +251,8 @@ def _get_server_params() -> StdioServerParameters:
         }
 
     # Mismo intérprete que Kairos (el del .venv) y raíz del repo como cwd, como las herramientas de tools/.
+    from mcp import StdioServerParameters
+
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", "garmin_mcp"],
@@ -264,6 +276,9 @@ async def garmin_mcp_session():
         async with garmin_mcp_session() as session:
             result = await session.call_tool("get_last_activity", {})
     """
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
     async def _open_and_yield(params: StdioServerParameters):
         try:
             with _server_errlog() as errlog:
@@ -340,7 +355,7 @@ async def call_tool(session: ClientSession, tool_name: str, arguments: dict) -> 
                 )
             return response_text
         return "Sin datos disponibles."
-    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, McpError) as e:
+    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _mcp_error()) as e:
         # McpError: error de protocolo del servidor (28/10: antes se escapaba hasta la CLI y cerraba Kairos).
         # El fallo del lado del cliente (servidor caído, sin respuesta) también se avisa: si no, la ruta decía
         # "sin datos" como si Garmin no tuviera nada (28/10).

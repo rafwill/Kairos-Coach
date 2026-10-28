@@ -3,13 +3,18 @@ agent/routes/load.py
 Rutas de carga: TSS de la semana o de un rango, actividades de la semana, tendencia de carga y estado de carga de hoy, TSS recientes por deporte; todo desde load_metrics_daily y activity_tss.
 """
 
+from __future__ import annotations
+
 import logging
 import json
 import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from mcp import ClientSession
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # solo para anotaciones: mcp se importa al usarlo (8c)
+    from mcp import ClientSession
 
 from agent.mcp.client import (
     call_tool,

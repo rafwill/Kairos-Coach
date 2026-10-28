@@ -71,8 +71,12 @@ async def test_garmin_mcp_session_opens_and_initializes(monkeypatch, tmp_path):
             self.initialized = True
 
     monkeypatch.setattr(mcp_client, "_get_server_params", fake_get_server_params)
-    monkeypatch.setattr(mcp_client, "stdio_client", lambda _params, errlog=None: errlogs.append(errlog) or DummyStdioCM())
-    monkeypatch.setattr(mcp_client, "ClientSession", DummyClientSession)
+    # mcp se importa al usarlo (8c, 28/10): se sustituye en su paquete, no en el cliente.
+    import mcp
+    import mcp.client.stdio
+
+    monkeypatch.setattr(mcp.client.stdio, "stdio_client", lambda _params, errlog=None: errlogs.append(errlog) or DummyStdioCM())
+    monkeypatch.setattr(mcp, "ClientSession", DummyClientSession)
 
     async with mcp_client.garmin_mcp_session() as session:
         assert session.initialized is True

@@ -3,13 +3,18 @@ agent/activity_analysis.py
 Análisis de una actividad: localizarla (la última, la de un deporte, por fecha o por nombre), bloque de análisis precalculado en Python para el LLM y sección final según el plan.
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import json
 import re
 from datetime import date
 
-from mcp import ClientSession
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # solo para anotaciones: mcp se importa al usarlo (8c)
+    from mcp import ClientSession
 
 from agent.mcp.client import (
     call_tool,

@@ -9,8 +9,6 @@ import json
 import asyncio
 from datetime import date
 
-from openai import APIError
-
 from agent import sensors as _sensors
 from agent import diabetes as _diabetes
 from agent import ia_provider as _ia_provider
@@ -44,6 +42,13 @@ from agent.coaching import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _provider_error() -> type[Exception]:
+    """openai.APIError (caída, 429 o 503 del proveedor), importado cuando hace falta (8c: openai tarda ≈ 0,9 s)."""
+    from openai import APIError
+
+    return APIError
 
 
 class LLMMixin:
@@ -157,7 +162,7 @@ class LLMMixin:
                 _add_ia_tokens(p_toks + c_toks)
             fixed = _strip_simulated_user_turn(str(response.choices[0].message.content or "").strip())
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, KeyError, IndexError,
-                APIError) as exc:
+                _provider_error()) as exc:
             # APIError: caída, 429 o 503 del proveedor (28/10: antes se escapaba y cerraba Kairos).
             self._log_chat_error(stage=f"sensor_retry_{kind}", error=exc)
             fixed = ""
@@ -275,7 +280,7 @@ class LLMMixin:
                 + "\n\n_Fase coaching por LLM sobre datos deterministas (sin recalcular métricas)._"
             )
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, asyncio.TimeoutError, json.JSONDecodeError, KeyError,
-                APIError) as exc:
+                _provider_error()) as exc:
             # APIError: caída, 429 o 503 del proveedor (28/10: antes se escapaba y cerraba Kairos).
             log.warning("No se pudo completar capa LLM de coaching (route=%s): %s", route, exc or type(exc).__name__)
             return (

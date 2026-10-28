@@ -12,12 +12,17 @@ Desde el 28/10 (pendiente 7) la lógica vive en sus módulos y aquí solo se com
 - PrefetchMixin (agent/prefetch.py) y ToolLoopMixin (agent/tool_loop.py): precarga de una actividad y bucle con tools.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 import time
 
-from mcp import ClientSession
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # solo para anotaciones: mcp se importa al usarlo (8c)
+    from mcp import ClientSession
 
 from agent import storage as _storage
 from agent import tool_groups as _tool_groups

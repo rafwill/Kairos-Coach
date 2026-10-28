@@ -3,6 +3,8 @@ agent/routes/day_data.py
 Ruta de datos de un día (mcp_factual): sueño, HRV, body battery, FC en reposo, estrés, pasos y TSS de Kairos de una fecha, y respaldo de recuperación cuando Garmin no da disposición.
 """
 
+from __future__ import annotations
+
 import logging
 import json
 import asyncio
@@ -10,7 +12,10 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
-from mcp import ClientSession
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # solo para anotaciones: mcp se importa al usarlo (8c)
+    from mcp import ClientSession
 
 from agent.mcp.client import (
     call_tool,

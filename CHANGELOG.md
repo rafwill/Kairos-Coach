@@ -6,6 +6,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, cobertura, lint ampliado y tiempos de `agent.log`); de ella salen los tres cambios siguientes. Lo que queda, en `docs/proximos_pasos.md` (Pendiente E).
 
+### Changed (arranque: openai y mcp en un hilo; pendiente 8c, segunda parte)
+- Señal: importar `agent.main` costaba 2,2–3,5 s antes de empezar nada, sobre todo `openai` (≈ 0,9 s, sus tipos) y el paquete `mcp` (≈ 0,6 s, que arrastra el servidor FastMCP aunque el host solo use el cliente).
+- Qué se hizo: los dos se importan al usarlos (`_build_llm_client`, `_provider_error()` para `openai.APIError`, el cliente MCP y `_mcp_error()`; en el resto de módulos `ClientSession` solo se usa en anotaciones, bajo `TYPE_CHECKING`) y `main()` los precarga en un hilo al empezar (`_warm_imports`), mientras el arranque espera a Supabase y al servidor MCP. Importar `agent.main` baja a 1,3 s.
+- Criterio fijado antes: la mediana de 3 arranques baja al menos 0,8 s. Resultado: mediana de 5 arranques 14,6 → 12,3 s (−2,3 s); en dos pares alternos (antes y después seguidos) −0,6 y −2,0 s. La red de la tarde metía mucho ruido (Supabase entre 1,1 y 3,7 s).
+- Queda fuera: el arranque del servidor MCP (2,6–3,8 s, otro proceso que importa `garminconnect` y FastMCP).
+
 ### Added (estrés de un rango en una llamada; pendiente 8a, segunda parte)
 - Señal: "¿qué tal mi estrés esta semana?" se pedía día a día con `get_stress_summary` (12, 7, 3 y 4 vueltas en las pasadas del bucle del 28/10).
 - Qué se hizo: tool nueva del servidor `get_stress_trend` (estrés medio y minutos en reposo, bajo, medio y alto por día) con `get_daily_stress_stats` de `garminconnect`, que admite un rango; Garmin rechaza más de 28 días contando los dos extremos (comprobado en vivo: 29 ya da 400), así que la tool pide por tramos de 28 (90 días, 4 peticiones). Grupo `dia_a_dia`, serie diaria como `get_rhr_trend`. Las descripciones de las dos tendencias piden un solo rango para comparar periodos. 44 tools.
