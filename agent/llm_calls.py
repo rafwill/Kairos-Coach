@@ -98,6 +98,13 @@ class LLMMixin:
                     if wait is None or getattr(exc, "status_code", None) not in (429, 503):
                         raise
                     log.info("[LLM] %s %s: reintento en %ss", self.provider, exc.status_code, wait)
+                    # Aviso en pantalla (29/10, petición del usuario): la CLI pone `llm_wait_notice`.
+                    notice = getattr(self, "llm_wait_notice", None)
+                    if notice:
+                        name = _ia_provider.KNOWN.get(_ia_provider.known(self.provider) or "", (self.provider,))[0]
+                        what = ("ha dado límite de peticiones (429)" if exc.status_code == 429
+                                else "está saturado (503)")
+                        notice(f"{name} {what}: espero {wait} s y reintento.")
                     await asyncio.sleep(wait)
 
         completions.create = _create

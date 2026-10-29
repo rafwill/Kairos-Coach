@@ -270,8 +270,12 @@ class TestLlmKey:
 
         monkeypatch.setattr("agent.llm_calls.asyncio.sleep", fake_sleep)
         agent = self._agent(monkeypatch, [self._Busy(503), self._Busy(429), "ok"])
+        shown = []
+        agent.llm_wait_notice = shown.append  # la CLI lo pinta en pantalla
         assert asyncio.run(agent.client.chat.completions.create(model="m", messages=[])) == "ok"
         assert waits == [5, 10]
+        assert shown == ["NVIDIA NIM está saturado (503): espero 5 s y reintento.",
+                         "NVIDIA NIM ha dado límite de peticiones (429): espero 10 s y reintento."]
         agent = self._agent(monkeypatch, [self._Busy(503)] * 4)
         with pytest.raises(self._Busy):
             asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))

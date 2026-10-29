@@ -1622,6 +1622,8 @@ async def main() -> None:
 
     async with garmin_mcp_session() as session:
         agent = TrainerAgent(mcp_session=session, provider=provider)
+        # Aviso cuando el proveedor da 429 o 503 y Kairos espera para reintentar (29/10).
+        agent.llm_wait_notice = lambda text: console.print(f"[yellow]⏳ {text}[/]")
         timer.mark("mcp_y_agente")
 
         console.print("[dim]Cargando herramientas de Garmin...[/]")
