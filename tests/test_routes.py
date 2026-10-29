@@ -150,8 +150,8 @@ class TestPlanStatusChatRoute:
         assert len(agent.conversation_history) == 2
 
     @pytest.mark.asyncio
-    async def test_chat_planning_falls_back_to_kairos_engine_when_the_llm_fails(self):
-        """El plan lo construye el LLM (28/10); si el proveedor falla, el motor de Kairos hace uno de respaldo y se avisa."""
+    async def test_chat_planning_saves_no_generic_plan_when_the_llm_fails(self):
+        """El plan lo construye el LLM (28/10); si no lo consigue, no se guarda ninguno (29/10: "PLANES GENÉRICOS NO")."""
         from agent.trainer_agent import (
             TrainerAgent,
         )
@@ -189,11 +189,9 @@ class TestPlanStatusChatRoute:
         }) as mocked_create, patch_all("_save_user_profile"), patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Puedes planificarme la semana para mi 10K?")
 
-        assert "Resumen" in out
-        assert "Plan activo: Plan hacia 10K" in out
-        assert "no consiguió un plan" in out and "plan de respaldo del motor de Kairos" in out
-        mocked_create.assert_called_once()
-        assert agent.user_profile["training_plan"]["id"] == "plan-db-1"
+        assert "No he creado ningún plan" in out and "no guardo uno genérico" in out and "/proveedor" in out
+        mocked_create.assert_not_called()
+        assert "training_plan" not in agent.user_profile
 
     @pytest.mark.asyncio
     async def test_chat_planning_updates_existing_plan_and_reports_changes(self):
@@ -275,7 +273,8 @@ class TestPlanStatusChatRoute:
         agent.client = MagicMock()
         agent.client.chat = MagicMock()
         agent.client.chat.completions = MagicMock()
-        agent.client.chat.completions.create = AsyncMock(side_effect=RuntimeError("proveedor caído"))
+        agent.client.chat.completions.create = AsyncMock(side_effect=AssertionError("no debe llamarse"))
+        agent._build_plan_with_llm = AsyncMock(return_value=({"title": "Plan", "plan_data": {}}, [], []))
 
         with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=None), patch_all(
             "_validate_structured_plan", return_value=["Error de validación de prueba"]

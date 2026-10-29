@@ -205,8 +205,10 @@ class TestWeekRules:
 class _FakeLLM:
     """Responde como un LLM: estructura y semanas; `bad_first` estropea la primera respuesta de la semana 1."""
 
-    def __init__(self, bad_first=False, always_bad=False, revisions=None, overshoot=False):
+    def __init__(self, bad_first=False, always_bad=False, revisions=None, overshoot=False, bad_first_conversation=False):
         self.calls = []
+        self.bad_first_conversation = bad_first_conversation
+        self.week1_conversations = 0
         self.overshoot = overshoot
         self.revisions = list(revisions or [])
         self.bad_first = bad_first
@@ -230,7 +232,10 @@ class _FakeLLM:
                 # Semana 2 con 380 min: dentro del ±12 % de su estructura (345), pero +19 % sobre lo que suma la 1 (320).
                 data = json.loads(json.dumps(data))
                 data["weeks"][1]["days"][2] = {"day": 3, **_easy(52.5 + 35)}
-            if 1 in weeks and (self.always_bad or (self.bad_first and len(messages) == 2)):
+            if 1 in weeks and len(messages) == 2:
+                self.week1_conversations += 1
+            if 1 in weeks and (self.always_bad or (self.bad_first and len(messages) == 2)
+                               or (self.bad_first_conversation and self.week1_conversations == 1)):
                 data = json.loads(json.dumps(data))
                 data["weeks"][0]["days"].pop()
         content = "```json\n" + json.dumps(data) + "\n```"
@@ -280,6 +285,13 @@ class TestTheLLMBuildsThePlan:
         assert len(fixes) == 1 and "Semana 2: 380 min suben más de un 10 %" in fixes[0] and "suma real" in fixes[0]
         totals = plan["plan_data"]["week_minutes"]
         assert totals[1] <= totals[0] * 1.10
+
+    @pytest.mark.asyncio
+    async def test_a_batch_that_never_complies_starts_over_once(self, monkeypatch):
+        monkeypatch.setattr("agent.plan_llm._add_ia_tokens", lambda n: None)
+        llm = _FakeLLM(bad_first_conversation=True)
+        plan, _, errors = await _Agent(llm)._build_plan_with_llm("Crea un plan", {})
+        assert errors == [] and plan is not None and llm.week1_conversations == 2
 
     @pytest.mark.asyncio
     async def test_no_plan_when_the_llm_never_complies(self, monkeypatch):

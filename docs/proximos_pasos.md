@@ -30,7 +30,7 @@ Se reescribe al final de cada sesión.
 
 ### B2. Planes
 
-9. **Plan construido por el LLM** (28-29/10; CHANGELOG). Con nemotron, 3 de 5 planes válidos el 28/10 y 2 de 2 con preferencias el 29/10 (3 a 5,5 min); si falla, plan de respaldo del motor determinista con aviso. Pendiente:
+9. **Plan construido por el LLM** (28-29/10; CHANGELOG). Con nemotron, 3 de 5 planes válidos el 28/10 y 2 de 2 con preferencias el 29/10 (3 a 5,5 min); si falla, no se guarda ningún plan (29/10). El 29/10, en `/plan crear` real, falló por la semana 9 sin descanso y se guardó el plan genérico de respaldo, ya quitado. Pendiente:
    - **Revisión del usuario** de un plan real (`/plan crear`) y de una revisión en el chat ("ajusta el plan: …").
    - **Fiabilidad con otros modelos:** medir con 2-3 modelos más (batería de planes) antes de producción.
 

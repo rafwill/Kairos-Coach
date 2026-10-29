@@ -170,15 +170,23 @@ class PlanLLMMixin:
                 return errs or _pb.check_quality_variety([s for n in weeks for s in expanded[n]])
             return check
 
-        results = await asyncio.gather(*[
-            self._plan_llm_json(
+        def _ask_weeks(weeks: list[int], label: str):
+            return self._plan_llm_json(
                 [system, {"role": "user", "content": _render_prompt(
                     "plan/weeks", datos=datos, estructura=estructura, semanas=", ".join(str(w) for w in weeks),
                     reglas=_pb.rules_text(f))}],
-                _check_chunk(weeks), f"semanas {weeks[0]}-{weeks[-1]}",
+                _check_chunk(weeks), label,
             )
-            for weeks in chunks
-        ])
+
+        results = list(await asyncio.gather(*[_ask_weeks(weeks, f"semanas {weeks[0]}-{weeks[-1]}") for weeks in chunks]))
+        # La tanda que no lo consigue en sus intentos empieza otra conversación desde cero, una vez (29/10: casi
+        # siempre falla una sola tanda, por poco, y sin ella no hay plan).
+        retry = [i for i, (data, _, _) in enumerate(results) if data is None]
+        if retry:
+            again = await asyncio.gather(*[_ask_weeks(chunks[i], f"semanas {chunks[i][0]}-{chunks[i][-1]} desde cero")
+                                           for i in retry])
+            for i, result in zip(retry, again):
+                results[i] = result
         failed = [f"Semanas {weeks[0]}-{weeks[-1]}: {e}" for weeks, (data, errs, _) in zip(chunks, results) if data is None
                   for e in errs]
         # La progresión se comprueba también con lo que suman de verdad los días (la estructura es una estimación):

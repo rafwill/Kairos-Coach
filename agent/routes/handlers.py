@@ -229,10 +229,14 @@ class RoutesMixin:
                 except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
                     new_plan, llm_errors = None, [f"{type(exc).__name__}: {exc}"]
                 if new_plan is None:
+                    # Sin plan del LLM no se guarda nada (29/10, decisión del usuario: "PLANES GENÉRICOS NO"; antes el
+                    # motor determinista guardaba uno de respaldo y sustituía al plan activo).
                     log.warning("[PLAN] el LLM no consiguió un plan válido: %s", " | ".join(llm_errors[:6]))
-                    notice = (f"> ⚠️ Tu modelo ({getattr(self, 'model', '')}) no consiguió un plan que cumpla las reglas "
-                              f"de Kairos ({len(llm_errors)} fallo(s); el primero: {llm_errors[0] if llm_errors else 'n/d'}). "
-                              "Este es el plan de respaldo del motor de Kairos.\n\n")
+                    return ("## ⚠️ No he creado ningún plan\n\n"
+                            f"Tu modelo ({getattr(self, 'model', '')}) no consiguió un plan que cumpla las reglas de Kairos "
+                            "y no guardo uno genérico en su lugar. Tu plan activo sigue como estaba.\n\n"
+                            "Lo que no cumplía:\n" + "\n".join(f"- {e}" for e in llm_errors[:6])
+                            + "\n\nPuedes repetir `/plan crear` o probar un modelo más capaz con `/proveedor`.")
             if new_plan is None:
                 new_plan, new_sessions = _generate_structured_plan_payload(
                     self.user_profile,

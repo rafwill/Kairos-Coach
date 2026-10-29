@@ -1050,6 +1050,11 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
     prefs = dict(goals.get("plan_preferences") or {})
     days = _parse_day_list(Prompt.ask("¿Qué días puedes entrenar? (L,M,X,J,V,S,D, rangos como L-V, o «todos»)",
                                       default=_format_days(list(availability.get("training_days") or []))))
+    # Día fijo de descanso (29/10): es el fallo más frecuente del LLM (semanas sin descanso); dicho por el atleta,
+    # es un día sin entrenar más y el LLM lo recibe como tal.
+    rest = _parse_day_list(Prompt.ask("¿Qué día(s) descansas siempre? (p. ej. V; Enter para que lo decida el entrenador)",
+                                      default=_format_days(list(availability.get("rest_days") or [])) if
+                                      availability.get("rest_days") else ""))
     limits_now = ", ".join(f"{_DAY_LETTERS[int(d)]} {m}" for d, m in sorted(
         (int(k), v) for k, v in (availability.get("max_minutes_per_day") or {}).items()))
     limits = _parse_day_limits(Prompt.ask("¿Tiempo máximo algún día? (p. ej. «L-V 75, S 180»; Enter si no hay límite)",
@@ -1066,7 +1071,8 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
         "descarga), 3 que decida el entrenador",
         choices=list(_PROGRESSION_CHOICES),
         default=next((k for k, v in _PROGRESSION_CHOICES.items() if v == prefs.get("progression")), "1"))
-    availability.update({"training_days": days or list(range(1, 8)),
+    availability.update({"training_days": [d for d in (days or range(1, 8)) if d not in rest] or list(range(1, 8)),
+                         "rest_days": rest,
                          "max_minutes_per_day": {str(d): m for d, m in limits.items()}})
     goals["availability"] = availability
     goals["plan_preferences"] = {"doubles": bool(doubles), "intensity": _INTENSITY_CHOICES[intensity],
@@ -1082,8 +1088,7 @@ async def _create_training_plan_cli(agent: TrainerAgent) -> None:
     Antes guardaba solo lo del formulario (título, objetivo, semanas) sin ninguna sesión: Kairos no tenía nada que
     leer y "¿qué me toca mañana?" acababa en "no puedo leer el plan". Ahora va por la misma ruta que el chat
     (`_route_planning`): estructura y sesiones a partir del objetivo del perfil, del volumen real y de lo que se le
-    diga aquí, comprobadas y guardadas; si el modelo no consigue un plan válido, el motor de Kairos hace uno de
-    respaldo y se avisa.
+    diga aquí, comprobadas y guardadas; si el modelo no consigue un plan válido, no se guarda ninguno (29/10).
     """
     goals = (_load_user_profile() or {}).get("goals", {}) or {}
     race = goals.get("target_race") or "sin objetivo (plan genérico de 8 semanas)"

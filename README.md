@@ -8,7 +8,7 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 
 - **Briefing al arrancar:** Body Battery, HRV, sueño, entrenamientos de las últimas 48 h, estado de carga por zonas de Forma (Joe Friel, relativas a tu CTL) y plan del día.
 - **Carga como TrainingPeaks:** un TSS por actividad con el método de su deporte, guardado una vez; PMC 42/7. Validado contra el export de TP del atleta (tabla abajo).
-- **Planes de entrenamiento:** los construye y revisa el LLM del atleta como su entrenador (por bloques con descarga, cada día con su fecha y sus tramos); Kairos le da los datos (objetivo, zonas de ritmo y FC, carga real, disponibilidad, lo hecho los últimos días), calcula ritmos, km y TSS planificado y comprueba las reglas (nunca más de un 10 % por semana sobre el volumen real, descargas, afinamiento, disponibilidad) antes de guardar cada versión. Si el modelo no consigue un plan válido, el motor determinista hace uno de respaldo y se avisa.
+- **Planes de entrenamiento:** los construye y revisa el LLM del atleta como su entrenador (por bloques con descarga, cada día con su fecha y sus tramos); Kairos le da los datos (objetivo, zonas de ritmo y FC, carga real, disponibilidad, lo hecho los últimos días), calcula ritmos, km y TSS planificado y comprueba las reglas (nunca más de un 10 % por semana sobre el volumen real, descargas, afinamiento, disponibilidad) antes de guardar cada versión. Si el modelo no consigue un plan válido, no se guarda ninguno: Kairos dice qué no cumplía y propone repetir o probar un modelo más capaz.
 - **Coaching con contexto:** perfil, salud (protocolo de diabetes con o sin insulina según la medicación; lesiones aparte), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
 - **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`.
@@ -93,7 +93,7 @@ agent/
   daily_engine.py        motor diario: plan de hoy, ajuste por HRV/sueño/body battery, zonas
   plan_llm.py            el LLM construye (estructura + semanas en paralelo) y revisa el plan, con reintentos
   plan_builder.py        datos del atleta para el plan, tramos → ritmos, km y TSS, reglas de estructura y semana
-  plans.py               motor determinista de respaldo, validación y estado del plan
+  plans.py               validación y estado del plan; motor determinista para planes antiguos
   run_plan.py            plan de carrera en asfalto por bloques: ritmos de Friel, fases, descargas, tramos y rTSS
   activity_analysis.py   localizar una actividad y su análisis precalculado
   hr_profile.py · wellness.py · garmin_data.py · tool_results.py · kairos_tools.py · dates.py ·

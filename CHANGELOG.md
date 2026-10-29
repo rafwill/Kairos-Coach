@@ -4,6 +4,17 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Changed (sin plan del LLM no se guarda ninguno; visto por el usuario)
+- Señal: el usuario ejecutó `/plan crear`. Nemotron falló en la semana 9 (sin día de descanso) y Kairos guardó y activó el plan genérico del motor determinista de respaldo, el formato viejo con "Calidad de carrera · 48 min · Z5". El usuario: "inservible… PLANES GENÉRICOS NO".
+- Qué se hizo:
+  - Si el LLM no consigue un plan válido, no se guarda ninguno ni se toca el plan activo. La respuesta dice qué no cumplía y propone repetir `/plan crear` o probar un modelo más capaz con `/proveedor`. El motor determinista queda solo para ajustar planes antiguos.
+  - La tanda de semanas que agota sus intentos empieza otra conversación desde cero, una vez.
+  - `/plan crear` pregunta el día fijo de descanso (`goals.availability.rest_days`). Es un día sin entrenar más, porque "la semana no tiene descanso" era el fallo más frecuente.
+- Resultado:
+  - Tests: 855.
+  - En vivo con nemotron (descanso el viernes, dobles, polarizada, 3+1): sin plan tras 13 min. La semana 10 se quedó en 21,2 % en Z3+ frente al 20 % y la tanda desde cero se atascó en el volumen. Con este modelo, las reglas a la vez (20 %, volumen, descanso) no convergen de forma fiable.
+  - Siguiente paso: probar otro modelo (B2.9 y F.9).
+
 ### Added (preferencias del atleta en el plan del LLM; decisiones del usuario)
 - Decisiones del usuario sobre lo que quedó abierto el 28/10:
   - Como mucho un 20 % del tiempo en Z3 o más.
