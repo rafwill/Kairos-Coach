@@ -32,7 +32,15 @@ Se reescribe al final de cada sesión.
 
 9. **Plan construido por el LLM** (28-29/10; CHANGELOG). Con nemotron, 3 de 5 planes válidos el 28/10 y 2 de 2 con preferencias el 29/10 (3 a 5,5 min); si falla, no se guarda ningún plan (29/10). El 29/10, en `/plan crear` real, falló por la semana 9 sin descanso y se guardó el plan genérico de respaldo, ya quitado. Pendiente:
    - **Revisión del usuario** de un plan real (`/plan crear`) y de una revisión en el chat ("ajusta el plan: …").
-   - **Fiabilidad con otros modelos:** medir con 2-3 modelos más (batería de planes) antes de producción.
+   - **Fiabilidad con otros modelos:** medir con 2-3 modelos más (batería de planes) antes de producción. Hecho el 29/10 con lo gratuito: Gemini 3.5/3.6 Flash, plan válido en 68 s; Groq gratuito imposible (8.000 tokens por minuto); nemotron, sin plan en 13 min.
+
+10. **Proveedor del día a día (decisión del usuario, pendiente):**
+    - **Situación:** Gemini va muy bien (planes y chat, batería 25/25 en 104 s), pero el nivel gratuito da 20 peticiones al día por modelo y el 29/10 se agotó. Un plan gasta 10–15 peticiones y una pregunta con tools, 2–5. NVIDIA no tiene ese límite, pero va mal: lento, y sin planes válidos.
+    - **Opciones:**
+      - (a) Facturación en Google AI Studio.
+      - (b) Separar el modelo de los planes del modelo del chat: una segunda configuración en `ia_provider`, por ejemplo Gemini para planes y NVIDIA para el chat, o al revés.
+      - (c) Alternar al agotarse el cupo: con el aviso de cupo diario, pasar solo a NVIDIA hasta que se libere.
+    - El usuario lo decidirá tras usar Kairos unas semanas.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 

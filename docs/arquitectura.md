@@ -52,7 +52,7 @@ Tests: un fichero por módulo o familia (`test_routes.py`, `test_routes_load.py`
 | `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y `load_metrics.formula_version` (con qué versión de la fórmula se calculó la serie). |
 | `session_context` | Historial reciente de conversación y resúmenes de sesión (memoria entre sesiones; la batería no la lee ni la escribe). |
 | `athlete_knowledge` | Base de conocimiento textual del atleta (RAG ligero). |
-| `ia_provider` | Proveedor de IA del atleta (proveedor, URL compatible con OpenAI, modelo) y consumo diario de tokens. La clave no: va en `.env`. |
+| `ia_provider` | Proveedor de IA del atleta (proveedor, URL compatible con OpenAI, modelo) y consumo diario de tokens. La clave no: va en `.env`. Toda llamada al LLM que devuelve 429 o 503 se repite tras 5, 10 y 20 s con aviso en pantalla; un 429 de cupo diario no se reintenta y avisa de cuándo se libera (`agent/llm_calls.py`). |
 | `training_plan`, `training_plan_session`, `training_plan_version` | Planes, sesiones (`structured_workout`) y snapshots de cada versión. |
 | `activity_tss` | Un TSS por actividad, calculado una vez: `tss`, `model`, anclajes usados y `native_load` (carga de Garmin, informativa). |
 | `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente única de todas las pantallas, del contexto del LLM y del motor de planes (`_load_metrics_series` / `_load_metrics_view`; el estado de carga se deriva con `load_metrics.load_fatigue_from_series`). Sin serie no hay estado de carga: no se recalcula en vivo. |

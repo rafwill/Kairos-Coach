@@ -86,7 +86,7 @@ agent/
                          perfil, datos del día, conteo) y tabla ROUTE_HANDLERS (handlers.py)
   tool_loop.py           bucle con tools (LLM + Garmin), G15, rescates y sensores de su respuesta
   prefetch.py            precarga de una actividad (y su análisis) antes del bucle
-  llm_calls.py           proveedor de IA, capa de coaching y reintento de los sensores
+  llm_calls.py           proveedor de IA (reintento ante 429/503, aviso de cupo diario), capa de coaching y sensores
   context.py             prompt de sistema y mensajes del LLM
   startup.py             arranque, foto de 48 h y resumen inicial (startup_status.py)
   load_compute.py        TSS de las actividades nuevas y serie de carga en Supabase
