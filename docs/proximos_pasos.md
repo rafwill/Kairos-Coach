@@ -54,7 +54,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ### F. Notas adicionales
 
-9. Revisar como conectar Claude con Kairos para la sincronización de datos y la generación de TSS en vez de Nvidia
+9. Revisar como conectar Claude con Kairos para la sincronización de datos y la generación de TSS en vez de Nvidia. Cómo: `/proveedor` → "anthropic" (ya en `agent/ia_provider.py`), clave de `platform.claude.com/settings/keys` (pago por uso), modelo `claude-opus-5-5` o `claude-sonnet-5-5`; va por la capa compatible con OpenAI de Anthropic, pensada para probar (si se adopta, cliente nativo). Aplazado por coste (29/10, decisión del usuario).
 
 10. Revisar garmin-personal-mcp. MCP que se puede conectar a Claude para preguntar cosas a Calude o ChatGPT
 
