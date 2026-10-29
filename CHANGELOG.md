@@ -4,6 +4,16 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Changed (el modelo de Gemini es 3.6 Flash; visto por el usuario)
+- Señal: el panel de uso de Google cuenta las llamadas como "Gemini 3.6 Flash", y Kairos pedía `gemini-3.5-flash`. El error de cupo de Google lo confirma: pedido `gemini-3.5-flash`, cupo de `gemini-3.6-flash`. Google sirve el 3.5 con el 3.6.
+- Qué se hizo:
+  - El modelo pasa a `gemini-3.6-flash` en `ia_provider`, en el `.env` (`GEMINI_MODEL` y el comentario de `PROVIDER_API_KEY`) y en la documentación.
+  - El modelo que Kairos propone para Gemini pasa de `gemini-2.5-flash`, que ya no está disponible para cuentas nuevas, a `gemini-3.6-flash`.
+- Hallazgo: el nivel gratuito permite 20 peticiones al día por modelo ("GenerateRequestsPerDayPerProjectPerModel-FreeTier", valor 20). Hoy se agotaron: comparativa, batería y pruebas.
+  - Un plan son 10–15 peticiones y una pregunta con tools, 2–5.
+  - Con ese cupo, Kairos no da para el uso diario.
+  - Además, el reintento ante 429 espera 5, 10 y 20 s también cuando el cupo es diario, y ahí no sirve.
+
 ### Release v3.0.0 — Kairos Coach Funcional
 - Primera versión funcional: carga como TrainingPeaks, planes construidos por el LLM del atleta y comprobados por reglas, arranque con la sesión de hoy y recomendación, proveedor de IA a elección del atleta. Notas de la release en GitHub. `pyproject.toml` pasa a 3.0.0.
 - Antes de publicarla:

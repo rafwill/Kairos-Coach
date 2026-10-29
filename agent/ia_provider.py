@@ -16,7 +16,7 @@ KNOWN: dict[str, tuple[str, str, str, str]] = {
     "nvidia": ("NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "nvidia/nemotron-3-ultra-550b-a55b",
                "https://build.nvidia.com"),
     "openai": ("OpenAI", "https://api.openai.com/v1", "gpt-4.1-mini", "https://platform.openai.com/api-keys"),
-    "gemini": ("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-flash",
+    "gemini": ("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-3.6-flash",
                "https://aistudio.google.com"),
     "anthropic": ("Anthropic", "https://api.anthropic.com/v1/", "claude-sonnet-5-5", "https://console.anthropic.com"),
     "groq": ("Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", "https://console.groq.com"),
