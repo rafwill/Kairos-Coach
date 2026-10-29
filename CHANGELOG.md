@@ -4,6 +4,18 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Fixed ("¿qué me toca mañana / el resto de la semana?" responde con el plan; visto por el usuario)
+- Señal (dos preguntas del usuario con el plan activo):
+  - "¿qué entrenamientos tengo el resto de la semana?" fue a `week_activities`: actividades ya hechas, por "entrenamientos" + "semana".
+  - "¿qué entrenamiento me toca mañana?" fue al bucle con tools. El bloque "Plan activo" del contexto decía "Mañana (30/10/2026): descanso", pero Gemini contestó que no tenía acceso al plan.
+- Qué se hizo:
+  - Ruta determinista `planned_sessions`, justo después de la del estado del plan.
+  - `_planned_days` reconoce las preguntas por lo que toca o está previsto ("toca", "tengo", "previsto", "planificado", "dice el plan") referidas a mañana, pasado mañana, el resto de la semana, esta semana, el fin de semana, la semana que viene o un día de la semana. No entra con "hoy", que va a la ruta de estado del día con la decisión del motor, ni con el pasado ("hice", "ayer", "semana pasada", km, TSS).
+  - Responde con las sesiones del plan de cada día (con su detalle; las dos de un día doble) y el total si son varios días. Si se pide consejo, la capa de coaching lo añade sobre esos datos.
+- Resultado:
+  - Con el plan real: el resto de la semana da descanso el viernes, rodaje de 65' el sábado y tirada de 85' el domingo (2:30, unos 30 km, 162 TSS). "Mañana" da el descanso del viernes y Gemini añade el consejo del día.
+  - Banco de frases: +6. Tests: 861.
+
 ### Changed (arranque con plan: sesión de hoy y recomendación del entrenador; decisión del usuario)
 - Petición del usuario: con plan asignado, primero "Sesión de hoy" y después la recomendación basada en las métricas clave y en lo que toca. Decisión: la decisión la toma el motor diario (reglas, comprobables, igual con cualquier modelo) y el LLM la explica y concreta.
 - Qué se hizo:

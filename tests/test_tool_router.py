@@ -87,6 +87,14 @@ class TestToolRouter:
         # Lo que no debe cambiar.
         ("¿Cuántos días he dormido mal este mes?", "sleep_trend"),
         ("¿Qué actividades hice esta semana?", "week_activities"),
+        # Lo que toca según el plan (29/10: la primera iba a las actividades hechas y la segunda al LLM, que
+        # decía no tener acceso al plan).
+        ("¿que entrenamientos tengo el resto de la semana?", "planned_sessions"),
+        ("¿qué entrenamiento me toca mañana?", "planned_sessions"),
+        ("¿Qué me toca pasado mañana?", "planned_sessions"),
+        ("¿Qué tengo el sábado?", "planned_sessions"),
+        ("¿Qué me toca la semana que viene?", "planned_sessions"),
+        ("¿Qué entrenamientos hice esta semana?", "week_activities"),
         ("¿Cuánto TSS hice la semana pasada?", "week_tss"),
         ("¿Cómo fue mi entreno de hoy?", None),
         ("¿Cuántas actividades tengo en la base de datos?", None),

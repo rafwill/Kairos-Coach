@@ -1418,3 +1418,30 @@ class TestPeriodAndSleepRoutes:
         assert "-80 min de sueño y -15 puntos" in out
         assert "- jue 22/10: sin datos" in out
         assert _dates._signed(-0.3) == "0" and _dates._signed(4.6) == "+5"
+
+
+class TestPlannedSessionsRoute:
+    """29/10: "¿qué me toca mañana / el resto de la semana?" responde con las sesiones del plan, sin el LLM."""
+
+    @pytest.mark.asyncio
+    async def test_lists_each_day_with_its_session_and_the_total(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {}
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        wk = {"title": "Rodaje Z2", "summary": {"duration_min": 60, "distance_km": 12.0, "tss": 60}, "steps": []}
+        sessions = [{"week_index": 1, "day_index": d, "session_type": "running_z2", "duration_min": 60,
+                     "structured_workout": dict(wk)} for d in range(1, 8)]
+        plan = {"title": "Plan Santa Pola", "sessions": sessions,
+                "plan_data": {"method": "bloques_con_descarga", "start_date": monday.isoformat()}}
+        with patch_all("_get_active_training_plan", return_value=plan), \
+             patch.object(TrainerAgent, "_augment_with_llm_coaching_if_needed", new=AsyncMock(side_effect=lambda q, md, **k: md)):
+            out = await TrainerAgent._route_planned_sessions(agent, "¿qué entrenamiento me toca mañana?")
+        tomorrow = today + timedelta(days=1)
+        if tomorrow.weekday() != 0:  # mañana sigue en la semana 1 del plan de prueba
+            assert f"{tomorrow.strftime('%d/%m/%Y')} — Rodaje Z2" in out and "Total" not in out
+        with patch_all("_get_active_training_plan", return_value=None):
+            out = await TrainerAgent._route_planned_sessions(agent, "¿qué me toca mañana?")
+        assert "/plan crear" in out

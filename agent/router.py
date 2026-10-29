@@ -5,6 +5,7 @@ Enrutado sin LLM (docs/Harness.md, G5): detectores de intención de cada ruta de
 
 import re
 import unicodedata
+from datetime import date, timedelta
 
 
 from agent.dates import (
@@ -36,6 +37,8 @@ class ToolRouter:
             return "config_options"
         if _is_plan_status_intent(user_message):
             return "plan_status"
+        if _planned_days(user_message) is not None:
+            return "planned_sessions"
         if _is_goal_status_intent(user_message):
             return "goal_status"
         # Periodo (km, la más larga) y sueño de anoche: Python, no el LLM (punto 3 de producción, 25/10).
@@ -274,6 +277,46 @@ def _is_week_tss_followup_intent(user_message: str, history: list[dict] | None =
         "semana natural",
     )
     return any(any(marker in content for marker in weekly_tss_markers) for content in recent_assistant)
+
+
+_PLAN_FUTURE_MARKERS = ("toca", "tengo planificad", "tengo previst", "tengo programad", "tengo que hacer",
+                        "entrenamiento tengo", "entrenamientos tengo", "sesiones tengo", "sesión tengo", "sesion tengo",
+                        "que tengo", "qué tengo", "hay planificad", "hay previst", "está previst", "esta previst",
+                        "pone el plan", "dice el plan", "en el plan")
+_PLAN_PAST_MARKERS = ("hice", "he hecho", "hecho", "realicé", "realice", "entrené", "entrene ", "ayer", "llevo",
+                      "cuántos", "cuantos", "tss", "km", "semana pasada", "mes pasado", "el pasado ")
+_WEEKDAYS_ES = {"lunes": 1, "martes": 2, "miércoles": 3, "miercoles": 3, "jueves": 4, "viernes": 5, "sábado": 6,
+                "sabado": 6, "domingo": 7}
+
+
+def _planned_days(user_message: str, today: date | None = None) -> list[date] | None:
+    """Días por los que pregunta "¿qué me toca…?" en el plan (29/10), o None si no es esa pregunta.
+
+    Mañana, pasado mañana, el resto de la semana, esta semana, el fin de semana, la semana que viene o un día
+    de la semana. "Hoy" no: lo responde la ruta de estado del día, con la decisión del motor diario.
+    """
+    text = (user_message or "").strip().lower()
+    if not text or not any(m in text for m in _PLAN_FUTURE_MARKERS) or any(m in text for m in _PLAN_PAST_MARKERS):
+        return None
+    today = today or date.today()
+    monday = today - timedelta(days=today.weekday())
+    if "pasado mañana" in text or "pasado manana" in text:
+        return [today + timedelta(days=2)]
+    if re.search(r"\bmañana\b|\bmanana\b", text.replace("por la mañana", "").replace("por la manana", "")):
+        return [today + timedelta(days=1)]
+    if any(k in text for k in ("resto de la semana", "queda de semana", "queda de la semana", "lo que queda")):
+        return [today + timedelta(days=i) for i in range(1, 7 - today.weekday())]
+    if any(k in text for k in ("semana que viene", "próxima semana", "proxima semana", "siguiente semana")):
+        return [monday + timedelta(days=7 + i) for i in range(7)]
+    if "fin de semana" in text:
+        sat = monday + timedelta(days=5) if today.weekday() <= 5 else monday + timedelta(days=12)
+        return [d for d in (sat, sat + timedelta(days=1)) if d >= today]
+    if "esta semana" in text:
+        return [monday + timedelta(days=i) for i in range(7)]
+    for name, idx in _WEEKDAYS_ES.items():
+        if re.search(rf"\b{name}\b", text):
+            return [today + timedelta(days=(idx - today.isoweekday()) % 7 or 7)]
+    return None
 
 
 def _is_week_activities_intent(user_message: str) -> bool:

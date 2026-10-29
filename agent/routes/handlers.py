@@ -31,6 +31,7 @@ from agent.daily_engine import (
     _build_startup_plan_recommendation,
     _compute_daily_plan_adjustment,
     _get_active_training_plan,
+    _get_planned_sessions_for_date,
     _normalize_storage_plan_row,
 )
 from agent.plans import (
@@ -39,6 +40,7 @@ from agent.plans import (
     _build_training_plan_status_markdown,
     _generate_structured_plan_payload,
     _plan_start,
+    _today_session_lines,
     _summarize_plan_changes,
     _validate_structured_plan,
     _wants_new_plan_intent,
@@ -73,6 +75,7 @@ from agent.startup_status import (
 )
 from agent.router import (
     _detect_personal_records_sport_intent,
+    _planned_days,
 )
 from agent.routes.day_data import (
     _build_mcp_factual_query_markdown,
@@ -354,6 +357,36 @@ class RoutesMixin:
         return (reply + "\n\n" if reply else "") + "## 🗓️ Cambios en el plan\n" + "\n".join(lines) + \
             "\n\nGuardado como una versión nueva del plan (`/plan ver` para verlo entero)."
 
+    async def _route_planned_sessions(self, user_message: str) -> str:
+        """"¿Qué me toca mañana / el resto de la semana / el sábado?": las sesiones del plan activo para esos días,
+        con su detalle (29/10: la primera iba a las actividades hechas y la segunda al LLM, que decía no ver el plan).
+        Si además se pide consejo, la capa de coaching lo añade sobre estos datos."""
+        days = _planned_days(user_message) or []
+        plan = _get_active_training_plan(self.user_profile)
+        if not plan or not plan.get("sessions"):
+            return ("## 🗓️ Tu plan\n- No tienes un plan activo con sesiones. Créalo con `/plan crear` y te digo cada día "
+                    "lo que te toca.")
+        if not days:
+            return ("## 🗓️ Tu plan\n- La semana acaba hoy. Para la siguiente, pregúntame «¿qué me toca la semana que "
+                    "viene?».")
+        lines = ["## 🗓️ Lo que te toca", f"_{plan.get('title') or 'Plan activo'}_", ""]
+        minutes = km = tss = 0.0
+        for d in days:
+            day_lines = _today_session_lines(plan, self.user_profile, d)
+            if not day_lines:
+                lines.append(f"- **{_run_plan._DAY_NAMES[d.isoweekday()]} {d.strftime('%d/%m/%Y')}** — sin sesión en el plan")
+                continue
+            lines += day_lines
+            for row in _get_planned_sessions_for_date(plan, d.isoformat()):
+                summary = (row.get("structured_workout") or {}).get("summary") or {}
+                minutes += float(summary.get("duration_min") or row.get("duration_min") or 0)
+                km += float(summary.get("distance_km") or 0)
+                tss += float(summary.get("tss") or 0)
+        if len(days) > 1:
+            lines += ["", f"**Total:** {_run_plan.fmt_duration(minutes)} · ~{km:.0f} km · {tss:.0f} TSS"]
+        reply = "\n".join(lines)
+        return await self._augment_with_llm_coaching_if_needed(user_message, reply, route="planned_sessions")
+
     async def _route_personal_records(self, user_message: str):
         """Récords personales: distancia y marca desde la primera respuesta; si Garmin no los da, sigue el LLM."""
         try:
@@ -388,6 +421,7 @@ ROUTE_HANDLERS: dict[str, str] = {
     "db_count": "_route_db_count",
     "config_options": "_route_config_options",
     "plan_status": "_route_plan_status",
+    "planned_sessions": "_route_planned_sessions",
     "goal_status": "_route_goal_status",
     "week_tss": "_route_week_tss",
     "week_activities": "_route_week_activities",
