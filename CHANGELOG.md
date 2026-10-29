@@ -4,6 +4,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Added (reintento ante proveedor saturado)
+- Señal: con Gemini gratuito, varios modelos Flash respondieron 503 ("high demand") y Pro 429; el panel de uso de Google lo enseña. Los reintentos de la librería `openai` esperan menos de un segundo.
+- Qué se hizo: toda llamada al LLM (chat, coaching, sensores, planes) que devuelve 429 o 503 se repite tras 5, 10 y 20 s; otros errores, sin cambio. Test con los tres casos (repite y acierta, agota las esperas, otro error sin reintento). Tests: 856.
+- Lo que no se hizo: las pausas fijas de 4–5 s entre llamadas que se sugerían. El plan no dio ningún 429 con 4 tandas en paralelo, y las pausas solo lo harían más lento.
+
 ### Changed (Gemini como proveedor; plan de Gemini activo; km de los rodajes por FC)
 - Comparativa pedida por el usuario: el plan hasta la media de Santa Pola, por la ruta real (`_build_plan_with_llm`), con su perfil y preferencias, sin escribir en Supabase. Los modelos los elegí tras consultar el catálogo de cada clave:
   - **Gemini `gemini-3.5-flash`:** válido en 68 s, 62.947 tokens de entrada y 25.578 de salida; 2 correcciones de 10 llamadas. Descartados Pro (sin cupo gratuito, 429) y 3.8 Flash (saturado: 119 s para responder "ok").

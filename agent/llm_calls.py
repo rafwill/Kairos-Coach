@@ -43,6 +43,9 @@ from agent.coaching import (
 
 log = logging.getLogger(__name__)
 
+# Esperas (s) antes de repetir una llamada al LLM que devuelve 429 o 503 (29/10).
+_BUSY_RETRY_WAITS = (5, 10, 20)
+
 
 def _provider_error() -> type[Exception]:
     """openai.APIError (caída, 429 o 503 del proveedor), importado cuando hace falta (8c: openai tarda ≈ 0,9 s)."""
@@ -70,6 +73,8 @@ class LLMMixin:
     def _watch_llm_auth(self) -> None:
         """Clave rechazada en cualquier llamada al LLM (26/10): marca `llm_auth_failed` y lanza LLMAuthError.
 
+        Además (29/10), un 429 o 503 del proveedor se repite tras esperar 5, 10 y 20 s.
+
         LLMAuthError es un RuntimeError, que todas las capas (bucle con tools, coaching, rescates, sensores)
         ya capturan; la CLI ve la marca, pide la clave nueva y repite la pregunta. Antes, un 401 de la capa de
         coaching (openai.AuthenticationError) no lo capturaba nadie y cerraba la sesión.
@@ -79,15 +84,21 @@ class LLMMixin:
         create = completions.create
 
         async def _create(*args, **kwargs):
-            try:
-                return await create(*args, **kwargs)
-            except LLMAuthError:
-                raise
-            except Exception as exc:
-                if not _is_llm_auth_error(exc):
+            for wait in (*_BUSY_RETRY_WAITS, None):
+                try:
+                    return await create(*args, **kwargs)
+                except LLMAuthError:
                     raise
-                self.llm_auth_failed = True
-                raise LLMAuthError(f"{self.provider}: el proveedor rechaza la clave ({exc})") from exc
+                except Exception as exc:
+                    if _is_llm_auth_error(exc):
+                        self.llm_auth_failed = True
+                        raise LLMAuthError(f"{self.provider}: el proveedor rechaza la clave ({exc})") from exc
+                    # Proveedor saturado o al límite (29/10, Gemini gratuito: 503 "high demand" y 429): se espera y se
+                    # repite; los reintentos de la librería son de menos de un segundo y no bastan.
+                    if wait is None or getattr(exc, "status_code", None) not in (429, 503):
+                        raise
+                    log.info("[LLM] %s %s: reintento en %ss", self.provider, exc.status_code, wait)
+                    await asyncio.sleep(wait)
 
         completions.create = _create
 

@@ -256,6 +256,31 @@ class TestLlmKey:
             asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
         assert agent.llm_auth_failed is False
 
+    class _Busy(Exception):
+        def __init__(self, status):
+            super().__init__(f"Error code: {status}")
+            self.status_code = status
+
+    def test_busy_provider_is_retried_after_waiting(self, monkeypatch):
+        # 29/10, Gemini gratuito: 503 "high demand" y 429; se espera 5, 10 y 20 s y se repite.
+        waits = []
+
+        async def fake_sleep(s):
+            waits.append(s)
+
+        monkeypatch.setattr("agent.llm_calls.asyncio.sleep", fake_sleep)
+        agent = self._agent(monkeypatch, [self._Busy(503), self._Busy(429), "ok"])
+        assert asyncio.run(agent.client.chat.completions.create(model="m", messages=[])) == "ok"
+        assert waits == [5, 10]
+        agent = self._agent(monkeypatch, [self._Busy(503)] * 4)
+        with pytest.raises(self._Busy):
+            asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
+        assert waits[2:] == [5, 10, 20]
+        agent = self._agent(monkeypatch, [self._Busy(400)])
+        with pytest.raises(self._Busy):  # otro error: sin espera ni reintento
+            asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
+        assert len(waits) == 5
+
     def test_coaching_layer_survives_a_rejected_key(self, monkeypatch):
         # Antes, el 401 de la capa de coaching no lo capturaba nadie y cerraba la sesión.
         agent = self._agent(monkeypatch, self._Unauthorized("401"))
