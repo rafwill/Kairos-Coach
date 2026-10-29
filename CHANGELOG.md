@@ -13,6 +13,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
   - Pasar a Gemini: `ia_provider` = gemini, `gemini-3.5-flash`, y su clave en `PROVIDER_API_KEY`; la de NVIDIA, en `NVIDIA_API_KEY`.
   - Guardar el plan de Gemini como plan activo (`19bd7f1c`, 104 sesiones, comprobado leyendo de vuelta; sustituye al genérico de respaldo).
   - Arreglar los km.
+- Batería con Gemini: 25/25, en 104 s en total (la pregunta más lenta, 19 s), frente a 166 s de nemotron (la más lenta, 63 s).
 - **Km de los tramos por FC:** en una sesión de carrera se estiman con el ritmo medio de su zona de ritmo equivalente (FC1 → Z1 … FC5 → Z5a); en bici o cross, no. El TSS sigue siendo hrTSS. En el plan guardado, la semana 4 pasa de 0 a 49 km y la 11, de 62 a 100.
 
 ### Changed (sin plan del LLM no se guarda ninguno; visto por el usuario)
