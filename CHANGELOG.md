@@ -4,6 +4,16 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Fixed (motor diario: adherencia de un día sin plan y etiqueta de la decisión; visto por el usuario)
+- Señal: al arrancar, con TSB +19 y estado "ready", Kairos recomendó "rodaje suave" por "ajuste por exceso de carga/adherencia baja en día previo", con una sesión resultante de 25' en Z3 Tempo. Datos reales: el plan se creó el 29/10 a las 11:48 y empieza el lunes 26/10; el 28/10 "tenía" un rodaje de 65 min, el atleta no hizo ninguna actividad, la adherencia salió 0,12 y la decisión bajó de mantener a reducir.
+- Qué se hizo:
+  - Un día anterior a la creación del plan no se juzga (`created_at`, que ahora lleva el plan normalizado).
+  - No hacer la sesión de ayer ya no baja la de hoy. Se baja si ayer hubo más carga de la prevista (+25 %) o una actividad distinta, y el motivo dice cuál ("ayer hiciste más carga de la prevista" / "una sesión distinta").
+  - Con plan, la decisión se muestra sobre la sesión del día: "la sesión del plan, tal cual" / "con un 20-30 % menos" / "rodaje suave en lugar de la sesión del plan" / "descanso". Antes "reducir" salía como "rodaje suave" y "mantener" como "calidad".
+- Resultado:
+  - Con el plan real, la comparación de ayer da `None`.
+  - Tests: 858 (dos nuevos y uno corregido, que esperaba la etiqueta errónea).
+
 ### Added (reintento ante proveedor saturado)
 - Señal: con Gemini gratuito, varios modelos Flash respondieron 503 ("high demand") y Pro 429; el panel de uso de Google lo enseña. Los reintentos de la librería `openai` esperan menos de un segundo.
 - Qué se hizo: toda llamada al LLM (chat, coaching, sensores, planes) que devuelve 429 o 503 se repite tras 5, 10 y 20 s; otros errores, sin cambio. En pantalla sale un aviso en amarillo por cada espera ("⏳ Google Gemini está saturado (503): espero 5 s y reintento."; petición del usuario), mediante `agent.llm_wait_notice`, que pone la CLI. Test con los tres casos (repite y acierta, agota las esperas, otro error sin reintento). Tests: 856.

@@ -160,7 +160,8 @@ class TestStartupProactive:
             "trainings": [],
         }
         out = _build_proactive_status_markdown(payload)
-        assert "Elección recomendada hoy: rodaje suave" in out
+        # Con plan, "reduce" es la sesión del plan con menos volumen (29/10: salía "rodaje suave" junto a un tempo).
+        assert "Elección recomendada hoy: la sesión del plan, con un 20-30 % menos" in out
         assert "Motor determinista" not in out
         assert "Motivo: estado neutral con una señal de riesgo" in out
 
@@ -333,6 +334,36 @@ class TestStartupProactive:
         trace = out.get("adjustment_trace") or []
         assert adjusted.get("schema") == "kairos-workout-v1"
         assert isinstance(trace, list) and trace
+
+    def _ready_snapshot(self, feedback):
+        today = date.today().isoformat()
+        return {
+            "dates": {"today": today},
+            "load_fatigue": {"status": "ready", "latest": {"tsb": 19.0, "atl": 40.0},
+                             "weekly": {"current_tss": 250.0, "high_tss": 450.0}, "ranges": {"atl_high": 70.0}},
+            "body_battery": {"today": {"date": today, "body_battery_level": 75}},
+            "sleep": {"today": {"date": today, "sleep_hours": 8.0, "sleep_score": 85}},
+            "hrv": {"today": {"date": today, "lastNightAvg": 50, "weeklyAvg": 50, "status": "balanced"}},
+            "plan_execution_feedback": feedback,
+        }
+
+    def test_skipping_yesterday_does_not_lower_today(self):
+        # 29/10: "ready" con TSB +19 bajaba a "reducir" porque ayer no entrenó (adherencia 0.12, 0 actividades).
+        missed = {"adherence_score": 0.12, "load_deviation_pct": -1.0, "executed": {"activities": 0}}
+        out = _compute_daily_plan_adjustment(self._ready_snapshot(missed), {"sessions": []})
+        assert out["decision"] == "maintain" and out["adherence_adjustment"] == "none"
+        other = {"adherence_score": 0.2, "load_deviation_pct": 0.1, "executed": {"activities": 1}}
+        out = _compute_daily_plan_adjustment(self._ready_snapshot(other), {"sessions": []})
+        assert out["decision"] == "reduce" and "ayer hiciste una sesión distinta de la prevista" in out["reason"]
+
+    def test_days_before_the_plan_existed_are_not_judged(self):
+        yday = (date.today() - timedelta(days=1)).isoformat()
+        plan = {"created_at": f"{date.today().isoformat()}T11:48:00+00:00", "plan_data": {},
+                "sessions": [{"week_index": 1, "day_index": date.fromisoformat(yday).isoweekday(),
+                              "session_type": "running_z2", "duration_min": 65}]}
+        assert _compute_plan_execution_feedback(plan, [], yday, profile={}) is None
+        plan["created_at"] = f"{yday}T07:00:00+00:00"
+        assert _compute_plan_execution_feedback(plan, [], yday, profile={}) is not None
 
     def test_build_proactive_status_markdown_shows_block_feedback_summary(self):
         payload = {

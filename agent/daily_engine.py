@@ -63,6 +63,8 @@ def _normalize_storage_plan_row(row: dict) -> dict | None:
             "status": status or "active",
             "source": row.get("source") or merged.get("source") or "agent",
             "active": (status == "active"),
+            # Fecha de creación: antes de ella el atleta no seguía este plan (adherencia, 29/10).
+            "created_at": row.get("created_at") or merged.get("created_at"),
         }
     )
     return merged
@@ -730,7 +732,13 @@ def _compute_plan_execution_feedback(
     target_date_iso: str,
     profile: dict,
 ) -> dict | None:
-    """Compara planificado vs ejecutado en un día y devuelve adherencia + desviación."""
+    """Compara planificado vs ejecutado en un día y devuelve adherencia + desviación.
+
+    Un día anterior a la creación del plan no se juzga (29/10: un plan creado hoy que empieza el lunes "tenía"
+    sesiones ayer, y no hacerlas bajaba la decisión de hoy).
+    """
+    if str((plan or {}).get("created_at") or "")[:10] > str(target_date_iso)[:10]:
+        return None
     planned = _get_planned_session_for_date(plan, target_date_iso)
     if not planned:
         return None
@@ -977,13 +985,18 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     def _upgrade(current: str) -> str:
         return order[min(len(order) - 1, rank.get(current, 2) + 1)]
 
+    executed_yday = int(((feedback.get("executed") or {}).get("activities")) or 0)
     if decision != "rest" and adherence_score >= 0.0:
-        if load_dev > 0.25 or adherence_score < 0.40:
+        # Se baja si ayer hizo más carga de la prevista o una actividad distinta; no por no entrenar (29/10: saltarse
+        # una sesión deja al atleta más fresco, y antes bajaba la de hoy igual que un exceso).
+        if load_dev > 0.25 or (adherence_score < 0.40 and executed_yday > 0):
             new_decision = _downgrade(decision)
             if new_decision != decision:
                 decision = new_decision
                 adherence_adjustment = "down"
-                reason = f"{reason}; ajuste por exceso de carga/adherencia baja en dia previo"
+                why = ("ayer hiciste más carga de la prevista" if load_dev > 0.25
+                       else "ayer hiciste una sesión distinta de la prevista")
+                reason = f"{reason}; ajuste porque {why}"
         elif (
             load_dev < -0.30
             and adherence_score >= 0.75
