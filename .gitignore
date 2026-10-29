@@ -1,5 +1,10 @@
-# Credenciales — nunca subir al repo
+# Credenciales — nunca subir al repo (también copias: .env.backup, .env.local…; la plantilla sí)
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
 
 # Certificado corporativo (específico del entorno)
 # Regenerar con: Export-Certificate -Cert (Get-ChildItem Cert:\LocalMachine\Root | Where Subject -like "*Zscaler*") -FilePath zscaler-ca.pem
@@ -16,9 +21,14 @@ env/
 dist/
 build/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
 
-# VS Code (configuración local de cada desarrollador)
+# Editores y asistentes (configuración local de cada desarrollador)
 .vscode/
+.idea/
+.claude/settings.local.json
 
 # Runtime local (no versionar)
 agent.log*

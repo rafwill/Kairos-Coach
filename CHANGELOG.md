@@ -4,6 +4,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Release v3.0.0 — Kairos Coach Funcional
+- Primera versión funcional: carga como TrainingPeaks, planes construidos por el LLM del atleta y comprobados por reglas, arranque con la sesión de hoy y recomendación, proveedor de IA a elección del atleta. Notas de la release en GitHub. `pyproject.toml` pasa a 3.0.0.
+- Antes de publicarla:
+  - Revisado lo que se sube: sin claves ni datos personales en el repositorio (solo plantillas y claves de prueba).
+  - Quitada una mención a la glucosa del atleta en este changelog.
+  - `.gitignore`: se añaden copias de `.env`, certificados y claves, cachés de ruff y mypy, `htmlcov`, `.idea` y la configuración local de Claude.
+
 ### Fixed ("¿qué me toca mañana / el resto de la semana?" responde con el plan; visto por el usuario)
 - Señal (dos preguntas del usuario con el plan activo):
   - "¿qué entrenamientos tengo el resto de la semana?" fue a `week_activities`: actividades ya hechas, por "entrenamientos" + "semana".
@@ -26,7 +33,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
   - Con plan, sin "🎯 Próximo paso" (petición del usuario: tras la sesión de hoy y la recomendación no aporta nada). El resumen acaba con el texto del entrenador y el pie de la fuente; sin plan, se mantiene.
 - Hallazgo: `_is_block_plan` y `_plan_start` solo miraban dentro de `plan_data`, y el plan leído de la base de datos lo trae fundido con la fila (`_normalize_storage_plan_row`). El plan activo no se reconocía como plan por bloques en el arranque ni en el contexto del LLM. Ahora se mira en los dos sitios (`_plan_field`).
 - Resultado:
-  - En vivo con Gemini: el arranque muestra la fuerza de hoy con su detalle, "la sesión del plan, tal cual", y el texto del entrenador con HRV 65 ms (+3 %), sueño 7 h 28 min, Body Battery 74, TSB +18,8, la sesión concreta y la nota de glucosa.
+  - En vivo con Gemini: el arranque muestra la fuerza de hoy con su detalle, "la sesión del plan, tal cual", y el texto del entrenador con HRV 65 ms (+3 %), sueño 7 h 28 min, Body Battery 74, TSB +18,8 y la sesión concreta.
   - Tests: 860.
 
 ### Fixed (motor diario: adherencia de un día sin plan y etiqueta de la decisión; visto por el usuario)

@@ -10,9 +10,9 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 28-29/10/2026** (ordenador 1; último commit `aa1a589`). 854 tests; batería 25/25; batería del bucle 10/10. Últimos cambios: el plan lo construye y lo revisa el LLM del atleta (28/10) y `/plan crear` pregunta las preferencias del atleta, con la regla del 20 % en Z3+, días dobles y ritmo o zona por tramo (29/10). Lo siguiente en planes: que el usuario cree su plan con `/plan crear` y lo revise (B2.9). Lo hecho, en `CHANGELOG.md` (28/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull`.
+**Sesión del 28-29/10/2026** (ordenador 1). Release **v3.0.0 — Kairos Coach Funcional** (29/10). 861 tests; batería 25/25 con Gemini. Proveedor del usuario: Gemini `gemini-3.5-flash` (la clave de NVIDIA, en `NVIDIA_API_KEY`). Plan activo: el de Gemini hacia la media de Santa Pola (`19bd7f1c`). Lo hecho, en `CHANGELOG.md` (28-29/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull` y poner en su `.env` la clave de Gemini en `PROVIDER_API_KEY`.
 
-- **Siguiente paso:** **aparcado hasta ~09/11/2026** (decisión del usuario): usar Kairos y revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`) para los puntos 1 y 2. Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
+- **Siguiente paso (decisión del usuario):** usar Kairos unas semanas con el plan y ajustar lo que salga. Revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`, `[PLAN]`, reintentos `[LLM] gemini 503`) para los puntos 1 y 2 y la revisión del plan (B2.9). Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
 
 ## Pendiente
 
