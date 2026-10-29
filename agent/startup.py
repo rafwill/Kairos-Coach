@@ -48,6 +48,7 @@ from agent.wellness import (
 from agent.kairos_tools import (
     _KAIROS_INTERNAL_TOOLS,
 )
+from agent.plans import _today_session_lines
 from agent.daily_engine import (
     _build_startup_plan_recommendation,
     _compute_daily_plan_adjustment,
@@ -540,9 +541,34 @@ class StartupMixin:
         if active_plan:
             snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
             snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
+            snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile)
         md = _build_proactive_status_markdown(snapshot)
+        if active_plan and snapshot["daily_plan_decision"].get("decision"):
+            md = await self._startup_coaching(md, snapshot["daily_plan_decision"])
         log.info("[STARTUP] ✓ total=%.1fs", time.perf_counter() - _t0)
         return md
+
+    async def _startup_coaching(self, md: str, decision: dict) -> str:
+        """Recomendación del arranque con plan (29/10, decisión del usuario): la decisión es la del motor diario y el
+        LLM la explica y concreta la sesión dentro de su marco (G12, S15). Su texto va dentro de "Recomendación",
+        antes del próximo paso; si el LLM falla, queda solo la parte determinista."""
+        if not getattr(self, "client", None):
+            return md
+        t0 = time.perf_counter()
+        augmented = await self._augment_with_llm_coaching_if_needed(
+            "¿Qué me recomiendas hoy con lo que me toca en el plan?", md, route="daily_readiness",
+            daily_plan_decision=decision, always=True)
+        log.info("[STARTUP] ⏱ coaching=%.1fs", time.perf_counter() - t0)
+        extra = augmented[len(md):] if augmented.startswith(md) else ""
+        if "_Fase coaching por LLM sobre datos deterministas" not in extra:
+            return md  # el LLM no respondió: sin la nota de error en el arranque
+        text = extra.split("## 🧠 Interpretación de coaching", 1)[-1]
+        text = text.split("\n\n_Fase coaching por LLM", 1)[0].strip()
+        marker = "\n\n## 🎯 Próximo paso"
+        block = "\n\n### 🧠 Tu entrenador\n" + text
+        md = md.replace(marker, block + marker, 1) if marker in md else md + block
+        return md.replace("- Fuente: respuesta determinista (sin inferencias numéricas del LLM).",
+                          "- Fuente: la decisión es del motor diario (reglas); «Tu entrenador» es el LLM sobre esos datos.")
 
     async def build_onboarding_mcp_enrichment(self) -> dict:
         """Obtiene datos MCP utiles para enriquecer la base inicial del atleta."""

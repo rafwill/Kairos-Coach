@@ -232,6 +232,10 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     else:
         initial_recommendation = "No tienes plan asignado. ¿Que quieres hacer hoy?"
 
+    today_session = [str(x) for x in (snapshot.get("today_session_lines") or [])]
+    if plan_assigned and today_session:
+        # Primero lo que toca hoy según el plan; después, la recomendación sobre esa sesión (29/10).
+        lines.extend(["", "## 🗓️ Sesión de hoy", *today_session])
     lines.extend([
         "",
         "## ✅ Recomendación",
@@ -254,7 +258,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         log.debug("proactive status: decisión del motor diario %s", decision_label)
         if reason:
             lines.append(f"  - Motivo: {reason}")
-        if resulting:
+        if resulting and not (plan_assigned and decision == "maintain"):  # mantener: la sesión de hoy, ya arriba
             lines.append(f"  - Sesión resultante: {resulting}")
     lines.extend([
         "",

@@ -676,6 +676,40 @@ class TestStartupProactive:
 
         assert "No tienes plan asignado" in out
 
+    @pytest.mark.asyncio
+    async def test_with_a_plan_today_session_comes_first_and_the_coach_writes_within_the_decision(self):
+        # 29/10, petición del usuario: primero lo que toca hoy; la decisión es del motor y el LLM la explica.
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.mcp_session = MagicMock()
+        agent.user_profile = {}
+        agent.client = MagicMock()
+        plan = {"title": "Plan", "sessions": []}
+        decision = {"decision": "maintain", "reason": "disponibilidad alta y recuperación estable"}
+        coach = AsyncMock(side_effect=lambda q, md, **kw: md + "\n\n## 🧠 Interpretación de coaching\nHaz el tempo tranquilo."
+                          "\n\n_Fase coaching por LLM sobre datos deterministas (sin recalcular métricas)._")
+        snapshot = {"body_battery": {}, "hrv": {}, "sleep": {}, "trainings": []}
+        with patch.object(TrainerAgent, "collect_startup_snapshot_48h", return_value=snapshot), \
+             patch_all("_get_active_training_plan", return_value=plan), \
+             patch_all("_compute_daily_plan_adjustment", return_value=decision), \
+             patch_all("_today_session_lines", return_value=["- **Jueves 29/10/2026 — Tempo 25'**"]), \
+             patch.object(TrainerAgent, "_augment_with_llm_coaching_if_needed", coach):
+            out = await TrainerAgent.build_startup_status_markdown(agent)
+        assert out.index("## 🗓️ Sesión de hoy") < out.index("## ✅ Recomendación") < out.index("### 🧠 Tu entrenador")
+        assert out.index("Haz el tempo tranquilo.") < out.index("## 🎯 Próximo paso")
+        assert "la sesión del plan, tal cual" in out and "Fase coaching" not in out
+        assert coach.await_args.kwargs["daily_plan_decision"] == decision
+        # Si el LLM no responde, queda la recomendación determinista, sin la nota de error.
+        coach.side_effect = lambda q, md, **kw: md + "\n\n## 🧠 Interpretación de coaching\n- No pude generar..."
+        with patch.object(TrainerAgent, "collect_startup_snapshot_48h", return_value=snapshot), \
+             patch_all("_get_active_training_plan", return_value=plan), \
+             patch_all("_compute_daily_plan_adjustment", return_value=decision), \
+             patch_all("_today_session_lines", return_value=["- **Jueves 29/10/2026 — Tempo 25'**"]), \
+             patch.object(TrainerAgent, "_augment_with_llm_coaching_if_needed", coach):
+            out = await TrainerAgent.build_startup_status_markdown(agent)
+        assert "Tu entrenador" not in out and "No pude generar" not in out and "## 🗓️ Sesión de hoy" in out
+
 
 class TestStartupInParallel:
     """Arranque (8c, 28/10): el resumen inicial va a la vez que la carga y el perfil de Garmin se pide una vez."""

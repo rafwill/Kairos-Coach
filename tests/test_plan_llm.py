@@ -412,3 +412,14 @@ class TestCoachPreferences:
         text = pb.frame_text(_frame(doubles=True, intensity="piramidal", max_load_weeks=2))
         assert "Dobles: sí" in text and "piramidal" in text and "bloques de 2 semanas de carga" in text
         assert "Como mucho un 20 %" in pb.rules_text(_frame())
+
+
+def test_a_plan_read_from_the_database_is_still_a_block_plan():
+    # 29/10: _normalize_storage_plan_row funde plan_data con la fila; el arranque no reconocía el plan por bloques.
+    from agent.daily_engine import _normalize_storage_plan_row
+    from agent.plans import _is_block_plan, _plan_start
+
+    row = {"id": "p1", "title": "Plan", "status": "active",
+           "plan_data": {"method": "bloques_con_descarga", "start_date": "2026-10-26", "author": "llm"}}
+    plan = _normalize_storage_plan_row(row)
+    assert "plan_data" not in plan and _is_block_plan(plan) and _plan_start(plan) == date(2026, 10, 26)

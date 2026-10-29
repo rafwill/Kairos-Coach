@@ -17,6 +17,7 @@ from agent.dates import (
 )
 from agent.daily_engine import (
     _get_planned_session_for_date,
+    _get_planned_sessions_for_date,
     _session_type_label,
     _get_active_training_plan,
     _intensity_class_from_rpe,
@@ -33,6 +34,30 @@ _DAY_NAMES_ES = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves", 5: "Vier
 def _day_slot(session: dict) -> tuple[int, int]:
     """Orden de las sesiones de una semana: día y, en un día doble (29/10), primero la principal."""
     return int(session.get("day_index") or 1), int(((session.get("structured_workout") or {}).get("slot")) or 1)
+
+
+def _today_session_lines(plan: dict, profile: dict, day: date | None = None) -> list[str]:
+    """La sesión (o sesiones, si es día doble) que toca hoy según el plan, para el arranque (29/10).
+
+    Plan por bloques: título, duración, km, TSS y tramos, como en `/plan ver`; plan antiguo: tipo, duración e
+    intensidad. Sin sesión hoy (antes o después del plan), lista vacía.
+    """
+    day = day or date.today()
+    rows = _get_planned_sessions_for_date(plan, day.isoformat())
+    lines: list[str] = []
+    zones, _ = _resolve_hr_zones(profile or {}, "running")
+    for i, row in enumerate(rows):
+        if _is_block_plan(plan):
+            sl = _run_plan.session_lines(row, day, zones)
+            lines.append(f"- **{sl[0]}**" + (" (doble)" if i else ""))
+            lines += [f"  - {x.strip()}" for x in sl[1:]]
+        elif str(row.get("session_type") or "") == "rest":
+            lines.append(f"- **{_DAY_NAMES_ES[day.isoweekday()]} {day.strftime('%d/%m/%Y')} — Descanso**")
+        else:
+            lines.append(f"- **{_DAY_NAMES_ES[day.isoweekday()]} {day.strftime('%d/%m/%Y')} — "
+                         f"{_session_type_label(row.get('session_type'))}** · {int(row.get('duration_min') or 0)} min · "
+                         f"{_session_intensity_label(row, profile)}")
+    return lines
 
 
 def _plan_week_lines(plan: dict, profile: dict, monday: date | None = None) -> list[str]:
@@ -1191,13 +1216,20 @@ def _generate_run_plan_payload(profile, race, race_date, target_time, threshold,
     return plan, sessions
 
 
+def _plan_field(plan: dict | None, key: str):
+    """Un dato de plan_data: dentro de `plan_data` (plan recién generado) o arriba (plan normalizado desde la base de
+    datos, `_normalize_storage_plan_row`, que funde plan_data con la fila; 29/10: el arranque no lo encontraba)."""
+    plan = plan or {}
+    return (plan.get("plan_data") or {}).get(key) or plan.get(key)
+
+
 def _is_block_plan(plan: dict | None) -> bool:
-    return str(((plan or {}).get("plan_data") or {}).get("method") or "") == "bloques_con_descarga"
+    return str(_plan_field(plan, "method") or "") == "bloques_con_descarga"
 
 
 def _plan_start(plan: dict) -> date | None:
     try:
-        return date.fromisoformat(str(((plan or {}).get("plan_data") or {}).get("start_date") or "")[:10])
+        return date.fromisoformat(str(_plan_field(plan, "start_date") or "")[:10])
     except ValueError:
         return None
 
@@ -1461,7 +1493,7 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
         min_quality_sessions = min(2, max_quality_sessions)
         if _is_block_plan(plan) and wi == max(by_week):
             min_quality_sessions = 0  # semana de carrera: la carrera es la sesión clave
-        elif _is_block_plan(plan) and wi in set((plan.get("plan_data") or {}).get("deload_weeks") or []):
+        elif _is_block_plan(plan) and wi in set(_plan_field(plan, "deload_weeks") or []):
             # descarga: una sola sesión de calidad (el LLM puede quitarla del todo)
             min_quality_sessions = 0 if (plan.get("plan_data") or {}).get("author") == "llm" else 1
         elif (plan.get("plan_data") or {}).get("author") == "llm":

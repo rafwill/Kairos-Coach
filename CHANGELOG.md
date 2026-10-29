@@ -4,6 +4,18 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Changed (arranque con plan: sesión de hoy y recomendación del entrenador; decisión del usuario)
+- Petición del usuario: con plan asignado, primero "Sesión de hoy" y después la recomendación basada en las métricas clave y en lo que toca. Decisión: la decisión la toma el motor diario (reglas, comprobables, igual con cualquier modelo) y el LLM la explica y concreta.
+- Qué se hizo:
+  - Bloque "🗓️ Sesión de hoy" (`_today_session_lines`): título, duración, km, TSS y tramos, como en `/plan ver`; con día doble, las dos sesiones.
+  - Dentro de "✅ Recomendación", tras la decisión del motor, "🧠 Tu entrenador": una llamada a la capa de coaching (`daily_readiness`, horizonte hoy, marco de la sesión G12, sensor S15). Si el LLM falla, queda la parte determinista sin nota de error.
+  - El pie dice qué es de las reglas y qué del LLM.
+  - Con "mantener", no se repite "Sesión resultante".
+- Hallazgo: `_is_block_plan` y `_plan_start` solo miraban dentro de `plan_data`, y el plan leído de la base de datos lo trae fundido con la fila (`_normalize_storage_plan_row`). El plan activo no se reconocía como plan por bloques en el arranque ni en el contexto del LLM. Ahora se mira en los dos sitios (`_plan_field`).
+- Resultado:
+  - En vivo con Gemini: el arranque muestra la fuerza de hoy con su detalle, "la sesión del plan, tal cual", y el texto del entrenador con HRV 65 ms (+3 %), sueño 7 h 28 min, Body Battery 74, TSB +18,8, la sesión concreta y la nota de glucosa.
+  - Tests: 860.
+
 ### Fixed (motor diario: adherencia de un día sin plan y etiqueta de la decisión; visto por el usuario)
 - Señal: al arrancar, con TSB +19 y estado "ready", Kairos recomendó "rodaje suave" por "ajuste por exceso de carga/adherencia baja en día previo", con una sesión resultante de 25' en Z3 Tempo. Datos reales: el plan se creó el 29/10 a las 11:48 y empieza el lunes 26/10; el 28/10 "tenía" un rodaje de 65 min, el atleta no hizo ninguna actividad, la adherencia salió 0,12 y la decisión bajó de mantener a reducir.
 - Qué se hizo:
