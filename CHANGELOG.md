@@ -4,6 +4,17 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-29
 
+### Changed (Gemini como proveedor; plan de Gemini activo; km de los rodajes por FC)
+- Comparativa pedida por el usuario: el plan hasta la media de Santa Pola, por la ruta real (`_build_plan_with_llm`), con su perfil y preferencias, sin escribir en Supabase. Los modelos los elegí tras consultar el catálogo de cada clave:
+  - **Gemini `gemini-3.5-flash`:** válido en 68 s, 62.947 tokens de entrada y 25.578 de salida; 2 correcciones de 10 llamadas. Descartados Pro (sin cupo gratuito, 429) y 3.8 Flash (saturado: 119 s para responder "ok").
+  - **Groq `openai/gpt-oss-120b`:** sin plan. El plan gratuito admite 8.000 tokens por minuto y una petición de semanas pide 9.727 (413).
+  - **Mistral:** sin plan gratuito.
+- Decisiones del usuario:
+  - Pasar a Gemini: `ia_provider` = gemini, `gemini-3.5-flash`, y su clave en `PROVIDER_API_KEY`; la de NVIDIA, en `NVIDIA_API_KEY`.
+  - Guardar el plan de Gemini como plan activo (`19bd7f1c`, 104 sesiones, comprobado leyendo de vuelta; sustituye al genérico de respaldo).
+  - Arreglar los km.
+- **Km de los tramos por FC:** en una sesión de carrera se estiman con el ritmo medio de su zona de ritmo equivalente (FC1 → Z1 … FC5 → Z5a); en bici o cross, no. El TSS sigue siendo hrTSS. En el plan guardado, la semana 4 pasa de 0 a 49 km y la 11, de 62 a 100.
+
 ### Changed (sin plan del LLM no se guarda ninguno; visto por el usuario)
 - Señal: el usuario ejecutó `/plan crear`. Nemotron falló en la semana 9 (sin día de descanso) y Kairos guardó y activó el plan genérico del motor determinista de respaldo, el formato viejo con "Calidad de carrera · 48 min · Z5". El usuario: "inservible… PLANES GENÉRICOS NO".
 - Qué se hizo:

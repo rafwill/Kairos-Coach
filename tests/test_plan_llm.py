@@ -99,7 +99,14 @@ class TestStepsAreComputedByTheCode:
         assert errors == []
         # FC2 140/169 = 0.83 → 40.8 TSS/h; FC1 124.5/169 → 40.8 TSS/h
         assert session["structured_workout"]["summary"]["tss"] == round(80 / 60 * 40.8, 1)
-        assert session["structured_workout"]["summary"]["distance_km"] == 0
+        assert session["structured_workout"]["summary"]["distance_km"] == 0  # bici o cross por FC: sin km
+        run = dict(day, type="easy", title="Rodaje por FC")
+        run_session, _ = pb.expand_day(run, f, 1)
+        # Rodaje por FC: km con el ritmo medio de la zona equivalente (FC1 → Z1, FC2 → Z2); el TSS sigue siendo hrTSS.
+        z1, z2 = rp.Paces(250, 270).zone("Z1"), rp.Paces(250, 270).zone("Z2")
+        expected = round(20 * 60 / (sum(z1) / 2) + 60 * 60 / (sum(z2) / 2), 1)
+        assert run_session["structured_workout"]["summary"]["distance_km"] == expected
+        assert run_session["structured_workout"]["summary"]["tss"] == session["structured_workout"]["summary"]["tss"]
         lines = rp.session_lines(session, START, ZONES)
         assert any("FC Z2 135–145 lpm" in x for x in lines)
 

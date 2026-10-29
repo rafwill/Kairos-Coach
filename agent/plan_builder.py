@@ -373,8 +373,16 @@ def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict
     return out
 
 
-def workout_totals(steps: list[dict], f: PlanFrame) -> tuple[float, float, float]:
-    """(minutos, km, TSS planificado): rTSS de TP con ritmo; hrTSS de TP (tabla por FC/umbral) con FC."""
+# Zona de ritmo equivalente a cada zona de FC, para estimar los km de un tramo de carrera por FC (29/10).
+_HR_TO_PACE_ZONE = {1: "Z1", 2: "Z2", 3: "Z3", 4: "Z4", 5: "Z5a"}
+
+
+def workout_totals(steps: list[dict], f: PlanFrame, running: bool = True) -> tuple[float, float, float]:
+    """(minutos, km, TSS planificado): rTSS de TP con ritmo; hrTSS de TP (tabla por FC/umbral) con FC.
+
+    En una sesión de carrera, los km de un tramo por FC se estiman con el ritmo medio de su zona de ritmo
+    equivalente (29/10: antes no sumaban y una semana de rodajes por FC salía con 0 km); en bici o cross, no.
+    """
     minutes = km = tss = 0.0
     for s, times in rp._leaf_steps(steps):
         dur = _num(s.get("duration_min")) * times
@@ -389,6 +397,9 @@ def workout_totals(steps: list[dict], f: PlanFrame) -> tuple[float, float, float
             ratio = (lo + hi) / 2 / f.hr_threshold_tp
             rate = next((r for upper, r in TP_HRTSS_RATES if ratio < upper), TP_HRTSS_RATE_ABOVE_THRESHOLD)
             tss += dur / 60 * rate
+        if target.get("metric") == "hr_zone" and running and f.paces:
+            fast, slow = f.paces.zone(_HR_TO_PACE_ZONE[min(5, int(target["zone"]))])
+            km += dur * 60 / ((fast + slow) / 2)
     return round(minutes, 1), round(km, 1), round(tss, 1)
 
 
@@ -460,7 +471,7 @@ def refresh_session(session: dict, f: PlanFrame) -> dict:
     wk = session["structured_workout"]
     if "secondary_label" in wk:  # sesión con tramos de ritmo o FC
         steps = wk["steps"]
-        minutes, km, tss = workout_totals(steps, f)
+        minutes, km, tss = workout_totals(steps, f, running=wk["sessionType"] != "cross_training")
         main = _main_target(steps)
         wk["summary"] = {"duration_min": minutes, "distance_km": km, "tss": tss,
                          "intensityClass": main.get("intensityClass") or "endurance"}
