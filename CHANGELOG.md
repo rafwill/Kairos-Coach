@@ -12,7 +12,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Hallazgo: el nivel gratuito permite 20 peticiones al día por modelo ("GenerateRequestsPerDayPerProjectPerModel-FreeTier", valor 20). Hoy se agotaron: comparativa, batería y pruebas.
   - Un plan son 10–15 peticiones y una pregunta con tools, 2–5.
   - Con ese cupo, Kairos no da para el uso diario.
-  - Además, el reintento ante 429 espera 5, 10 y 20 s también cuando el cupo es diario, y ahí no sirve.
+  - Además, el reintento ante 429 esperaba 5, 10 y 20 s también cuando el cupo es diario, y ahí no sirve.
+- Aviso de cupo diario (petición del usuario):
+  - Ante un 429 de cupo diario (el error dice "per day" y trae `retryDelay`), Kairos no reintenta.
+  - En pantalla avisa: "⏳ Google Gemini: cupo diario de peticiones agotado; se libera en 17 h. Hasta entonces, cambia de proveedor con /proveedor si lo necesitas."
+  - Lanza `LLMQuotaError`, un RuntimeError que todas las capas ya capturan.
+  - Comprobado con el error real de la cuenta del usuario. Tests: 862.
 
 ### Release v3.0.0 — Kairos Coach Funcional
 - Primera versión funcional: carga como TrainingPeaks, planes construidos por el LLM del atleta y comprobados por reglas, arranque con la sesión de hoy y recomendación, proveedor de IA a elección del atleta. Notas de la release en GitHub. `pyproject.toml` pasa a 3.0.0.

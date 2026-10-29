@@ -285,6 +285,28 @@ class TestLlmKey:
             asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
         assert len(waits) == 5
 
+    def test_daily_quota_is_not_retried_and_says_when_it_resets(self, monkeypatch):
+        # 29/10, Gemini gratuito: 20 peticiones al día por modelo; esperar segundos no sirve.
+        from agent.llm_calls import LLMQuotaError
+
+        waits = []
+
+        async def fake_sleep(s):
+            waits.append(s)
+
+        monkeypatch.setattr("agent.llm_calls.asyncio.sleep", fake_sleep)
+        daily = self._Busy(429)
+        daily.body = [{"error": {"code": 429, "message": "Quota exceeded for metric: generate_content_free_tier_requests, "
+                       "limit: 20, model: gemini-3.6-flash, description: Generate content requests per day limit "
+                       "exceeded on Free Tier.", "details": [{"retryDelay": "62453s"}]}}]
+        agent = self._agent(monkeypatch, [daily, "ok"])
+        shown = []
+        agent.llm_wait_notice = shown.append
+        with pytest.raises(LLMQuotaError):
+            asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
+        assert waits == [] and shown == ["NVIDIA NIM: cupo diario de peticiones agotado; se libera en 17 h. Hasta "
+                                         "entonces, cambia de proveedor con /proveedor si lo necesitas."]
+
     def test_coaching_layer_survives_a_rejected_key(self, monkeypatch):
         # Antes, el 401 de la capa de coaching no lo capturaba nadie y cerraba la sesión.
         agent = self._agent(monkeypatch, self._Unauthorized("401"))

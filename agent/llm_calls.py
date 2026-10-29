@@ -3,6 +3,7 @@ agent/llm_calls.py
 Llamadas al LLM fuera del bucle con tools: proveedor y clave, capa de coaching de las rutas mixtas y sensores sobre cada salida con su único reintento.
 """
 
+import re
 import time
 import logging
 import json
@@ -45,6 +46,31 @@ log = logging.getLogger(__name__)
 
 # Esperas (s) antes de repetir una llamada al LLM que devuelve 429 o 503 (29/10).
 _BUSY_RETRY_WAITS = (5, 10, 20)
+
+
+class LLMQuotaError(RuntimeError):
+    """Cupo diario del proveedor agotado (29/10): no se reintenta. RuntimeError: todas las capas ya lo capturan."""
+
+
+def _daily_quota_reset(exc: Exception) -> str | None:
+    """Si el 429 es de cupo diario, cuándo se libera ("17 h", "25 min"); None si es un límite por minuto.
+
+    Google lo dice en el error: "requests per day", la cuota "…PerDay…" y "retryDelay": "62453s" o "retry in 17h20m".
+    """
+    text = f"{exc} {getattr(exc, 'body', '')}"
+    if not re.search(r"per\s*day|perday", text, re.I):
+        return None
+    seconds = None
+    m = re.search(r"retryDelay'?\"?\s*[:=]\s*'?\"?(\d+)s", text)
+    if m:
+        seconds = int(m.group(1))
+    else:
+        m = re.search(r"retry in (?:(\d+)h)?(?:(\d+)m)?", text)
+        if m and (m.group(1) or m.group(2)):
+            seconds = int(m.group(1) or 0) * 3600 + int(m.group(2) or 0) * 60
+    if seconds is None:
+        return "unas horas"
+    return f"{round(seconds / 3600)} h" if seconds >= 5400 else f"{max(1, round(seconds / 60))} min"
 
 
 def _provider_error() -> type[Exception]:
@@ -95,13 +121,25 @@ class LLMMixin:
                         raise LLMAuthError(f"{self.provider}: el proveedor rechaza la clave ({exc})") from exc
                     # Proveedor saturado o al límite (29/10, Gemini gratuito: 503 "high demand" y 429): se espera y se
                     # repite; los reintentos de la librería son de menos de un segundo y no bastan.
-                    if wait is None or getattr(exc, "status_code", None) not in (429, 503):
+                    if getattr(exc, "status_code", None) not in (429, 503):
                         raise
-                    log.info("[LLM] %s %s: reintento en %ss", self.provider, exc.status_code, wait)
                     # Aviso en pantalla (29/10, petición del usuario): la CLI pone `llm_wait_notice`.
                     notice = getattr(self, "llm_wait_notice", None)
+                    name = _ia_provider.KNOWN.get(_ia_provider.known(self.provider) or "", (self.provider,))[0]
+                    daily = _daily_quota_reset(exc) if exc.status_code == 429 else None
+                    if daily is not None:
+                        # Cupo del día agotado (Gemini gratuito: 20 peticiones al día por modelo): esperar segundos no
+                        # sirve; se avisa de cuándo se libera y no se reintenta.
+                        text = (f"{name}: cupo diario de peticiones agotado; se libera en {daily}. Hasta entonces, cambia "
+                                "de proveedor con /proveedor si lo necesitas.")
+                        log.warning("[LLM] %s 429 cupo diario agotado (se libera en %s)", self.provider, daily)
+                        if notice:
+                            notice(text)
+                        raise LLMQuotaError(text) from exc
+                    if wait is None:
+                        raise
+                    log.info("[LLM] %s %s: reintento en %ss", self.provider, exc.status_code, wait)
                     if notice:
-                        name = _ia_provider.KNOWN.get(_ia_provider.known(self.provider) or "", (self.provider,))[0]
                         what = ("ha dado límite de peticiones (429)" if exc.status_code == 429
                                 else "está saturado (503)")
                         notice(f"{name} {what}: espero {wait} s y reintento.")
