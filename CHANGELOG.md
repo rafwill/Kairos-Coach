@@ -11,6 +11,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
   - Dentro de "✅ Recomendación", tras la decisión del motor, "🧠 Tu entrenador": una llamada a la capa de coaching (`daily_readiness`, horizonte hoy, marco de la sesión G12, sensor S15). Si el LLM falla, queda la parte determinista sin nota de error.
   - El pie dice qué es de las reglas y qué del LLM.
   - Con "mantener", no se repite "Sesión resultante".
+  - Con plan, sin "🎯 Próximo paso" (petición del usuario: tras la sesión de hoy y la recomendación no aporta nada). El resumen acaba con el texto del entrenador y el pie de la fuente; sin plan, se mantiene.
 - Hallazgo: `_is_block_plan` y `_plan_start` solo miraban dentro de `plan_data`, y el plan leído de la base de datos lo trae fundido con la fila (`_normalize_storage_plan_row`). El plan activo no se reconocía como plan por bloques en el arranque ni en el contexto del LLM. Ahora se mira en los dos sitios (`_plan_field`).
 - Resultado:
   - En vivo con Gemini: el arranque muestra la fuerza de hoy con su detalle, "la sesión del plan, tal cual", y el texto del entrenador con HRV 65 ms (+3 %), sueño 7 h 28 min, Body Battery 74, TSB +18,8, la sesión concreta y la nota de glucosa.

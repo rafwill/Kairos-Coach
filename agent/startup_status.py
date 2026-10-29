@@ -25,6 +25,11 @@ from agent.routes.load import (
 log = logging.getLogger(__name__)
 
 
+# Pie del resumen con plan: de dónde sale la recomendación (el arranque lo cambia si añade el texto del LLM).
+SOURCE_RULES = "_Fuente: respuesta determinista (sin inferencias numéricas del LLM)._"
+SOURCE_RULES_AND_COACH = "_Fuente: la decisión es del motor diario (reglas); «Tu entrenador» es el LLM sobre esos datos._"
+
+
 def _build_proactive_status_markdown(snapshot: dict) -> str:
     """Genera un bloque Markdown con estado proactivo de últimas 48h."""
     unavailable_label = "No disponible en este momento"
@@ -260,10 +265,14 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             lines.append(f"  - Motivo: {reason}")
         if resulting and not (plan_assigned and decision == "maintain"):  # mantener: la sesión de hoy, ya arriba
             lines.append(f"  - Sesión resultante: {resulting}")
-    lines.extend([
-        "",
-        "## 🎯 Próximo paso",
-        "- Si quieres, convierto esta recomendación en sesión concreta para hoy/mañana.",
-        "- Fuente: respuesta determinista (sin inferencias numéricas del LLM).",
-    ])
+    if plan_assigned:
+        # Con plan, la sesión de hoy y la recomendación ya están arriba: sin "Próximo paso" (29/10, usuario).
+        lines.extend(["", SOURCE_RULES])
+    else:
+        lines.extend([
+            "",
+            "## 🎯 Próximo paso",
+            "- Si quieres, convierto esta recomendación en sesión concreta para hoy/mañana.",
+            "- Fuente: respuesta determinista (sin inferencias numéricas del LLM).",
+        ])
     return "\n".join(lines)

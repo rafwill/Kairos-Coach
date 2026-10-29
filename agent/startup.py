@@ -49,6 +49,7 @@ from agent.kairos_tools import (
     _KAIROS_INTERNAL_TOOLS,
 )
 from agent.plans import _today_session_lines
+from agent.startup_status import SOURCE_RULES, SOURCE_RULES_AND_COACH
 from agent.daily_engine import (
     _build_startup_plan_recommendation,
     _compute_daily_plan_adjustment,
@@ -564,11 +565,12 @@ class StartupMixin:
             return md  # el LLM no respondió: sin la nota de error en el arranque
         text = extra.split("## 🧠 Interpretación de coaching", 1)[-1]
         text = text.split("\n\n_Fase coaching por LLM", 1)[0].strip()
-        marker = "\n\n## 🎯 Próximo paso"
+        # El texto del entrenador cierra la recomendación, justo antes del pie, que pasa a decir de dónde sale cada parte.
+        marker = "\n\n" + SOURCE_RULES
         block = "\n\n### 🧠 Tu entrenador\n" + text
-        md = md.replace(marker, block + marker, 1) if marker in md else md + block
-        return md.replace("- Fuente: respuesta determinista (sin inferencias numéricas del LLM).",
-                          "- Fuente: la decisión es del motor diario (reglas); «Tu entrenador» es el LLM sobre esos datos.")
+        if marker in md:
+            return md.replace(marker, block + "\n\n" + SOURCE_RULES_AND_COACH, 1)
+        return md + block
 
     async def build_onboarding_mcp_enrichment(self) -> dict:
         """Obtiene datos MCP utiles para enriquecer la base inicial del atleta."""

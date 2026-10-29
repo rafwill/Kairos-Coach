@@ -697,7 +697,9 @@ class TestStartupProactive:
              patch.object(TrainerAgent, "_augment_with_llm_coaching_if_needed", coach):
             out = await TrainerAgent.build_startup_status_markdown(agent)
         assert out.index("## 🗓️ Sesión de hoy") < out.index("## ✅ Recomendación") < out.index("### 🧠 Tu entrenador")
-        assert out.index("Haz el tempo tranquilo.") < out.index("## 🎯 Próximo paso")
+        # Con plan no hay "Próximo paso" (29/10): el texto del entrenador cierra y el pie dice qué es de cada uno.
+        assert "Próximo paso" not in out and out.rstrip().endswith("«Tu entrenador» es el LLM sobre esos datos._")
+        assert out.index("Haz el tempo tranquilo.") < out.index("_Fuente:")
         assert "la sesión del plan, tal cual" in out and "Fase coaching" not in out
         assert coach.await_args.kwargs["daily_plan_decision"] == decision
         # Si el LLM no responde, queda la recomendación determinista, sin la nota de error.
