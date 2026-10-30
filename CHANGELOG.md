@@ -4,6 +4,15 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Fixed (el resumen de cambios del plan da la media semanal en h:mm y el TSS; visto por el usuario)
+- Señal: al final del plan salía "Volumen semanal estimado: 5159 -> 5181 min".
+- Causa: `_summarize_plan_changes` sumaba los minutos de todas las sesiones del plan y los llamaba semanales; "Sesiones semanales" también era el total.
+- Ahora dice "Volumen medio por semana: 6:27 h -> 6:29 h (total del plan: 85:59 h -> 86:21 h)" y "TSS medio por semana: … (total del plan: …)".
+  - Duración y TSS salen del resumen de cada sesión estructurada; la semana, de `week_index`.
+  - Si no hay TSS planificado (planes antiguos), no sale la línea de TSS.
+  - "Sesiones semanales" pasa a "Sesiones del plan".
+- La tabla del plan y la cabecera de cada semana ya daban el tiempo en h:mm y el TSS de cada semana. Tests: 866.
+
 ### Added (dos modelos: uno para planes y arranque y otro para el chat; decisión del usuario, pendiente 10)
 - Señal: en el panel de AI Studio, el nivel gratuito da 20 peticiones al día a Gemini 3.6 Flash y 500 a Gemini 3.5 Flash Lite (15 por minuto). Un plan gasta 10–15 peticiones y una pregunta con tools, 2–5.
 - Decisión del usuario:

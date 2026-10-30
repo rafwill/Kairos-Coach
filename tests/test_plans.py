@@ -778,4 +778,18 @@ class TestStructuredPlanEngine:
         new_sessions = [{"duration_min": 50}, {"duration_min": 70}]
         out = _summarize_plan_changes(previous_plan, new_plan, previous_sessions, new_sessions)
         assert "Duración" in out
-        assert "Volumen semanal estimado" in out
+        assert "Volumen medio por semana: 1:40 h -> 2:00 h" in out
+        assert "TSS" not in out  # sin TSS planificado (planes antiguos), sin línea de TSS
+
+    def test_summarize_plan_changes_gives_weekly_means_in_hours_and_tss(self):
+        # 30/10, visto por el usuario: "Volumen semanal estimado: 5159 -> 5181 min" era el plan entero, en minutos.
+        def week(wi, minutes, tss):
+            return [{"week_index": wi, "duration_min": 0,
+                     "structured_workout": {"summary": {"duration_min": m, "tss": t}}} for m, t in zip(minutes, tss)]
+
+        previous = week(1, [60, 90], [50, 70]) + week(2, [60, 120], [50, 100])
+        new = week(1, [60, 90], [50, 70]) + week(2, [75, 120], [60, 100])
+        out = _summarize_plan_changes({"duration_weeks": 2}, {"duration_weeks": 2}, previous, new)
+        assert "- Volumen medio por semana: 2:45 h -> 2:52 h (total del plan: 5:30 h -> 5:45 h)" in out
+        assert "- TSS medio por semana: 135 -> 140 (total del plan: 270 -> 280)" in out
+        assert "Sesiones" not in out

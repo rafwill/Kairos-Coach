@@ -1532,6 +1532,29 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
     return errors
 
 
+def _plan_volume(sessions: list[dict] | None) -> tuple[float, float, int]:
+    """Minutos y TSS planificados del plan entero y su número de semanas (al menos 1).
+
+    Duración y TSS del resumen de la sesión estructurada (`structured_workout.summary`); la duración, si falta,
+    de `duration_min`. Sin TSS planificado (planes antiguos), 0.
+    """
+    minutes = tss = 0.0
+    weeks: set[int] = set()
+    for s in sessions or []:
+        s = s or {}
+        summary = (s.get("structured_workout") or {}).get("summary") or {}
+        minutes += _safe_float(summary.get("duration_min") or s.get("duration_min"), 0.0)
+        tss += _safe_float(summary.get("tss"), 0.0)
+        weeks.add(int(s.get("week_index") or 1))
+    return minutes, tss, max(1, len(weeks))
+
+
+def _fmt_hours(minutes: float) -> str:
+    """Minutos en "h:mm h" (5159 → "85:59 h")."""
+    total = int(round(minutes))
+    return f"{total // 60}:{total % 60:02d} h"
+
+
 def _summarize_plan_changes(
     previous_plan: dict | None,
     new_plan: dict,
@@ -1553,12 +1576,17 @@ def _summarize_plan_changes(
     prev_sessions_count = len(previous_sessions or [])
     new_sessions_count = len(new_sessions or [])
     if prev_sessions_count != new_sessions_count:
-        changes.append(f"Sesiones semanales: {prev_sessions_count} -> {new_sessions_count}")
+        changes.append(f"Sesiones del plan: {prev_sessions_count} -> {new_sessions_count}")
 
-    prev_total = sum(int((s or {}).get("duration_min") or 0) for s in (previous_sessions or []))
-    new_total = sum(int((s or {}).get("duration_min") or 0) for s in (new_sessions or []))
-    if prev_total != new_total:
-        changes.append(f"Volumen semanal estimado: {prev_total} -> {new_total} min")
+    # Antes (hasta el 30/10) sumaba los minutos del plan entero y los llamaba "volumen semanal" ("5159 -> 5181 min").
+    prev_min, prev_tss, prev_weeks = _plan_volume(previous_sessions)
+    new_min, new_tss, new_weeks = _plan_volume(new_sessions)
+    if round(prev_min) != round(new_min):
+        changes.append(f"Volumen medio por semana: {_fmt_hours(prev_min / prev_weeks)} -> {_fmt_hours(new_min / new_weeks)} "
+                       f"(total del plan: {_fmt_hours(prev_min)} -> {_fmt_hours(new_min)})")
+    if (prev_tss or new_tss) and round(prev_tss) != round(new_tss):
+        changes.append(f"TSS medio por semana: {prev_tss / prev_weeks:.0f} -> {new_tss / new_weeks:.0f} "
+                       f"(total del plan: {prev_tss:.0f} -> {new_tss:.0f})")
 
     if not changes:
         return "Se registró una nueva versión sin cambios estructurales relevantes."

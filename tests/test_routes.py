@@ -252,7 +252,7 @@ class TestPlanStatusChatRoute:
         mocked_update.assert_called_once()
         mocked_create.assert_not_called()
         assert "Cambios de versión" in out or "Cambios de version" in out
-        assert "Volumen semanal estimado" in out
+        assert "Volumen medio por semana" in out
 
     @pytest.mark.asyncio
     async def test_chat_planning_validation_error_returns_user_facing_message(self):
