@@ -174,14 +174,16 @@ class TestProfileScreens:
 
     def test_ask_goals_retries_invalid_values(self, out):
         future = (date.today() + timedelta(days=60)).isoformat()
-        answers = ["Rafa", "trail running", "200", "8", "Ultra", "2020-01-01", future, "9:3", "9:30:00"]
+        # 30/10 (planes de trail): distancia y D+ de la carrera; un número no válido se vuelve a preguntar.
+        answers = ["Rafa", "trail running", "200", "8", "Ultra", "x", "55", "2400", "2020-01-01", future, "9:3", "9:30:00"]
         profile = {}
         with patch.object(m.Prompt, "ask", side_effect=answers):
             m._ask_goals(profile)
         assert profile["personal"]["name"] == "Rafa"
         assert profile["goals"] == {"primary": "trail running", "weekly_training_hours": 8.0, "target_race": "Ultra",
+                                    "target_race_distance_km": 55.0, "target_race_elevation_m": 2400.0,
                                     "target_race_date": future, "target_time": "9:30:00"}
-        assert out().count("✗") == 3
+        assert out().count("✗") == 4
 
     def test_ask_goals_allows_skipping(self):
         profile = {}

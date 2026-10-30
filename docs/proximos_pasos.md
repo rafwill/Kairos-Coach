@@ -19,9 +19,10 @@ Se reescribe al final de cada sesión.
   - Pendiente 11 b: otros deportes dentro del plan (bici, remo, elíptica, natación).
   - Pendiente 11 a: dónde entrena y el desnivel de sus salidas (asfalto 7,6 m/km, trail 48,3 m/km con sus datos).
   - El tiempo de hoy en el arranque (Open-Meteo; `/perfil lugar <ciudad>`).
-  - Queda del punto 11: las pruebas en vivo con Gemini, fuera del proxy.
+  - Punto 12: planes de trail (D+ semanal, tiradas seguidas, marcha, bici con su nombre, sin RP).
+  - Queda: las pruebas en vivo con Gemini, fuera del proxy, y un plan de trail real cuando haya objetivo.
   - Arreglado el fallo que rehízo el plan de Gemini con el motor determinista ("plan ver 19bd7f1c" sin barra; `plan_data` perdido al normalizar). Plan de Gemini recuperado como versión 4 y comprobado.
-  - Detalle en el CHANGELOG del 30/10. Tests: 929.
+  - Detalle en el CHANGELOG del 30/10. Tests: 944.
 - **Siguiente paso, fuera del proxy (en casa):**
   - Punto 10: Flash Lite en el chat y el relevo.
   - Pendiente 11 d2 en vivo: un «replanifica el plan» real, revisado por el usuario.
@@ -55,6 +56,30 @@ Se reescribe al final de cada sesión.
     - Batería 25/25 con Flash Lite en el chat (`tools/run_bateria.py --modelo gemini-3.5-flash-lite`).
     - Que el relevo salta al agotarse Flash (`[LLM] … relevo con …` en `agent.log`).
     - Si Flash Lite responde peor que Flash en el chat, valorar las otras opciones: facturación en AI Studio, o NVIDIA para el chat.
+
+12. **Planes de trail: hecho el 30/10** (CHANGELOG; `tests/test_plan_trail.py`). **Falta un plan de trail real**, revisado por el usuario cuando tenga el objetivo, con `/perfil editar objetivo` (distancia y D+) y `/plan crear`. Las cifras se irán revisando con planes reales. Decisiones del usuario y criterios fijados antes de programarlo:
+    - **Cuándo es trail:** la carrera objetivo tiene desnivel positivo (D+) o su nombre dice "trail" o "ultra". Lo decide la carrera, no el deporte principal. Corregido antes de cerrar: el criterio inicial incluía "o el deporte principal es trail running", y el perfil real del usuario es "trail running" con una media en asfalto de objetivo.
+      - `/perfil editar objetivo` pregunta la distancia (km) y el D+ (m) de la carrera. La distancia sale por defecto del nombre ("Ultra PDA 55km" → 55).
+    - **Ritmo de carrera:** en trail no hay RP (el ritmo depende del terreno). Lo exigente va por FC; las zonas de ritmo quedan para tramos llanos.
+    - **Tirada larga (decisión del usuario):**
+      - Hasta el 50 % de la semana (asfalto: 40 %).
+      - Puede subir hasta 30 min de una semana de carga a la siguiente (asfalto: 15).
+      - En la fase específica puede haber dos tiradas largas en días seguidos, juntas como mucho el 60 % de la semana. Por defecto sábado y domingo; `/plan crear` pregunta qué dos días (p. ej. viernes y sábado).
+      - La estructura da la más larga ("long_min", con "auto" si quiere). La segunda lleva sus minutos.
+    - **Desnivel semanal (decisión del usuario):**
+      - La estructura de cada semana lleva su D+ ("vert_m"), con la misma progresión que el volumen: la semana 1 como mucho un 10 % sobre el D+ sostenido (media semanal de las últimas 4 semanas, carrera y marcha), cada semana de carga como mucho un 10 % sobre la anterior de carga, y la descarga y el afinamiento al menos un 15 % por debajo.
+      - La semana pico llega al D+ de la carrera si es de hasta 60 km, o a la mitad si es más larga. Si con el 10 % por semana no da tiempo a llegar, el mínimo es lo que permite esa progresión (consecuencia de las dos reglas, no un número nuevo).
+      - Cada sesión lleva su D+ ("vert"); los días de la semana suman su D+ ±12 %, la misma tolerancia que los minutos. La progresión se comprueba también con esas sumas reales.
+    - **Marcha (decisión del usuario):** caminata, senderismo y marcha nórdica con o sin palos son un solo deporte, "hiking" (Marcha / senderismo). En trail se camina mucho y hay que practicarlo. Va con tramos por FC y su D+.
+      - En un plan de trail o si el atleta la elige, sus minutos cuentan en el volumen sostenido.
+    - **Bici con su nombre (decisión del usuario):** carretera ("cycling"), gravel ("gravel") y MTB ("mtb") son deportes distintos.
+    - **Km:** en trail, los tramos por FC no estiman km (con los ritmos de asfalto salían de más).
+    - **Instrucciones del LLM, en `prompts/plan/`:** en trail cuentan las subidas andando con palos, el desnivel en cinta si es llano, las bajadas técnicas, la fuerza excéntrica, practicar en las tiradas largas la nutrición y el material (palos, mochila, frontal) y, si la carrera lo pide, la noche.
+    - **`/plan ver`:** columna D+ en la tabla de semanas y "+600 m" en cada sesión con desnivel.
+    - **Cierre:**
+      - Tests de cada regla a favor y en contra, con un plan de trail completo con el LLM simulado.
+      - El plan de asfalto activo no cambia; los tests de asfalto siguen igual.
+      - Un plan de trail real, revisado por el usuario cuando tenga el objetivo.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 

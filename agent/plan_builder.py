@@ -35,7 +35,11 @@ DAY_TYPES = {
 PHASES = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento", "race": "Carrera"}
 STEP_KINDS = {"warmup", "steady", "work", "recovery", "cooldown"}
 # Deportes de un día "cross" (30/10): van por FC (hrTSS de TP, como la bici sin potencia), sin ritmo ni km.
-CROSS_SPORTS = {"cycling": "Bici", "rowing": "Remo", "elliptical": "Elíptica", "swimming": "Natación"}
+CROSS_SPORTS = {"cycling": "Bici de carretera", "gravel": "Gravel", "mtb": "MTB", "hiking": "Marcha / senderismo",
+                "rowing": "Remo", "elliptical": "Elíptica", "swimming": "Natación"}
+# Marcha (30/10, decisión del usuario): caminata, senderismo y marcha nórdica con o sin palos, un solo deporte; en trail
+# se camina mucho y hay que practicarlo. Lleva D+ como la carrera.
+VERT_SPORTS = {"hiking", "mtb", "gravel"}
 AUTO_DAY_TYPES = {"easy", "recovery", "long"}  # días cuyo tramo continuo puede ir con "min": "auto"
 _STEP_NAMES = {"warmup": "Calentamiento", "cooldown": "Vuelta a la calma", "work": "Trabajo", "recovery": "Recuperación",
                "steady": "Continuo"}
@@ -80,6 +84,29 @@ class PlanFrame:
     # Entorno (30/10, pendiente 11 a): dónde entrena y el desnivel de sus rutas ({"road"|"trail": {km, m_per_km}}).
     location: str = ""
     terrain: dict = field(default_factory=dict)
+    # Trail (30/10, decisiones del usuario; docs/proximos_pasos.md, punto 12): D+ de la carrera, D+ semanal sostenido y
+    # los dos días seguidos en que puede hacer tiradas largas en la fase específica.
+    trail: bool = False
+    race_elevation_m: float | None = None
+    recent_weekly_vert_m: float | None = None
+    back_to_back_days: list = field(default_factory=lambda: [6, 7])
+
+    @property
+    def long_share(self) -> float:
+        """Parte de la semana que puede ser la tirada larga: 50 % en trail, 40 % en asfalto (decisión del usuario)."""
+        return 0.50 if self.trail else 0.40
+
+    @property
+    def long_step(self) -> float:
+        """Minutos que puede crecer la tirada larga de una semana de carga a la siguiente: 30 en trail, 15 en asfalto."""
+        return 30.0 if self.trail else 15.0
+
+    @property
+    def peak_vert_target(self) -> float | None:
+        """D+ que debe alcanzar la semana pico: el de la carrera hasta 60 km; la mitad, más larga (decisión del usuario)."""
+        if not self.trail or not self.race_elevation_m:
+            return None
+        return self.race_elevation_m if (self.distance_km or 0) <= 60 else self.race_elevation_m / 2
 
     @property
     def paces(self) -> rp.Paces | None:
@@ -112,7 +139,11 @@ def frame_text(f: PlanFrame) -> str:
     lines = ["## Carrera objetivo",
              f"- {f.race}: {rp._DAY_NAMES[f.race_date.isoweekday()]} {f.race_date.strftime('%d/%m/%Y')} "
              f"(semana {f.race_week} del plan)" + (f", distancia {f.distance_km:g} km" if f.distance_km else "")
+             + (f", desnivel positivo {f.race_elevation_m:.0f} m" if f.race_elevation_m else "")
              + (f", tiempo objetivo {f.target_time}" if f.target_time else "")]
+    if f.trail:
+        lines.append("- Es una carrera de trail: sin ritmo de carrera (RP); lo exigente va por FC." +
+                     (f" La semana pico debe llegar al menos a {f.peak_vert_target:.0f} m de D+." if f.peak_vert_target else ""))
     lines += ["", "## Semanas del plan (lunes a domingo)"]
     for w in range(1, f.weeks + 1):
         m = f.monday(w)
@@ -138,6 +169,9 @@ def frame_text(f: PlanFrame) -> str:
         lines.append(f"- Volumen sostenido: {f.recent_weekly_minutes:.0f} min/semana (media de las últimas 4 semanas)")
     if f.longest_recent_min:
         lines.append(f"- Sesión de carrera o trail más larga de las últimas 6 semanas: {f.longest_recent_min:.0f} min")
+    if f.trail:
+        lines.append(f"- Desnivel positivo sostenido: {f.recent_weekly_vert_m or 0:.0f} m/semana (media de las últimas 4 "
+                     "semanas, carrera y marcha)")
     load = f.load or {}
     if load.get("ctl") is not None:
         lines.append(f"- CTL {load['ctl']}, ATL {load.get('atl')}, TSB {load.get('tsb')}, estado {load.get('status') or 'n/d'}")
@@ -206,6 +240,13 @@ def rules_text(f: PlanFrame) -> str:
              "- Un rodaje con \"auto\" dura al menos 20 min y menos que la tirada larga de la semana: si la semana "
              "necesita más, añade un rodaje o alarga otras sesiones; si necesita menos, quita uno o pon sus minutos."]
     lines += [f"- El {rp._DAY_NAMES[int(d)].lower()}, como mucho {cap} min." for d, cap in sorted(f.max_minutes_per_day.items())]
+    if f.trail:
+        a, b = (rp._DAY_NAMES[d].lower() for d in f.back_to_back_days)
+        lines += [f"- La tirada larga, como mucho el {f.long_share * 100:.0f} % de la semana. En la fase específica puede "
+                  f"haber dos tiradas largas seguidas, el {a} y el {b}, juntas como mucho el 60 % de la semana: la más "
+                  "larga dura lo que dice la estructura y la otra lleva sus minutos (sin \"auto\").",
+                  "- Cada sesión con desnivel lleva \"vert\" (m de D+); los días suman el D+ de la semana de la estructura "
+                  "(±12 %). Sin RP: lo exigente, por FC."]
     if f.cross_sports is not None:
         lines.append("- Sin sesiones \"cross\": el atleta no quiere otros deportes." if not f.cross_sports else
                      f"- \"cross\" solo de {', '.join(f.cross_sports)}"
@@ -279,8 +320,9 @@ def check_macro(macro: dict, f: PlanFrame) -> list[str]:
             continue
         if minutes > goal_min * 1.10:
             errors.append(f"Semana {n}: {minutes:.0f} min superan las horas disponibles ({goal_min:.0f} min + 10 %).")
-        if long_min > minutes * 0.40:
-            errors.append(f"Semana {n}: la tirada larga ({long_min:.0f} min) supera el 40 % de la semana ({minutes:.0f} min).")
+        if long_min > minutes * f.long_share:
+            errors.append(f"Semana {n}: la tirada larga ({long_min:.0f} min) supera el {f.long_share * 100:.0f} % de la "
+                          f"semana ({minutes:.0f} min).")
         if phase in ("taper", "race"):
             if peak and minutes > peak * 0.85:
                 errors.append(f"Semana {n}: el afinamiento debe bajar al menos un 15 % sobre la semana más alta "
@@ -296,8 +338,9 @@ def check_macro(macro: dict, f: PlanFrame) -> list[str]:
             what = "el volumen que sostiene el atleta" if n == 1 or not peak else "la semana de carga anterior"
             errors.append(f"Semana {n}: {minutes:.0f} min suben más de un 10 % sobre {what} ({last_load:.0f} min); "
                           f"como mucho {last_load * 1.10:.0f} min.")
-        if last_long and long_min > last_long + 15:
-            errors.append(f"Semana {n}: la tirada larga sube más de 15 min sobre la anterior de carga ({last_long:.0f} min).")
+        if last_long and long_min > last_long + f.long_step:
+            errors.append(f"Semana {n}: la tirada larga sube más de {f.long_step:.0f} min sobre la anterior de carga "
+                          f"({last_long:.0f} min).")
         streak += 1
         if streak > f.max_load_weeks:
             errors.append(f"Semana {n}: más de {f.max_load_weeks} semanas de carga seguidas; pon una descarga "
@@ -306,6 +349,53 @@ def check_macro(macro: dict, f: PlanFrame) -> list[str]:
         last_load = minutes
         last_long = long_min
         peak = max(peak, minutes)
+    return errors + (check_vert(weeks, f) if f.trail else [])
+
+
+def check_vert(weeks: list[dict], f: PlanFrame) -> list[str]:
+    """D+ semanal de un plan de trail (decisión del usuario, 30/10): misma progresión que el volumen y la semana pico
+    llega al D+ de la carrera (≤ 60 km) o a su mitad. Si con el 10 % por semana no da tiempo, el mínimo es lo que esa
+    progresión permite: es consecuencia de las dos reglas, no un número nuevo."""
+    errors: list[str] = []
+    start = f.recent_weekly_vert_m or 0.0
+    last = start
+    peak = 0.0
+    load_weeks = 0
+    for w in weeks:
+        n, phase, vert = int(w["week"]), str(w.get("phase") or ""), _num(w.get("vert_m"), -1)
+        if vert < 0:
+            errors.append(f"Semana {n}: falta \"vert_m\" (m de D+ de la semana).")
+            continue
+        if phase in ("taper", "race"):
+            if peak and vert > peak * 0.85:
+                errors.append(f"Semana {n}: el afinamiento debe bajar el D+ al menos un 15 % sobre la semana más alta "
+                              f"({peak:.0f} m); como mucho {peak * 0.85:.0f} m.")
+            continue
+        if w.get("deload"):
+            if last and vert > last * 0.85:
+                errors.append(f"Semana {n}: la descarga debe bajar el D+ al menos un 15 % sobre la última semana de carga "
+                              f"({last:.0f} m); como mucho {last * 0.85:.0f} m.")
+            continue
+        if last and vert > last * 1.10 + 1:
+            what = "el D+ que sostiene el atleta" if not peak else "la semana de carga anterior"
+            errors.append(f"Semana {n}: {vert:.0f} m de D+ suben más de un 10 % sobre {what} ({last:.0f} m); "
+                          f"como mucho {last * 1.10:.0f} m.")
+        load_weeks += 1
+        last = vert
+        peak = max(peak, vert)
+    target = f.peak_vert_target
+    if target and not errors:
+        # Lo más alto que permite subir un 10 % por semana de carga, en metros enteros como los escribe el LLM.
+        reachable = start
+        for _ in range(load_weeks):
+            reachable = math.floor(reachable * 1.10)
+        reachable = reachable if start else target
+        need = min(target, reachable)
+        if peak + 1 < need:
+            errors.append(f"La semana pico tiene {peak:.0f} m de D+; debe llegar al menos a {need:.0f} m"
+                          + (f" (el D+ de la carrera, {f.race_elevation_m:.0f} m)" if need == f.race_elevation_m else
+                             " (lo que permite subir un 10 % por semana de carga)" if need < target else
+                             f" (la mitad del D+ de la carrera, {f.race_elevation_m:.0f} m)") + ".")
     return errors
 
 
@@ -387,7 +477,8 @@ def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict
         errors.append(f"{where}: el atleta no tiene ritmo umbral; usa zonas de FC (FC1 a FC5).")
         return None
     if zone == "RP" and not f.race_pace:
-        errors.append(f"{where}: no hay ritmo de carrera (falta tiempo objetivo o distancia); usa una zona de ritmo.")
+        errors.append(f"{where}: en trail no hay ritmo de carrera (RP); lo exigente, por FC (FC1 a FC5)." if f.trail else
+                      f"{where}: no hay ritmo de carrera (falta tiempo objetivo o distancia); usa una zona de ritmo.")
         return None
     if zone != "RP" and zone not in rp.PACE_ZONES:
         errors.append(f"{where}: zona \"{raw.get('zone')}\" no válida (usa {', '.join(rp.ZONE_ORDER)}, RP o FC1-FC5).")
@@ -500,6 +591,12 @@ def expand_day(day: dict, f: PlanFrame, week: int) -> tuple[dict | None, list[st
               "threshold_pace": f.threshold_pace,
               "steps": steps,
               **({"sport": str(day["sport"])} if kind == "cross" else {})}
+    if day.get("vert") not in (None, ""):
+        # D+ de la sesión (trail, 30/10): lo escribe el LLM; la semana lo suma frente a su estructura.
+        vert = _num(day.get("vert"), -1)
+        if vert < 0:
+            return None, [f"{where}: \"vert\" son los metros de desnivel positivo de la sesión (un número ≥ 0)."]
+        wk["vert_m"] = round(vert)
     wk["plan_day"] = {k: v for k, v in day.items()}  # lo que escribió el LLM: la revisión parte de aquí
     session = {"week_index": week, "day_index": d, "session_type": wk["sessionType"], "structured_workout": wk}
     return refresh_session(session, f), []
@@ -510,13 +607,16 @@ def refresh_session(session: dict, f: PlanFrame) -> dict:
     wk = session["structured_workout"]
     if "secondary_label" in wk:  # sesión con tramos de ritmo o FC
         steps = wk["steps"]
-        minutes, km, tss = workout_totals(steps, f, running=wk["sessionType"] != "cross_training")
+        # En trail, los tramos por FC no estiman km (30/10): con los ritmos de asfalto salían de más.
+        minutes, km, tss = workout_totals(steps, f, running=wk["sessionType"] != "cross_training" and not f.trail)
         main = _main_target(steps)
         wk["summary"] = {"duration_min": minutes, "distance_km": km, "tss": tss,
                          "intensityClass": main.get("intensityClass") or "endurance"}
         wk["targets"] = {"intensityClass": main.get("intensityClass") or "endurance", "primary": main,
                          "secondary": {"metric": "rpe", "label": wk["secondary_label"]}}
         wk["notes"] = " · ".join(rp.describe_steps(steps))
+    if wk.get("vert_m") is not None:
+        wk["summary"]["elevation_gain_m"] = wk["vert_m"]
     rpe_label = ((wk.get("targets") or {}).get("secondary") or {}).get("label") or ""
     session.update({"duration_min": int(round(float(wk["summary"]["duration_min"]))), "intensity": rpe_label,
                     "exercises": [wk["title"]], "notes": wk["notes"]})
@@ -537,7 +637,10 @@ def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_m
     if not target:
         return [f"Semana {n}: sin minutos en la estructura no se puede usar \"auto\"; pon los minutos."]
     errors: list[str] = []
-    for s in [s for s in autos if s["session_type"] == "long_run"]:
+    long_autos = [s for s in autos if s["session_type"] == "long_run"]
+    if len(long_autos) > 1:  # dos tiradas seguidas (trail): la más larga con "auto", la otra con sus minutos
+        return [f"Semana {n}: solo una tirada larga puede llevar \"auto\" (la de la estructura); pon los minutos de la otra."]
+    for s in long_autos:
         long_min = _num(planned.get("long_min"))
         rest = float(s["structured_workout"]["summary"]["duration_min"]) - 1
         if long_min - rest < 10:
@@ -553,7 +656,7 @@ def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_m
         others = max(float(s["structured_workout"]["summary"]["duration_min"]) - 1 for s in easy)
         longs = [float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions if s["session_type"] == "long_run"]
         # Un rodaje dura al menos 20 min y nunca tanto como la tirada larga de la semana (sin tirada: 90 min).
-        low, high = max(1.0, 20 - others), (longs[0] if longs else 90.0) - others - 1
+        low, high = max(1.0, 20 - others), (max(longs) if longs else 90.0) - others - 1
         if not low <= each <= high:
             fix = ("quita un rodaje o pon sus minutos" if each < low else
                    "añade un rodaje" + (" (o dobla: un segundo rodaje el mismo día)" if f.doubles else "")
@@ -693,14 +796,38 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
         errors.append(f"Semana {n}: los días suman {total:.0f} min ({per_day}) y la estructura dice {target:.0f} min "
                       f"(±12 %: entre {target * 0.88:.0f} y {target * 1.12:.0f}); {verb} unos {abs(total - target):.0f} min.")
     long_min = _num(planned.get("long_min"))
-    longs = [s for s in sessions if s["session_type"] == "long_run"]
+    longs = sorted((s for s in sessions if s["session_type"] == "long_run"),
+                   key=lambda s: -float(s["structured_workout"]["summary"]["duration_min"]))
+    # Trail, fase específica (decisión del usuario, 30/10): dos tiradas largas en sus dos días seguidos, juntas como
+    # mucho el 60 % de la semana; la más larga es la de la estructura.
+    back_to_back = f.trail and planned.get("phase") == "specific" and len(longs) == 2
+    if back_to_back:
+        days = sorted(int(s["day_index"]) for s in longs)
+        both = sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in longs)
+        if days != sorted(f.back_to_back_days):
+            a, b = (rp._DAY_NAMES[d].lower() for d in f.back_to_back_days)
+            errors.append(f"Semana {n}: las dos tiradas largas seguidas van el {a} y el {b}.")
+        if total and both > total * 0.60 + 0.5:
+            errors.append(f"Semana {n}: las dos tiradas largas suman {both:.0f} min, más del 60 % de la semana "
+                          f"({total:.0f} min); como mucho {total * 0.60:.0f}.")
     if long_min and n != f.race_week:
-        if len(longs) != 1:
-            errors.append(f"Semana {n}: debe tener una tirada larga (\"long\").")
+        if len(longs) != 1 and not back_to_back:
+            errors.append(f"Semana {n}: debe tener una tirada larga (\"long\")"
+                          + (" (dos seguidas solo en la fase específica)." if f.trail and len(longs) > 1 else "."))
         elif abs(float(longs[0]["structured_workout"]["summary"]["duration_min"]) - long_min) > max(10.0, long_min * 0.15):
             got = float(longs[0]["structured_workout"]["summary"]["duration_min"])
             errors.append(f"Semana {n}: la tirada larga dura {got:.0f} min y la estructura dice {long_min:.0f} min; "
                           f"{'quita' if got > long_min else 'añade'} unos {abs(got - long_min):.0f} min.")
+    # D+ de la semana (trail, 30/10): los días suman el de la estructura ±12 %, la misma tolerancia que los minutos.
+    target_vert = _num(planned.get("vert_m"), -1)
+    if f.trail and target_vert >= 0 and n != f.race_week:
+        vert = sum(_num(s["structured_workout"].get("vert_m")) for s in sessions)
+        if abs(vert - target_vert) > target_vert * 0.12 + 0.5:
+            per_day = ", ".join(f"{rp._DAY_NAMES[d][:2]} {sum(_num(s['structured_workout'].get('vert_m')) for s in by_day[d]):.0f}"
+                                for d in range(1, 8))
+            errors.append(f"Semana {n}: los días suman {vert:.0f} m de D+ ({per_day}) y la estructura dice "
+                          f"{target_vert:.0f} m (±12 %); {'quita' if vert > target_vert else 'añade'} unos "
+                          f"{abs(vert - target_vert):.0f} m en los \"vert\".")
     return errors
 
 
@@ -717,13 +844,17 @@ def chunk_weeks(weeks: int, per_call: int) -> list[list[int]]:
 
 
 def actual_macro(macro: dict, expanded: dict[int, list[dict]]) -> dict:
-    """La estructura con lo que suman de verdad los días de cada semana (minutos y tirada larga)."""
+    """La estructura con lo que suman de verdad los días de cada semana (minutos, tirada larga y, en trail, D+)."""
     weeks = []
     for w in macro.get("weeks") or []:
         sessions = expanded.get(int(w["week"])) or []
         longs = [float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions if s["session_type"] == "long_run"]
-        weeks.append({**w, "minutes": round(sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions)),
-                      "long_min": round(longs[0]) if longs else 0})
+        real = {**w, "minutes": round(sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions)),
+                "long_min": round(max(longs)) if longs else 0}
+        if "vert_m" in w:  # sin la carrera: su D+ es el de la prueba, no entrenamiento del afinamiento
+            real["vert_m"] = round(sum(_num(s["structured_workout"].get("vert_m")) for s in sessions
+                                       if s["session_type"] != "race_run"))
+        weeks.append(real)
     return {**macro, "weeks": weeks}
 
 
@@ -768,6 +899,11 @@ def plan_data(macro: dict, sessions: list[dict], f: PlanFrame) -> dict:
         "target_time": f.target_time,
         "weekly_training_hours": f.weekly_hours,
         "rationale": str(macro.get("rationale") or ""),
+        # Trail (30/10): D+ de la carrera y de cada semana (previsto en la estructura y lo que suman sus días).
+        **({"trail": True, "race_elevation_m": f.race_elevation_m,
+            "planned_week_vert": [_num(w.get("vert_m")) for w in weeks],
+            "week_vert": [round(sum(_num(s["structured_workout"].get("vert_m")) for s in sessions if s["week_index"] == w))
+                          for w in range(1, f.weeks + 1)]} if f.trail else {}),
     }
 
 
@@ -789,6 +925,10 @@ def merge_replan(old_pd: dict, old_sessions: list[dict], new_pd: dict, new_sessi
     for key, default in (("phases", "base"), ("focus", ""), ("planned_week_minutes", 0), ("long_minutes", 0)):
         pd[key] = [first(key, default)] + list(new_pd.get(key) or [])
     pd["week_minutes"] = [round(sum(float(s.get("duration_min") or 0) for s in kept), 1)] + list(new_pd.get("week_minutes") or [])
+    if "week_vert" in new_pd:  # trail: el D+ de la semana actual, lo que suman sus sesiones
+        pd["planned_week_vert"] = [first("planned_week_vert", 0)] + list(new_pd.get("planned_week_vert") or [])
+        pd["week_vert"] = [round(sum(_num((s.get("structured_workout") or {}).get("vert_m")) for s in kept))] + \
+            list(new_pd["week_vert"])
     pd["deload_weeks"] = ([1] if current_week in set(old_pd.get("deload_weeks") or []) else []) + \
         [int(w) + 1 for w in new_pd.get("deload_weeks") or []]
     pd["phase_weeks"] = {ph: pd["phases"].count(ph) for ph in PHASES}

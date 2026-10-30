@@ -10,6 +10,7 @@ Principios:
 - Tirada larga semanal, que crece de forma gradual y en específico incluye tramos a ritmo de carrera.
 - Salud: respeta las lesiones y patologías del perfil en cada sesión.
 - Disponibilidad: respeta los días sin entrenar y los minutos máximos por día.
+- Trail (si el bloque "Carrera objetivo" dice que es de trail): el volumen es tiempo en pie y desnivel, no km. La especificidad es la del terreno de la carrera: subidas largas (corriendo y andando, con palos si la carrera los permite), bajadas técnicas y fuerza excéntrica (cuádriceps, gemelo) para aguantarlas, y marcha o senderismo como entrenamiento, no como relleno. En las tiradas largas se practica la nutrición y el material de la carrera (mochila, palos, frontal si hay noche). En la fase específica, dos tiradas largas en días seguidos acercan a la fatiga de la carrera. Si el atleta vive en llano, el desnivel sale de una cinta inclinada, escaleras o un puerto en bici de montaña o gravel.
 - Entorno (bloque "Entorno", si está): pon las sesiones donde el atleta puede hacerlas. Con poco desnivel en sus salidas, las cuestas van con el desnivel que tenga a mano (un puente, una rampa corta) o como fartlek; con mucho, cuenta con él en los rodajes y en la tirada larga. Ten en cuenta el clima habitual de su lugar en las fechas del plan: con calor, las sesiones exigentes por FC o a primera hora.
 
 Reglas de Kairos (obligatorias):

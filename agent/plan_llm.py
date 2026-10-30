@@ -37,6 +37,11 @@ _WEEKS_PER_CALL = 4
 _PROGRESSION_ROUNDS = 2  # rondas para corregir la progresión con las sumas reales de los días
 
 
+def _trail_prompt(name: str, f: _pb.PlanFrame) -> str:
+    """Las instrucciones propias del trail (30/10, punto 12), solo si la carrera es de trail; si no, nada."""
+    return _render_prompt(name) if f.trail else ""
+
+
 def _correction(errors: list[str]) -> str:
     return _render_prompt("plan/correction", fallos="\n".join(f"- {e}" for e in errors[:12]))
 
@@ -60,6 +65,9 @@ class PlanLLMMixin:
         if pd.get("start_date"):
             start = date.fromisoformat(str(pd["start_date"])[:10])
             goals.update({k: pd[k] for k in ("target_race", "target_race_date", "target_time") if pd.get(k) is not None})
+            if pd.get("race_elevation_m"):  # trail: el D+ y la distancia con los que se hizo el plan
+                goals.update({"target_race_elevation_m": pd["race_elevation_m"],
+                              "target_race_distance_km": pd.get("race_distance_km")})
         if from_monday is not None:
             start = from_monday - timedelta(days=from_monday.weekday())
         race = str(goals.get("target_race") or "").strip()
@@ -71,19 +79,28 @@ class PlanLLMMixin:
         if not race or race_date is None or (race_date < today and not pd):
             # Sin objetivo (o ya pasado): bloque de 8 semanas que acaba con un test de 10K en domingo.
             race, race_date, target_time = "Test de 10K", start + timedelta(weeks=7, days=6), ""
-        distance = _run_plan.race_distance_km(race)
+        # Trail (30/10, punto 12 de proximos_pasos): la distancia y el D+ de la carrera vienen del perfil. Lo decide la
+        # carrera, no el deporte principal: el usuario es "trail running" y su objetivo, una media en asfalto.
+        distance = _safe_float(goals.get("target_race_distance_km"), 0.0) or _run_plan.race_distance_km(race)
+        elevation = _safe_float(goals.get("target_race_elevation_m"), 0.0) or None
+        trail = bool(elevation) or any(w in race.lower() for w in ("trail", "ultra"))
         seconds = _run_plan.parse_target_time(target_time)
         threshold = _resolve_running_threshold_pace_for_date(profile, today.isoformat())
         zones, _ = _resolve_hr_zones(profile, "running")
         constraints = _resolve_training_constraints(goals, health, user_message)
         prefs = goals.get("plan_preferences") or {}
+        cross_sports = list((prefs.get("cross") or {}).get("sports") or []) if prefs.get("cross") is not None else None
+        # La marcha cuenta en el volumen sostenido si el plan la pone: trail o elegida por el atleta.
+        walks = load_context.get("recent_weekly_walk_minutes") if trail or "hiking" in (cross_sports or []) else None
+        recent = (load_context.get("recent_weekly_minutes") or 0.0) + (walks or 0.0) or None
+        b2b = [int(d) for d in ((goals.get("availability") or {}).get("back_to_back_days") or [6, 7])]
         return _pb.PlanFrame(
             start=start, weeks=_pb.weeks_until(start, race_date), race=race, race_date=race_date, distance_km=distance,
             target_time=target_time, threshold_pace=threshold,
-            race_pace=(seconds / distance) if seconds and distance else None,
+            race_pace=(seconds / distance) if seconds and distance and not trail else None,
             hr_zones=list(zones or []), hr_threshold_tp=_resolve_tp_hr_threshold_for_date(profile, today.isoformat()),
             weekly_hours=min(24.0, max(3.0, _safe_float(goals.get("weekly_training_hours"), 8.0))),
-            recent_weekly_minutes=load_context.get("recent_weekly_minutes"),
+            recent_weekly_minutes=recent,
             longest_recent_min=load_context.get("longest_recent_min"),
             load={k: load_context.get(k) for k in ("ctl", "atl", "tsb", "status") if load_context.get(k) is not None},
             available_days=list(constraints.get("available_days") or range(1, 8)),
@@ -98,10 +115,12 @@ class PlanLLMMixin:
             max_load_weeks=2 if prefs.get("progression") == "2+1" else 3,
             notes=[str(n) for n in (prefs.get("notes") or [])],  # 30/10: lo que el atleta dijo para siempre
             # Deportes cruzados de /plan crear (30/10): sin respuesta, sin regla.
-            cross_sports=list((prefs.get("cross") or {}).get("sports") or []) if prefs.get("cross") is not None else None,
+            cross_sports=cross_sports,
             cross_max=(prefs.get("cross") or {}).get("max_per_week"),
             location=str(goals.get("training_location") or "").strip(),  # 30/10: entorno (pendiente 11 a)
             terrain=dict(load_context.get("terrain") or {}),
+            trail=trail, race_elevation_m=elevation, recent_weekly_vert_m=load_context.get("recent_weekly_vert_m"),
+            back_to_back_days=b2b if len(b2b) == 2 else [6, 7],
         )
 
     def _plan_system_message(self) -> dict:
@@ -161,7 +180,10 @@ class PlanLLMMixin:
         macro, errors, _ = await self._plan_llm_json(
             [system, {"role": "user", "content": _render_prompt("plan/macro", datos=datos, semanas=f.weeks,
                                                                  semana_carrera=f.race_week,
-                                                                 dias_entreno=_pb.training_days_text(f))}],
+                                                                 dias_entreno=_pb.training_days_text(f),
+                                                                 tirada_pct=f"{f.long_share * 100:.0f}",
+                                                                 tirada_min=f"{f.long_step:.0f}",
+                                                                 trail=_trail_prompt("plan/macro_trail", f))}],
             lambda m: _pb.check_macro(m, f), "estructura",
         )
         if macro is None:
@@ -188,7 +210,7 @@ class PlanLLMMixin:
             return self._plan_llm_json(
                 [system, {"role": "user", "content": _render_prompt(
                     "plan/weeks", datos=datos, estructura=estructura, semanas=", ".join(str(w) for w in weeks),
-                    reglas=_pb.rules_text(f))}],
+                    reglas=_pb.rules_text(f), trail=_trail_prompt("plan/weeks_trail", f))}],
                 _check_chunk(weeks), label,
             )
 
@@ -304,7 +326,9 @@ class PlanLLMMixin:
 
         macro = {"weeks": [{"week": i + 1, "phase": ph, "deload": (i + 1) in set(pd.get("deload_weeks") or []),
                             "minutes": _at("planned_week_minutes", i, _at("week_minutes", i, 0)),
-                            "long_min": _at("long_minutes", i, 0), "focus": _at("focus", i, "")}
+                            "long_min": _at("long_minutes", i, 0), "focus": _at("focus", i, ""),
+                            # Trail (30/10): el D+ de la semana, para que la revisión compruebe el de los días que cambia.
+                            **({"vert_m": _at("planned_week_vert", i, 0)} if f.trail else {})}
                            for i, ph in enumerate(pd.get("phases") or [])]}
         planned = {int(w["week"]): w for w in macro["weeks"]}
         first_day = {w: (today.isoweekday() if w == current else 1) for w in editable}
@@ -313,7 +337,8 @@ class PlanLLMMixin:
         messages = [self._plan_system_message(), {"role": "user", "content": _render_prompt(
             "plan/revision", datos=_pb.frame_text(f), estructura=_pb.macro_text(macro),
             hoy=f"{_run_plan._DAY_NAMES[today.isoweekday()]} {today.strftime('%d/%m/%Y')} (semana {current} del plan)",
-            realizado=await self._executed_vs_planned(sessions, f.start), dias=dias, mensaje=user_message)}]
+            realizado=await self._executed_vs_planned(sessions, f.start), dias=dias, mensaje=user_message,
+            trail=_trail_prompt("plan/weeks_trail", f))}]
         result: dict[int, list[dict]] = {}
 
         def check(data: dict) -> list[str]:

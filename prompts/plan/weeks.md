@@ -31,3 +31,4 @@ Formato (JSON):
 - Cada tramo: "kind" (warmup, steady, work, recovery, cooldown), tiempo ("min" o "sec") o distancia ("m" o "km", solo por ritmo) y su objetivo: "zone" (Z1…Z5c, RP o FC1…FC5) o "pace" con un ritmo concreto ("pace": "4:00"). Las series van en un bloque {"repeat": n, "steps": [...]}.
 - Día doble (si el atleta dobla): repite el "day" con la segunda sesión, p. ej. {"day": 3, "type": "easy", …} y {"day": 3, "type": "strength", …}; primero la principal.
 - "title" dice la sesión como la diría un entrenador (p. ej. "Umbral 3×10'", "Tirada larga con 2×15' a RP"); "note" da la indicación técnica que haga falta (cuesta del 6-8 %, superficie, cadencia, nutrición).
+{{trail}}

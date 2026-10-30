@@ -1,0 +1,5 @@
+- Es una carrera de trail. Cada sesión con desnivel lleva "vert" (m de D+), y los "vert" de la semana suman el D+ de su estructura.
+- Lo exigente va por FC (FC1…FC5): en subida, el ritmo no dice nada. Las zonas de ritmo, solo en tramos llanos; no hay RP.
+- Las subidas andando, con o sin palos, son parte del trail y se practican: van como tramos del rodaje o de la tirada (p. ej. {"kind": "work", "min": 8, "zone": "FC3", "note": "subida andando con palos"}).
+- La marcha o el senderismo, si el atleta los hace, es un "cross" con "sport": "hiking", sus tramos por FC y su "vert", p. ej. {"day": 6, "type": "cross", "sport": "hiking", "title": "Marcha con palos", "vert": 700, "steps": [ {"kind": "warmup", "min": 10, "zone": "FC1" }, {"kind": "steady", "min": 120, "zone": "FC2" }, {"kind": "cooldown", "min": 10, "zone": "FC1" } ] }. Lo mismo la bici de montaña ("sport": "mtb") o el gravel ("gravel").
+- Dos tiradas largas seguidas (solo en la fase específica, en los dos días que dicen las reglas): la más larga dura lo de la estructura (puede llevar "auto") y la otra lleva sus minutos.
