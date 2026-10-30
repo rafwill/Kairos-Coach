@@ -720,6 +720,32 @@ def plan_data(macro: dict, sessions: list[dict], f: PlanFrame) -> dict:
     }
 
 
+def merge_replan(old_pd: dict, old_sessions: list[dict], new_pd: dict, new_sessions: list[dict],
+                 current_week: int) -> tuple[dict, list[dict]]:
+    """Replanificar (30/10, pendiente 11 d2): la semana actual del plan viejo como semana 1 y las nuevas desde la 2.
+
+    `new_pd` y `new_sessions` son el plan nuevo, que empieza el lunes que viene; el resultado empieza el lunes de
+    esta semana, así que las listas por semana de plan_data llevan delante la de la semana actual.
+    """
+    kept = [dict(s, week_index=1) for s in old_sessions if int(s.get("week_index") or 0) == current_week]
+    moved = [dict(s, week_index=int(s["week_index"]) + 1) for s in new_sessions]
+
+    def first(key: str, default):
+        values = list(old_pd.get(key) or [])
+        return values[current_week - 1] if 0 < current_week <= len(values) else default
+
+    pd = dict(new_pd)
+    for key, default in (("phases", "base"), ("focus", ""), ("planned_week_minutes", 0), ("long_minutes", 0)):
+        pd[key] = [first(key, default)] + list(new_pd.get(key) or [])
+    pd["week_minutes"] = [round(sum(float(s.get("duration_min") or 0) for s in kept), 1)] + list(new_pd.get("week_minutes") or [])
+    pd["deload_weeks"] = ([1] if current_week in set(old_pd.get("deload_weeks") or []) else []) + \
+        [int(w) + 1 for w in new_pd.get("deload_weeks") or []]
+    pd["phase_weeks"] = {ph: pd["phases"].count(ph) for ph in PHASES}
+    start = date.fromisoformat(str(new_pd["start_date"])[:10]) - timedelta(weeks=1)
+    pd["start_date"] = start.isoformat()
+    return pd, sorted(kept + moved, key=session_key)
+
+
 def compact_week(sessions: list[dict], week: int) -> list[dict]:
     """Días de una semana en el formato compacto (lo que escribió el LLM), para la revisión."""
     out = []

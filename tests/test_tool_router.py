@@ -115,6 +115,10 @@ class TestToolRouter:
         router, profile = ToolRouter(), {"goals": {"target_race": "Media maratón"}}
         for q in ("replanifica el plan", "Replanifica mi plan, que he estado enfermo"):
             assert router.route_key(q, [], profile) == "planning", q
+        # Ver el plan no es cambiarlo (30/10: "plan ver 19bd7f1c" rehízo el plan de Gemini con el motor determinista).
+        for q in ("plan ver 19bd7f1c", "muéstrame el plan", "quiero ver mi plan", "lista mis planes"):
+            assert router.route_key(q, [], profile) == "plan_status", q
+        assert router.route_key("ajusta el plan, quiero ver más series", [], profile) == "planning"
 
     def test_every_route_has_its_handler(self):
         # Tabla de rutas (28/10, al dividir trainer_agent.py): una ruta sin método caería al LLM sin avisar.

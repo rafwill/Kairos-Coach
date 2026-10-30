@@ -4,6 +4,43 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Added («replanifica el plan» rehace el bloque hasta la carrera; pendiente 11 d2, petición del usuario)
+- Petición del usuario: tras un viaje, una enfermedad o semanas que no salen como estaban, Kairos tiene que replanificar con los datos, no solo retocar dos semanas.
+- Qué se hizo (criterios fijados antes en `docs/proximos_pasos.md`):
+  - Con un plan del LLM activo, "replanific…" o "rehaz el plan" va a `_route_plan_rebuild`. "Ajusta el plan" sigue siendo la revisión corta.
+  - El LLM rehace estructura y días desde el lunes que viene hasta la carrera (un lunes, desde hoy).
+    - Usa el mismo constructor que `/plan crear` (`_build_plan_with_llm`, con `plan` y `from_monday`) y todas sus reglas.
+    - La progresión parte de la media de las últimas 4 semanas, que ya recoge el parón.
+    - Carrera, objetivo y tiempo, los del plan activo. Lo que cuenta el atleta llega al LLM.
+  - Esta semana se queda con sus sesiones. Se guarda como versión nueva del mismo plan que empieza el lunes de esta semana: la semana 1 es la actual y desde la 2 van las nuevas (`plan_builder.merge_replan`, que también une las listas por semana de `plan_data`). Lleva `revised_on`, y con él el aviso del arranque (d1) empieza de cero.
+  - Sin plan válido del LLM no cambia nada y la respuesta dice qué no cumplía.
+  - Sin al menos una semana entera antes de la de la carrera no rehace nada y propone "ajusta el plan".
+- Resultado:
+  - Tests del criterio (`tests/test_plan_replan.py`, 8): enrutado, fechas (miércoles y lunes), unión de semanas y `plan_data`, fallo sin cambios y caso sin semanas. Tests: 889.
+  - Pendiente: la prueba en vivo con Gemini, que el proxy del trabajo bloquea. Un replanificado gasta como `/plan crear`, 10–15 peticiones; si Flash agota su cupo, sigue Flash Lite.
+
+### Fixed (un mensaje con "plan" rehízo el plan de Gemini con el motor determinista; encontrado al preparar el pendiente 11 d2)
+- Señal:
+  - Al leer el plan activo para d2, no llevaba `author: "llm"`.
+  - El historial (`training_plan_version`) lo explica. La versión 3 (30/10, 09:55 hora local, "agent_structured_adjustment") sustituyó al plan de Gemini, de 104 sesiones y hecho por el LLM, por uno del motor determinista: 91 sesiones, `source` "agent_structured_plan" y otros minutos en casi todas las semanas (la 11, de 570 a 460).
+  - Fue "plan ver 19bd7f1c", escrito sin la barra, dos veces (historial de la sesión). Fue a la ruta de planes como petición de planificación y dio "Volumen semanal estimado: 5159 -> 5181 min".
+- Causa:
+  - `_normalize_storage_plan_row` funde `plan_data` con la fila y no conservaba la clave `plan_data`.
+  - La ruta de planes mira `plan["plan_data"]["author"]` para mandar un plan del LLM a su revisión. Con un plan leído de la base nunca lo veía, y caía al motor determinista, que guardaba encima.
+  - La revisión del LLM tampoco habría funcionado bien con un plan de la base. Habría guardado un `plan_data` casi vacío y contado las semanas desde el lunes actual en vez de desde el inicio del plan.
+  - El test del 29/10 exigía precisamente que el plan normalizado no tuviera `plan_data`.
+- Qué se hizo:
+  - El plan normalizado conserva también `plan_data`. El test del 29/10 ahora exige lo contrario.
+  - Test nuevo: un plan del LLM leído de la base va a su revisión, sin pasar por el motor determinista ni guardar nada. Sin el arreglo, falla.
+  - "plan ver / listar / activar / crear" sin la barra es el comando (`_with_plan_slash`).
+  - En el router, ver el plan no es cambiarlo. "ver", "muéstrame", "enséñame" o "lista" junto a "plan", sin un verbo de cambio (ajusta, modifica, cambia, replanifica…), va al estado del plan (`plan_status`) y no a la ruta que lo cambia.
+  - Tests: 881.
+- Datos:
+  - Se recuperó la versión 2, la del plan de Gemini con el arreglo de los km del 29/10. Antes, prueba sin escribir comparándola con la actual.
+  - Se guardó como versión 4 del mismo plan ("restore_v2_llm_plan").
+  - Comprobado al leer de vuelta: activo, `plan_data` y 104 sesiones idénticos a la versión 2, y los minutos por semana de Gemini (336 … 570, 410, 259). La versión 3 sigue en el historial.
+- Lección: un test que fija un detalle de forma ("sin `plan_data`") debe comprobar también a quien lo lee. Aquí la forma nueva rompió a un lector que nadie probaba con un plan leído de la base.
+
 ### Added (el arranque avisa cuando el plan ya no encaja; pendiente 11 d1, petición del usuario)
 - Petición del usuario: que Kairos replanifique por lo que pasa de verdad (viaje, enfermedad, sesiones que no se pueden hacer), no solo cuando el atleta lo pide.
 - Primer paso: un detector sin LLM que avisa y propone, sin cambiar nada (`agent/plan_drift.py`). Criterios fijados antes de programarlo en `docs/proximos_pasos.md`.

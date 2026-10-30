@@ -65,6 +65,10 @@ def _normalize_storage_plan_row(row: dict) -> dict | None:
             "active": (status == "active"),
             # Fecha de creación: antes de ella el atleta no seguía este plan (adherencia, 29/10).
             "created_at": row.get("created_at") or merged.get("created_at"),
+            # plan_data también tal cual (30/10): quien lee `plan["plan_data"]` (la ruta de planes, la revisión del
+            # LLM) lo encontraba vacío. La ruta de planes no reconocía el plan del LLM y lo rehízo con el motor
+            # determinista encima.
+            "plan_data": dict(plan_data) if isinstance(plan_data, dict) else {},
         }
     )
     return merged

@@ -194,6 +194,29 @@ class TestPlanStatusChatRoute:
         assert "training_plan" not in agent.user_profile
 
     @pytest.mark.asyncio
+    async def test_an_llm_plan_read_from_the_database_goes_to_the_llm_revision(self):
+        # 30/10: el plan de Gemini leído de la base no se reconocía como del LLM (plan_data fundido en la fila) y "ajusta
+        # el plan" lo rehízo con el motor determinista encima. Debe ir a la revisión del LLM y no tocar nada más.
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"goals": {"target_race": "Media", "target_race_date": "2027-01-19"}, "health": {}}
+        agent.conversation_history = []
+        agent._build_plan_load_context = AsyncMock(return_value={})
+        agent._route_plan_revision = AsyncMock(return_value="revisado")
+        row = {"id": "p1", "title": "Plan", "status": "active", "source": "agent_llm_plan",
+               "plan_data": {"author": "llm", "method": "bloques_con_descarga", "start_date": "2026-10-26"}}
+        with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=row), \
+             patch("agent.trainer_agent._storage.list_training_plan_sessions", return_value=[{"week_index": 1}]), \
+             patch("agent.trainer_agent._storage.update_training_plan") as update, \
+             patch_all("_generate_structured_plan_payload", side_effect=AssertionError("motor determinista")):
+            out = await TrainerAgent._route_planning(agent, "ajusta el plan de esta semana")
+        assert out == "revisado"
+        plan = agent._route_plan_revision.await_args.args[1]
+        assert plan["plan_data"]["author"] == "llm" and plan["plan_data"]["start_date"] == "2026-10-26"
+        update.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_chat_planning_updates_existing_plan_and_reports_changes(self):
         from agent.trainer_agent import (
             TrainerAgent,

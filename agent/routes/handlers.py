@@ -41,9 +41,11 @@ from agent.plans import (
     _generate_structured_plan_payload,
     _plan_start,
     _today_session_lines,
+    _plan_detail_markdown,
     _summarize_plan_changes,
     _validate_structured_plan,
     _wants_new_plan_intent,
+    _wants_replan_intent,
 )
 from agent.routes.load import (
     _build_current_week_tss_markdown,
@@ -222,6 +224,8 @@ class RoutesMixin:
             notice = ""
             if not wants_new and previous_plan and previous_plan.get("id") and \
                     (previous_plan.get("plan_data") or {}).get("author") == "llm":
+                if _wants_replan_intent(user_message):
+                    return await self._route_plan_rebuild(user_message, previous_plan, previous_sessions, load_context)
                 return await self._route_plan_revision(user_message, previous_plan, previous_sessions, load_context)
             if wants_new or not (previous_plan and previous_plan.get("id")):
                 # El plan lo construye el LLM del atleta (28/10); el código lo comprueba y calcula ritmos, km y TSS.
@@ -310,6 +314,59 @@ class RoutesMixin:
             )
             assistant_reply = _build_goal_plan_fallback(self.user_profile)
             return assistant_reply, "planning_fallback"
+    async def _route_plan_rebuild(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict) -> str:
+        """«Replanifica el plan» (30/10, pendiente 11 d2; criterios en docs/proximos_pasos.md): el LLM rehace la
+        estructura y los días desde el lunes que viene hasta la carrera, con las reglas de `/plan crear` y la
+        progresión desde lo que el atleta sostiene de verdad. Esta semana se queda como estaba (para cambiarla, "ajusta
+        el plan"); un lunes, se rehace desde hoy. Si el LLM no consigue un plan válido, no cambia nada."""
+        today = date.today()
+        this_monday = today - timedelta(days=today.weekday())
+        old_start = _plan_start(plan) or this_monday
+        current = (this_monday - old_start).days // 7 + 1
+        keep_week = today.weekday() > 0 and current >= 1
+        from_monday = this_monday + timedelta(weeks=1) if keep_week else max(this_monday, old_start)
+        f = self._plan_frame(load_context, user_message, plan=plan, from_monday=from_monday)
+        if f.race_week < 2:
+            return ("## 🔄 Replanificar\n- Desde el lunes " + from_monday.strftime("%d/%m") + " no queda ni una semana "
+                    "entera antes de la de la carrera: no hay bloque que rehacer. Para cambiar los días que quedan, pídeme "
+                    "«ajusta el plan» y lo que necesitas.")
+        try:
+            new_plan, new_sessions, errors = await self._build_plan_with_llm(user_message, load_context, plan=plan,
+                                                                             from_monday=from_monday)
+        except LLMAuthError:
+            raise
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
+            new_plan, new_sessions, errors = None, [], [f"{type(exc).__name__}: {exc}"]
+        if new_plan is None:
+            log.warning("[PLAN] replanificar sin plan válido: %s", " | ".join(errors[:6]))
+            return ("## ⚠️ No he replanificado\n\n"
+                    f"Tu modelo ({getattr(self, 'model', '')}) no consiguió un plan que cumpla las reglas de Kairos. "
+                    "Tu plan sigue como estaba.\n\nLo que no cumplía:\n" + "\n".join(f"- {e}" for e in errors[:6])
+                    + "\n\nPuedes repetirlo o, para cambiar solo los próximos días, pedirme «ajusta el plan».")
+        pd = dict(new_plan.get("plan_data") or {})
+        weeks = int(new_plan.get("duration_weeks") or 0)
+        if keep_week:
+            pd, new_sessions = _plan_builder.merge_replan(plan.get("plan_data") or {}, sessions, pd, new_sessions, current)
+            weeks += 1
+        # Lo de antes de hoy ya se tuvo en cuenta: el detector de desvíos del arranque empieza aquí.
+        pd["revised_on"] = today.isoformat()
+        persisted = _storage.update_training_plan(
+            str(plan["id"]),
+            {k: new_plan.get(k) for k in ("title", "description", "objective", "difficulty")}
+            | {"duration_weeks": weeks, "status": "active", "source": "agent_llm_plan", "plan_data": pd},
+            sessions=new_sessions,
+            change_reason="llm_replan",
+        )
+        persisted_plan = _normalize_storage_plan_row(persisted) or {**plan, "plan_data": pd}
+        self.user_profile["training_plan"] = persisted_plan
+        _save_user_profile(self.user_profile)
+        self.__dict__.pop("_active_plan_cache", None)  # el bloque "Plan activo" se recarga
+        kept = "Esta semana sigue como estaba; " if keep_week else ""
+        return (f"## 🔄 Plan replanificado desde el {from_monday.strftime('%d/%m/%Y')}\n"
+                f"{kept}la carrera sigue el {f.race_date.strftime('%d/%m/%Y')}. La progresión parte de lo que has "
+                f"sostenido las últimas 4 semanas. Guardado como una versión nueva del plan.\n\n"
+                + _plan_detail_markdown(persisted_plan, new_sessions, self.user_profile))
+
     async def _route_plan_revision(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict) -> str:
         """Revisión del plan del LLM con lo que cuenta el atleta (28/10): cambia días desde hoy hasta el final de la
         semana siguiente, el código los comprueba y se guarda una versión nueva. Si no pasa las reglas, no se toca."""

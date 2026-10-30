@@ -10,7 +10,16 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 30/10/2026** (ordenador 2, el del trabajo). `git pull` desde `22e5595` hasta `aa27605`. Decidido el pendiente 10: Gemini 3.6 Flash para planes y arranque, y Gemini 3.5 Flash Lite para el chat y como relevo (columna `ia_provider.chat_model`; CHANGELOG del 30/10). Hecho en Supabase: columna `ia_provider.chat_model` añadida y guardado `gemini-3.5-flash-lite` con `/proveedor`, comprobado al leerlo. Para cambiarlo con Gemini ya guardado, `/proveedor` propone el modelo del chat que hay, no Flash Lite: hay que escribirlo. Siguiente paso: punto 10, comprobarlo en vivo fuera del proxy.
+**Sesión del 30/10/2026** (ordenador 2, el del trabajo). `git pull` desde `22e5595` hasta `aa27605`. Decidido el pendiente 10: Gemini 3.6 Flash para planes y arranque, y Gemini 3.5 Flash Lite para el chat y como relevo (columna `ia_provider.chat_model`; CHANGELOG del 30/10). Hecho en Supabase: columna `ia_provider.chat_model` añadida y guardado `gemini-3.5-flash-lite` con `/proveedor`, comprobado al leerlo. Para cambiarlo con Gemini ya guardado, `/proveedor` propone el modelo del chat que hay, no Flash Lite: hay que escribirlo.
+- Después, en la misma sesión:
+  - Resumen de cambios del plan en h:mm y TSS.
+  - Pendiente 11 d1: aviso en el arranque si el plan ya no encaja.
+  - Pendiente 11 d2: «replanifica el plan» rehace hasta la carrera.
+  - Arreglado el fallo que rehízo el plan de Gemini con el motor determinista ("plan ver 19bd7f1c" sin barra; `plan_data` perdido al normalizar). Plan de Gemini recuperado como versión 4 y comprobado.
+  - Detalle en el CHANGELOG del 30/10. Tests: 889.
+- **Siguiente paso, fuera del proxy (en casa):**
+  - Punto 10: Flash Lite en el chat y el relevo.
+  - Pendiente 11 d2 en vivo: un «replanifica el plan» real, revisado por el usuario.
 
 **Sesión del 28-29/10/2026** (ordenador 1). Release **v3.0.0 — Kairos Coach Funcional** (29/10). 861 tests; batería 25/25 con Gemini. Proveedor del usuario: Gemini `gemini-3.6-flash` (la clave de NVIDIA, en `NVIDIA_API_KEY`). Plan activo: el de Gemini hacia la media de Santa Pola (`19bd7f1c`). Lo hecho, en `CHANGELOG.md` (28-29/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull` y poner en su `.env` la clave de Gemini en `PROVIDER_API_KEY`.
 
@@ -85,10 +94,17 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
         - Falta poder rehacer el bloque entero cuando el parón es largo (viaje, una semana enfermo), con la carrera en su fecha y la progresión desde lo que el atleta sostiene de verdad.
     - Orden propuesto: (d) primero, que es el valor diferencial; después (c), (b) y (a).
     - **(d1) Detector de desvíos: hecho el 30/10** (`agent/plan_drift.py`; criterios y resultado en el CHANGELOG). Queda verlo saltar con un desvío real y revisar con el usuario si los umbrales avisan cuando deben.
-    - **(d2) Replanificar el bloque entero tras un parón,** desde hoy hasta la carrera. Es lo siguiente.
-      - Hoy «replanifica el plan» solo cambia hasta el final de la semana siguiente.
-      - Hace falta rehacer la estructura de las semanas que quedan: progresión desde lo que el atleta sostiene de verdad, descargas, afinamiento y la carrera en su fecha. Después, los días por tandas, como en `/plan crear`.
-      - Criterios de cierre por fijar antes de programarlo.
+    - **(d2) Replanificar el bloque entero tras un parón: hecho el 30/10** (`_route_plan_rebuild`; CHANGELOG). **Falta la prueba en vivo con Gemini fuera del proxy:** un «replanifica el plan» real, en tiempo y peticiones parecidos a `/plan crear`, revisado por el usuario. Diseño y criterios fijados antes de programarlo:
+      - **Cuándo:** con un plan del LLM activo y "replanific…" en el mensaje (lo que propone el bloque de d1). "Ajusta el plan" sigue siendo la revisión corta, hasta el final de la semana siguiente.
+      - **Qué rehace:** la estructura y los días desde el lunes que viene hasta la carrera, con el mismo constructor que `/plan crear` (`_build_plan_with_llm`) y todas sus reglas. Si hoy es lunes, desde hoy.
+        - La progresión parte de lo que el atleta sostiene de verdad: la media de las últimas 4 semanas, que ya recoge el parón.
+        - La carrera, en su fecha. Objetivo y tiempo, los del plan activo.
+        - Lo que el atleta escribe ("he estado enfermo una semana") llega al LLM como "Lo que pide el atleta".
+      - **Esta semana:** se quedan las sesiones que tenía. Para cambiarlas, "ajusta el plan".
+      - **Cómo se guarda:** versión nueva del mismo plan, que empieza el lunes de esta semana. La semana 1 es la actual, con sus sesiones; desde la 2, las nuevas. Lleva `revised_on` = hoy. La versión anterior queda en `training_plan_version`.
+      - **Si el LLM no consigue un plan válido:** no cambia nada y la respuesta dice qué no cumplía, como en `/plan crear`.
+      - **Si no queda al menos una semana entera antes de la de la carrera:** no rehace nada y propone "ajusta el plan".
+      - **Cierre:** tests con el LLM simulado del enrutado (replanificar frente a ajustar), las fechas, la unión de semanas y `plan_data`, el fallo que no toca nada y el caso sin semanas. En vivo con Gemini, fuera del proxy (desde el trabajo no llega): un replanificado válido en tiempo y peticiones parecidos a `/plan crear`, revisado por el usuario.
 
 12. Añadir un porcentaje de cumplimiento de los entrenamientos en Kairos basado en los datos de kairos y los entrenamientos del atleta
 

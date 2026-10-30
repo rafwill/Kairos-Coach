@@ -44,10 +44,12 @@ def _correction(errors: list[str]) -> str:
 class PlanLLMMixin:
     """El LLM construye el plan (estructura y días) y el código lo comprueba y calcula ritmos, km y TSS."""
 
-    def _plan_frame(self, load_context: dict, user_message: str = "", plan: dict | None = None) -> _pb.PlanFrame:
+    def _plan_frame(self, load_context: dict, user_message: str = "", plan: dict | None = None,
+                    from_monday: date | None = None) -> _pb.PlanFrame:
         """Datos del atleta para construir el plan: objetivo, umbrales, zonas, carga real y disponibilidad.
 
-        Con `plan` (revisión), el inicio y la carrera son los del plan guardado.
+        Con `plan` (revisión), el inicio y la carrera son los del plan guardado; con `from_monday` (replanificar,
+        30/10), la carrera la del plan y el inicio ese lunes.
         """
         profile = self.user_profile or {}
         goals = dict(profile.get("goals") or {})
@@ -58,6 +60,8 @@ class PlanLLMMixin:
         if pd.get("start_date"):
             start = date.fromisoformat(str(pd["start_date"])[:10])
             goals.update({k: pd[k] for k in ("target_race", "target_race_date", "target_time") if pd.get(k) is not None})
+        if from_monday is not None:
+            start = from_monday - timedelta(days=from_monday.weekday())
         race = str(goals.get("target_race") or "").strip()
         target_time = str(goals.get("target_time") or "").strip()
         try:
@@ -138,9 +142,13 @@ class PlanLLMMixin:
             messages = messages + [{"role": "assistant", "content": text}, {"role": "user", "content": _correction(errors)}]
         return None, errors, messages
 
-    async def _build_plan_with_llm(self, user_message: str, load_context: dict) -> tuple[dict | None, list[dict], list[str]]:
-        """Plan construido por el LLM: (plan, sesiones, []) o (None, [], fallos) si no consiguió uno válido."""
-        f = self._plan_frame(load_context, user_message)
+    async def _build_plan_with_llm(self, user_message: str, load_context: dict, plan: dict | None = None,
+                                   from_monday: date | None = None) -> tuple[dict | None, list[dict], list[str]]:
+        """Plan construido por el LLM: (plan, sesiones, []) o (None, [], fallos) si no consiguió uno válido.
+
+        Con `plan` y `from_monday` (replanificar, 30/10): la carrera del plan activo, desde ese lunes.
+        """
+        f = self._plan_frame(load_context, user_message, plan=plan, from_monday=from_monday)
         datos = _pb.frame_text(f)
         system = self._plan_system_message()
         t0 = time.perf_counter()

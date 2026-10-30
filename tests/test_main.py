@@ -480,6 +480,17 @@ def _enter_takes_default(answers):
     return lambda *a, **k: next(it) or k.get("default", "")
 
 
+def test_plan_commands_without_the_slash_are_commands():
+    # 30/10: "plan ver 19bd7f1c" fue al chat como petición de planificación y rehízo el plan de Gemini.
+    from agent.main import _with_plan_slash
+
+    assert _with_plan_slash("plan ver 19bd7f1c") == "/plan ver 19bd7f1c"
+    assert _with_plan_slash("  Plan listar") == "/Plan listar"
+    assert _with_plan_slash("plan crear") == "/plan crear"
+    for text in ("/plan ver 1", "planifica mi media", "plan para el sábado", "¿qué plan tengo?"):
+        assert _with_plan_slash(text) == text
+
+
 class TestAskIaProvider:
     def test_known_provider_fills_url_and_proposes_model(self):
         with patch("agent.main.Prompt.ask", side_effect=_enter_takes_default(["NVIDIA NIM", "", ""])) as ask, \

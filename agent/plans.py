@@ -441,6 +441,13 @@ def _wants_new_plan_intent(user_message: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _wants_replan_intent(user_message: str) -> bool:
+    """«Replanifica el plan» (30/10, pendiente 11 d2): rehacer desde el lunes que viene hasta la carrera, no solo
+    hasta el final de la semana siguiente como "ajusta el plan"."""
+    text = (user_message or "").strip().lower()
+    return any(m in text for m in ("replanific", "rehaz el plan", "rehacer el plan", "rehaz mi plan", "rehacer mi plan"))
+
+
 def _race_distance_km(race: str) -> float | None:
     """Distancia de la carrera objetivo a partir de su nombre (para derivar el ritmo objetivo)."""
     txt = str(race or "").lower()

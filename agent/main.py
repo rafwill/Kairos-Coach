@@ -863,6 +863,16 @@ def _show_profile() -> None:
     )
 
 
+_PLAN_COMMAND_WITHOUT_SLASH = re.compile(r"^plan\s+(ver|listar|activar|crear)\b", re.IGNORECASE)
+
+
+def _with_plan_slash(user_input: str) -> str:
+    """"plan ver 19bd7f1c" sin la barra es el comando /plan ver (30/10: iba a la ruta de planes como petición de
+    planificación, y esta rehízo el plan de Gemini con el motor determinista)."""
+    text = (user_input or "").strip()
+    return "/" + text if _PLAN_COMMAND_WITHOUT_SLASH.match(text) else user_input
+
+
 def _parse_plan_command(cmd: str) -> tuple[str | None, str | None]:
     """Parsea comandos /plan y devuelve (acción, argumento opcional)."""
     raw = (cmd or "").strip().lower()
@@ -1813,6 +1823,7 @@ async def main() -> None:
                 break
 
             # Comandos especiales
+            user_input = _with_plan_slash(user_input)
             cmd = user_input.strip().lower()
 
             if cmd in {"/proveedor", "/provider"}:

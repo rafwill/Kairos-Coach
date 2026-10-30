@@ -261,8 +261,8 @@ class _Agent(PlanLLMMixin):
     def _profile_context_block(self):
         return ""
 
-    def _plan_frame(self, load_context, user_message="", plan=None):
-        return _frame()
+    def _plan_frame(self, load_context, user_message="", plan=None, from_monday=None):
+        return _frame(start=from_monday) if from_monday else _frame()
 
 
 class TestTheLLMBuildsThePlan:
@@ -416,10 +416,13 @@ class TestCoachPreferences:
 
 def test_a_plan_read_from_the_database_is_still_a_block_plan():
     # 29/10: _normalize_storage_plan_row funde plan_data con la fila; el arranque no reconocía el plan por bloques.
+    # 30/10: además conserva plan_data. Sin él, la ruta de planes no veía author "llm" y rehízo el plan de Gemini con
+    # el motor determinista encima (versión 3 del plan 19bd7f1c).
     from agent.daily_engine import _normalize_storage_plan_row
     from agent.plans import _is_block_plan, _plan_start
 
     row = {"id": "p1", "title": "Plan", "status": "active",
            "plan_data": {"method": "bloques_con_descarga", "start_date": "2026-10-26", "author": "llm"}}
     plan = _normalize_storage_plan_row(row)
-    assert "plan_data" not in plan and _is_block_plan(plan) and _plan_start(plan) == date(2026, 10, 26)
+    assert _is_block_plan(plan) and _plan_start(plan) == date(2026, 10, 26)
+    assert plan["plan_data"]["author"] == "llm" and plan["plan_data"]["start_date"] == "2026-10-26"

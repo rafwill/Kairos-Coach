@@ -80,6 +80,10 @@ class ToolRouter:
         return None
 
 
+_PLAN_VIEW = re.compile(r"\b(ver|veo|muestra|muéstrame|muestrame|enseña|enséñame|ensename|lista|listar|listame|lístame)\b")
+_PLAN_CHANGE = ("ajust", "modific", "cambi", "replanific", "crea", "hazme", "rehaz", "adapta")
+
+
 def _is_planning_intent(user_message: str, history: list[dict] | None = None) -> bool:
     """Detecta intención de planificación en la consulta del usuario.
 
@@ -121,6 +125,9 @@ def _is_planning_intent(user_message: str, history: list[dict] | None = None) ->
     ]
     if not any(marker in text for marker in planning_markers):
         return False
+    # Ver el plan no es cambiarlo (30/10: "plan ver 19bd7f1c" fue a esta ruta, que rehízo el plan de Gemini).
+    if _PLAN_VIEW.search(text) and not any(m in text for m in _PLAN_CHANGE):
+        return False
     # Guardia anti-falso-positivo: consultas de estado de objetivo no son planificación.
     # 'objetivo' solo clasifica como planning si va acompañado de un verbo de acción.
     if "objetivo" in text and not any(m in text for m in ("preparar", "planifica", "alcanzar", "lograr", "conseguir")):
@@ -147,7 +154,7 @@ def _is_plan_status_intent(user_message: str) -> bool:
         "tengo", "hay", "existe", "asignado", "asignada",
         "mi plan", "ese plan", "cuál es", "cual es", "qué plan", "que plan",
     ]
-    return any(marker in text for marker in status_markers)
+    return any(marker in text for marker in status_markers) or bool(_PLAN_VIEW.search(text))
 
 
 def _is_goal_status_intent(user_message: str) -> bool:
