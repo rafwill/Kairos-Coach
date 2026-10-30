@@ -6,9 +6,11 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 
 ## Qué hace
 
-- **Briefing al arrancar:** Body Battery, HRV, sueño, entrenamientos de las últimas 48 h, estado de carga por zonas de Forma (Joe Friel, relativas a tu CTL) y plan del día.
+- **Briefing al arrancar:** Body Battery, HRV, sueño, entrenamientos de las últimas 48 h, estado de carga por zonas de Forma (Joe Friel, relativas a tu CTL), la sesión de hoy del plan con la recomendación de tu entrenador, el tiempo de hoy donde entrenas y, si los últimos días no encajan con el plan (sesiones clave sin hacer, días sin actividad, HRV baja, otro deporte, carga muy por debajo o por encima), un aviso que propone replanificar.
 - **Carga como TrainingPeaks:** un TSS por actividad con el método de su deporte, guardado una vez; PMC 42/7. Validado contra el export de TP del atleta (tabla abajo).
-- **Planes de entrenamiento** (asfalto y trail: en trail, desnivel semanal, tiradas largas seguidas, marcha con palos, gravel o MTB)**:** los construye y revisa el LLM del atleta como su entrenador (por bloques con descarga, cada día con su fecha y sus tramos); Kairos le da los datos (objetivo, zonas de ritmo y FC, carga real, disponibilidad, lo hecho los últimos días), calcula ritmos, km y TSS planificado y comprueba las reglas (nunca más de un 10 % por semana sobre el volumen real, descargas, afinamiento, disponibilidad) antes de guardar cada versión. Si el modelo no consigue un plan válido, no se guarda ninguno: Kairos dice qué no cumplía y propone repetir o probar un modelo más capaz.
+- **Planes de entrenamiento:** los construye y revisa el LLM del atleta como su entrenador (por bloques con descarga, cada día con su fecha y sus tramos); Kairos le da los datos (objetivo, zonas de ritmo y FC, carga real, disponibilidad, lo hecho los últimos días), calcula ritmos, km y TSS planificado y comprueba las reglas (nunca más de un 10 % por semana sobre el volumen real, descargas, afinamiento, disponibilidad) antes de guardar cada versión. Si el modelo no consigue un plan válido, no se guarda ninguno: Kairos dice qué no cumplía y propone repetir o probar un modelo más capaz.
+- **Planes de trail:** con la distancia y el desnivel de la carrera, el plan lleva el D+ de cada semana y de cada sesión (con la progresión del volumen y la semana pico al D+ de la carrera), tiradas largas de hasta el 50 % de la semana y dos seguidas en la fase específica, marcha o senderismo con palos como entrenamiento, bici de carretera, gravel o MTB, y todo lo exigente por FC (sin ritmo de carrera).
+- **Planes que se adaptan:** "ajusta el plan: …" cambia los próximos días y "replanifica el plan" lo rehace hasta la carrera con lo que has sostenido de verdad. Lo que dices para siempre ("los martes no puedo", "prefiero las series en pista") queda guardado para todos tus planes. El plan tiene en cuenta otros deportes que hagas, dónde entrenas y el desnivel de tus salidas.
 - **Coaching con contexto:** perfil, salud (protocolo de diabetes con o sin insulina según la medicación; lesiones aparte), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
 - **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`. Admite dos modelos: uno para crear planes y escribir el arranque y otro, más ligero, para el chat, que releva al primero si se queda sin cupo o saturado (con Gemini gratuito: 3.6 Flash, 20 peticiones al día, y 3.5 Flash Lite, 500).
@@ -62,7 +64,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | Comando | Qué hace |
 | --- | --- |
 | `/ayuda` | Ejemplos de preguntas, comandos e indicadores |
-| `/perfil` · `/perfil editar [objetivo\|salud]` | Ver o editar el perfil |
+| `/perfil` · `/perfil editar [objetivo\|salud]` | Ver o editar el perfil (el objetivo lleva la distancia y el desnivel de la carrera: con D+, el plan es de trail) |
 | `/perfil umbral <mm:ss>` | Nuevo ritmo umbral de running (rige desde hoy) |
 | `/perfil umbral fc <lpm>` | Nueva FC umbral tras un test, la misma que en TrainingPeaks (rige desde hoy) |
 | `/perfil fc <reposo> <max>` | FC de reposo y máxima |
@@ -72,7 +74,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/proveedor` | Cambiar de proveedor de IA, modelos (planes y arranque; chat) o clave |
 | `salir` | Salir de Kairos (la sesión queda guardada para la próxima vez) |
 
-Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué sesión me recomiendas para esta semana?"*, *"Créame un plan para mi media maratón"*.
+Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué me toca mañana?"*, *"Ajusta el plan, tengo una molestia en el gemelo"*, *"Replanifica el plan, he estado una semana enfermo"*, *"Los martes no puedo entrenar"*.
 
 Con `make` disponible: `make setup` y `make serve`. Los comandos de pruebas y diagnóstico están en [Tests y diagnóstico](#tests-y-diagnóstico).
 
@@ -119,7 +121,7 @@ garmin_mcp/              servidor MCP de Garmin Connect (44 tools, solo lectura)
   README.md              arranque, configuración y catálogo de las 44 tools
   server.py              definición de las tools; arranque: python -m garmin_mcp
 prompts/                 todo el texto que recibe el LLM: system prompt, reglas de entrenador y
-                         plantillas por familia (system/, coaching/, rescue/, activity_analysis/, diabetes/)
+                         plantillas por familia (system/, coaching/, rescue/, activity_analysis/, diabetes/, plan/)
 supabase/                schema.sql (esquema completo e idempotente), rls.sql (seguridad por fila) y README.md
 tests/                   suite de pytest (sin red: Garmin, Supabase y LLM mockeados)
 tools/
@@ -169,4 +171,4 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 
 ## Privacidad
 
-Cada usuario entra con su cuenta de Supabase Auth y la base de datos solo le deja ver sus filas (seguridad por fila, [`supabase/README.md`](supabase/README.md)). La contraseña la guarda Supabase Auth como hash y la de Garmin va cifrada con Fernet (`ENCRYPTION_KEY`). Los tokens de Garmin viven fuera del repo y los datos reales del atleta solo en rutas ignoradas por git.
+Cada usuario entra con su cuenta de Supabase Auth y la base de datos solo le deja ver sus filas (seguridad por fila, [`supabase/README.md`](supabase/README.md)). La contraseña la guarda Supabase Auth como hash y la de Garmin va cifrada con Fernet (`ENCRYPTION_KEY`). Los tokens de Garmin viven fuera del repo y los datos reales del atleta solo en rutas ignoradas por git. Si guardas dónde entrenas (`/perfil lugar`), Kairos consulta la previsión de hoy en Open-Meteo: el nombre del lugar solo la primera vez (para sus coordenadas) y después solo las coordenadas; nada más sale hacia ese servicio.

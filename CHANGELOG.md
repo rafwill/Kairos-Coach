@@ -4,6 +4,16 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Docs (repaso de la documentación con lo nuevo del 30/10; petición del usuario)
+- **README:**
+  - "Qué hace" cuenta el arranque con la sesión de hoy, el tiempo y el aviso de plan que ya no encaja, los planes de trail y los planes que se adaptan (ajustar, replanificar, preferencias que duran, otros deportes, entorno).
+  - Ejemplos nuevos ("¿Qué me toca mañana?", "Ajusta el plan…", "Replanifica el plan…", "Los martes no puedo entrenar").
+  - `/perfil editar objetivo` con distancia y D+, y la familia `prompts/plan/`.
+  - En privacidad, qué recibe Open-Meteo.
+- **`docs/Harness.md`:** guías G16 (aviso de plan que ya no encaja), G17 (preferencias que duran), G18 (entorno y planes de trail) y G19 (tiempo de hoy); G8, con la revisión, la replanificación y las preferencias de `/plan crear`.
+- **`docs/arquitectura.md`:** el arranque con el tiempo y el aviso del plan; los campos nuevos de `goals` y del plan (`plan_data` conservado al normalizar, `revised_on`).
+- **`/ayuda`:** los ejemplos de planes, con las frases que funcionan ahora.
+
 ### Added (planes de trail; decisiones del usuario, punto 12 de `docs/proximos_pasos.md`)
 - Petición del usuario: su próximo objetivo será trail, que es más complejo que el asfalto. Hay que complementar con marcha o senderismo con palos, elíptica, gravel o MTB, y el prompt y el contexto deben tener lo necesario.
 - Qué faltaba:

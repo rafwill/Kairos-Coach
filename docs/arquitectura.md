@@ -49,11 +49,11 @@ Tests: un fichero por módulo o familia (`test_routes.py`, `test_routes_load.py`
 | Tabla | Contenido |
 | --- | --- |
 | `app_user` | Usuario de la aplicación, vinculado a su cuenta de Supabase Auth (`auth_user_id`), y credenciales auxiliares (contraseña de Garmin cifrada con Fernet). `password_hash` (PBKDF2) solo en cuentas anteriores al 24/10 sin migrar. |
-| `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y `load_metrics.formula_version` (con qué versión de la fórmula se calculó la serie). |
+| `user_profile` | Perfil del atleta en JSON: `goals`, `performance` (umbrales e historiales por fecha), espejo del plan activo y `load_metrics.formula_version` (con qué versión de la fórmula se calculó la serie). En `goals` (30/10): distancia y D+ de la carrera (`target_race_distance_km`, `target_race_elevation_m`), lugar (`training_location`) y sus coordenadas para el tiempo (`training_location_coords`), disponibilidad con los días de tiradas seguidas (`availability.back_to_back_days`) y preferencias de `/plan crear` y del chat (`plan_preferences`: dobles, intensidad, progresión, `cross`, `notes`). |
 | `session_context` | Historial reciente de conversación y resúmenes de sesión (memoria entre sesiones; la batería no la lee ni la escribe). |
 | `athlete_knowledge` | Base de conocimiento textual del atleta (RAG ligero). |
 | `ia_provider` | Proveedor de IA del atleta (proveedor, URL compatible con OpenAI, modelo, `chat_model`) y consumo diario de tokens. La clave no: va en `.env`. `model` crea los planes y escribe el arranque; `chat_model` (null = el mismo) responde en el chat y releva al principal al momento si da 429 o 503 (30/10). Toda llamada al LLM que devuelve 429 o 503 se repite tras 5, 10 y 20 s con aviso en pantalla; un 429 de cupo diario no se reintenta y avisa de cuándo se libera (`agent/llm_calls.py`). |
-| `training_plan`, `training_plan_session`, `training_plan_version` | Planes, sesiones (`structured_workout`) y snapshots de cada versión. |
+| `training_plan`, `training_plan_session`, `training_plan_version` | Planes, sesiones (`structured_workout`) y snapshots de cada versión. El plan leído se normaliza (`_normalize_storage_plan_row`) con `plan_data` fundido en la fila y también conservado tal cual (30/10). `plan_data.revised_on`: última revisión o replanificación. |
 | `activity_tss` | Un TSS por actividad, calculado una vez: `tss`, `model`, anclajes usados y `native_load` (carga de Garmin, informativa). |
 | `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente única de todas las pantallas, del contexto del LLM y del motor de planes (`_load_metrics_series` / `_load_metrics_view`; el estado de carga se deriva con `load_metrics.load_fatigue_from_series`). Sin serie no hay estado de carga: no se recalcula en vivo. |
 | `wellness_daily` | Body Battery y HRV por día, con `pulled_at` para no consultar Garmin de más. |
@@ -74,7 +74,9 @@ main.py → run_agent()
   │            incremental (normal) · incremental_refresh (actividad nueva) · full_recalc (usuario nuevo / cambio de fórmula)
   │          · TrainerAgent.build_startup_status_markdown(load_ready=…)
   │            snapshot de 48 h (body battery, HRV, sueño, entrenamientos); espera a la carga solo para leer la serie
-  │            + estado de carga + plan activo
+  │            · a la vez, el tiempo de hoy donde entrena (Open-Meteo, agent/weather.py; solo con goals.training_location)
+  │            + estado de carga + plan activo: sesión de hoy, ¿sigue valiendo el plan? (agent/plan_drift.py,
+  │              últimos 7 días frente a activity_tss y wellness_daily) y recomendación (motor diario + LLM principal)
 ```
 
 Desde el 28/10 (pendiente 8c) lo independiente va en paralelo, el sondeo de Zscaler (solo para el aviso del entorno) va en un hilo y las lecturas de Supabase del arranque pasan por la caché de `storage`. Tiempos por paso en `agent.log` (`[ARRANQUE]`): de 11,7 s a 9,3 s de media.
