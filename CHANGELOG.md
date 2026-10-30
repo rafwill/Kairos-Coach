@@ -4,6 +4,48 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Added (planes de trail; decisiones del usuario, punto 12 de `docs/proximos_pasos.md`)
+- Petición del usuario: su próximo objetivo será trail, que es más complejo que el asfalto. Hay que complementar con marcha o senderismo con palos, elíptica, gravel o MTB, y el prompt y el contexto deben tener lo necesario.
+- Qué faltaba:
+  - La carrera no tenía ni distancia ni D+ (solo se reconocían distancias de asfalto).
+  - El desnivel semanal no se planificaba.
+  - La tirada larga tenía las reglas de asfalto (40 %, +15 min, una por semana).
+  - No había marcha ni bici con nombre.
+  - En los tramos por FC, los km se estimaban con ritmos de asfalto.
+  - Las instrucciones no hablaban de lo propio del trail.
+- Decisiones del usuario:
+  - Tirada larga hasta el 50 % de la semana y +30 min por semana de carga.
+  - Dos tiradas seguidas en la fase específica, juntas como mucho el 60 %, en los dos días que diga el atleta.
+  - D+ semanal con la progresión del volumen, y la semana pico al D+ de la carrera (hasta 60 km) o a su mitad.
+  - Caminata, senderismo y marcha nórdica, un solo deporte que se practica.
+  - Bici con su nombre.
+- Qué se hizo (criterios fijados antes en `docs/proximos_pasos.md`):
+  - **Carrera:** `/perfil editar objetivo` pregunta distancia y D+; la distancia sale por defecto del nombre ("Ultra PDA 55km" → 55). Es trail si la carrera tiene D+ o su nombre dice "trail" o "ultra".
+    - Corregido antes de cerrar: el criterio inicial incluía el deporte principal, pero el perfil real del usuario es "trail running" con una media en asfalto de objetivo. Su plan de asfalto se habría tratado como trail.
+  - **Sin RP en trail:** lo exigente, por FC. Un tramo a RP da un fallo con su texto.
+  - **Tirada larga** (`PlanFrame.long_share`, `long_step`):
+    - Hasta el 50 % de la semana y +30 min en trail (asfalto igual que antes).
+    - En la fase específica, dos tiradas en los días de `availability.back_to_back_days`, juntas como mucho el 60 %. `/plan crear` pregunta qué dos días; por defecto, sábado y domingo.
+    - Solo la más larga puede llevar "auto".
+  - **D+ semanal** (`check_vert`):
+    - "vert_m" en la estructura de cada semana: la semana 1 como mucho un 10 % sobre el D+ sostenido (carrera y marcha de las últimas 4 semanas, `recent_weekly_vert_m`), cada semana de carga un 10 % sobre la anterior de carga, y descarga y afinamiento al menos un 15 % por debajo.
+    - La semana pico, al D+ de la carrera (≤ 60 km) o a su mitad. Si con el 10 % por semana no da tiempo, el mínimo es lo que permite esa progresión, calculado semana a semana en metros enteros.
+    - Cada sesión lleva "vert", y los días suman el D+ de la semana ±12 %. La progresión se comprueba también con las sumas reales, sin el D+ de la carrera.
+  - **Deportes:**
+    - "hiking" (Marcha / senderismo, con o sin palos) y la bici con su nombre: "cycling" (carretera), "gravel" y "mtb".
+    - La marcha cuenta en el volumen sostenido si el plan es de trail o el atleta la eligió (`recent_weekly_walk_minutes`, aparte).
+  - **Km:** en trail, los tramos por FC no estiman km.
+  - **Prompts:**
+    - `prompts/plan/system.md` (principios de trail: tiempo en pie y desnivel, subidas corriendo y andando, bajadas técnicas, fuerza excéntrica, marcha como entrenamiento, nutrición y material, tiradas seguidas, desnivel si vive en llano).
+    - `macro_trail.md` y `weeks_trail.md`, que solo se añaden en trail.
+    - La regla de la tirada larga de `macro.md` lleva sus números del atleta (40/15 o 50/30).
+    - La revisión del plan recibe el D+ de cada semana.
+  - **`/plan ver`:** columna D+ y "+600 m" en cada sesión con desnivel.
+- Resultado:
+  - Tests (`tests/test_plan_trail.py`, 12): un plan de trail completo de 8 semanas con el LLM simulado (marcha con palos y tiradas seguidas en la fase específica) y cada regla a favor y en contra. Tests: 944.
+  - El plan de asfalto del usuario no cambia: con su perfil real, `_plan_frame` no es trail y sigue con RP.
+- Pendiente: un plan de trail real, revisado por el usuario cuando tenga el objetivo, para ir ajustando las cifras ("lo iremos viendo").
+
 ### Added (el tiempo de hoy donde entrena el atleta, con Open-Meteo; decisión del usuario, pendiente 11 a)
 - Decisión del usuario: sí a consultar la previsión del día en un servicio externo, que recibe la ubicación.
 - Qué se hizo (`agent/weather.py`; criterios fijados antes en `docs/proximos_pasos.md`):

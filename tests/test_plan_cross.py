@@ -33,7 +33,7 @@ def _cross(sport="cycling", zone="FC2", **kw):
 def test_cross_day_needs_a_sport_and_hr_steps():
     session, errors = pb.expand_day(_cross(), _frame(), 1)
     assert errors == [] and session["structured_workout"]["sport"] == "cycling"
-    assert session["structured_workout"]["title"] == "Bici"  # título por defecto, del deporte
+    assert session["structured_workout"]["title"] == "Bici de carretera"  # título por defecto, del deporte
     assert pb.expand_day(_cross("rowing", title="Remo técnico"), _frame(), 1)[0]["structured_workout"]["title"] == "Remo técnico"
     for bad in ({"day": 3, "type": "cross", "minutes": 45, "rpe": "5"},  # antes: "Fuerza" con 35 TSS/h
                 {**_cross(), "sport": "padel"}, {k: v for k, v in _cross().items() if k != "sport"}):
@@ -75,14 +75,15 @@ def test_week_rules_for_cross_sports():
 
 def test_the_llm_gets_the_cross_preferences_and_rules():
     f = _frame(cross_sports=["cycling", "swimming"], cross_max=2)
-    assert "Deportes cruzados dentro del plan: bici, natación; como mucho 2 sesiones por semana" in pb.frame_text(f)
+    assert "Deportes cruzados dentro del plan: bici de carretera, natación; como mucho 2 sesiones por semana" in pb.frame_text(f)
     assert "\"cross\" solo de cycling, swimming, como mucho 2 por semana." in pb.rules_text(f)
     assert "ninguno (solo carrera y fuerza)" in pb.frame_text(_frame(cross_sports=[]))
     assert "Deportes cruzados" not in pb.frame_text(_frame()) and "\"cross\"" not in pb.rules_text(_frame())
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("bici, remo", ["cycling", "rowing"]), ("Gravel y natación", ["cycling", "swimming"]),
+    ("bici, remo", ["cycling", "rowing"]), ("Gravel y natación", ["gravel", "swimming"]), ("MTB, marcha con palos", ["mtb", "hiking"]),
+    ("senderismo y caminata", ["hiking"]), ("marcha nórdica", ["hiking"]),
     ("no", []), ("ninguno", []), ("", None),
 ])
 def test_parse_cross_sports(text, expected):

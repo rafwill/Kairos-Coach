@@ -1262,8 +1262,10 @@ def _plan_detail_markdown(plan: dict, sessions: list[dict], profile: dict | None
     lines = [f"## 🗓️ {plan.get('title') or 'Plan'}", head, ""]
     if pd.get("rationale"):
         lines += [str(pd["rationale"]), ""]
-    lines += ["| Semana | Fechas | Fase | Tiempo | km | TSS |" + (" Enfoque |" if focus else ""),
-              "|---|---|---|---|---:|---:|" + ("---|" if focus else "")]
+    # Trail (30/10): columna D+ si alguna sesión lleva desnivel.
+    vert = any((s.get("structured_workout") or {}).get("vert_m") for s in sessions)
+    lines += ["| Semana | Fechas | Fase | Tiempo | km |" + (" D+ |" if vert else "") + " TSS |" + (" Enfoque |" if focus else ""),
+              "|---|---|---|---|---:|" + ("---:|" if vert else "") + "---:|" + ("---|" if focus else "")]
     names = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento", "race": "Carrera"}
     for wi in sorted(by_week):
         rows = by_week[wi]
@@ -1273,7 +1275,9 @@ def _plan_detail_markdown(plan: dict, sessions: list[dict], profile: dict | None
         label = names.get(phase, phase) + (" · descarga" if wi in deloads else "")
         lines.append(f"| {wi}{' (actual)' if wi == current else ''} | {monday.strftime('%d/%m')}–{(monday + timedelta(days=6)).strftime('%d/%m')} | "
                      f"{label} | {_run_plan.fmt_duration(sum(float(x.get('duration_min') or 0) for x in summ))} | "
-                     f"{sum(float(x.get('distance_km') or 0) for x in summ):.0f} | {sum(float(x.get('tss') or 0) for x in summ):.0f} |"
+                     f"{sum(float(x.get('distance_km') or 0) for x in summ):.0f} | "
+                     + (f"{sum(float((r.get('structured_workout') or {}).get('vert_m') or 0) for r in rows):.0f} | " if vert else "")
+                     + f"{sum(float(x.get('tss') or 0) for x in summ):.0f} |"
                      + (f" {focus[wi - 1] if wi - 1 < len(focus) else ''} |" if focus else ""))
     for wi in weeks:
         rows = sorted(by_week.get(wi, []), key=_day_slot)

@@ -1,0 +1,3 @@
+- Es una carrera de trail: cada semana lleva también "vert_m", los metros de desnivel positivo (D+) de la semana (carrera y marcha), p. ej. {"week": 1, "phase": "base", "deload": false, "minutes": 330, "long_min": 120, "vert_m": 900, "focus": "…"}.
+- El D+ sigue la misma progresión que los minutos: la semana 1 como mucho un 10 % sobre el D+ que sostiene el atleta (bloque "Carga real"); cada semana de carga, como mucho un 10 % sobre la anterior de carga; la descarga y el afinamiento, al menos un 15 % por debajo. La semana pico llega al D+ que dice el bloque "Carrera objetivo".
+- En "long_min" va la tirada más larga de la semana. En la fase específica puede haber dos tiradas largas seguidas (las detalla otra llamada); "long_min" es la más larga de las dos.

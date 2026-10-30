@@ -86,13 +86,24 @@ class ContextMixin:
         minutes_28 = 0.0
         longest = 0.0
         terrain = {"road": [0.0, 0.0], "trail": [0.0, 0.0]}  # [km, m de desnivel positivo] de las 6 semanas
+        walk_28 = vert_28 = 0.0
         for act in acts or []:
             d_iso = _extract_activity_date_iso(act) or ""
             minutes = _extract_activity_duration_minutes(act)
             act_type = act.get("type") or act.get("activityType") or act.get("activityTypeDTO") or ""
-            # Caminatas y senderismo no cuentan (30/10): el plan nunca los pone e inflaban el punto de partida.
-            if d_iso >= last_28_iso and not _load_metrics._is_hike_walk_activity(act_type):
-                minutes_28 += minutes
+            is_walk = _load_metrics._is_hike_walk_activity(act_type)
+            if d_iso >= last_28_iso:
+                # Caminatas y senderismo, aparte (30/10): solo cuentan en el volumen si el plan los pone (trail o
+                # marcha elegida; plan_llm._plan_frame).
+                if is_walk:
+                    walk_28 += minutes
+                else:
+                    minutes_28 += minutes
+                if is_walk or _is_running_non_trail_activity(act_type) or _load_metrics._is_trail_activity(act_type):
+                    try:  # D+ sostenido de carrera y marcha (trail, 30/10)
+                        vert_28 += max(0.0, float(act.get("elevationGain") or 0.0))
+                    except (TypeError, ValueError):
+                        pass
             is_trail = _load_metrics._is_trail_activity(act_type)
             if _is_running_non_trail_activity(act_type) or is_trail:
                 longest = max(longest, minutes)
@@ -105,6 +116,10 @@ class ContextMixin:
                     pass
         if minutes_28 > 0:
             context["recent_weekly_minutes"] = round(minutes_28 / 4.0, 1)
+        if walk_28 > 0:
+            context["recent_weekly_walk_minutes"] = round(walk_28 / 4.0, 1)
+        if vert_28 > 0:
+            context["recent_weekly_vert_m"] = round(vert_28 / 4.0)
         if longest > 0:
             context["longest_recent_min"] = round(longest, 1)
         by_group = {k: {"km": round(km, 1), "m_per_km": round(gain / km, 1)} for k, (km, gain) in terrain.items() if km > 0}

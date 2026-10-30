@@ -624,6 +624,27 @@ def _handle_garmin_password_change() -> str | None:
     return None
 
 
+def _km_in_name(race: str) -> float | None:
+    """"Ultra PDA 55km" → 55; "Media Maratón (21,1 km)" → 21.1; None si el nombre no trae km."""
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*km?\b", race or "", re.IGNORECASE)
+    return float(m.group(1).replace(",", ".")) if m else None
+
+
+def _ask_number(question: str, current) -> float | None:
+    """Un número ≥ 0 (acepta coma decimal); Enter deja el actual; vacío sin actual → None."""
+    while True:
+        raw = Prompt.ask(question, default="" if current in (None, "") else f"{float(current):g}").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw.replace(",", "."))
+        except ValueError:
+            value = -1.0
+        if value >= 0:
+            return value
+        console.print("  [red]✗[/] Escribe un número (p. ej. 55 o 21,1).")
+
+
 def _ask_goals(profile: dict) -> None:
     """Pregunta y guarda nombre + campos de objetivos de entrenamiento."""
     p = profile.setdefault("personal", {})
@@ -669,6 +690,15 @@ def _ask_goals(profile: dict) -> None:
     )
     if race.strip():
         g["target_race"] = race.strip()
+
+    # Distancia y desnivel de la carrera (30/10, planes de trail): el D+ decide si el plan es de trail.
+    if g.get("target_race"):
+        g["target_race_distance_km"] = _ask_number(
+            "  Distancia de la carrera en km [dim](Enter para omitir)[/]",
+            g.get("target_race_distance_km") or _km_in_name(g["target_race"]))
+        g["target_race_elevation_m"] = _ask_number(
+            "  Desnivel positivo de la carrera en m [dim](D+; Enter o 0 si es en asfalto)[/]",
+            g.get("target_race_elevation_m")) or None
 
     # Fecha del evento con validación de formato y fecha futura
     while True:
@@ -1050,10 +1080,16 @@ _INTENSITY_CHOICES = {"1": "polarizada", "2": "piramidal", "3": ""}
 _PROGRESSION_CHOICES = {"1": "3+1", "2": "2+1", "3": ""}
 
 
-_CROSS_WORDS = {"bici": "cycling", "bicicleta": "cycling", "ciclismo": "cycling", "gravel": "cycling",
-                "rodillo": "cycling", "remo": "rowing", "elíptica": "elliptical", "eliptica": "elliptical",
+# 30/10 (decisión del usuario): la bici con su nombre (carretera, gravel, MTB) y la marcha (caminata, senderismo y
+# marcha nórdica, con o sin palos) como un solo deporte.
+_CROSS_WORDS = {"bici": "cycling", "bicicleta": "cycling", "ciclismo": "cycling", "carretera": "cycling",
+                "rodillo": "cycling", "gravel": "gravel", "mtb": "mtb", "btt": "mtb",
+                "marcha": "hiking", "senderismo": "hiking", "caminata": "hiking", "caminar": "hiking", "palos": "hiking",
+                "nórdica": "hiking", "nordica": "hiking", "hiking": "hiking",
+                "remo": "rowing", "elíptica": "elliptical", "eliptica": "elliptical",
                 "natación": "swimming", "natacion": "swimming", "nadar": "swimming", "piscina": "swimming"}
-_CROSS_NAMES = {"cycling": "bici", "rowing": "remo", "elliptical": "elíptica", "swimming": "natación"}
+_CROSS_NAMES = {"cycling": "bici de carretera", "gravel": "gravel", "mtb": "MTB", "hiking": "marcha",
+                "rowing": "remo", "elliptical": "elíptica", "swimming": "natación"}
 
 
 def _parse_cross_sports(text: str) -> list[str] | None:
@@ -1103,6 +1139,18 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
         "descarga), 3 que decida el entrenador",
         choices=list(_PROGRESSION_CHOICES),
         default=next((k for k, v in _PROGRESSION_CHOICES.items() if v == prefs.get("progression")), "1"))
+    # Trail (30/10, decisión del usuario): en la fase específica, dos tiradas largas en días seguidos; el atleta dice cuáles.
+    race = str(goals.get("target_race") or "").lower()
+    if goals.get("target_race_elevation_m") or "trail" in race or "ultra" in race:
+        current = availability.get("back_to_back_days") or [6, 7]
+        while True:
+            pair = sorted(_parse_day_list(Prompt.ask(
+                "Trail: en la fase específica, ¿qué dos días seguidos puedes hacer tiradas largas? (p. ej. S-D o V-S)",
+                default=_format_days(list(current)))))
+            if len(pair) == 2 and pair[1] - pair[0] == 1:
+                availability["back_to_back_days"] = pair
+                break
+            console.print("  [red]✗[/] Tienen que ser dos días seguidos (p. ej. S-D o V-S).")
     # Dónde entrena (30/10, pendiente 11 a): el LLM tiene en cuenta el clima habitual de ese lugar en las fechas del plan.
     location = Prompt.ask("¿Dónde entrenas normalmente? (ciudad o zona; Enter para no decirlo)",
                           default=str(goals.get("training_location") or "")).strip()
@@ -1119,11 +1167,13 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
     while True:
         try:
             sports = _parse_cross_sports(Prompt.ask(
-                "¿Qué otros deportes quieres dentro del plan? (bici, remo, elíptica, natación; «no» si ninguno; Enter "
+                "¿Qué otros deportes quieres dentro del plan? (bici de carretera, gravel, MTB, marcha o senderismo con o "
+                "sin palos, remo, elíptica, natación; «no» si ninguno; Enter "
                 "para que decida el entrenador)", default=cross_default))
             break
         except ValueError as exc:
-            console.print(f"  [red]✗[/] No conozco «{exc}» como deporte del plan: bici, remo, elíptica o natación.")
+            console.print(f"  [red]✗[/] No conozco «{exc}» como deporte del plan: bici de carretera, gravel, MTB, "
+                          "marcha o senderismo, remo, elíptica o natación.")
     cross = None if sports is None else {"sports": sports}
     if sports:
         cross["max_per_week"] = int(Prompt.ask("¿Cuántas sesiones de esos deportes por semana como mucho?",

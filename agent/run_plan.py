@@ -498,9 +498,10 @@ def week_header(week_index: int, start: date, phase: str, deload: bool, sessions
     minutes = sum(float(((s.get("structured_workout") or {}).get("summary") or {}).get("duration_min") or 0) for s in sessions)
     km = sum(float(((s.get("structured_workout") or {}).get("summary") or {}).get("distance_km") or 0) for s in sessions)
     tss = sum(float(((s.get("structured_workout") or {}).get("summary") or {}).get("tss") or 0) for s in sessions)
+    vert = sum(float((s.get("structured_workout") or {}).get("vert_m") or 0) for s in sessions)  # trail (30/10)
     label = names.get(phase, phase) + (" · descarga" if deload else "")
     return (f"Semana {week_index} · {monday.strftime('%d/%m')}–{(monday + timedelta(days=6)).strftime('%d/%m/%Y')} · {label} · "
-            f"{fmt_duration(minutes)} · ~{km:.0f} km · {tss:.0f} TSS")
+            f"{fmt_duration(minutes)} · ~{km:.0f} km" + (f" · +{vert:.0f} m" if vert else "") + f" · {tss:.0f} TSS")
 
 
 def session_lines(session: dict, day: date, hr_zones: list | None = None) -> list[str]:
@@ -515,6 +516,8 @@ def session_lines(session: dict, day: date, hr_zones: list | None = None) -> lis
     head += f" · {fmt_duration(float(summary.get('duration_min') or session.get('duration_min') or 0))}"
     if km:
         head += f" · ~{km:.1f} km"
+    if wk.get("vert_m"):  # D+ de la sesión (trail, 30/10)
+        head += f" · +{float(wk['vert_m']):.0f} m"
     if summary.get("tss"):
         head += f" · {float(summary['tss']):.0f} TSS"
     steps = wk.get("steps") or []
