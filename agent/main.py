@@ -1106,10 +1106,12 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
     # Dónde entrena (30/10, pendiente 11 a): el LLM tiene en cuenta el clima habitual de ese lugar en las fechas del plan.
     location = Prompt.ask("¿Dónde entrenas normalmente? (ciudad o zona; Enter para no decirlo)",
                           default=str(goals.get("training_location") or "")).strip()
-    if location:
+    if location and location != goals.get("training_location"):
         goals["training_location"] = location
-    else:
+        goals.pop("training_location_coords", None)  # otro lugar: el tiempo de hoy vuelve a buscar sus coordenadas
+    elif not location:
         goals.pop("training_location", None)
+        goals.pop("training_location_coords", None)
     # Otros deportes dentro del plan (30/10): cuáles y cuántas sesiones por semana como mucho.
     cross_now = prefs.get("cross")
     cross_default = ("no" if cross_now and not cross_now.get("sports") else
@@ -1311,6 +1313,7 @@ def _show_menu() -> None:
     table.add_row("Editar", "/perfil umbral <mm:ss>", "Actualizar umbral de running (ej. 4:15)")
     table.add_row("Editar", "/perfil umbral fc <lpm>", "Actualizar FC umbral tras un test, la misma que en TrainingPeaks (ej. 169)")
     table.add_row("Editar", "/perfil fc <reposo> <max>", "Actualizar FC reposo/máxima (ej. 48 186)")
+    table.add_row("Editar", "/perfil lugar <ciudad>", "Dónde entrenas: para el plan y el tiempo de hoy (ej. Elche)")
 
     table.add_row("Plan", "/plan crear", "Crear el plan con tu LLM y activarlo")
     table.add_row("Plan", "/plan activar <id>", "Activar plan por ID")
@@ -1609,6 +1612,22 @@ def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
         _save_user_profile(profile)
         agent.user_profile = _load_user_profile()
         console.print(f"[green]✓[/] Perfil de FC actualizado: [bold]{msg}[/bold].")
+        return True
+
+    if cmd.startswith("/perfil lugar"):
+        # Dónde entrena (30/10): para el plan y para el tiempo de hoy (Open-Meteo recibe solo sus coordenadas).
+        place = user_input.strip()[len("/perfil lugar"):].strip()
+        if not place:
+            console.print("[yellow]Uso:[/] /perfil lugar <ciudad o zona> (ej: /perfil lugar Elche)")
+            return True
+        profile = _load_user_profile()
+        goals = profile.setdefault("goals", {})
+        goals["training_location"] = place
+        goals.pop("training_location_coords", None)  # se vuelven a buscar en el próximo arranque
+        _save_user_profile(profile)
+        agent.user_profile = _load_user_profile()
+        console.print(f"[green]✓[/] Lugar de entrenamiento: [bold]{place}[/bold]. Desde el próximo arranque verás el "
+                      "tiempo de hoy allí (previsión de Open-Meteo, que recibe solo las coordenadas).")
         return True
 
     if cmd.startswith("/carga"):

@@ -49,6 +49,7 @@ from agent.kairos_tools import (
     _KAIROS_INTERNAL_TOOLS,
 )
 from agent import plan_drift as _plan_drift
+from agent import weather as _weather
 from agent.plans import _plan_field, _plan_start, _today_session_lines
 from agent.startup_status import SOURCE_RULES, SOURCE_RULES_AND_COACH
 from agent.daily_engine import (
@@ -230,6 +231,24 @@ class StartupMixin:
 
         return result
 
+    async def _today_weather(self) -> dict | None:
+        """Tiempo de hoy donde entrena el atleta (30/10, decisión del usuario); None sin lugar o si falla.
+
+        Las coordenadas del lugar se buscan una vez y se guardan en el perfil con el nombre del que salen.
+        """
+        goals = (getattr(self, "user_profile", None) or {}).get("goals") or {}
+        location = str(goals.get("training_location") or "")
+        if not location:
+            return None
+        weather, coords = await _weather.today_weather(location, goals.get("training_location_coords"), date.today())
+        if coords:
+            self.user_profile.setdefault("goals", {})["training_location_coords"] = coords
+            try:
+                _save_user_profile(self.user_profile)
+            except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                log.info("[TIEMPO] no se pudieron guardar las coordenadas: %s", exc)
+        return weather
+
     async def collect_startup_snapshot_48h(self, prefetch_today: dict | None = None,
                                            load_ready: "asyncio.Future | None" = None) -> dict:
         """Recoge un snapshot operativo de 48h para briefing de arranque.
@@ -242,6 +261,8 @@ class StartupMixin:
         two_days_ago_iso = (date.today() - timedelta(days=2)).isoformat()
         _pf = prefetch_today or {}
         _t_snap = time.perf_counter()
+        # El tiempo de hoy (Open-Meteo, 30/10) va a la vez que las llamadas a Garmin.
+        weather_task = asyncio.create_task(self._today_weather())
         if not hasattr(self, "_session_wellness_cache") or not isinstance(getattr(self, "_session_wellness_cache", None), dict):
             self._session_wellness_cache = {}
         _session_wellness_cache: dict[str, dict[str, Any]] = self._session_wellness_cache
@@ -553,6 +574,7 @@ class StartupMixin:
             "load_debug": _load_debug,
             "plan_execution_feedback": plan_execution_feedback,
             "trainings": recent_trainings[:5],
+            "weather": await weather_task,
         }
 
     async def build_startup_status_markdown(self, profile_changes: list[str] | None = None,
