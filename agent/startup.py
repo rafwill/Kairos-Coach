@@ -558,7 +558,7 @@ class StartupMixin:
         t0 = time.perf_counter()
         augmented = await self._augment_with_llm_coaching_if_needed(
             "¿Qué me recomiendas hoy con lo que me toca en el plan?", md, route="daily_readiness",
-            daily_plan_decision=decision, always=True)
+            daily_plan_decision=decision, always=True, model=self.model)  # el principal, no el del chat (30/10)
         log.info("[STARTUP] ⏱ coaching=%.1fs", time.perf_counter() - t0)
         extra = augmented[len(md):] if augmented.startswith(md) else ""
         if "_Fase coaching por LLM sobre datos deterministas" not in extra:

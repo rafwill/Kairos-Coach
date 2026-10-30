@@ -887,11 +887,12 @@ _IA_TOKENS_DAYS = 90  # días de consumo que se conservan en ia_provider.daily_t
 
 @_db_read("ia_provider")
 def get_ia_provider() -> dict | None:
-    """Proveedor de IA del atleta (26/10): {provider, base_url, model, daily_tokens}; None si aún no lo ha dado."""
+    """Proveedor de IA del atleta (26/10): {provider, base_url, model, chat_model, daily_tokens}; None si aún no lo ha dado."""
     uid = _require_active_user_id()
     sb = _require_supabase()
     try:
-        res = sb.table("ia_provider").select("provider, base_url, model, daily_tokens").eq("app_user_id", uid).limit(1).execute()
+        res = sb.table("ia_provider").select("provider, base_url, model, chat_model, daily_tokens").eq(
+            "app_user_id", uid).limit(1).execute()
     except Exception as exc:
         if _is_missing_table_error(exc, "ia_provider"):
             raise RuntimeError("Falta la tabla ia_provider en Supabase: ejecuta supabase/schema.sql y supabase/rls.sql.") from exc
@@ -900,12 +901,15 @@ def get_ia_provider() -> dict | None:
 
 
 @_db_write("ia_provider")
-def save_ia_provider(provider: str, base_url: str, model: str) -> None:
-    """Guarda (o cambia) el proveedor de IA del atleta; el consumo acumulado se conserva."""
+def save_ia_provider(provider: str, base_url: str, model: str, chat_model: str | None = None) -> None:
+    """Guarda (o cambia) el proveedor de IA del atleta; el consumo acumulado se conserva.
+
+    `chat_model` (30/10): modelo del chat si es distinto del principal; None, el mismo.
+    """
     uid = _require_active_user_id()
     sb = _require_supabase()
     sb.table("ia_provider").upsert(
-        {"app_user_id": uid, "provider": provider, "base_url": base_url, "model": model}
+        {"app_user_id": uid, "provider": provider, "base_url": base_url, "model": model, "chat_model": chat_model}
     ).execute()
 
 

@@ -1355,7 +1355,8 @@ def _ask_ia_provider(current: dict | None = None) -> dict:
     """Pregunta el proveedor de IA del atleta (26/10), sin menú: el nombre y, si Kairos no lo conoce, la URL.
 
     Con un proveedor conocido se rellena la URL y se propone un modelo; con otro, se piden la URL de su API
-    compatible con OpenAI y el modelo. Devuelve {provider, base_url, model}.
+    compatible con OpenAI y el modelo. Después, el modelo del chat (30/10), con Enter el mismo. Devuelve
+    {provider, base_url, model, chat_model}; chat_model es None si es el mismo.
     """
     current = current or {}
     console.print(Panel.fit(
@@ -1381,12 +1382,18 @@ def _ask_ia_provider(current: dict | None = None) -> dict:
                 break
             console.print("  [red]✗[/] Tiene que empezar por http:// o https://")
         default_model = ""
+    default_chat = _ia_provider.CHAT_MODEL.get(k or "", "")
     if current.get("provider") == provider and current.get("model"):
         default_model = str(current["model"])
+        default_chat = str(current.get("chat_model") or "")
     while True:
-        model = Prompt.ask("  Modelo", default=default_model).strip()
+        model = Prompt.ask("  Modelo [dim](planes y arranque)[/]", default=default_model).strip()
         if model:
-            return {"provider": provider, "base_url": base_url, "model": model}
+            break
+    chat_model = Prompt.ask("  Modelo del chat [dim](también releva al otro si falla)[/]",
+                            default=default_chat or model).strip()
+    return {"provider": provider, "base_url": base_url, "model": model,
+            "chat_model": chat_model if chat_model and chat_model != model else None}
 
 
 async def _ensure_ia_provider(network_probe: "asyncio.Future | None" = None) -> dict:
@@ -1405,7 +1412,7 @@ async def _ensure_ia_provider(network_probe: "asyncio.Future | None" = None) -> 
         await _ask_api_key(config, "Necesito tu clave para empezar." if first_time
                            else "Este ordenador no tiene la clave de tu proveedor de IA.")
     if first_time:
-        save_ia_provider(config["provider"], config["base_url"], config["model"])
+        save_ia_provider(config["provider"], config["base_url"], config["model"], config.get("chat_model"))
 
     network_line = "🏢  Red corporativa [dim](Zscaler detectado)[/dim]" if on_vpn else "🌐  Sin VPN corporativa"
     console.print(Panel.fit(
@@ -1444,7 +1451,7 @@ async def _switch_provider(agent: TrainerAgent, config: dict) -> dict:
     same_provider = new_config["provider"] == config["provider"]
     if not same_provider or not _has_key() or Confirm.ask("  ¿Cambiar también la clave?", default=False):
         await _ask_api_key(new_config, "Clave de tu proveedor de IA.")
-    save_ia_provider(new_config["provider"], new_config["base_url"], new_config["model"])
+    save_ia_provider(new_config["provider"], new_config["base_url"], new_config["model"], new_config.get("chat_model"))
     agent.set_provider(new_config)
     console.print(Panel.fit(
         f"[bold green]Proveedor de IA guardado[/]\n{_ia_provider.label(new_config)}",

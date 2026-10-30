@@ -22,6 +22,8 @@ from tests.agent_fixtures import _no_baseline_in_db  # noqa: F401 — autouse: s
 
 
 NVIDIA = {"provider": "nvidia", "base_url": "https://integrate.api.nvidia.com/v1", "model": "m"}
+GEMINI = {"provider": "gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+          "model": "gemini-3.6-flash"}
 
 
 class TestCoachingHorizon:
@@ -306,6 +308,60 @@ class TestLlmKey:
             asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
         assert waits == [] and shown == ["NVIDIA NIM: cupo diario de peticiones agotado; se libera en 17 h. Hasta "
                                          "entonces, cambia de proveedor con /proveedor si lo necesitas."]
+
+    def _two_models(self, monkeypatch, error):
+        from agent import trainer_agent as ta
+
+        monkeypatch.setenv("PROVIDER_API_KEY", "k")
+        monkeypatch.delenv("KAIROS_MODEL", raising=False)
+        agent = object.__new__(ta.TrainerAgent)
+        agent.set_provider({**GEMINI, "chat_model": "gemini-lite"})
+        agent.client.chat.completions.create = AsyncMock(side_effect=error)
+        agent._watch_llm_auth()
+        return agent
+
+    def test_chat_model_relieves_the_main_one_without_waiting(self, monkeypatch):
+        # 30/10, decisión del usuario: Flash (planes y arranque) sin cupo o saturado → sigue Flash Lite al momento.
+        from agent.llm_calls import LLMQuotaError
+
+        waits = []
+
+        async def fake_sleep(s):
+            waits.append(s)
+
+        monkeypatch.setattr("agent.llm_calls.asyncio.sleep", fake_sleep)
+        daily = self._Busy(429)
+        daily.body = "Generate content requests per day limit exceeded. retryDelay: '62453s'"
+        agent = self._two_models(monkeypatch, [daily, "ok"])
+        shown = []
+        agent.llm_wait_notice = shown.append
+        assert asyncio.run(agent.client.chat.completions.create(model="gemini-3.6-flash", messages=[])) == "ok"
+        assert waits == [] and shown == ["Google Gemini: gemini-3.6-flash sin cupo diario; sigo con gemini-lite."]
+        agent = self._two_models(monkeypatch, [self._Busy(503), "ok"])
+        assert asyncio.run(agent.client.chat.completions.create(model="gemini-3.6-flash", messages=[])) == "ok"
+        assert waits == []
+        # El del chat no tiene relevo: sus 503 esperan y su cupo diario se avisa como siempre.
+        agent = self._two_models(monkeypatch, [daily])
+        with pytest.raises(LLMQuotaError):
+            asyncio.run(agent.client.chat.completions.create(model="gemini-lite", messages=[]))
+        # Si el relevo también falla, ya no hay otro: su 503 espera y reintenta.
+        agent = self._two_models(monkeypatch, [self._Busy(503), self._Busy(503), "ok"])
+        assert asyncio.run(agent.client.chat.completions.create(model="gemini-3.6-flash", messages=[])) == "ok"
+        assert waits == [5]
+
+    def test_coaching_uses_the_chat_model_unless_told_otherwise(self, monkeypatch):
+        agent = self._two_models(monkeypatch, None)
+        inner = AsyncMock(side_effect=RuntimeError("caída"))
+        agent.client.chat.completions.create = inner
+        agent.user_profile = {}
+        asyncio.run(agent._augment_with_llm_coaching_if_needed("q", "Datos", "daily", always=True))
+        asyncio.run(agent._augment_with_llm_coaching_if_needed("q", "Datos", "daily", always=True,
+                                                               model="gemini-3.6-flash"))
+        assert [c.kwargs["model"] for c in inner.call_args_list] == ["gemini-lite", "gemini-3.6-flash"]
+        assert (agent.model, agent._chat_llm_model()) == ("gemini-3.6-flash", "gemini-lite")
+        monkeypatch.setenv("KAIROS_MODEL", "otro")  # batería con --modelo: ese para todo
+        agent.set_provider({**GEMINI, "chat_model": "gemini-lite"})
+        assert (agent.model, agent._chat_llm_model()) == ("otro", "otro")
 
     def test_coaching_layer_survives_a_rejected_key(self, monkeypatch):
         # Antes, el 401 de la capa de coaching no lo capturaba nadie y cerraba la sesión.

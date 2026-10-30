@@ -482,25 +482,35 @@ def _enter_takes_default(answers):
 
 class TestAskIaProvider:
     def test_known_provider_fills_url_and_proposes_model(self):
-        with patch("agent.main.Prompt.ask", side_effect=_enter_takes_default(["NVIDIA NIM", ""])) as ask, \
+        with patch("agent.main.Prompt.ask", side_effect=_enter_takes_default(["NVIDIA NIM", "", ""])) as ask, \
              patch("agent.main.console.print"):
             config = _ask_ia_provider()
         assert config["provider"] == "nvidia" and config["base_url"] == "https://integrate.api.nvidia.com/v1"
         assert config["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
-        assert ask.call_count == 2  # proveedor y modelo; la URL no se pregunta
+        assert config["chat_model"] is None  # Enter: el mismo modelo para el chat
+        assert ask.call_count == 3  # proveedor, modelo y modelo del chat; la URL no se pregunta
+
+    def test_gemini_proposes_flash_lite_for_the_chat(self):
+        # 30/10, decisión del usuario: Flash para planes y arranque (20 peticiones al día), Flash Lite para el chat (500).
+        with patch("agent.main.Prompt.ask", side_effect=_enter_takes_default(["gemini", "", ""])), \
+             patch("agent.main.console.print"):
+            config = _ask_ia_provider()
+        assert (config["model"], config["chat_model"]) == ("gemini-3.6-flash", "gemini-3.5-flash-lite")
 
     def test_unknown_provider_asks_url_and_model(self):
-        answers = ["Mi Proveedor", "api.ejemplo.com", "https://api.ejemplo.com/v1", "", "modelo-x"]
+        answers = ["Mi Proveedor", "api.ejemplo.com", "https://api.ejemplo.com/v1", "", "modelo-x", "modelo-x"]
         with patch("agent.main.Prompt.ask", side_effect=answers), patch("agent.main.console.print") as printed:
             config = _ask_ia_provider()
-        assert config == {"provider": "Mi Proveedor", "base_url": "https://api.ejemplo.com/v1", "model": "modelo-x"}
+        assert config == {"provider": "Mi Proveedor", "base_url": "https://api.ejemplo.com/v1", "model": "modelo-x",
+                          "chat_model": None}
         assert any("http://" in str(c.args[0]) for c in printed.call_args_list)  # URL sin esquema rechazada
 
-    def test_change_keeps_the_current_model_as_default(self):
-        with patch("agent.main.Prompt.ask", side_effect=_enter_takes_default(["nvidia", ""])) as ask, \
+    def test_change_keeps_the_current_models_as_default(self):
+        current = {**NVIDIA, "chat_model": "nvidia/ligero"}
+        with patch("agent.main.Prompt.ask", side_effect=_enter_takes_default(["nvidia", "", ""])) as ask, \
              patch("agent.main.console.print"):
-            config = _ask_ia_provider(NVIDIA)
-        assert config["model"] == "nvidia/nemotron-x"
+            config = _ask_ia_provider(current)
+        assert (config["model"], config["chat_model"]) == ("nvidia/nemotron-x", "nvidia/ligero")
         assert ask.call_args_list[1].kwargs["default"] == "nvidia/nemotron-x"
 
 
@@ -523,7 +533,7 @@ class TestEnsureIaProvider:
         assert config == NVIDIA
         ask_provider.assert_called_once()
         assert ask_key.await_args.args[0] == NVIDIA
-        save.assert_called_once_with("nvidia", NVIDIA["base_url"], NVIDIA["model"])
+        save.assert_called_once_with("nvidia", NVIDIA["base_url"], NVIDIA["model"], None)
 
     def test_next_times_ask_nothing(self, monkeypatch):
         config, ask_provider, ask_key, save = self._run(monkeypatch, dict(NVIDIA), key="nvapi-real")

@@ -140,7 +140,7 @@ class TestSwitchProvider:
              patch.object(m, "_ask_api_key", new=AsyncMock()) as ask_key:
             assert asyncio.run(m._switch_provider(agent, NVIDIA)) == GROQ
         assert ask_key.await_args.args[0] == GROQ
-        save.assert_called_once_with("groq", GROQ["base_url"], GROQ["model"])
+        save.assert_called_once_with("groq", GROQ["base_url"], GROQ["model"], None)
         agent.set_provider.assert_called_once_with(GROQ)
         assert "Proveedor de IA guardado" in out()
 

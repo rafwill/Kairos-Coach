@@ -3,6 +3,7 @@ agent/llm_calls.py
 Llamadas al LLM fuera del bucle con tools: proveedor y clave, capa de coaching de las rutas mixtas y sensores sobre cada salida con su único reintento.
 """
 
+import os
 import re
 import time
 import logging
@@ -90,16 +91,23 @@ class LLMMixin:
         self.provider_config = dict(config)
         self.provider = str(config["provider"])
         self.client, self.model, self._api_key = _build_llm_client(config)
+        # Modelo del chat (30/10): vacío, el mismo; con KAIROS_MODEL (batería --modelo), ese para todo.
+        self.chat_model = self.model if os.environ.get("KAIROS_MODEL") else (config.get("chat_model") or self.model)
         self._watch_llm_auth()
 
         # Variables para tracking de tokens de la sesión
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
+    def _chat_llm_model(self) -> str:
+        """Modelo de las respuestas del chat (30/10): `chat_model` si lo hay; si no, el principal."""
+        return getattr(self, "chat_model", None) or self.model
+
     def _watch_llm_auth(self) -> None:
         """Clave rechazada en cualquier llamada al LLM (26/10): marca `llm_auth_failed` y lanza LLMAuthError.
 
-        Además (29/10), un 429 o 503 del proveedor se repite tras esperar 5, 10 y 20 s.
+        Además (29/10), un 429 o 503 del proveedor se repite tras esperar 5, 10 y 20 s. Si la llamada era del
+        modelo principal y hay otro modelo para el chat (30/10), este la releva al momento, sin esperas.
 
         LLMAuthError es un RuntimeError, que todas las capas (bucle con tools, coaching, rescates, sensores)
         ya capturan; la CLI ve la marca, pide la clave nueva y repite la pregunta. Antes, un 401 de la capa de
@@ -110,7 +118,10 @@ class LLMMixin:
         create = completions.create
 
         async def _create(*args, **kwargs):
-            for wait in (*_BUSY_RETRY_WAITS, None):
+            chat = self._chat_llm_model()
+            relay = chat if kwargs.get("model") == self.model and chat != self.model else None
+            waits = iter((*_BUSY_RETRY_WAITS, None))
+            while True:
                 try:
                     return await create(*args, **kwargs)
                 except LLMAuthError:
@@ -127,6 +138,16 @@ class LLMMixin:
                     notice = getattr(self, "llm_wait_notice", None)
                     name = _ia_provider.KNOWN.get(_ia_provider.known(self.provider) or "", (self.provider,))[0]
                     daily = _daily_quota_reset(exc) if exc.status_code == 429 else None
+                    if relay:
+                        # Planes y arranque con el principal agotado o saturado: sigue el modelo del chat (30/10).
+                        what = ("sin cupo diario" if daily is not None
+                                else "con límite de peticiones (429)" if exc.status_code == 429 else "saturado (503)")
+                        log.warning("[LLM] %s %s %s: relevo con %s", self.provider, kwargs["model"], exc.status_code,
+                                    relay)
+                        if notice:
+                            notice(f"{name}: {kwargs['model']} {what}; sigo con {relay}.")
+                        kwargs["model"], relay = relay, None
+                        continue
                     if daily is not None:
                         # Cupo del día agotado (Gemini gratuito: 20 peticiones al día por modelo): esperar segundos no
                         # sirve; se avisa de cuándo se libera y no se reintenta.
@@ -136,6 +157,7 @@ class LLMMixin:
                         if notice:
                             notice(text)
                         raise LLMQuotaError(text) from exc
+                    wait = next(waits)
                     if wait is None:
                         raise
                     log.info("[LLM] %s %s: reintento en %ss", self.provider, exc.status_code, wait)
@@ -171,13 +193,14 @@ class LLMMixin:
         return _diabetes.protocol((self.user_profile or {}).get("health")) == "insulina"
 
     async def _apply_output_sensors(
-        self, text: str, context_messages: list, kind: str, decision: str | None = None
+        self, text: str, context_messages: list, kind: str, decision: str | None = None, model: str | None = None
     ) -> str:
         """Pasa los sensores al texto del LLM antes de enseñarlo (docs/Harness.md §6).
 
         Corrige sin LLM las fechas ISO y la nota glucémica; si otro sensor falla, devuelve al LLM las pistas
         en una sola llamada más (sin tools) y se queda con la versión con menos fallos. Lo que siga fallando
         se avisa al pie y queda en el log. `decision` es la del motor diario, solo si la respuesta es para hoy.
+        `model`: el de la respuesta que se corrige (por defecto, el del chat).
         """
         # Referencia para S14: todo lo que recibió el LLM (contexto, datos deterministas y resultados de tools).
         reference = "\n".join(str(m.get("content") or "") for m in context_messages if isinstance(m, dict))
@@ -201,7 +224,7 @@ class LLMMixin:
             _t0 = time.perf_counter()
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
-                    model=self.model,
+                    model=model or self._chat_llm_model(),
                     messages=retry_messages,
                     **({
                         "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
@@ -244,11 +267,13 @@ class LLMMixin:
         always: bool = False,
         prompt: str | None = None,
         horizon: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Añade una interpretación de coaching por LLM cuando el usuario la pide (o siempre, con `always`).
 
         `prompt` sustituye las instrucciones de formato (por defecto, readiness o brief) y `horizon` el horizonte
-        deducido de la pregunta (la tendencia de sueño habla de un periodo, no de hoy o mañana).
+        deducido de la pregunta (la tendencia de sueño habla de un periodo, no de hoy o mañana). `model`: por
+        defecto el del chat; el arranque pasa el principal (30/10).
 
         `daily_plan_decision` es la del motor diario (ruta de estado del día). Si la respuesta es para hoy,
         el LLM recibe el marco de la sesión de hoy (G12) y el sensor S15 comprueba que lo respeta.
@@ -294,10 +319,11 @@ class LLMMixin:
             ]
 
             _t0_coaching = time.perf_counter()
-            log.info("[LLM] ▶ llamada route=%s modelo=%s tipo=coaching", route, self.model)
+            model = model or self._chat_llm_model()
+            log.info("[LLM] ▶ llamada route=%s modelo=%s tipo=coaching", route, model)
             coaching_response = await asyncio.wait_for(
                 self.client.chat.completions.create(
-                    model=self.model,
+                    model=model,
                     messages=coaching_messages,
                     **({
                         "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
@@ -319,7 +345,7 @@ class LLMMixin:
                 str((coaching_response.choices[0].message.content or "")).strip()
             )
             coaching_text = await self._apply_output_sensors(
-                coaching_text, coaching_messages, "coaching", decision=today_decision
+                coaching_text, coaching_messages, "coaching", decision=today_decision, model=model
             )
             if not coaching_text:
                 return (

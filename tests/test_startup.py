@@ -685,6 +685,7 @@ class TestStartupProactive:
         agent.mcp_session = MagicMock()
         agent.user_profile = {}
         agent.client = MagicMock()
+        agent.model, agent.chat_model = "principal", "ligero"
         plan = {"title": "Plan", "sessions": []}
         decision = {"decision": "maintain", "reason": "disponibilidad alta y recuperación estable"}
         coach = AsyncMock(side_effect=lambda q, md, **kw: md + "\n\n## 🧠 Interpretación de coaching\nHaz el tempo tranquilo."
@@ -702,6 +703,7 @@ class TestStartupProactive:
         assert out.index("Haz el tempo tranquilo.") < out.index("_Fuente:")
         assert "la sesión del plan, tal cual" in out and "Fase coaching" not in out
         assert coach.await_args.kwargs["daily_plan_decision"] == decision
+        assert coach.await_args.kwargs["model"] == "principal"  # 30/10: el arranque, con el modelo principal
         # Si el LLM no responde, queda la recomendación determinista, sin la nota de error.
         coach.side_effect = lambda q, md, **kw: md + "\n\n## 🧠 Interpretación de coaching\n- No pude generar..."
         with patch.object(TrainerAgent, "collect_startup_snapshot_48h", return_value=snapshot), \

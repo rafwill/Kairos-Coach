@@ -132,6 +132,9 @@ create table if not exists ia_provider (
     updated_at   timestamptz not null default now()
 );
 drop table if exists gemini_usage;
+-- Modelo del chat (30/10): el de `model` crea los planes y escribe el arranque; este responde en el chat y releva
+-- al principal si da 429 o 503. Null = el mismo.
+alter table ia_provider add column if not exists chat_model text;
 
 -- ─── training_plan (fuente de verdad de planes) ────────────────────────────
 create table if not exists training_plan (

@@ -51,7 +51,7 @@ def _build_llm_client(config: dict) -> tuple[Any, str, str]:
     """Cliente, modelo y clave del proveedor del atleta (26/10): cualquier API compatible con OpenAI.
 
     `config` = fila de ia_provider (provider, base_url, model); la clave sale del .env (`PROVIDER_API_KEY`).
-    `KAIROS_MODEL` cambia el modelo solo para esta ejecución (batería con --modelo).
+    `KAIROS_MODEL` cambia el modelo solo para esta ejecución (batería con --modelo); también el del chat.
     """
     from openai import AsyncOpenAI  # aquí y no arriba: importarlo cuesta ≈ 0,9 s y main lo precarga en un hilo (8c)
 

@@ -117,10 +117,10 @@ class ToolLoopMixin:
                 _t0 = time.perf_counter()
                 turn_tools = _tool_groups.select(self.tools_schema, self._turn_tool_groups) if self.tools_schema else []
                 log.info("[LLM] ▶ llamada iter=%d modelo=%s route=chat msgs=%d",
-                         iteration, self.model, len(messages))
+                         iteration, self._chat_llm_model(), len(messages))
                 response = await asyncio.wait_for(
                     self.client.chat.completions.create(
-                        model=self.model,
+                        model=self._chat_llm_model(),
                         messages=messages,
                         tools=turn_tools or None,
                         tool_choice="auto" if turn_tools else None,
@@ -166,7 +166,7 @@ class ToolLoopMixin:
                     return await self._finalize_chat_reply(user_message, msg, route="llm_request_too_large")
                 if "410" in err_str or "end of life" in err_str.lower() or "no longer available" in err_str.lower():
                     msg = (
-                        f"El modelo `{self.model}` ha llegado a su fin de vida y ya no está disponible.\n\n"
+                        f"El modelo `{self._chat_llm_model()}` ha llegado a su fin de vida y ya no está disponible.\n\n"
                         "Elige otro modelo con `/proveedor`."
                     )
                     return await self._finalize_chat_reply(user_message, msg, route="llm_model_eol")
@@ -481,7 +481,7 @@ class ToolLoopMixin:
                     ]
                 try:
                     rescue_response = await self.client.chat.completions.create(
-                        model=self.model,
+                        model=self._chat_llm_model(),
                         messages=rescue_messages,
                     )
                     if getattr(rescue_response, "usage", None):

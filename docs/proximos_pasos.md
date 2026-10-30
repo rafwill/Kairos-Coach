@@ -1,6 +1,6 @@
 ﻿# Próximos pasos — Kairos Coach
 
-Última revisión: 28/10/2026.
+Última revisión: 30/10/2026.
 
 Solo lo que falta y lo descartado. Lo terminado se borra: el detalle está en `CHANGELOG.md` y en git. El estado vigente del cálculo de carga y las limitaciones aceptadas están en `CLAUDE.md`.
 
@@ -9,6 +9,8 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 ## Dónde lo dejamos
 
 Se reescribe al final de cada sesión.
+
+**Sesión del 30/10/2026** (ordenador 2, el del trabajo). `git pull` desde `22e5595` hasta `aa27605`. Decidido el pendiente 10: Gemini 3.6 Flash para planes y arranque, y Gemini 3.5 Flash Lite para el chat y como relevo (columna `ia_provider.chat_model`; CHANGELOG del 30/10). Hecho en Supabase: columna `ia_provider.chat_model` añadida y guardado `gemini-3.5-flash-lite` con `/proveedor`, comprobado al leerlo. Para cambiarlo con Gemini ya guardado, `/proveedor` propone el modelo del chat que hay, no Flash Lite: hay que escribirlo. Siguiente paso: punto 10, comprobarlo en vivo fuera del proxy.
 
 **Sesión del 28-29/10/2026** (ordenador 1). Release **v3.0.0 — Kairos Coach Funcional** (29/10). 861 tests; batería 25/25 con Gemini. Proveedor del usuario: Gemini `gemini-3.6-flash` (la clave de NVIDIA, en `NVIDIA_API_KEY`). Plan activo: el de Gemini hacia la media de Santa Pola (`19bd7f1c`). Lo hecho, en `CHANGELOG.md` (28-29/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull` y poner en su `.env` la clave de Gemini en `PROVIDER_API_KEY`.
 
@@ -34,13 +36,11 @@ Se reescribe al final de cada sesión.
    - **Revisión del usuario** de un plan real (`/plan crear`) y de una revisión en el chat ("ajusta el plan: …").
    - **Fiabilidad con otros modelos:** medir con 2-3 modelos más (batería de planes) antes de producción. Hecho el 29/10 con lo gratuito: Gemini 3.5/3.6 Flash, plan válido en 68 s; Groq gratuito imposible (8.000 tokens por minuto); nemotron, sin plan en 13 min.
 
-10. **Proveedor del día a día (decisión del usuario, pendiente):**
-    - **Situación:** Gemini va muy bien (planes y chat, batería 25/25 en 104 s), pero el nivel gratuito da 20 peticiones al día por modelo y el 29/10 se agotó. Un plan gasta 10–15 peticiones y una pregunta con tools, 2–5. NVIDIA no tiene ese límite, pero va mal: lento, y sin planes válidos.
-    - **Opciones:**
-      - (a) Facturación en Google AI Studio.
-      - (b) Separar el modelo de los planes del modelo del chat: una segunda configuración en `ia_provider`, por ejemplo Gemini para planes y NVIDIA para el chat, o al revés.
-      - (c) Alternar al agotarse el cupo: con el aviso de cupo diario, pasar solo a NVIDIA hasta que se libere.
-    - El usuario lo decidirá tras usar Kairos unas semanas.
+10. **Dos modelos de Gemini (decidido el 30/10; CHANGELOG): comprobarlo en vivo.** Flash (20 peticiones al día) para planes y arranque, y Flash Lite (500) para el chat y como relevo. Desde el ordenador del trabajo no se pudo probar porque el proxy bloquea Gemini. Fuera del proxy, comprobar:
+    - Que `gemini-3.5-flash-lite` responde con ese nombre (Google sirvió el 3.5 Flash como 3.6).
+    - Batería 25/25 con Flash Lite en el chat (`tools/run_bateria.py --modelo gemini-3.5-flash-lite`).
+    - Que el relevo salta al agotarse Flash (`[LLM] … relevo con …` en `agent.log`).
+    - Si Flash Lite responde peor que Flash en el chat, valorar las otras opciones: facturación en AI Studio, o NVIDIA para el chat.
 
 ### C. Cálculo de carga (TSS frente a TrainingPeaks)
 

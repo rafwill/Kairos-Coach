@@ -2,6 +2,27 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-30
+
+### Added (dos modelos: uno para planes y arranque y otro para el chat; decisión del usuario, pendiente 10)
+- Señal: en el panel de AI Studio, el nivel gratuito da 20 peticiones al día a Gemini 3.6 Flash y 500 a Gemini 3.5 Flash Lite (15 por minuto). Un plan gasta 10–15 peticiones y una pregunta con tools, 2–5.
+- Decisión del usuario:
+  - `gemini-3.6-flash` crea los planes y escribe la recomendación del arranque, que es cuando llega más información.
+  - `gemini-3.5-flash-lite` responde en el chat y releva a Flash si este falla.
+- Qué se hizo:
+  - `ia_provider` tiene una columna nueva, `chat_model` (null = el mismo modelo). Va en `supabase/schema.sql` con `add column if not exists`.
+  - `set_provider` guarda `chat_model`.
+    - Con el del chat van el bucle con tools, los rescates, la capa de coaching de las rutas y el reintento de los sensores (`_chat_llm_model`).
+    - Con el principal van los planes (`plan_llm`) y el arranque (`_startup_coaching` pasa `model=self.model`).
+    - `KAIROS_MODEL` (batería `--modelo`) manda en los dos.
+  - Relevo: si una llamada del modelo principal da 429 (de cupo diario o por minuto) o 503, se repite al momento con el del chat, sin esperas.
+    - En pantalla: "Google Gemini: gemini-3.6-flash sin cupo diario; sigo con gemini-3.5-flash-lite."
+    - Si el relevo también falla, sigue lo de siempre: espera y reintenta, o avisa del cupo diario.
+    - El modelo del chat no tiene relevo.
+  - `/proveedor` pregunta también el modelo del chat. Con Enter se queda el mismo; con Gemini se propone `gemini-3.5-flash-lite` (`ia_provider.CHAT_MODEL`). La etiqueta muestra los dos modelos.
+    - Si Gemini ya estaba guardado, se propone el modelo del chat que había, no Flash Lite. Con el usuario: lo escribió a mano y quedó guardado (comprobado al leer `ia_provider`). La columna se añadió en Supabase el 30/10.
+- No comprobado en vivo: el proxy del ordenador del trabajo bloquea Gemini. El identificador `gemini-3.5-flash-lite` sale del nombre del panel. Tests: 865.
+
 ## 2026-10-29
 
 ### Changed (el modelo de Gemini es 3.6 Flash; visto por el usuario)

@@ -11,7 +11,7 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 - **Planes de entrenamiento:** los construye y revisa el LLM del atleta como su entrenador (por bloques con descarga, cada día con su fecha y sus tramos); Kairos le da los datos (objetivo, zonas de ritmo y FC, carga real, disponibilidad, lo hecho los últimos días), calcula ritmos, km y TSS planificado y comprueba las reglas (nunca más de un 10 % por semana sobre el volumen real, descargas, afinamiento, disponibilidad) antes de guardar cada versión. Si el modelo no consigue un plan válido, no se guarda ninguno: Kairos dice qué no cumplía y propone repetir o probar un modelo más capaz.
 - **Coaching con contexto:** perfil, salud (protocolo de diabetes con o sin insulina según la medicación; lesiones aparte), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
-- **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`.
+- **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`. Admite dos modelos: uno para crear planes y escribir el arranque y otro, más ligero, para el chat, que releva al primero si se queda sin cupo o saturado (con Gemini gratuito: 3.6 Flash, 20 peticiones al día, y 3.5 Flash Lite, 500).
 
 ## Estado de la carga (2026-10-21)
 
@@ -68,7 +68,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/perfil fc <reposo> <max>` | FC de reposo y máxima |
 | `/plan listar` · `/plan ver <nº o id>` · `/plan activar <nº o id>` · `/plan crear` | Planes de entrenamiento: `/plan crear` pregunta como un entrenador (días, tiempo máximo por día, dobles, distribución de la intensidad, progresión de la carga) y tu LLM construye el plan (semanas y sesiones con fecha, tramos, ritmos o zonas, km y TSS) a partir del objetivo del perfil y Kairos lo comprueba; en el chat, "ajusta el plan: …" lo revisa; el nº y el id corto salen en `/plan listar` |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |
-| `/proveedor` | Cambiar de proveedor de IA, modelo o clave |
+| `/proveedor` | Cambiar de proveedor de IA, modelos (planes y arranque; chat) o clave |
 | `salir` | Salir de Kairos (la sesión queda guardada para la próxima vez) |
 
 Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué sesión me recomiendas para esta semana?"*, *"Créame un plan para mi media maratón"*.
@@ -106,7 +106,7 @@ agent/
   storage.py             persistencia multiusuario en Supabase
   sensors.py             sensores sobre el texto del LLM (zonas, ritmo umbral, fechas…), compartidos con el juez
   diabetes.py            qué protocolo de diabetes recibe el LLM (con o sin insulina), según el perfil
-  ia_provider.py         proveedores de IA conocidos (URL y modelo propuesto) y variable de la clave
+  ia_provider.py         proveedores de IA conocidos (URL, modelo y modelo del chat propuestos) y variable de la clave
   tool_groups.py         metatooling: qué grupos de tools recibe el LLM según la pregunta
   mcp/
     client.py            cliente MCP: arranca el servidor, sesión stdio y llamadas a tools
