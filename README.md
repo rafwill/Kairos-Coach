@@ -93,6 +93,7 @@ agent/
   daily_engine.py        motor diario: plan de hoy, ajuste por HRV/sueño/body battery, zonas
   plan_llm.py            el LLM construye (estructura + semanas en paralelo) y revisa el plan, con reintentos
   plan_builder.py        datos del atleta para el plan, tramos → ritmos, km y TSS, reglas de estructura y semana
+  plan_drift.py          ¿sigue valiendo el plan? Señales de los últimos 7 días para proponer replanificar
   plans.py               validación y estado del plan; motor determinista para planes antiguos
   run_plan.py            plan de carrera en asfalto por bloques: ritmos de Friel, fases, descargas, tramos y rTSS
   activity_analysis.py   localizar una actividad y su análisis precalculado

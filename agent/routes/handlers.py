@@ -7,7 +7,7 @@ devuelve la respuesta (o la respuesta y otro nombre de ruta para agent.log, o No
 
 import logging
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 
 
 from agent.mcp.client import (
@@ -335,6 +335,8 @@ class RoutesMixin:
         weeks = int(plan.get("duration_weeks") or 0)
         pd["week_minutes"] = [round(sum(float(s.get("duration_min") or 0) for s in new_sessions
                                         if int(s.get("week_index") or 0) == w), 1) for w in range(1, weeks + 1)]
+        # Lo de antes de hoy ya se tuvo en cuenta: el detector de desvíos del arranque empieza aquí (30/10).
+        pd["revised_on"] = date.today().isoformat()
         persisted = _storage.update_training_plan(
             str(plan["id"]),
             {k: plan.get(k) for k in ("title", "description", "objective", "difficulty", "duration_weeks")}

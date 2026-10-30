@@ -48,7 +48,8 @@ from agent.wellness import (
 from agent.kairos_tools import (
     _KAIROS_INTERNAL_TOOLS,
 )
-from agent.plans import _today_session_lines
+from agent import plan_drift as _plan_drift
+from agent.plans import _plan_field, _plan_start, _today_session_lines
 from agent.startup_status import SOURCE_RULES, SOURCE_RULES_AND_COACH
 from agent.daily_engine import (
     _build_startup_plan_recommendation,
@@ -64,6 +65,31 @@ from agent.startup_status import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _plan_drift_lines(plan: dict, today: date | None = None) -> list[str]:
+    """Bloque «🔄 Tu plan ya no encaja» del arranque (30/10, pendiente 11 d1); vacío si el plan sigue valiendo.
+
+    Solo juzga los días desde la creación del plan y su última revisión (`revised_on`): lo anterior ya se tuvo en
+    cuenta al crearlo o revisarlo. Lee activity_tss y wellness_daily; un fallo de lectura deja el bloque vacío.
+    """
+    start, sessions = _plan_start(plan), plan.get("sessions") or []
+    if not start or not sessions:
+        return []
+    today = today or date.today()
+    marks = [str(plan.get("created_at") or "")[:10], str(_plan_field(plan, "revised_on") or "")[:10]]
+    since = max((date.fromisoformat(m) for m in marks if len(m) == 10), default=None)
+    days = _plan_drift.window(today, start, since)
+    if not days:
+        return []
+    acts = _storage.get_activity_tss_map((days[0] - timedelta(days=1)).isoformat())  # el día de antes: sesión movida
+    if acts is None:
+        return []
+    hrv = _storage.get_wellness_daily_range(days[0].isoformat(), today.isoformat())
+    signals = _plan_drift.detect(sessions, start, list(acts.values()), hrv, today, since)
+    if signals:
+        log.info("[PLAN] desvíos: %s", " | ".join(s.code for s in signals))
+    return _plan_drift.markdown(signals)
 
 
 class StartupMixin:
@@ -543,6 +569,7 @@ class StartupMixin:
             snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
             snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
             snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile)
+            snapshot["plan_drift_lines"] = _plan_drift_lines(active_plan)
         md = _build_proactive_status_markdown(snapshot)
         if active_plan and snapshot["daily_plan_decision"].get("decision"):
             md = await self._startup_coaching(md, snapshot["daily_plan_decision"])

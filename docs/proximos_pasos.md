@@ -66,7 +66,29 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 10. Revisar garmin-personal-mcp. MCP que se puede conectar a Claude para preguntar cosas a Calude o ChatGPT
 
-11. Revisar construcción de planes de entrenamiento en Kairos y cómo se integran con los datos de Garmin y Claude. Pregunta con orografia, donde vive el atleta, temperatura, entrenamientos cruzados de ciclismo, remo, gimnasio dentro de la planificacion. Preguntar prioridades del atleta en cuanto a tiempos semanales de entrenamiento y dias de la semana donde tiene disponibilidad para entrenar. El atleta puede sugerir ajustes o preferencias adicionales que Kairos debe considerar al generar el plan, y ser dinamico en cada momento. El atleta puede tener unviaje no planificado, ponerse malo o tener que entrenar en momentos que no puede, y kairos tiene que replanificar basado en los datos de garmin y los de entrenamiento, esto es lo que dará la fuerza y el valor a nuestro codigo
+11. **Planes que se adaptan al atleta en cada momento** (revisado el 30/10 frente a lo hecho el 28-29/10). Es lo que dará la fuerza y el valor a Kairos.
+    - **Ya hecho** (CHANGELOG del 28 y 29/10):
+      - El plan lo construye el LLM del atleta y el código lo comprueba.
+      - `/plan crear` pregunta como un entrenador: días disponibles, día fijo de descanso, tiempo máximo por día, dobles, distribución de la intensidad y progresión. Las respuestas se guardan en el perfil.
+      - Lo que el atleta escribe al pedir el plan llega al LLM como "Lo que pide el atleta".
+      - En el chat, "ajusta el plan: …" (`_route_plan_revision`) revisa los días que quedan, con lo hecho los últimos 7 días (Garmin + `activity_tss`).
+      - El motor diario ajusta la sesión de hoy con HRV, sueño, Body Battery y carga.
+    - **Falta:**
+      - (a) **Entorno.** El LLM no recibe ni dónde vive el atleta, ni la orografía (el desnivel de sus rutas habituales se podría sacar de Garmin), ni la temperatura (con calor, ajustar ritmos o ir por FC). `/plan crear` no lo pregunta.
+      - (b) **Deportes cruzados.** El plan admite `cross` y `strength`, pero `/plan crear` no pregunta qué hace el atleta (bici, remo, gimnasio) ni cuánto.
+        - Un `cross` sin tramos sale titulado "Fuerza" y con el TSS de la fuerza (35/h, `plan_builder.py`), no con el del deporte que sea.
+        - La regla de volumen (≤ 10 %) mira el volumen sostenido sin separar deportes.
+      - (c) **Preferencias que duran.** Lo que el atleta pide en el chat solo vale para esa revisión, no se guarda. Ejemplos: "los martes no puedo", "prefiero las series en pista".
+      - (d) **Replanificación por los datos y no solo a petición.**
+        - Hoy Kairos solo replanifica si el atleta lo pide, y solo hasta el final de la semana siguiente. El motor diario solo toca la sesión de hoy.
+        - Falta que Kairos detecte en Garmin cuándo el plan ya no vale y proponga rehacerlo: sesiones clave sin hacer, varios días sin actividad, HRV baja varios días seguidos, una actividad distinta de la prevista.
+        - Falta poder rehacer el bloque entero cuando el parón es largo (viaje, una semana enfermo), con la carrera en su fecha y la progresión desde lo que el atleta sostiene de verdad.
+    - Orden propuesto: (d) primero, que es el valor diferencial; después (c), (b) y (a).
+    - **(d1) Detector de desvíos: hecho el 30/10** (`agent/plan_drift.py`; criterios y resultado en el CHANGELOG). Queda verlo saltar con un desvío real y revisar con el usuario si los umbrales avisan cuando deben.
+    - **(d2) Replanificar el bloque entero tras un parón,** desde hoy hasta la carrera. Es lo siguiente.
+      - Hoy «replanifica el plan» solo cambia hasta el final de la semana siguiente.
+      - Hace falta rehacer la estructura de las semanas que quedan: progresión desde lo que el atleta sostiene de verdad, descargas, afinamiento y la carrera en su fecha. Después, los días por tandas, como en `/plan crear`.
+      - Criterios de cierre por fijar antes de programarlo.
 
 12. Añadir un porcentaje de cumplimiento de los entrenamientos en Kairos basado en los datos de kairos y los entrenamientos del atleta
 

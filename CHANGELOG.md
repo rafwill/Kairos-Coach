@@ -4,6 +4,25 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Added (el arranque avisa cuando el plan ya no encaja; pendiente 11 d1, petición del usuario)
+- Petición del usuario: que Kairos replanifique por lo que pasa de verdad (viaje, enfermedad, sesiones que no se pueden hacer), no solo cuando el atleta lo pide.
+- Primer paso: un detector sin LLM que avisa y propone, sin cambiar nada (`agent/plan_drift.py`). Criterios fijados antes de programarlo en `docs/proximos_pasos.md`.
+  - **Ventana:** de ayer hacia atrás, como mucho 7 días. No entran días anteriores al inicio del plan, a su creación ni a su última revisión (`plan_data.revised_on`, que ahora apunta `_route_plan_revision`).
+  - **Fuentes:** `activity_tss` (fecha, deporte y TSS), las sesiones del plan (TSS previsto) y `wellness_daily` (HRV, con el lector nuevo `get_wellness_daily_range`). Sin llamadas a Garmin.
+  - **Señales:**
+    - Al menos 2 sesiones clave (calidad, tirada o carrera) sin hacer y no movidas al día de antes o al de después.
+    - Al menos 3 días de entrenamiento seguidos sin actividad; un descanso previsto no corta la racha.
+    - Al menos 3 noches seguidas con la HRV por debajo del 90 % de su media semanal.
+    - Al menos 2 días con carrera prevista y solo otro deporte hecho; el trail cuenta como carrera.
+    - TSS hecho por debajo del 50 % o por encima del 130 % del previsto, con al menos 5 días y 150 TSS previstos.
+  - **En el arranque con plan:** bloque "🔄 Tu plan ya no encaja", tras la sesión de hoy, con las señales y la propuesta de pedir «replanifica el plan». Esa frase va a la revisión del plan del LLM, que hoy cambia hasta el final de la semana siguiente.
+- Resultado:
+  - Cada señal tiene su test a favor y en contra (`tests/test_plan_drift.py`). Tests: 879.
+  - Con el plan real del usuario no salta ninguna señal, también juzgando desde el inicio del plan (26/10). Es correcto: faltan la fuerza del 26 y el rodaje del 28, que no son sesiones clave ni días seguidos, y la calidad del 27 y la del 29 están hechas.
+- Lo que no hace aún:
+  - La HRV solo está en `wellness_daily` los días que se abre Kairos, y un día sin fila corta la racha.
+  - Replanificar el bloque entero tras un parón largo queda para el pendiente 11 d2.
+
 ### Fixed (el resumen de cambios del plan da la media semanal en h:mm y el TSS; visto por el usuario)
 - Señal: al final del plan salía "Volumen semanal estimado: 5159 -> 5181 min".
 - Causa: `_summarize_plan_changes` sumaba los minutos de todas las sesiones del plan y los llamaba semanales; "Sesiones semanales" también era el total.

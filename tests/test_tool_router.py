@@ -109,6 +109,13 @@ class TestToolRouter:
                  if router.route_key(q, [], {}) != want]
         assert wrong == []
 
+    def test_replan_request_goes_to_the_plan_revision(self):
+        # Lo que propone el arranque cuando el plan ya no encaja (30/10, pendiente 11 d1). La ruta de planes pide
+        # objetivo en el perfil; con un plan del LLM activo, va a su revisión (_route_plan_revision).
+        router, profile = ToolRouter(), {"goals": {"target_race": "Media maratón"}}
+        for q in ("replanifica el plan", "Replanifica mi plan, que he estado enfermo"):
+            assert router.route_key(q, [], profile) == "planning", q
+
     def test_every_route_has_its_handler(self):
         # Tabla de rutas (28/10, al dividir trainer_agent.py): una ruta sin método caería al LLM sin avisar.
         from agent.routes.handlers import FIRST_ROUTES, ROUTE_HANDLERS, RoutesMixin

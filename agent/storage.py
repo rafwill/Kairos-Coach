@@ -1230,6 +1230,29 @@ def get_wellness_daily(metric_date: str) -> dict | None:
         return None
 
 
+@_db_read("wellness_daily")
+def get_wellness_daily_range(start_date: str, end_date: str) -> list[dict]:
+    """HRV de la noche y su media semanal de cada día entre dos fechas (incluidas); [] si no se puede leer (30/10)."""
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb:
+        return []
+    try:
+        resp = (
+            sb.table("wellness_daily")
+            .select("metric_date,hrv_last_night_avg_ms,hrv_weekly_avg_ms")
+            .eq("app_user_id", uid)
+            .gte("metric_date", start_date)
+            .lte("metric_date", end_date)
+            .order("metric_date")
+            .execute()
+        )
+        return [dict(r) for r in (resp.data or [])]
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
+        log.warning("get_wellness_daily_range: %s", exc)
+        return []
+
+
 @_db_write("wellness_daily")
 def upsert_wellness_daily(
     metric_date: str,

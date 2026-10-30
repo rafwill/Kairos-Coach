@@ -241,6 +241,9 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     if plan_assigned and today_session:
         # Primero lo que toca hoy según el plan; después, la recomendación sobre esa sesión (29/10).
         lines.extend(["", "## 🗓️ Sesión de hoy", *today_session])
+    if plan_assigned:
+        # Señales de que el plan ya no encaja con lo de los últimos días (30/10, pendiente 11 d1).
+        lines.extend(str(x) for x in (snapshot.get("plan_drift_lines") or []))
     lines.extend([
         "",
         "## ✅ Recomendación",
