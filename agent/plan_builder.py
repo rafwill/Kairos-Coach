@@ -34,6 +34,8 @@ DAY_TYPES = {
 }
 PHASES = {"base": "Base", "build": "Construcción", "specific": "Específico", "taper": "Afinamiento", "race": "Carrera"}
 STEP_KINDS = {"warmup", "steady", "work", "recovery", "cooldown"}
+# Deportes de un día "cross" (30/10): van por FC (hrTSS de TP, como la bici sin potencia), sin ritmo ni km.
+CROSS_SPORTS = {"cycling": "Bici", "rowing": "Remo", "elliptical": "Elíptica", "swimming": "Natación"}
 AUTO_DAY_TYPES = {"easy", "recovery", "long"}  # días cuyo tramo continuo puede ir con "min": "auto"
 _STEP_NAMES = {"warmup": "Calentamiento", "cooldown": "Vuelta a la calma", "work": "Trabajo", "recovery": "Recuperación",
                "steady": "Continuo"}
@@ -72,6 +74,9 @@ class PlanFrame:
     max_load_weeks: int = 3  # semanas de carga seguidas antes de una descarga (3+1 o 2+1)
     max_hard_share: float = 0.20  # tiempo en Z3 o más por semana (decisión del usuario, 29/10)
     notes: list = field(default_factory=list)  # lo que el atleta dijo para siempre (plan_prefs, 30/10)
+    # Deportes cruzados (/plan crear, 30/10): None = sin regla (decide el entrenador); [] = ninguno.
+    cross_sports: list | None = None
+    cross_max: int | None = None  # sesiones "cross" por semana como mucho
 
     @property
     def paces(self) -> rp.Paces | None:
@@ -154,6 +159,11 @@ def frame_text(f: PlanFrame) -> str:
               }.get(f.intensity, "la decide el entrenador")
               + f"; en cualquier caso, como mucho un {f.max_hard_share * 100:.0f} % del tiempo semanal en Z3 o más",
               f"- Progresión de la carga: bloques de {f.max_load_weeks} semanas de carga + 1 de descarga"]
+    if f.cross_sports is not None:
+        lines.append("- Deportes cruzados dentro del plan: " + (
+            ", ".join(CROSS_SPORTS[s].lower() for s in f.cross_sports)
+            + (f"; como mucho {f.cross_max} sesiones por semana" if f.cross_max is not None else "")
+            if f.cross_sports else "ninguno (solo carrera y fuerza)"))
     lines += [f"- Siempre (lo dijo el atleta): {n}" for n in f.notes]
     if f.note:
         lines += ["", "## Lo que pide el atleta", f.note]
@@ -183,6 +193,10 @@ def rules_text(f: PlanFrame) -> str:
              "- Un rodaje con \"auto\" dura al menos 20 min y menos que la tirada larga de la semana: si la semana "
              "necesita más, añade un rodaje o alarga otras sesiones; si necesita menos, quita uno o pon sus minutos."]
     lines += [f"- El {rp._DAY_NAMES[int(d)].lower()}, como mucho {cap} min." for d, cap in sorted(f.max_minutes_per_day.items())]
+    if f.cross_sports is not None:
+        lines.append("- Sin sesiones \"cross\": el atleta no quiere otros deportes." if not f.cross_sports else
+                     f"- \"cross\" solo de {', '.join(f.cross_sports)}"
+                     + (f", como mucho {f.cross_max} por semana." if f.cross_max is not None else "."))
     return "\n".join(lines)
 
 
@@ -426,7 +440,11 @@ def expand_day(day: dict, f: PlanFrame, week: int) -> tuple[dict | None, list[st
         wk = rp.rest_session()
         if title:
             wk["title"] = title
-    elif kind in ("strength", "cross") and not day.get("steps"):
+    elif kind == "cross" and (str(day.get("sport") or "") not in CROSS_SPORTS or not day.get("steps")):
+        # 30/10: antes un "cross" sin tramos salía titulado "Fuerza" y con el TSS de la fuerza (35/h).
+        return None, [f"{where}: un \"cross\" lleva \"sport\" ({', '.join(CROSS_SPORTS)}) y \"steps\" por FC "
+                      "(FC1 a FC5), con warmup y cooldown."]
+    elif kind == "strength" and not day.get("steps"):
         minutes = _num(day.get("minutes"))
         if minutes <= 0:
             return None, [f"{where}: una sesión de {kind} sin tramos necesita \"minutes\"."]
@@ -459,10 +477,16 @@ def expand_day(day: dict, f: PlanFrame, week: int) -> tuple[dict | None, list[st
         if nested_auto or len(autos) > 1 or (autos and kind not in AUTO_DAY_TYPES):
             return None, [f"{where}: \"min\": \"auto\" va en un solo tramo \"steady\" de un rodaje (easy, recovery) "
                           "o de la tirada larga (long), fuera de las series."]
+        if kind == "cross" and any((s.get("target") or {}).get("metric") != "hr_zone" for s, _ in rp._leaf_steps(steps)):
+            # Una zona de ritmo en bici o remo daría un rTSS de carrera: solo FC (hrTSS de TP, como la bici sin potencia).
+            return None, [f"{where}: en un \"cross\" cada tramo va por FC (FC1 a FC5), sin zonas de ritmo, RP ni \"pace\"."]
+        if kind == "cross":
+            title = title or CROSS_SPORTS[str(day["sport"])]
         wk = {"schema": "kairos-workout-v1", "sessionType": DAY_TYPES[kind], "title": title or DAY_TYPES[kind],
               "secondary_label": f"RPE {day['rpe']}" if day.get("rpe") else "",
               "threshold_pace": f.threshold_pace,
-              "steps": steps}
+              "steps": steps,
+              **({"sport": str(day["sport"])} if kind == "cross" else {})}
     wk["plan_day"] = {k: v for k, v in day.items()}  # lo que escribió el LLM: la revisión parte de aquí
     session = {"week_index": week, "day_index": d, "session_type": wk["sessionType"], "structured_workout": wk}
     return refresh_session(session, f), []
@@ -605,6 +629,18 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
         errors.append(f"Semana {n}: {quality} sesiones de calidad; como mucho {f.max_quality}.")
     if any(b - a < 2 for a, b in zip(quality_days, quality_days[1:])):
         errors.append(f"Semana {n}: dos sesiones de calidad en días seguidos; deja al menos un día entre ellas.")
+    # Deportes cruzados (30/10): solo los que dijo el atleta y como mucho los que admite por semana.
+    cross = [s for s in sessions if s["session_type"] == "cross_training"]
+    if f.cross_sports is not None and cross:
+        if not f.cross_sports:
+            errors.append(f"Semana {n}: el atleta no quiere otros deportes en el plan; quita las sesiones \"cross\".")
+        else:
+            other = sorted({str(s["structured_workout"].get("sport")) for s in cross} - set(f.cross_sports))
+            if other:
+                errors.append(f"Semana {n}: \"cross\" de {', '.join(other)}; el atleta solo hace "
+                              f"{', '.join(f.cross_sports)}.")
+        if f.cross_max is not None and len(cross) > f.cross_max:
+            errors.append(f"Semana {n}: {len(cross)} sesiones \"cross\"; como mucho {f.cross_max}.")
     races = [d for d, day in by_day.items() for s in day if s["session_type"] == "race_run"]
     if n == f.race_week:
         if races != [f.race_date.isoweekday()]:

@@ -4,6 +4,21 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Added (otros deportes dentro del plan: bici, remo, elíptica, natación; pendiente 11 b)
+- Antes:
+  - `/plan crear` no preguntaba qué otros deportes hace el atleta.
+  - Un día `cross` sin tramos salía titulado "Fuerza" y con el TSS de la fuerza (35/h).
+  - Un `cross` con zonas de ritmo habría salido con el rTSS de carrera aunque fuera bici.
+  - El volumen sostenido contaba caminatas y senderismo, que el plan nunca pone, e inflaba el punto de partida de la progresión.
+- Qué se hizo (criterios fijados antes en `docs/proximos_pasos.md`):
+  - `/plan crear` pregunta "¿Qué otros deportes quieres dentro del plan?" (bici, remo, elíptica, natación; «no»; Enter = que decida el entrenador) y, si da alguno, cuántas sesiones por semana como mucho. Un deporte que no conoce ("pádel") lo dice y vuelve a preguntar; no lo toma como «ninguno». Se guarda en `plan_preferences.cross`.
+  - Un día `cross` lleva `"sport"` y tramos solo por FC. El TSS sale de la tabla hrTSS de TP, como la bici sin potencia, sin km. El título por defecto es el del deporte.
+  - Reglas por semana: solo los deportes del atleta, como mucho su máximo; con «no», ninguno. El LLM los recibe en "Preferencias del atleta" y en las reglas, y el prompt de semanas trae el formato.
+  - Volumen sostenido (`recent_weekly_minutes`) sin caminatas ni senderismo. Con los datos del usuario no cambia: 0 en las últimas 4 semanas.
+- Resultado:
+  - Tests de cada regla a favor y en contra, del TSS por FC frente a los 35/h, de la pregunta y del volumen (`tests/test_plan_cross.py`). Tests: 918.
+  - El plan activo no tiene sesiones `cross`: nada que cambiar en los datos.
+
 ### Added (lo que el atleta dice para siempre se guarda para sus planes; pendiente 11 c)
 - Antes, "los martes no puedo" o "prefiero las series en pista" dicho al ajustar el plan valía solo para esa revisión.
 - Qué se hizo (`agent/plan_prefs.py`, sin LLM; criterios fijados antes en `docs/proximos_pasos.md`):

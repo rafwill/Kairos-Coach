@@ -92,7 +92,7 @@ class TestStepsAreComputedByTheCode:
 
     def test_hr_step_uses_tp_hrtss_table(self):
         f = _frame()
-        day = {"day": 3, "type": "cross", "title": "Bici suave", "steps": [
+        day = {"day": 3, "type": "cross", "sport": "cycling", "title": "Bici suave", "steps": [
             {"kind": "warmup", "min": 10, "zone": "FC1"}, {"kind": "steady", "min": 60, "zone": "FC2"},
             {"kind": "cooldown", "min": 10, "zone": "FC1"}]}
         session, errors = pb.expand_day(day, f, 1)

@@ -88,9 +88,10 @@ class ContextMixin:
         for act in acts or []:
             d_iso = _extract_activity_date_iso(act) or ""
             minutes = _extract_activity_duration_minutes(act)
-            if d_iso >= last_28_iso:
-                minutes_28 += minutes
             act_type = act.get("type") or act.get("activityType") or act.get("activityTypeDTO") or ""
+            # Caminatas y senderismo no cuentan (30/10): el plan nunca los pone e inflaban el punto de partida.
+            if d_iso >= last_28_iso and not _load_metrics._is_hike_walk_activity(act_type):
+                minutes_28 += minutes
             if _is_running_non_trail_activity(act_type) or _load_metrics._is_trail_activity(act_type):
                 longest = max(longest, minutes)
         if minutes_28 > 0:

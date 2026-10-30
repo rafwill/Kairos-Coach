@@ -97,6 +97,9 @@ class PlanLLMMixin:
             intensity=str(prefs.get("intensity") or ""),
             max_load_weeks=2 if prefs.get("progression") == "2+1" else 3,
             notes=[str(n) for n in (prefs.get("notes") or [])],  # 30/10: lo que el atleta dijo para siempre
+            # Deportes cruzados de /plan crear (30/10): sin respuesta, sin regla.
+            cross_sports=list((prefs.get("cross") or {}).get("sports") or []) if prefs.get("cross") is not None else None,
+            cross_max=(prefs.get("cross") or {}).get("max_per_week"),
         )
 
     def _plan_system_message(self) -> dict:

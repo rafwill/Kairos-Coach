@@ -1,4 +1,4 @@
-﻿# Próximos pasos — Kairos Coach
+# Próximos pasos — Kairos Coach
 
 Última revisión: 30/10/2026.
 
@@ -16,9 +16,10 @@ Se reescribe al final de cada sesión.
   - Pendiente 11 d1: aviso en el arranque si el plan ya no encaja.
   - Pendiente 11 d2: «replanifica el plan» rehace hasta la carrera.
   - Pendiente 11 c: lo que el atleta dice para siempre se guarda para sus planes.
-  - Lo siguiente del punto 11 es (b), los deportes cruzados.
+  - Pendiente 11 b: otros deportes dentro del plan (bici, remo, elíptica, natación).
+  - Lo siguiente del punto 11 es (a), el entorno (orografía, lugar, temperatura).
   - Arreglado el fallo que rehízo el plan de Gemini con el motor determinista ("plan ver 19bd7f1c" sin barra; `plan_data` perdido al normalizar). Plan de Gemini recuperado como versión 4 y comprobado.
-  - Detalle en el CHANGELOG del 30/10. Tests: 906.
+  - Detalle en el CHANGELOG del 30/10. Tests: 918.
 - **Siguiente paso, fuera del proxy (en casa):**
   - Punto 10: Flash Lite en el chat y el relevo.
   - Pendiente 11 d2 en vivo: un «replanifica el plan» real, revisado por el usuario.
@@ -86,9 +87,19 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
       - El motor diario ajusta la sesión de hoy con HRV, sueño, Body Battery y carga.
     - **Falta:**
       - (a) **Entorno.** El LLM no recibe ni dónde vive el atleta, ni la orografía (el desnivel de sus rutas habituales se podría sacar de Garmin), ni la temperatura (con calor, ajustar ritmos o ir por FC). `/plan crear` no lo pregunta.
-      - (b) **Deportes cruzados.** El plan admite `cross` y `strength`, pero `/plan crear` no pregunta qué hace el atleta (bici, remo, gimnasio) ni cuánto.
+      - (b) **Deportes cruzados: hecho el 30/10** (CHANGELOG). Queda verlo con un `/plan crear` real con bici o remo, fuera del proxy. Situación de partida: el plan admite `cross` y `strength`, pero `/plan crear` no pregunta qué hace el atleta (bici, remo, gimnasio) ni cuánto.
         - Un `cross` sin tramos sale titulado "Fuerza" y con el TSS de la fuerza (35/h, `plan_builder.py`), no con el del deporte que sea.
         - La regla de volumen (≤ 10 %) mira el volumen sostenido sin separar deportes.
+        - **Diseño y criterios fijados antes de programarlo (30/10):**
+          - **Pregunta en `/plan crear`:** "¿Qué otros deportes quieres dentro del plan? (bici, remo, elíptica, natación; «no» si ninguno; Enter para que decida el entrenador)" y, si da alguno, "¿Cuántas sesiones por semana como mucho?". Se guarda en `plan_preferences.cross` = {sports, max_per_week}; Enter = sin regla.
+          - **Formato del día `cross`:** lleva `"sport"` (cycling, rowing, elliptical o swimming) y tramos por FC (FC1–FC5) con warmup y cooldown. El título por defecto sale del deporte ("Bici", "Remo", "Elíptica", "Natación").
+            - Sin tramos, sin "sport" o con ritmo (zonas Z, RP o "pace") → fallo con su texto para el LLM.
+            - El TSS sale de los tramos por FC con la tabla hrTSS de TP, como la bici sin potencia, en vez de 35/h de la fuerza. Sin km.
+          - **Reglas por semana** (si el atleta respondió): solo sus deportes y como mucho `max_per_week` sesiones `cross`; con «no», ninguna.
+          - **El LLM recibe** sus deportes y el máximo en "Preferencias del atleta", y el formato del `cross` en el prompt de semanas.
+          - **Volumen sostenido** (`recent_weekly_minutes`): sin caminatas ni senderismo, que el plan nunca pone (inflaban el punto de partida). Con los datos del usuario no cambia nada: 0 caminatas en las últimas 4 semanas.
+          - Planes ya guardados: no se tocan (el plan actual no tiene `cross`).
+          - **Cierre:** tests de cada regla a favor y en contra, del TSS por FC frente a los 35/h, de la pregunta de `/plan crear` y del volumen sin caminatas.
       - (c) **Preferencias que duran: hecho el 30/10** (`agent/plan_prefs.py`; CHANGELOG). Queda verlo con frases reales en `agent.log` (`[PLAN] preferencias guardadas`). Una frase que se guarde o se pierda sin deber va a los tests antes de tocar las reglas.
         - **Diseño y criterios fijados antes de programarlo (30/10).** Sin LLM: `agent/plan_prefs.py` lee el mensaje de planes (crear, ajustar o replanificar) antes de llamar al LLM.
           - **Días que nunca puede.** Cuentan si se dicen en plural ("los martes no puedo", "no puedo entrenar los martes ni los jueves") o con "nunca", "ningún", "siempre" o "a partir de ahora". El día sale de `availability.training_days` y entra en `rest_days`, así que las reglas lo exigen como descanso desde esa misma petición.

@@ -1050,6 +1050,28 @@ _INTENSITY_CHOICES = {"1": "polarizada", "2": "piramidal", "3": ""}
 _PROGRESSION_CHOICES = {"1": "3+1", "2": "2+1", "3": ""}
 
 
+_CROSS_WORDS = {"bici": "cycling", "bicicleta": "cycling", "ciclismo": "cycling", "gravel": "cycling",
+                "rodillo": "cycling", "remo": "rowing", "elíptica": "elliptical", "eliptica": "elliptical",
+                "natación": "swimming", "natacion": "swimming", "nadar": "swimming", "piscina": "swimming"}
+_CROSS_NAMES = {"cycling": "bici", "rowing": "remo", "elliptical": "elíptica", "swimming": "natación"}
+
+
+def _parse_cross_sports(text: str) -> list[str] | None:
+    """"bici, remo" → ["cycling", "rowing"]; «no»/«ninguno» → []; vacío → None (decide el entrenador; 30/10).
+
+    ValueError si no reconoce ningún deporte ("pádel"): no es lo mismo que «ninguno».
+    """
+    low = (text or "").strip().lower()
+    if not low:
+        return None
+    if low in {"no", "ninguno", "ninguna", "nada"}:
+        return []
+    found = [_CROSS_WORDS[w] for w in re.findall(r"[a-záéíóúñ]+", low) if w in _CROSS_WORDS]
+    if not found:
+        raise ValueError(low)
+    return list(dict.fromkeys(found))
+
+
 def _ask_plan_preferences(agent: TrainerAgent) -> None:
     """Lo que un entrenador pregunta antes de hacer un plan (29/10, petición del usuario): días, límites de tiempo,
     dobles, distribución de la intensidad y progresión de la carga. Se guarda en el perfil (goals.availability y
@@ -1081,6 +1103,23 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
         "descarga), 3 que decida el entrenador",
         choices=list(_PROGRESSION_CHOICES),
         default=next((k for k, v in _PROGRESSION_CHOICES.items() if v == prefs.get("progression")), "1"))
+    # Otros deportes dentro del plan (30/10): cuáles y cuántas sesiones por semana como mucho.
+    cross_now = prefs.get("cross")
+    cross_default = ("no" if cross_now and not cross_now.get("sports") else
+                     ", ".join(_CROSS_NAMES[s] for s in (cross_now or {}).get("sports") or []))
+    while True:
+        try:
+            sports = _parse_cross_sports(Prompt.ask(
+                "¿Qué otros deportes quieres dentro del plan? (bici, remo, elíptica, natación; «no» si ninguno; Enter "
+                "para que decida el entrenador)", default=cross_default))
+            break
+        except ValueError as exc:
+            console.print(f"  [red]✗[/] No conozco «{exc}» como deporte del plan: bici, remo, elíptica o natación.")
+    cross = None if sports is None else {"sports": sports}
+    if sports:
+        cross["max_per_week"] = int(Prompt.ask("¿Cuántas sesiones de esos deportes por semana como mucho?",
+                                               choices=[str(i) for i in range(1, 8)],
+                                               default=str((cross_now or {}).get("max_per_week") or 2)))
     # Lo que el atleta dijo en el chat para siempre (plan_prefs, 30/10): se enseña y se mantiene salvo que diga que no.
     notes = [str(n) for n in (prefs.get("notes") or [])]
     if notes:
@@ -1092,7 +1131,8 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
                          "max_minutes_per_day": {str(d): m for d, m in limits.items()}})
     goals["availability"] = availability
     goals["plan_preferences"] = {"doubles": bool(doubles), "intensity": _INTENSITY_CHOICES[intensity],
-                                 "progression": _PROGRESSION_CHOICES[progression], "notes": notes}
+                                 "progression": _PROGRESSION_CHOICES[progression], "notes": notes,
+                                 **({"cross": cross} if cross is not None else {})}
     if hasattr(agent, "user_profile"):
         agent.user_profile = profile
     _save_user_profile(profile)
