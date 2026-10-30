@@ -66,6 +66,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/perfil umbral <mm:ss>` | Nuevo ritmo umbral de running (rige desde hoy) |
 | `/perfil umbral fc <lpm>` | Nueva FC umbral tras un test, la misma que en TrainingPeaks (rige desde hoy) |
 | `/perfil fc <reposo> <max>` | FC de reposo y máxima |
+| `/perfil lugar <ciudad>` | Dónde entrenas: lo usa el plan y el tiempo de hoy del arranque (Open-Meteo recibe solo las coordenadas) |
 | `/plan listar` · `/plan ver <nº o id>` · `/plan activar <nº o id>` · `/plan crear` | Planes de entrenamiento: `/plan crear` pregunta como un entrenador (días, tiempo máximo por día, dobles, distribución de la intensidad, progresión de la carga, otros deportes como bici o remo, dónde entrenas) y tu LLM construye el plan (semanas y sesiones con fecha, tramos, ritmos o zonas, km y TSS) a partir del objetivo del perfil y Kairos lo comprueba; en el chat, "ajusta el plan: …" cambia los próximos días y "replanifica el plan" lo rehace hasta la carrera (al arrancar, Kairos avisa si el plan ya no encaja con lo que estás haciendo); el nº y el id corto salen en `/plan listar` |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |
 | `/proveedor` | Cambiar de proveedor de IA, modelos (planes y arranque; chat) o clave |
@@ -95,6 +96,7 @@ agent/
   plan_builder.py        datos del atleta para el plan, tramos → ritmos, km y TSS, reglas de estructura y semana
   plan_drift.py          ¿sigue valiendo el plan? Señales de los últimos 7 días para proponer replanificar
   plan_prefs.py          lo que el atleta dice para siempre («los martes no puedo», «prefiero…») para sus planes
+  weather.py             el tiempo de hoy donde entrena el atleta (Open-Meteo, sin clave)
   plans.py               validación y estado del plan; motor determinista para planes antiguos
   run_plan.py            plan de carrera en asfalto por bloques: ritmos de Friel, fases, descargas, tramos y rTSS
   activity_analysis.py   localizar una actividad y su análisis precalculado

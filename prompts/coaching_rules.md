@@ -114,6 +114,8 @@ Decide con las reglas de carga y las señales de recuperación de arriba:
 - **🟠 Sesión suave / posponer**: 7 días seguidos en zona de carga o ≥ 2 señales.
 - **🔴 Descanso**: Riesgo alto, o 7 días en zona de carga con ≥ 2 señales.
 
+**Tiempo de hoy** (bloque "🌡️ Tiempo hoy en …", si está): con calor, la parte exigente por FC y no por ritmo (con calor el mismo ritmo cuesta más) y a la hora más fresca del día que muestra el bloque, con hidratación; con frío, calentamiento más largo. No cambia la decisión del día (entrenar, reducir, suave o descanso): la concreta. Usa solo las temperaturas del bloque.
+
 **Anomalías biométricas (OBLIGATORIO)**: menciónalas antes de cualquier recomendación, independientemente de la carga:
 - FC en reposo 5–7 lpm por encima de su media de 7 días sin carga que lo justifique.
 - Sueño < 6 h o puntuación < 60 dos noches seguidas.

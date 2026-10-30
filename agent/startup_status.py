@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 
 
 from agent import load_metrics as _load_metrics
+from agent import weather as _weather
 from agent.dates import (
     _parse_iso_date_safe,
     _safe_float,
@@ -244,6 +245,8 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     if plan_assigned:
         # Señales de que el plan ya no encaja con lo de los últimos días (30/10, pendiente 11 d1).
         lines.extend(str(x) for x in (snapshot.get("plan_drift_lines") or []))
+    # El tiempo de hoy donde entrena (Open-Meteo, 30/10): la capa de coaching lo lee aquí, con los demás datos.
+    lines.extend(_weather.markdown(snapshot.get("weather")))
     lines.extend([
         "",
         "## ✅ Recomendación",

@@ -18,9 +18,10 @@ Se reescribe al final de cada sesión.
   - Pendiente 11 c: lo que el atleta dice para siempre se guarda para sus planes.
   - Pendiente 11 b: otros deportes dentro del plan (bici, remo, elíptica, natación).
   - Pendiente 11 a: dónde entrena y el desnivel de sus salidas (asfalto 7,6 m/km, trail 48,3 m/km con sus datos).
-  - Queda del punto 11: la temperatura real del día (decisión del usuario) y las pruebas en vivo fuera del proxy.
+  - El tiempo de hoy en el arranque (Open-Meteo; `/perfil lugar <ciudad>`).
+  - Queda del punto 11: las pruebas en vivo con Gemini, fuera del proxy.
   - Arreglado el fallo que rehízo el plan de Gemini con el motor determinista ("plan ver 19bd7f1c" sin barra; `plan_data` perdido al normalizar). Plan de Gemini recuperado como versión 4 y comprobado.
-  - Detalle en el CHANGELOG del 30/10. Tests: 922.
+  - Detalle en el CHANGELOG del 30/10. Tests: 929.
 - **Siguiente paso, fuera del proxy (en casa):**
   - Punto 10: Flash Lite en el chat y el relevo.
   - Pendiente 11 d2 en vivo: un «replanifica el plan» real, revisado por el usuario.
@@ -87,12 +88,22 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
       - En el chat, "ajusta el plan: …" (`_route_plan_revision`) revisa los días que quedan, con lo hecho los últimos 7 días (Garmin + `activity_tss`).
       - El motor diario ajusta la sesión de hoy con HRV, sueño, Body Battery y carga.
     - **Falta:**
-      - (a) **Entorno: hecho el 30/10, salvo la temperatura real** (CHANGELOG). Falta la decisión del usuario sobre un servicio de tiempo externo (recibe la ubicación) para ajustar la sesión del día con calor. Situación de partida: el LLM no recibe ni dónde vive el atleta, ni la orografía (el desnivel de sus rutas habituales se podría sacar de Garmin), ni la temperatura (con calor, ajustar ritmos o ir por FC). `/plan crear` no lo pregunta.
+      - (a) **Entorno: hecho el 30/10, con la temperatura del día (Open-Meteo)** (CHANGELOG). Situación de partida: el LLM no recibe ni dónde vive el atleta, ni la orografía (el desnivel de sus rutas habituales se podría sacar de Garmin), ni la temperatura (con calor, ajustar ritmos o ir por FC). `/plan crear` no lo pregunta.
         - **Diseño y criterios fijados antes de programarlo (30/10):**
           - **Orografía, de Garmin y sin umbrales inventados.** Con las mismas actividades de las últimas 6 semanas que ya lee el contexto de carga, se calculan metros de desnivel positivo por km, por separado para carrera en asfalto y para trail, con los km de cada uno ("asfalto: 8 m/km en 120 km; trail: 45 m/km en 30 km"). Sin etiquetas llano/ondulado: el LLM interpreta el número. Si un grupo no tiene km, no sale.
           - **Lugar.** `/plan crear` pregunta "¿Dónde entrenas normalmente? (ciudad o zona; Enter para no decirlo)" y lo guarda en `goals.training_location`. El LLM lo recibe con los datos.
           - **Instrucción en `prompts/plan/system.md`**, no en el código: tener en cuenta el terreno habitual (cuestas donde las hay, o sustitutos si es llano) y el clima de ese lugar en las fechas del plan (con calor, sesiones por FC o a primera hora).
           - **Temperatura real del día: fuera de este paso.** Necesita un servicio de tiempo externo que recibe la ubicación. Decide el usuario.
+          - **Temperatura real: hecho el 30/10** (`agent/weather.py`; CHANGELOG). Para verlo hace falta `/perfil lugar <ciudad>`: hoy el perfil del usuario no tiene lugar. Diseño y criterios fijados antes de programarlo:
+            - **Fuente:** Open-Meteo, gratuito y sin clave; comprobado desde la red del trabajo (200).
+              - El nombre del lugar (`goals.training_location`) se geocodifica una vez y las coordenadas se guardan con el nombre del que salen (`goals.training_location_coords`). Si cambia el lugar, se vuelven a buscar.
+              - Cada día solo se envían las coordenadas. Nada más del atleta sale hacia Open-Meteo.
+            - **Datos de hoy, en la hora local del lugar:** temperatura mínima y máxima, sensación térmica máxima y la temperatura a las 7:00, 12:00 y 19:00.
+            - **Dónde:** bloque "🌡️ Tiempo hoy en …" en el arranque y en la ruta de estado del día, tras la sesión de hoy. La capa de coaching lo recibe con los datos.
+            - **Sin umbrales de calor en el código.** El motor diario no cambia. La guía para el LLM va en `prompts/coaching_rules.md`: con calor, lo exigente por FC y a la hora más fresca del día. El LLM decide con los datos.
+            - **Si falla** (sin lugar, sin red, más de 4 s o respuesta rara): sin bloque, el arranque sigue igual y queda una línea en el log.
+            - **`/perfil lugar <ciudad>`** guarda el lugar sin pasar por `/plan crear`.
+            - **Cierre:** tests de la lectura de la respuesta, del fallo, de la caché de coordenadas, del bloque y del comando. En vivo, la función de producción con un lugar real.
           - **Cierre:** tests del cálculo (asfalto, trail, sin km, sin desnivel), de la pregunta y de que llega al LLM. Además, el cálculo con los datos reales del usuario (solo lectura), comparable con Garmin Connect.
       - (b) **Deportes cruzados: hecho el 30/10** (CHANGELOG). Queda verlo con un `/plan crear` real con bici o remo, fuera del proxy. Situación de partida: el plan admite `cross` y `strength`, pero `/plan crear` no pregunta qué hace el atleta (bici, remo, gimnasio) ni cuánto.
         - Un `cross` sin tramos sale titulado "Fuerza" y con el TSS de la fuerza (35/h, `plan_builder.py`), no con el del deporte que sea.

@@ -4,6 +4,19 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Added (el tiempo de hoy donde entrena el atleta, con Open-Meteo; decisión del usuario, pendiente 11 a)
+- Decisión del usuario: sí a consultar la previsión del día en un servicio externo, que recibe la ubicación.
+- Qué se hizo (`agent/weather.py`; criterios fijados antes en `docs/proximos_pasos.md`):
+  - **Open-Meteo**, gratuito y sin clave; responde desde la red del trabajo con el certificado del `.env`.
+    - El lugar (`goals.training_location`) se geocodifica una vez y las coordenadas se guardan con el nombre del que salen (`training_location_coords`). Si cambia el lugar, se vuelven a buscar.
+    - Cada día solo se envían las coordenadas.
+  - **En el arranque y en la ruta de estado del día**, bloque "🌡️ Tiempo hoy en …" tras la sesión de hoy: mínima y máxima, sensación térmica máxima y la temperatura a las 7:00, 12:00 y 19:00. La consulta va a la vez que las llamadas a Garmin, con un tope de 4 s. Si falla, no hay bloque y queda una línea `[TIEMPO]` en el log.
+  - **Sin umbrales de calor en el código**: el motor diario no cambia. La guía para el LLM está en `prompts/coaching_rules.md`: con calor, lo exigente por FC y a la hora más fresca del bloque, con hidratación; con frío, calentamiento más largo; concreta la decisión del día, no la cambia.
+  - `/perfil lugar <ciudad>` guarda el lugar sin pasar por `/plan crear`.
+- Resultado:
+  - Tests de la lectura, la caché de coordenadas, los fallos (500, lugar desconocido, timeout, respuesta del proxy), el bloque, el guardado y el comando (`tests/test_weather.py`, sin red). Tests: 929.
+  - En vivo con la función de producción ("Santa Pola"): 15–24 ºC, sensación máxima 25 ºC, 7:00 15 ºC, 12:00 23 ºC, 19:00 20 ºC.
+
 ### Added (el plan tiene en cuenta dónde entrena el atleta y el desnivel de sus salidas; pendiente 11 a)
 - Antes el LLM no sabía dónde vive el atleta, qué terreno tiene ni qué clima hace en las fechas del plan.
 - Qué se hizo (criterios fijados antes en `docs/proximos_pasos.md`):
