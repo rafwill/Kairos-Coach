@@ -4,6 +4,19 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Added (el plan tiene en cuenta dónde entrena el atleta y el desnivel de sus salidas; pendiente 11 a)
+- Antes el LLM no sabía dónde vive el atleta, qué terreno tiene ni qué clima hace en las fechas del plan.
+- Qué se hizo (criterios fijados antes en `docs/proximos_pasos.md`):
+  - **Orografía desde Garmin, sin umbrales:** con las actividades de las últimas 6 semanas que ya lee el contexto de carga, se calcula el desnivel positivo por km, por separado para asfalto y trail, con sus km (`load_context["terrain"]`). El LLM lo recibe en un bloque "Entorno" y lo interpreta él; no hay etiquetas llano/ondulado inventadas.
+  - **Lugar:** `/plan crear` pregunta "¿Dónde entrenas normalmente?" (`goals.training_location`; Enter para no decirlo).
+  - **Instrucción en `prompts/plan/system.md`:**
+    - Cuestas con el desnivel que tenga a mano o fartlek si su terreno es llano; con mucho desnivel, contar con él.
+    - Clima habitual de su lugar en las fechas del plan: con calor, lo exigente por FC o a primera hora.
+- Resultado:
+  - Tests del cálculo, de la pregunta y de que llega al LLM (`tests/test_plan_env.py`). Tests: 922.
+  - Con los datos reales del usuario (solo lectura, función de producción): asfalto 7,6 m/km en 196,7 km; trail 48,3 m/km en 109,5 km.
+- Fuera de este paso: la temperatura real del día. Necesita un servicio de tiempo externo que recibe la ubicación; lo decide el usuario.
+
 ### Added (otros deportes dentro del plan: bici, remo, elíptica, natación; pendiente 11 b)
 - Antes:
   - `/plan crear` no preguntaba qué otros deportes hace el atleta.

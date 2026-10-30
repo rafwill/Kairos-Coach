@@ -1103,6 +1103,13 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
         "descarga), 3 que decida el entrenador",
         choices=list(_PROGRESSION_CHOICES),
         default=next((k for k, v in _PROGRESSION_CHOICES.items() if v == prefs.get("progression")), "1"))
+    # Dónde entrena (30/10, pendiente 11 a): el LLM tiene en cuenta el clima habitual de ese lugar en las fechas del plan.
+    location = Prompt.ask("¿Dónde entrenas normalmente? (ciudad o zona; Enter para no decirlo)",
+                          default=str(goals.get("training_location") or "")).strip()
+    if location:
+        goals["training_location"] = location
+    else:
+        goals.pop("training_location", None)
     # Otros deportes dentro del plan (30/10): cuáles y cuántas sesiones por semana como mucho.
     cross_now = prefs.get("cross")
     cross_default = ("no" if cross_now and not cross_now.get("sports") else

@@ -322,13 +322,14 @@ class TestPlanScreens:
         agent = _Agent()
         agent.user_profile = {"goals": {"target_race": "Santa Pola"}}
         agent._route_planning = AsyncMock(return_value="## 🧭 Resumen\nPlan activo: Hacia Santa Pola\n- Semana 1: ~380 min")
-        answers = iter(["todos", "V", "L-V 75, S 180", "2", "1", "", "no puedo los martes"])
+        answers = iter(["todos", "V", "L-V 75, S 180", "2", "1", "Elche", "", "no puedo los martes"])
         with patch.object(m, "_load_user_profile", return_value=agent.user_profile),              patch.object(m.Prompt, "ask", side_effect=lambda *a, **k: next(answers)),              patch.object(m.Confirm, "ask", return_value=True), patch.object(m, "_save_user_profile") as save:
             asyncio.run(m._create_training_plan_cli(agent))
         goals = agent.user_profile["goals"]
         assert goals["availability"]["training_days"] == [1, 2, 3, 4, 6, 7] and goals["availability"]["rest_days"] == [5]
         assert goals["availability"]["max_minutes_per_day"] == {"1": 75, "2": 75, "3": 75, "4": 75, "5": 75, "6": 180}
         assert goals["plan_preferences"] == {"doubles": True, "intensity": "piramidal", "progression": "3+1", "notes": []}
+        assert goals["training_location"] == "Elche"  # 30/10: dónde entrena (pendiente 11 a)
         save.assert_called_once()
         message = agent._route_planning.await_args.args[0]
         assert agent._route_planning.await_args.kwargs == {"force_new": True}
@@ -342,7 +343,7 @@ class TestPlanScreens:
             agent = _Agent()
             agent.user_profile = {"goals": {"plan_preferences": {"doubles": True, "notes": ["Prefiero las series en pista."]}}}
             agent._route_planning = AsyncMock(return_value="ok")
-            answers = iter(["todos", "", "", "1", "1", "", ""])
+            answers = iter(["todos", "", "", "1", "1", "", "", ""])
             with patch.object(m, "_load_user_profile", return_value=agent.user_profile), \
                  patch.object(m.Prompt, "ask", side_effect=lambda *a, **k: next(answers)), \
                  patch.object(m.Confirm, "ask", side_effect=lambda q, **k: keep if "teniendo en cuenta" in q else True), \
@@ -355,7 +356,7 @@ class TestPlanScreens:
         agent = _Agent()
         agent.user_profile = {}
         agent._route_planning = AsyncMock(return_value=("Plan genérico de respaldo", "planning_fallback"))
-        answers = iter(["todos", "", "", "1", "1", "", ""])
+        answers = iter(["todos", "", "", "1", "1", "", "", ""])
         with patch.object(m, "_load_user_profile", return_value={}),              patch.object(m.Prompt, "ask", side_effect=lambda *a, **k: next(answers)),              patch.object(m.Confirm, "ask", return_value=False), patch.object(m, "_save_user_profile"):
             asyncio.run(m._create_training_plan_cli(agent))
         assert agent._route_planning.await_args.args[0] == "Crea un plan nuevo"

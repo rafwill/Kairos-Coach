@@ -100,10 +100,10 @@ def test_plan_create_asks_and_saves_the_cross_sports():
     class _Agent:
         user_profile = {"goals": {}}
 
-    for answers, expected in ((["todos", "", "", "1", "1", "pádel", "bici, remo", "2"],
+    for answers, expected in ((["todos", "", "", "1", "1", "", "pádel", "bici, remo", "2"],
                                {"sports": ["cycling", "rowing"], "max_per_week": 2}),
-                              (["todos", "", "", "1", "1", "no"], {"sports": []}),
-                              (["todos", "", "", "1", "1", ""], None)):
+                              (["todos", "", "", "1", "1", "", "no"], {"sports": []}),
+                              (["todos", "", "", "1", "1", "", ""], None)):
         agent = _Agent()
         agent.user_profile = {"goals": {}}
         it = iter(answers)

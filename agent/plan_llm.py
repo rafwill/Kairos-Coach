@@ -100,6 +100,8 @@ class PlanLLMMixin:
             # Deportes cruzados de /plan crear (30/10): sin respuesta, sin regla.
             cross_sports=list((prefs.get("cross") or {}).get("sports") or []) if prefs.get("cross") is not None else None,
             cross_max=(prefs.get("cross") or {}).get("max_per_week"),
+            location=str(goals.get("training_location") or "").strip(),  # 30/10: entorno (pendiente 11 a)
+            terrain=dict(load_context.get("terrain") or {}),
         )
 
     def _plan_system_message(self) -> dict:

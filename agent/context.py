@@ -85,6 +85,7 @@ class ContextMixin:
         last_28_iso = (today - timedelta(days=28)).isoformat()
         minutes_28 = 0.0
         longest = 0.0
+        terrain = {"road": [0.0, 0.0], "trail": [0.0, 0.0]}  # [km, m de desnivel positivo] de las 6 semanas
         for act in acts or []:
             d_iso = _extract_activity_date_iso(act) or ""
             minutes = _extract_activity_duration_minutes(act)
@@ -92,12 +93,23 @@ class ContextMixin:
             # Caminatas y senderismo no cuentan (30/10): el plan nunca los pone e inflaban el punto de partida.
             if d_iso >= last_28_iso and not _load_metrics._is_hike_walk_activity(act_type):
                 minutes_28 += minutes
-            if _is_running_non_trail_activity(act_type) or _load_metrics._is_trail_activity(act_type):
+            is_trail = _load_metrics._is_trail_activity(act_type)
+            if _is_running_non_trail_activity(act_type) or is_trail:
                 longest = max(longest, minutes)
+                # Orografía de sus rutas (30/10, pendiente 11 a): desnivel por km, asfalto y trail por separado.
+                group = terrain["trail" if is_trail else "road"]
+                group[0] += _load_metrics._extract_activity_distance_km(act) or 0.0
+                try:
+                    group[1] += max(0.0, float(act.get("elevationGain") or 0.0))
+                except (TypeError, ValueError):
+                    pass
         if minutes_28 > 0:
             context["recent_weekly_minutes"] = round(minutes_28 / 4.0, 1)
         if longest > 0:
             context["longest_recent_min"] = round(longest, 1)
+        by_group = {k: {"km": round(km, 1), "m_per_km": round(gain / km, 1)} for k, (km, gain) in terrain.items() if km > 0}
+        if by_group:
+            context["terrain"] = by_group
         return context
 
     def _profile_context_block(self) -> str:

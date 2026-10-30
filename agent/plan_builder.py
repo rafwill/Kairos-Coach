@@ -77,6 +77,9 @@ class PlanFrame:
     # Deportes cruzados (/plan crear, 30/10): None = sin regla (decide el entrenador); [] = ninguno.
     cross_sports: list | None = None
     cross_max: int | None = None  # sesiones "cross" por semana como mucho
+    # Entorno (30/10, pendiente 11 a): dónde entrena y el desnivel de sus rutas ({"road"|"trail": {km, m_per_km}}).
+    location: str = ""
+    terrain: dict = field(default_factory=dict)
 
     @property
     def paces(self) -> rp.Paces | None:
@@ -139,6 +142,16 @@ def frame_text(f: PlanFrame) -> str:
     if load.get("ctl") is not None:
         lines.append(f"- CTL {load['ctl']}, ATL {load.get('atl')}, TSB {load.get('tsb')}, estado {load.get('status') or 'n/d'}")
     lines.append(f"- Horas disponibles declaradas: {f.weekly_hours:g} h/semana")
+    if f.location or f.terrain:
+        lines += ["", "## Entorno"]
+        if f.location:
+            lines.append(f"- Entrena en: {f.location}")
+        names = {"road": "carrera en asfalto", "trail": "trail"}
+        for key in ("road", "trail"):
+            if key in f.terrain:
+                t = f.terrain[key]
+                lines.append(f"- Desnivel positivo de sus salidas de {names[key]} (últimas 6 semanas): "
+                             f"{t['m_per_km']:g} m/km en {t['km']:g} km")
     lines += ["", "## Disponibilidad"]
     names = [rp._DAY_NAMES[d] for d in sorted(f.available_days)]
     lines.append(f"- Días disponibles: {', '.join(names)}")
