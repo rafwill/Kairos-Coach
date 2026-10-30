@@ -14,6 +14,7 @@ from agent.mcp.client import (
     call_tool,
 )
 from agent import plan_builder as _plan_builder
+from agent import plan_prefs as _plan_prefs
 from agent import run_plan as _run_plan
 from agent import storage as _storage
 from agent.hr_profile import _resolve_hr_zones
@@ -202,6 +203,21 @@ class RoutesMixin:
         )
         return assistant_reply
     async def _route_planning(self, user_message: str, force_new: bool = False):
+        """Planificación (crear, ajustar o replanificar). Antes de llamar al LLM guarda en el perfil lo que el atleta
+        dice para siempre ("los martes no puedo", "prefiero las series en pista"; plan_prefs, 30/10), así que ya vale
+        para esta misma petición, y la respuesta empieza diciendo qué se ha guardado."""
+        profile = getattr(self, "user_profile", None)
+        saved = _plan_prefs.remember(profile, user_message) if profile is not None else []
+        if saved:
+            _save_user_profile(self.user_profile)
+            log.info("[PLAN] preferencias guardadas: %s", " | ".join(saved))
+        result = await self._plan_request(user_message, force_new=force_new)
+        head = _plan_prefs.saved_markdown(saved)
+        if isinstance(result, tuple):
+            return (head + result[0], *result[1:])
+        return head + result
+
+    async def _plan_request(self, user_message: str, force_new: bool = False):
         """Planificación: el LLM construye el plan nuevo (agent/plan_llm.py) y el código lo comprueba; si no lo consigue, el
         motor de Kairos hace uno de respaldo y se avisa. Se guarda versionado en la base de datos."""
         try:

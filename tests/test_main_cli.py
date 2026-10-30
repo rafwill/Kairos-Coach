@@ -328,13 +328,28 @@ class TestPlanScreens:
         goals = agent.user_profile["goals"]
         assert goals["availability"]["training_days"] == [1, 2, 3, 4, 6, 7] and goals["availability"]["rest_days"] == [5]
         assert goals["availability"]["max_minutes_per_day"] == {"1": 75, "2": 75, "3": 75, "4": 75, "5": 75, "6": 180}
-        assert goals["plan_preferences"] == {"doubles": True, "intensity": "piramidal", "progression": "3+1"}
+        assert goals["plan_preferences"] == {"doubles": True, "intensity": "piramidal", "progression": "3+1", "notes": []}
         save.assert_called_once()
         message = agent._route_planning.await_args.args[0]
         assert agent._route_planning.await_args.kwargs == {"force_new": True}
         assert "plan nuevo" in message.lower() and "no puedo los martes" in message
         text = out()
         assert "Santa Pola" in text and "Semana 1" in text
+
+    def test_create_plan_shows_the_lasting_preferences_and_asks_to_keep_them(self, out):
+        # 30/10 (pendiente 11 c): lo que el atleta dijo en el chat para siempre se enseña; "no" lo borra.
+        for keep, expected in ((True, ["Prefiero las series en pista."]), (False, [])):
+            agent = _Agent()
+            agent.user_profile = {"goals": {"plan_preferences": {"doubles": True, "notes": ["Prefiero las series en pista."]}}}
+            agent._route_planning = AsyncMock(return_value="ok")
+            answers = iter(["todos", "", "", "1", "1", ""])
+            with patch.object(m, "_load_user_profile", return_value=agent.user_profile), \
+                 patch.object(m.Prompt, "ask", side_effect=lambda *a, **k: next(answers)), \
+                 patch.object(m.Confirm, "ask", side_effect=lambda q, **k: keep if "teniendo en cuenta" in q else True), \
+                 patch.object(m, "_save_user_profile"):
+                asyncio.run(m._create_training_plan_cli(agent))
+            assert agent.user_profile["goals"]["plan_preferences"]["notes"] == expected
+            assert "Prefiero las series en pista." in out()
 
     def test_create_plan_fallback_reply_is_shown(self, out):
         agent = _Agent()

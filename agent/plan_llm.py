@@ -96,6 +96,7 @@ class PlanLLMMixin:
             doubles=bool(prefs.get("doubles")),
             intensity=str(prefs.get("intensity") or ""),
             max_load_weeks=2 if prefs.get("progression") == "2+1" else 3,
+            notes=[str(n) for n in (prefs.get("notes") or [])],  # 30/10: lo que el atleta dijo para siempre
         )
 
     def _plan_system_message(self) -> dict:

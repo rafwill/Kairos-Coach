@@ -71,6 +71,7 @@ class PlanFrame:
     intensity: str = ""  # "polarizada", "piramidal" o "" (decide el entrenador)
     max_load_weeks: int = 3  # semanas de carga seguidas antes de una descarga (3+1 o 2+1)
     max_hard_share: float = 0.20  # tiempo en Z3 o más por semana (decisión del usuario, 29/10)
+    notes: list = field(default_factory=list)  # lo que el atleta dijo para siempre (plan_prefs, 30/10)
 
     @property
     def paces(self) -> rp.Paces | None:
@@ -153,6 +154,7 @@ def frame_text(f: PlanFrame) -> str:
               }.get(f.intensity, "la decide el entrenador")
               + f"; en cualquier caso, como mucho un {f.max_hard_share * 100:.0f} % del tiempo semanal en Z3 o más",
               f"- Progresión de la carga: bloques de {f.max_load_weeks} semanas de carga + 1 de descarga"]
+    lines += [f"- Siempre (lo dijo el atleta): {n}" for n in f.notes]
     if f.note:
         lines += ["", "## Lo que pide el atleta", f.note]
     return "\n".join(lines)

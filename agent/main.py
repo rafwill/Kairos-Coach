@@ -1081,12 +1081,18 @@ def _ask_plan_preferences(agent: TrainerAgent) -> None:
         "descarga), 3 que decida el entrenador",
         choices=list(_PROGRESSION_CHOICES),
         default=next((k for k, v in _PROGRESSION_CHOICES.items() if v == prefs.get("progression")), "1"))
+    # Lo que el atleta dijo en el chat para siempre (plan_prefs, 30/10): se enseña y se mantiene salvo que diga que no.
+    notes = [str(n) for n in (prefs.get("notes") or [])]
+    if notes:
+        console.print("Lo que me dijiste para tus planes:\n" + "\n".join(f"  - {n}" for n in notes))
+        if not Confirm.ask("¿Lo sigo teniendo en cuenta?", default=True):
+            notes = []
     availability.update({"training_days": [d for d in (days or range(1, 8)) if d not in rest] or list(range(1, 8)),
                          "rest_days": rest,
                          "max_minutes_per_day": {str(d): m for d, m in limits.items()}})
     goals["availability"] = availability
     goals["plan_preferences"] = {"doubles": bool(doubles), "intensity": _INTENSITY_CHOICES[intensity],
-                                 "progression": _PROGRESSION_CHOICES[progression]}
+                                 "progression": _PROGRESSION_CHOICES[progression], "notes": notes}
     if hasattr(agent, "user_profile"):
         agent.user_profile = profile
     _save_user_profile(profile)

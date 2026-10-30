@@ -15,8 +15,10 @@ Se reescribe al final de cada sesión.
   - Resumen de cambios del plan en h:mm y TSS.
   - Pendiente 11 d1: aviso en el arranque si el plan ya no encaja.
   - Pendiente 11 d2: «replanifica el plan» rehace hasta la carrera.
+  - Pendiente 11 c: lo que el atleta dice para siempre se guarda para sus planes.
+  - Lo siguiente del punto 11 es (b), los deportes cruzados.
   - Arreglado el fallo que rehízo el plan de Gemini con el motor determinista ("plan ver 19bd7f1c" sin barra; `plan_data` perdido al normalizar). Plan de Gemini recuperado como versión 4 y comprobado.
-  - Detalle en el CHANGELOG del 30/10. Tests: 889.
+  - Detalle en el CHANGELOG del 30/10. Tests: 906.
 - **Siguiente paso, fuera del proxy (en casa):**
   - Punto 10: Flash Lite en el chat y el relevo.
   - Pendiente 11 d2 en vivo: un «replanifica el plan» real, revisado por el usuario.
@@ -87,7 +89,15 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
       - (b) **Deportes cruzados.** El plan admite `cross` y `strength`, pero `/plan crear` no pregunta qué hace el atleta (bici, remo, gimnasio) ni cuánto.
         - Un `cross` sin tramos sale titulado "Fuerza" y con el TSS de la fuerza (35/h, `plan_builder.py`), no con el del deporte que sea.
         - La regla de volumen (≤ 10 %) mira el volumen sostenido sin separar deportes.
-      - (c) **Preferencias que duran.** Lo que el atleta pide en el chat solo vale para esa revisión, no se guarda. Ejemplos: "los martes no puedo", "prefiero las series en pista".
+      - (c) **Preferencias que duran: hecho el 30/10** (`agent/plan_prefs.py`; CHANGELOG). Queda verlo con frases reales en `agent.log` (`[PLAN] preferencias guardadas`). Una frase que se guarde o se pierda sin deber va a los tests antes de tocar las reglas.
+        - **Diseño y criterios fijados antes de programarlo (30/10).** Sin LLM: `agent/plan_prefs.py` lee el mensaje de planes (crear, ajustar o replanificar) antes de llamar al LLM.
+          - **Días que nunca puede.** Cuentan si se dicen en plural ("los martes no puedo", "no puedo entrenar los martes ni los jueves") o con "nunca", "ningún", "siempre" o "a partir de ahora". El día sale de `availability.training_days` y entra en `rest_days`, así que las reglas lo exigen como descanso desde esa misma petición.
+          - **Lo que no dura:** "este martes", "el martes que viene", "mañana" o un día en singular sin esas palabras. Eso es para una vez y no se guarda.
+          - **Preferencias de texto.** La frase que lleva "prefiero", "siempre", "nunca", "a partir de ahora" o "de ahora en adelante" se guarda tal cual en `plan_preferences.notes`: sin duplicados, como mucho 8 (se va la más antigua) y 200 caracteres cada una.
+          - **Las preferencias llegan al LLM** en "Preferencias del atleta" de cada plan, revisión o replanificado.
+          - **La respuesta dice qué se ha guardado.** `/plan crear` las enseña y pregunta si se mantienen. Responder que ya no borra las notas; los días se cambian con su pregunta de días.
+          - `/plan crear` ya no borra las notas al guardar sus respuestas.
+          - **Cierre:** un test por tipo de frase, a favor y en contra, con frases reales del estilo del usuario. Más uno de que llegan al LLM, uno de que las reglas exigen el día y uno de `/plan crear`.
       - (d) **Replanificación por los datos y no solo a petición.**
         - Hoy Kairos solo replanifica si el atleta lo pide, y solo hasta el final de la semana siguiente. El motor diario solo toca la sesión de hoy.
         - Falta que Kairos detecte en Garmin cuándo el plan ya no vale y proponga rehacerlo: sesiones clave sin hacer, varios días sin actividad, HRV baja varios días seguidos, una actividad distinta de la prevista.

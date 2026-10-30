@@ -4,6 +4,19 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-30
 
+### Added (lo que el atleta dice para siempre se guarda para sus planes; pendiente 11 c)
+- Antes, "los martes no puedo" o "prefiero las series en pista" dicho al ajustar el plan valía solo para esa revisión.
+- Qué se hizo (`agent/plan_prefs.py`, sin LLM; criterios fijados antes en `docs/proximos_pasos.md`):
+  - La ruta de planes (crear, ajustar, replanificar y la pregunta libre de `/plan crear`) lee el mensaje antes de llamar al LLM y guarda lo que dura en el perfil. Así ya vale para esa misma petición.
+  - **Días que nunca puede:** en plural ("los martes no puedo", "no puedo los martes ni los jueves", "los fines de semana no tengo tiempo") o con "nunca", "siempre" o "a partir de ahora". Salen de `availability.training_days` y entran en `rest_days`, así que las reglas los exigen como descanso.
+  - **Lo que es para una vez no se guarda:** "este martes", "el martes que viene", "mañana", "el jueves no puedo".
+  - **Preferencias de texto:** la frase con "prefiero", "siempre", "nunca", "a partir de ahora" o "de ahora en adelante" va a `plan_preferences.notes` (sin duplicados, las 8 últimas, 200 caracteres). El LLM la recibe en cada plan, revisión o replanificado como "Siempre (lo dijo el atleta): …".
+  - La respuesta empieza con "📝 Lo tendré en cuenta en tus planes" y lo guardado.
+  - `/plan crear` enseña las notas y pregunta si las mantiene; antes, al guardar sus respuestas, habría borrado cualquier nota.
+- Resultado:
+  - Tests por tipo de frase, a favor y en contra (`tests/test_plan_prefs.py`). También de que llegan al LLM, de que las reglas exigen el día, de que la ruta guarda antes de llamar al LLM y de `/plan crear`. Tests: 906.
+  - El perfil del usuario no tenía notas: no hay datos que cambiar.
+
 ### Added («replanifica el plan» rehace el bloque hasta la carrera; pendiente 11 d2, petición del usuario)
 - Petición del usuario: tras un viaje, una enfermedad o semanas que no salen como estaban, Kairos tiene que replanificar con los datos, no solo retocar dos semanas.
 - Qué se hizo (criterios fijados antes en `docs/proximos_pasos.md`):

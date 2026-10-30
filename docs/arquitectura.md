@@ -35,7 +35,7 @@ Capas, de abajo arriba (cada una importa solo de las de debajo, nunca de `traine
 | Capa | Módulos |
 | --- | --- |
 | Utilidades | `prompts`, `dates`, `llm`, `knowledge`, `tool_results`, `garmin_data`, `data_access` |
-| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans` (validación, estado y motor determinista de planes antiguos), `run_plan` (plan por bloques determinista, planes antiguos), `plan_builder` (datos del plan para el LLM, tramos → ritmos, km y TSS, reglas), `plan_drift` (¿sigue valiendo el plan? Señales de los últimos 7 días, sin LLM), `activity_analysis`, `startup_status`, `replies`, `coaching` |
+| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans` (validación, estado y motor determinista de planes antiguos), `run_plan` (plan por bloques determinista, planes antiguos), `plan_builder` (datos del plan para el LLM, tramos → ritmos, km y TSS, reglas), `plan_drift` (¿sigue valiendo el plan? Señales de los últimos 7 días, sin LLM), `plan_prefs` (lo que el atleta dice para siempre: días sin entrenar y preferencias para sus planes), `activity_analysis`, `startup_status`, `replies`, `coaching` |
 | Rutas | `routes/` (load, period, sleep, records, profile, day_data, db_count) y `router` |
 | Mixins del agente | `load_compute` (LoadMixin), `startup` (StartupMixin), `context` (ContextMixin), `llm_calls` (LLMMixin), `routes/handlers` (RoutesMixin), `prefetch` (PrefetchMixin), `tool_loop` (ToolLoopMixin), `plan_llm` (PlanLLMMixin: el LLM construye y revisa el plan) |
 
