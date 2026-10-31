@@ -59,6 +59,7 @@ from agent.daily_engine import (
     _compute_daily_plan_adjustment,
     _compute_plan_execution_feedback,
     _get_active_training_plan,
+    _today_completion,
 )
 from agent.routes.load import (
     _compute_effective_week_tss_from_series_and_activities,
@@ -560,6 +561,18 @@ class StartupMixin:
                 except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as _week_exc:
                     log.debug("collect_startup: no se pudo calcular current_tss_effective: %s", _week_exc)
 
+        # Lo hecho hoy frente a lo que toca (31/10): tras entrenar, el arranque no propone la sesión de hoy otra vez.
+        # Va después de la carga porque el TSS guardado de la actividad lo escribe ese cálculo.
+        today_completion = None
+        today_execution: dict = {}
+        if active_plan:
+            today_acts = [a for a in activities_recent if _extract_activity_date_iso(a) == today_iso]
+            today_completion = _today_completion(active_plan, today_iso, today_acts)
+            if today_completion and today_completion["all_done"]:
+                today_execution = _compute_plan_execution_feedback(
+                    plan=active_plan, activities_for_day=today_acts, target_date_iso=today_iso,
+                    profile=getattr(self, "user_profile", {}) or {}) or {}
+
         body_summary = (
             f"hoy={_format_body_battery_day(body_today, today_iso)} · "
             f"ayer={_format_body_battery_day(body_yday, yesterday_iso)}"
@@ -583,6 +596,8 @@ class StartupMixin:
             "load_fatigue": load_fatigue or {},
             "load_debug": _load_debug,
             "plan_execution_feedback": plan_execution_feedback,
+            "today_completion": today_completion,
+            "today_execution": today_execution,
             "trainings": recent_trainings[:5],
             "weather": await weather_task,
         }
@@ -600,7 +615,12 @@ class StartupMixin:
         if active_plan:
             snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
             snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
-            snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile)
+            completion = snapshot.get("today_completion") or {}
+            done = 0 if not completion else (completion["planned"] if completion["all_done"] else completion["executed"])
+            snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile, done=done)
+            if completion.get("all_done"):
+                snapshot["tomorrow_session_lines"] = _today_session_lines(
+                    active_plan, self.user_profile, day=date.today() + timedelta(days=1))
             snapshot["plan_drift_lines"] = _plan_drift_lines(active_plan)
         md = _build_proactive_status_markdown(snapshot)
         needs_coach = bool(active_plan and snapshot["daily_plan_decision"].get("decision"))

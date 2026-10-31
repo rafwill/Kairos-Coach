@@ -36,27 +36,30 @@ def _day_slot(session: dict) -> tuple[int, int]:
     return int(session.get("day_index") or 1), int(((session.get("structured_workout") or {}).get("slot")) or 1)
 
 
-def _today_session_lines(plan: dict, profile: dict, day: date | None = None) -> list[str]:
+def _today_session_lines(plan: dict, profile: dict, day: date | None = None, done: int = 0) -> list[str]:
     """La sesión (o sesiones, si es día doble) que toca hoy según el plan, para el arranque (29/10).
 
     Plan por bloques: título, duración, km, TSS y tramos, como en `/plan ver`; plan antiguo: tipo, duración e
-    intensidad. Sin sesión hoy (antes o después del plan), lista vacía.
+    intensidad. Sin sesión hoy (antes o después del plan), lista vacía. `done` (31/10): las primeras sesiones ya
+    hechas salen solo con su título y "✅ Realizada", sin tramos.
     """
     day = day or date.today()
     rows = _get_planned_sessions_for_date(plan, day.isoformat())
     lines: list[str] = []
     zones, _ = _resolve_hr_zones(profile or {}, "running")
     for i, row in enumerate(rows):
+        mark = " ✅ Realizada" if i < done else ""
         if _is_block_plan(plan):
             sl = _run_plan.session_lines(row, day, zones)
-            lines.append(f"- **{sl[0]}**" + (" (doble)" if i else ""))
-            lines += [f"  - {x.strip()}" for x in sl[1:]]
+            lines.append(f"- **{sl[0]}**" + (" (doble)" if i else "") + mark)
+            if not mark:
+                lines += [f"  - {x.strip()}" for x in sl[1:]]
         elif str(row.get("session_type") or "") == "rest":
             lines.append(f"- **{_DAY_NAMES_ES[day.isoweekday()]} {day.strftime('%d/%m/%Y')} — Descanso**")
         else:
             lines.append(f"- **{_DAY_NAMES_ES[day.isoweekday()]} {day.strftime('%d/%m/%Y')} — "
                          f"{_session_type_label(row.get('session_type'))}** · {int(row.get('duration_min') or 0)} min · "
-                         f"{_session_intensity_label(row, profile)}")
+                         f"{_session_intensity_label(row, profile)}" + mark)
     return lines
 
 

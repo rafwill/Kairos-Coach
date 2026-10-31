@@ -4,6 +4,17 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-10-31
 
+### Changed (el arranque tras entrenar hoy; petición del usuario)
+- Problema: con la sesión de hoy ya hecha, el arranque seguía mostrando el plan vs ejecutado de ayer, la sesión de hoy sin hacer, la lectura de la mañana ("Fresco: buen momento para calidad") y recomendaba entrenar.
+- Ahora (`daily_engine._today_completion`, `startup_status`): cada actividad de hoy cubre una sesión prevista, por orden; un día de descanso en el plan también se cierra si se ha entrenado.
+  - "Sesión de hoy (realizada)" con "✅ Realizada" y "Hecho hoy: nombre · TSS"; "Mañana" con la sesión de mañana del plan.
+  - "Plan vs ejecutado (hoy)" en lugar del de ayer.
+  - El motor diario decide descanso (regla `done_today`): "descanso o movilidad suave: ya has entrenado hoy"; el coaching recibe ese marco.
+  - Estado de carga: el TSB queda como "de esta mañana, antes de entrenar", sin la regla de la mañana, y se añade "Forma de mañana (CTL − ATL)" con su zona.
+  - Día doble con la primera hecha: la decisión es sobre la que falta.
+- Sin plan activo no cambia (la ruta sin plan no tiene sesión que cerrar). Cualquier actividad de hoy cuenta como sesión hecha, también un paseo.
+- Tests: `tests/test_today_done.py` (983 en total).
+
 ### Added (resumen del arranque reutilizable; petición del usuario)
 - Problema: al salir y volver a entrar a los 5 minutos, Kairos repetía todo (snapshot de Garmin, cálculo de carga y la llamada al LLM, ≈ 94 s y 1 de las 20 peticiones diarias de Flash) para sacar casi lo mismo.
 - Decisiones del usuario: umbral de 60 min, tabla nueva, el sueño de hoy en la huella, y que el atleta vea de cuándo es el resumen y pueda pedir uno nuevo.

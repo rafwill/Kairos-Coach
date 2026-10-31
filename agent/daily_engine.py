@@ -153,6 +153,24 @@ def _get_planned_sessions_for_date(plan: dict, target_date_iso: str) -> list[dic
     return same or [first]
 
 
+def _today_completion(plan: dict | None, today_iso: str, activities_today: list[dict]) -> dict | None:
+    """Qué parte de lo que toca hoy según el plan ya está hecha (31/10, petición del usuario: tras entrenar, el
+    arranque seguía proponiendo la sesión de hoy). Cada actividad de hoy cubre una sesión prevista, por orden;
+    en un día de descanso, entrenar también cierra el día. None si no hay plan o no se ha entrenado."""
+    executed = [a for a in activities_today or [] if isinstance(a, dict)]
+    if not executed or not isinstance(plan, dict):
+        return None
+    rows = [r for r in _get_planned_sessions_for_date(plan, today_iso)
+            if str(r.get("session_type") or "") != "rest" and _safe_float(r.get("duration_min"), 0.0) > 0]
+    return {
+        "planned": len(rows),
+        "executed": len(executed),
+        "all_done": len(executed) >= len(rows),
+        "names": [str(a.get("name") or a.get("activityName") or "Actividad") for a in executed],
+        "pending": rows[len(executed):],
+    }
+
+
 def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | None:
     """Obtiene la sesión planificada para una fecha.
 
@@ -883,6 +901,22 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
 
     planned_session = _resolve_today_plan_session(plan) if has_plan else "sin plan activo"
     planned_row = _get_planned_session_for_date(plan, today_iso) if has_plan else None
+    completion = snapshot.get("today_completion") or {}
+    if completion.get("all_done"):
+        done_text = "; ".join(completion.get("names") or []) or "una actividad"
+        return {
+            "rule": "done_today",
+            "decision": "rest",
+            "reason": "ya has hecho la sesión de hoy",
+            "adherence_adjustment": "none",
+            "planned_session": planned_session,
+            "resulting_session": f"sesión de hoy ya realizada ({done_text}); el resto del día, descanso + movilidad ligera (20-30 min)",
+            "inputs": {"status": "neutral", "today_day_index": today_idx, "stress_flags": None},
+        }
+    if completion.get("pending"):
+        # Día doble con la primera ya hecha: la decisión es sobre la que falta.
+        planned_row = completion["pending"][0]
+        planned_session = str((planned_row.get("structured_workout") or {}).get("title") or planned_session)
     planned_duration_min = int((planned_row or {}).get("duration_min") or 0)
 
     if today_idx in unavailable_days:

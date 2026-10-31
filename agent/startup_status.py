@@ -58,6 +58,12 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     plan_recommendation = str(snapshot.get("plan_recommendation") or "").strip()
     daily_plan_decision = snapshot.get("daily_plan_decision") or {}
     plan_execution_feedback = snapshot.get("plan_execution_feedback") or {}
+    # Lo hecho hoy (31/10): si la sesión de hoy ya está hecha, el plan vs ejecutado es el de hoy, no el de ayer.
+    completion = snapshot.get("today_completion") or {}
+    today_done = bool(completion.get("all_done"))
+    feedback_day = "ayer"
+    if today_done and (snapshot.get("today_execution") or {}).get("adherence_score") is not None:
+        plan_execution_feedback, feedback_day = snapshot["today_execution"], "hoy"
     body_battery = snapshot.get("body_battery", {}) or {}
     hrv = snapshot.get("hrv", {}) or {}
     sleep = snapshot.get("sleep", {}) or {}
@@ -148,14 +154,23 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             atl_pos = "por encima de lo habitual" if atl_high and atl_now > atl_high else "dentro de lo habitual"
             zone = _load_metrics.form_zone(tsb_now, float(latest.get("ctl", 0.0)))
             lines.append(
-                "  - Estado: "
+                "  - Estado" + (" de esta mañana, antes de entrenar (TSB)" if today_done else "") + ": "
                 f"Estado físico (CTL) {float(latest.get('ctl', 0.0)):.1f} · "
                 f"Fatiga (ATL) {atl_now:.1f} (máximo habitual {atl_high:.1f}; {atl_pos}) · "
                 f"Forma (TSB) {tsb_now:+.1f} = {zone['form_pct']:+.0f} % de tu CTL → zona {zone['emoji']} {zone['label']} "
                 f"(rango habitual {tsb_low:+.1f} a {tsb_high:+.1f}) · "
                 f"TSS de la semana {float(weekly_tss):.1f}"
             )
-        if recommendation:
+            if today_done:
+                # El TSB de TP es el de la mañana; con la sesión de hoy hecha, la forma de mañana es CTL − ATL de hoy.
+                ctl_now = float(latest.get("ctl", 0.0))
+                tomorrow_tsb = ctl_now - atl_now
+                tomorrow_zone = _load_metrics.form_zone(tomorrow_tsb, ctl_now)
+                lines.append(
+                    f"  - Tras la sesión de hoy: Forma de mañana (CTL − ATL) {tomorrow_tsb:+.1f} = "
+                    f"{tomorrow_zone['form_pct']:+.0f} % de tu CTL → zona {tomorrow_zone['emoji']} {tomorrow_zone['label']}"
+                )
+        if recommendation and not today_done:
             lines.append(f"  - Regla aplicada: {recommendation}")
         if load_fatigue.get("warming_up"):
             days_rem = int(load_fatigue.get("warming_up_days_remaining") or 0)
@@ -200,7 +215,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             load_text = f"carga: previsto 0 TSS (descanso) · hecho {done_tss:.0f} TSS"
         else:
             load_text = f"desviación de carga {dev_pct:+.0f}% ({done_tss:.0f} de {planned_tss:.0f} TSS)"
-        lines.append(f"- Plan vs ejecutado (ayer): adherencia {score:.2f} ({label}) · {load_text}")
+        lines.append(f"- Plan vs ejecutado ({feedback_day}): adherencia {score:.2f} ({label}) · {load_text}")
         if structured_summary:
             lines.append(f"  - Plan de referencia: {structured_summary}")
         block_summary = ((plan_execution_feedback.get("block_feedback") or {}).get("summary") or {})
@@ -233,6 +248,9 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             "rest": "descanso",
         }).get(decision, "rodaje suave")
 
+    if decision_for_user and plan_assigned and today_done:
+        decision_for_user = "descanso o movilidad suave: ya has entrenado hoy"
+
     if decision_for_user:
         initial_recommendation = f"Elección recomendada hoy: {decision_for_user}."
     elif plan_assigned:
@@ -244,9 +262,19 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         initial_recommendation = "No tienes plan asignado. ¿Que quieres hacer hoy?"
 
     today_session = [str(x) for x in (snapshot.get("today_session_lines") or [])]
-    if plan_assigned and today_session:
+    if plan_assigned and (today_session or today_done):
         # Primero lo que toca hoy según el plan; después, la recomendación sobre esa sesión (29/10).
-        lines.extend(["", "## 🗓️ Sesión de hoy", *today_session])
+        title = "## 🗓️ Sesión de hoy"
+        if today_done:
+            title += " (realizada)" if completion.get("planned") else " (hoy no tocaba entrenar)"
+        lines.extend(["", title, *today_session])
+        if today_done:
+            done_tss = _safe_float(((snapshot.get("today_execution") or {}).get("executed") or {}).get("tss"), 0.0)
+            lines.append("- Hecho hoy: " + " · ".join(completion.get("names") or ["actividad"])
+                         + (f" · {done_tss:.0f} TSS" if done_tss > 0 else ""))
+            tomorrow = [str(x) for x in (snapshot.get("tomorrow_session_lines") or [])]
+            if tomorrow:
+                lines.extend(["", "## 🗓️ Mañana", *tomorrow])
     if plan_assigned:
         # Señales de que el plan ya no encaja con lo de los últimos días (30/10, pendiente 11 d1).
         lines.extend(str(x) for x in (snapshot.get("plan_drift_lines") or []))
