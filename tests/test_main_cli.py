@@ -477,6 +477,7 @@ class TestStartupChecks:
 
 class _MainAgent(_Agent):
     instances: list = []
+    cached_summary = None  # lo que devuelve cached_startup_summary
 
     def __init__(self, mcp_session=None, provider=None):
         super().__init__()
@@ -490,6 +491,7 @@ class _MainAgent(_Agent):
         self.initialize = AsyncMock()
         self.compute_and_persist_load_metrics = AsyncMock()
         self.build_startup_status_markdown = AsyncMock(return_value="## Estado\n- Listo")
+        self.cached_startup_summary = AsyncMock(return_value=type(self).cached_summary)
         self.build_onboarding_mcp_enrichment = AsyncMock(return_value={})
         _MainAgent.instances.append(self)
 
@@ -605,6 +607,26 @@ class TestMainLoop:
         assert sync.await_args.kwargs == {"profile_raw": '{"displayName": "x"}'}
         agent = _MainAgent.instances[0]
         assert agent.build_startup_status_markdown.await_args.kwargs["load_ready"] is not None
+        assert "Listo" in out()
+
+    def test_a_saved_recent_summary_is_shown_without_recomputing_load_or_status(self, monkeypatch, out):
+        # 31/10: reentrada en menos de 1 h sin nada nuevo → el resumen guardado, sin carga ni snapshot ni LLM.
+        monkeypatch.setattr(_MainAgent, "cached_summary", "_🕒 Resumen de las 14:33 (hace 5 min)_\n\n## Guardado")
+        _run_main(["salir"], monkeypatch=monkeypatch)
+        agent = _MainAgent.instances[0]
+        agent.compute_and_persist_load_metrics.assert_not_called()
+        agent.build_startup_status_markdown.assert_not_called()
+        text = out()
+        assert "Resumen de las 14:33" in text and "Guardado" in text
+        assert "CTL (Estado físico)=60.4" in text  # la línea de carga sale de la serie guardada
+
+    def test_resumen_command_recomputes_load_and_summary(self, monkeypatch, out):
+        monkeypatch.setattr(_MainAgent, "cached_summary", "## Guardado")
+        _run_main(["/resumen", "salir"], monkeypatch=monkeypatch)
+        agent = _MainAgent.instances[0]
+        agent.compute_and_persist_load_metrics.assert_awaited_once_with()
+        agent.build_startup_status_markdown.assert_awaited_once_with()
+        assert agent.chat.call_count == 0
         assert "Listo" in out()
 
     def test_plan_create_is_awaited_by_the_main_loop(self, monkeypatch, out):

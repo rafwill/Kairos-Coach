@@ -47,7 +47,7 @@ El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`a
 3. En el SQL Editor de Supabase (New query → pegar → Run), en este orden:
    1. [`supabase/schema.sql`](supabase/schema.sql): tablas, índices y funciones. En un proyecto ya existente añade solo lo que falte sin tocar los datos.
    2. [`supabase/rls.sql`](supabase/rls.sql): activa la seguridad por fila y las políticas, para que cada usuario vea solo sus filas. **Sin este paso las tablas quedan abiertas** a cualquiera con la clave `anon`.
-4. Comprueba la seguridad: `make check-rls` (en Windows sin `make`: `.venv\Scripts\python.exe tools\check_rls.py`). Sin sesión, las 11 tablas deben salir `cerrada`.
+4. Comprueba la seguridad: `make check-rls` (en Windows sin `make`: `.venv\Scripts\python.exe tools\check_rls.py`). Sin sesión, las 12 tablas deben salir `cerrada`.
 5. Primer acceso: arranca Kairos (ver Uso), escribe tu email y la contraseña de Garmin Connect, acepta crear la cuenta, abre el enlace del correo de confirmación y vuelve a entrar. Después, `check_rls` con tu sesión debe ver tus datos.
 
 Qué protege cada política y cómo se migra un proyecto antiguo con usuarios sin cuenta de Auth: [`supabase/README.md`](supabase/README.md).
@@ -72,6 +72,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/plan listar` · `/plan ver <nº o id>` · `/plan activar <nº o id>` · `/plan crear` | Planes de entrenamiento: `/plan crear` pregunta como un entrenador (días, tiempo máximo por día, dobles, distribución de la intensidad, progresión de la carga, otros deportes como bici o remo, dónde entrenas) y tu LLM construye el plan (semanas y sesiones con fecha, tramos, ritmos o zonas, km y TSS) a partir del objetivo del perfil y Kairos lo comprueba; en el chat, "ajusta el plan: …" cambia los próximos días y "replanifica el plan" lo rehace hasta la carrera (al arrancar, Kairos avisa si el plan ya no encaja con lo que estás haciendo); el nº y el id corto salen en `/plan listar` |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |
 | `/proveedor` | Cambiar de proveedor de IA, modelos (planes y arranque; chat) o clave |
+| `/resumen` | Rehacer el resumen inicial con datos nuevos de Garmin (si reentras en menos de 1 h y no hay nada nuevo, Kairos muestra el guardado, con su hora, sin consultar a Garmin ni al LLM) |
 | `salir` | Salir de Kairos (la sesión queda guardada para la próxima vez) |
 
 Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué me toca mañana?"*, *"Ajusta el plan, tengo una molestia en el gemelo"*, *"Replanifica el plan, he estado una semana enfermo"*, *"Los martes no puedo entrenar"*.
@@ -91,7 +92,7 @@ agent/
   prefetch.py            precarga de una actividad (y su análisis) antes del bucle
   llm_calls.py           proveedor de IA (reintento ante 429/503, aviso de cupo diario), capa de coaching y sensores
   context.py             prompt de sistema y mensajes del LLM
-  startup.py             arranque, foto de 48 h y resumen inicial (startup_status.py)
+  startup.py             arranque, foto de 48 h y resumen inicial (startup_status.py; startup_cache.py: huella y frescura del resumen guardado)
   load_compute.py        TSS de las actividades nuevas y serie de carga en Supabase
   daily_engine.py        motor diario: plan de hoy, ajuste por HRV/sueño/body battery, zonas
   plan_llm.py            el LLM construye (estructura + semanas en paralelo) y revisa el plan, con reintentos

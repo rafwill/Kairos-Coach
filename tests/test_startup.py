@@ -393,6 +393,45 @@ class TestStartupProactive:
         assert "Bloques:" in out
         assert "2/3 completos" in out
 
+    def test_plan_vs_executed_without_planned_tss_shows_absolute_load(self):
+        payload = {
+            "plan_assigned": True,
+            "plan_recommendation": "Plan activo",
+            "plan_execution_feedback": {
+                "adherence_score": 0.0,
+                "adherence_label": "baja",
+                "load_deviation_pct": 84.6,
+                "planned": {"session_type": "rest", "tss_est": 0.0},
+                "executed": {"activities": 1, "tss": 84.6},
+            },
+            "body_battery": {"summary": "sin datos"},
+            "hrv": {"summary": "sin datos"},
+            "sleep": {"summary": "sin datos"},
+            "trainings": [],
+        }
+        out = _build_proactive_status_markdown(payload)
+        assert "previsto 0 TSS (descanso) · hecho 85 TSS" in out
+        assert "8460" not in out
+
+    def test_plan_vs_executed_with_planned_tss_shows_percentage_and_tss(self):
+        payload = {
+            "plan_assigned": True,
+            "plan_recommendation": "Plan activo",
+            "plan_execution_feedback": {
+                "adherence_score": 0.9,
+                "adherence_label": "adherente",
+                "load_deviation_pct": 0.5,
+                "planned": {"tss_est": 60.0},
+                "executed": {"activities": 1, "tss": 90.0},
+            },
+            "body_battery": {"summary": "sin datos"},
+            "hrv": {"summary": "sin datos"},
+            "sleep": {"summary": "sin datos"},
+            "trainings": [],
+        }
+        out = _build_proactive_status_markdown(payload)
+        assert "desviación de carga +50% (90 de 60 TSS)" in out
+
     def test_compute_daily_plan_adjustment_respects_unavailable_day(self):
         today_iso = date.today().isoformat()
         today_idx = date.today().isoweekday()

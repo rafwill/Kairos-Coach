@@ -18,6 +18,7 @@ from agent.mcp.client import (
 from agent import storage as _storage
 from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _try_parse_json,
+    TSS_FORMULA_VERSION,
 )
 from agent.tool_results import (
     _build_tools_schema,
@@ -49,6 +50,7 @@ from agent.kairos_tools import (
     _KAIROS_INTERNAL_TOOLS,
 )
 from agent import plan_drift as _plan_drift
+from agent import startup_cache as _startup_cache
 from agent import weather as _weather
 from agent.plans import _plan_field, _plan_start, _today_session_lines
 from agent.startup_status import SOURCE_RULES, SOURCE_RULES_AND_COACH
@@ -66,6 +68,33 @@ from agent.startup_status import (
 )
 
 log = logging.getLogger(__name__)
+
+
+async def _call_json(session, tool_name: str, args: dict) -> Any:
+    """Llama a una tool de Garmin con 8 s de tiempo y devuelve el JSON; None si falla."""
+    try:
+        raw = await asyncio.wait_for(call_tool(session, tool_name, args), timeout=8.0)
+    except (TimeoutError, OSError) as exc:
+        log.debug("startup: fallo red en %s: %s", tool_name, exc)
+        return None
+    except RuntimeError as exc:
+        log.debug("startup: fallo runtime en %s: %s", tool_name, exc)
+        return None
+    except asyncio.TimeoutError:
+        log.debug("startup: timeout en %s", tool_name)
+        return None
+    parsed_raw = _try_parse_json(raw)
+    if parsed_raw is not None:
+        return parsed_raw
+    compact = _compact_tool_result(raw, tool_name)
+    parsed = _try_parse_json(compact)
+    return parsed if parsed is not None else compact
+
+
+def _recent_training_ids(activities: list[dict]) -> list[str]:
+    """Ids de las actividades de las últimas 48 h (hasta 5), como las lista el snapshot del arranque."""
+    ids = [a.get("activityId") or a.get("id") for a in activities if _is_activity_in_last_48h(a)]
+    return [str(i) for i in ids if i is not None][:5]
 
 
 def _plan_drift_lines(plan: dict, today: date | None = None) -> list[str]:
@@ -268,26 +297,7 @@ class StartupMixin:
         _session_wellness_cache: dict[str, dict[str, Any]] = self._session_wellness_cache
 
         async def _tool_json(tool_name: str, args: dict) -> Any:
-            try:
-                raw = await asyncio.wait_for(
-                    call_tool(self.mcp_session, tool_name, args),
-                    timeout=8.0,
-                )
-            except (TimeoutError, OSError) as exc:
-                log.debug("collect_startup_snapshot_48h: fallo red en %s: %s", tool_name, exc)
-                return None
-            except RuntimeError as exc:
-                log.debug("collect_startup_snapshot_48h: fallo runtime en %s: %s", tool_name, exc)
-                return None
-            except asyncio.TimeoutError:
-                log.debug("collect_startup_snapshot_48h: timeout en %s", tool_name)
-                return None
-            parsed_raw = _try_parse_json(raw)
-            if parsed_raw is not None:
-                return parsed_raw
-            compact = _compact_tool_result(raw, tool_name)
-            parsed = _try_parse_json(compact)
-            return parsed if parsed is not None else compact
+            return await _call_json(self.mcp_session, tool_name, args)
 
         async def _cached_or_fetch(cache_key: str, tool_name: str, args: dict) -> Any:
             if cache_key in _pf:
@@ -593,10 +603,60 @@ class StartupMixin:
             snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile)
             snapshot["plan_drift_lines"] = _plan_drift_lines(active_plan)
         md = _build_proactive_status_markdown(snapshot)
-        if active_plan and snapshot["daily_plan_decision"].get("decision"):
+        needs_coach = bool(active_plan and snapshot["daily_plan_decision"].get("decision"))
+        if needs_coach:
             md = await self._startup_coaching(md, snapshot["daily_plan_decision"])
+        self._save_startup_summary(snapshot, profile_changes, md, needs_coach)
         log.info("[STARTUP] ✓ total=%.1fs", time.perf_counter() - _t0)
         return md
+
+    async def cached_startup_summary(self, profile_changes: list[str] | None = None) -> str | None:
+        """El resumen del arranque guardado, con su nota de cuándo es, si tiene menos de 1 h y nada ha cambiado
+        (31/10, petición del usuario); None si hay que rehacerlo. Solo hace 2 llamadas a Garmin (actividades y sueño
+        de hoy) y 1 a Supabase para el plan, y se salta el cálculo de carga, el snapshot y el LLM."""
+        try:
+            row = _storage.get_startup_summary()
+            if not _startup_cache.is_recent(row):
+                return None
+            today_iso = date.today().isoformat()
+            acts_raw, sleep_today = await asyncio.gather(
+                _call_json(self.mcp_session, "get_activities_by_date", {
+                    "start_date": (date.today() - timedelta(days=2)).isoformat(), "end_date": today_iso,
+                    "page": 0, "page_size": 100}),
+                _call_json(self.mcp_session, "get_sleep_summary", {"date": today_iso}),
+            )
+            if acts_raw is None:
+                return None  # Garmin no responde: no se puede asegurar que no haya nada nuevo
+            current = _startup_cache.fingerprint(
+                today=today_iso, activity_ids=_recent_training_ids(_extract_activities_list(acts_raw)),
+                sleep=_format_sleep_day(sleep_today, today_iso), plan_row=_storage.get_active_training_plan(),
+                formula_version=TSS_FORMULA_VERSION, profile_changes=profile_changes)
+            if not _startup_cache.matches(row, current):
+                return None
+            log.info("[STARTUP] resumen reutilizado (huella igual, menos de 1 h)")
+            return _startup_cache.with_note(row)
+        except Exception as exc:  # noqa: BLE001 — la caché es opcional: ante cualquier fallo se rehace el resumen
+            log.warning("[STARTUP] caché del resumen no disponible: %s", exc)
+            return None
+
+    def _save_startup_summary(self, snapshot: dict, profile_changes: list[str] | None, md: str,
+                              needs_coach: bool) -> None:
+        """Guarda el resumen con su huella para reutilizarlo. No se guarda si Garmin no respondió nada ni si faltó el
+        texto del entrenador (el LLM falló): así el siguiente arranque lo reintenta."""
+        sleep_today = (snapshot.get("sleep") or {}).get("today")
+        if all(x is None for x in ((snapshot.get("body_battery") or {}).get("today"),
+                                   (snapshot.get("hrv") or {}).get("today"), sleep_today)):
+            return
+        if needs_coach and "🧠 Tu entrenador" not in md:
+            return
+        try:
+            today_iso = str((snapshot.get("dates") or {}).get("today") or date.today().isoformat())
+            _storage.save_startup_summary(_startup_cache.fingerprint(
+                today=today_iso, activity_ids=[t.get("activity_id") for t in snapshot.get("trainings") or []],
+                sleep=_format_sleep_day(sleep_today, today_iso), plan_row=_storage.get_active_training_plan(),
+                formula_version=TSS_FORMULA_VERSION, profile_changes=profile_changes), md)
+        except Exception as exc:  # noqa: BLE001 — la caché es opcional
+            log.warning("[STARTUP] no se pudo guardar el resumen: %s", exc)
 
     async def _startup_coaching(self, md: str, decision: dict) -> str:
         """Recomendación del arranque con plan (29/10, decisión del usuario): la decisión es la del motor diario y el

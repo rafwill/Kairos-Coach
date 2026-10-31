@@ -1371,6 +1371,7 @@ def _show_menu() -> None:
     table.add_row("Plan", "/plan crear", "Crear el plan con tu LLM y activarlo")
     table.add_row("Plan", "/plan activar <id>", "Activar plan por ID")
 
+    table.add_row("Sistema", "/resumen", "Rehacer el resumen inicial con datos nuevos de Garmin")
     table.add_row("Sistema", "/proveedor", "Cambiar de proveedor de IA, modelo o clave")
     table.add_row("Sistema", "/ayuda", "Mostrar ayuda extendida")
     table.add_row("Sistema", "salir", "Salir de Kairos (la sesión queda guardada)")
@@ -1578,6 +1579,18 @@ async def _switch_provider(agent: TrainerAgent, config: dict) -> dict:
         border_style="green",
     ))
     return new_config
+
+
+async def _refresh_startup_summary(agent: TrainerAgent) -> None:
+    """/resumen: rehace el resumen inicial con datos nuevos de Garmin y lo guarda para los próximos arranques (31/10)."""
+    try:
+        with console.status("[dim]Kairos está actualizando tu resumen...[/]"):
+            await agent.compute_and_persist_load_metrics()
+            summary = await agent.build_startup_status_markdown()
+        console.print(Markdown(summary))
+    except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, json.JSONDecodeError, KeyError) as exc:
+        log.warning("/resumen falló: %s", exc)
+        console.print(f"[dim yellow]No se pudo actualizar el resumen: {exc}[/]")
 
 
 def _handle_cli_command(user_input: str, agent: TrainerAgent) -> bool:
@@ -1863,9 +1876,13 @@ async def main() -> None:
         # Usuario existente: cálculo incremental desde último registro persistido.
         # El resumen inicial empieza a la vez (8c, 28/10): pide a Garmin sus datos mientras se calcula la carga y
         # espera a que termine solo para leer la serie.
-        load_task = asyncio.ensure_future(agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user))
         skip_startup_status = str(os.environ.get("KAIROS_SKIP_STARTUP_STATUS", "")).strip().lower() in {"1", "true", "yes", "on"}
-        status_task = None if skip_startup_status else asyncio.ensure_future(
+        # Reentrada en menos de 1 h sin nada nuevo (31/10): se muestra el resumen guardado y no se consulta a Garmin
+        # para la carga, ni se rehace el snapshot ni el LLM. `/resumen` lo actualiza cuando el atleta quiera.
+        cached_status = None if (skip_startup_status or is_new_user) else await agent.cached_startup_summary(profile_changes)
+        load_task = None if cached_status else asyncio.ensure_future(
+            agent.compute_and_persist_load_metrics(force_full_recalc=is_new_user))
+        status_task = None if (skip_startup_status or cached_status) else asyncio.ensure_future(
             agent.build_startup_status_markdown(profile_changes=profile_changes, load_ready=load_task)
         )
         try:
@@ -1888,22 +1905,23 @@ async def main() -> None:
                     await asyncio.sleep(1)
                 await task
 
-            await _compute_with_counter()
-            load_meta = getattr(agent, "_last_load_compute_meta", {}) or {}
-            load_mode = str(load_meta.get("mode") or "")
-            load_reason = str(load_meta.get("reason") or "").strip()
-            if load_mode == "full_recalc":
-                console.print(
-                    "[yellow]ℹ Kairos tardó más porque recalculó el histórico de carga completo"
-                    + (f" ({load_reason})" if load_reason else "")
-                    + ".[/]"
-                )
-            elif load_mode == "incremental_refresh":
-                console.print(
-                    "[dim]ℹ Kairos refrescó días recientes para incorporar actividades nuevas"
-                    + (f" ({load_reason})" if load_reason else "")
-                    + ".[/]"
-                )
+            if load_task is not None:
+                await _compute_with_counter()
+                load_meta = getattr(agent, "_last_load_compute_meta", {}) or {}
+                load_mode = str(load_meta.get("mode") or "")
+                load_reason = str(load_meta.get("reason") or "").strip()
+                if load_mode == "full_recalc":
+                    console.print(
+                        "[yellow]ℹ Kairos tardó más porque recalculó el histórico de carga completo"
+                        + (f" ({load_reason})" if load_reason else "")
+                        + ".[/]"
+                    )
+                elif load_mode == "incremental_refresh":
+                    console.print(
+                        "[dim]ℹ Kairos refrescó días recientes para incorporar actividades nuevas"
+                        + (f" ({load_reason})" if load_reason else "")
+                        + ".[/]"
+                    )
             lm = _load_metrics_view(agent.user_profile)
             last = lm.get("latest") or {}
             if last.get("atl") or last.get("ctl"):
@@ -1921,7 +1939,9 @@ async def main() -> None:
 
         timer.mark("carga")
         # Estado proactivo al arranque (especialmente para usuario existente).
-        if status_task is None:
+        if cached_status:
+            console.print(Markdown(cached_status))
+        elif status_task is None:
             console.print("[dim]Resumen inicial omitido por KAIROS_SKIP_STARTUP_STATUS.[/]")
         else:
             try:
@@ -1953,6 +1973,10 @@ async def main() -> None:
 
             if cmd in {"/proveedor", "/provider"}:
                 provider = await _switch_provider(agent, provider)
+                continue
+
+            if cmd == "/resumen":
+                await _refresh_startup_summary(agent)
                 continue
 
             if _parse_plan_command(cmd)[0] == "create":

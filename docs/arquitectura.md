@@ -35,7 +35,7 @@ Capas, de abajo arriba (cada una importa solo de las de debajo, nunca de `traine
 | Capa | Módulos |
 | --- | --- |
 | Utilidades | `prompts`, `dates`, `llm`, `knowledge`, `tool_results`, `garmin_data`, `data_access` |
-| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans` (validación, estado y motor determinista de planes antiguos), `run_plan` (plan por bloques determinista, planes antiguos), `plan_builder` (datos del plan para el LLM, tramos → ritmos, km y TSS, reglas), `plan_drift` (¿sigue valiendo el plan? Señales de los últimos 7 días, sin LLM), `plan_prefs` (lo que el atleta dice para siempre: días sin entrenar y preferencias para sus planes), `weather` (el tiempo de hoy donde entrena, de Open-Meteo, para el arranque), `activity_analysis`, `startup_status`, `replies`, `coaching` |
+| Dominio | `hr_profile`, `wellness`, `kairos_tools`, `daily_engine`, `plans` (validación, estado y motor determinista de planes antiguos), `run_plan` (plan por bloques determinista, planes antiguos), `plan_builder` (datos del plan para el LLM, tramos → ritmos, km y TSS, reglas), `plan_drift` (¿sigue valiendo el plan? Señales de los últimos 7 días, sin LLM), `plan_prefs` (lo que el atleta dice para siempre: días sin entrenar y preferencias para sus planes), `weather` (el tiempo de hoy donde entrena, de Open-Meteo, para el arranque), `activity_analysis`, `startup_status`, `startup_cache` (huella y frescura del resumen guardado), `replies`, `coaching` |
 | Rutas | `routes/` (load, period, sleep, records, profile, day_data, db_count) y `router` |
 | Mixins del agente | `load_compute` (LoadMixin), `startup` (StartupMixin), `context` (ContextMixin), `llm_calls` (LLMMixin), `routes/handlers` (RoutesMixin), `prefetch` (PrefetchMixin), `tool_loop` (ToolLoopMixin), `plan_llm` (PlanLLMMixin: el LLM construye y revisa el plan) |
 
@@ -57,6 +57,7 @@ Tests: un fichero por módulo o familia (`test_routes.py`, `test_routes_load.py`
 | `activity_tss` | Un TSS por actividad, calculado una vez: `tss`, `model`, anclajes usados y `native_load` (carga de Garmin, informativa). |
 | `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente única de todas las pantallas, del contexto del LLM y del motor de planes (`_load_metrics_series` / `_load_metrics_view`; el estado de carga se deriva con `load_metrics.load_fatigue_from_series`). Sin serie no hay estado de carga: no se recalcula en vivo. |
 | `wellness_daily` | Body Battery y HRV por día, con `pulled_at` para no consultar Garmin de más. |
+| `startup_summary` | Último resumen del arranque con su huella (día, actividades de las últimas 48 h, sueño de hoy, plan activo, fórmula de TSS, cambios del perfil). Si se reentra en menos de 1 h con la misma huella, se muestra sin volver a consultar a Garmin ni al LLM, con la hora; `/resumen` lo rehace (31/10; `agent/startup_cache.py`). |
 
 Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve para instalar desde cero y para poner al día un proyecto existente).
 
@@ -169,7 +170,7 @@ Criterio de validez: el TSS por sesión de Kairos debe coincidir con el de TP pa
 
 ## Seguridad
 
-- Cuentas y acceso a datos: Supabase Auth (email + la misma contraseña que en Garmin) y seguridad por fila (RLS) en las 11 tablas, de modo que cada usuario solo ve y modifica sus filas y la clave `anon` sin sesión no ve nada. Sesión guardada en `~/.kairos/supabase_session.json`. Nada se lee de la base de datos antes de iniciar sesión. Conceptos, políticas, puesta en marcha en dos fases y marcha atrás: [`supabase/README.md`](../supabase/README.md); comprobación: `make check-rls`.
+- Cuentas y acceso a datos: Supabase Auth (email + la misma contraseña que en Garmin) y seguridad por fila (RLS) en las 12 tablas, de modo que cada usuario solo ve y modifica sus filas y la clave `anon` sin sesión no ve nada. Sesión guardada en `~/.kairos/supabase_session.json`. Nada se lee de la base de datos antes de iniciar sesión. Conceptos, políticas, puesta en marcha en dos fases y marcha atrás: [`supabase/README.md`](../supabase/README.md); comprobación: `make check-rls`.
 - Contraseña de Garmin: cifrada con Fernet (`ENCRYPTION_KEY` del `.env`); `_sanitize_credentials_for_storage` impide guardarla en claro.
 - Solo lectura en Garmin: el MCP propio solo expone tools `get_*`, y una tool que no esté en el esquema (una de escritura que pidiera el LLM) no se manda al servidor.
 - Tokens de Garmin en `~/.garminconnect/kairos/` (fuera del repo).

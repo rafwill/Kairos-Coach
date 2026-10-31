@@ -2,6 +2,19 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-10-31
+
+### Added (resumen del arranque reutilizable; petición del usuario)
+- Problema: al salir y volver a entrar a los 5 minutos, Kairos repetía todo (snapshot de Garmin, cálculo de carga y la llamada al LLM, ≈ 94 s y 1 de las 20 peticiones diarias de Flash) para sacar casi lo mismo.
+- Decisiones del usuario: umbral de 60 min, tabla nueva, el sueño de hoy en la huella, y que el atleta vea de cuándo es el resumen y pueda pedir uno nuevo.
+- Tabla `startup_summary` (`supabase/schema.sql`, `rls.sql`, `make check-rls`; hay que ejecutar los dos SQL en Supabase). Se guarda el resumen con una huella: día, ids de las actividades de las últimas 48 h, sueño de hoy, plan activo (id y `updated_at`), `TSS_FORMULA_VERSION` y cambios del perfil.
+- Al arrancar (`StartupMixin.cached_startup_summary`): si tiene menos de 60 min, solo se pide a Garmin la lista de actividades y el sueño de hoy; si la huella coincide se muestra con la nota "Resumen de las HH:MM (hace N min)" y se salta el cálculo de carga, el snapshot y el LLM. Cualquier cambio, o Garmin sin responder, rehace el resumen.
+- No se guarda si Garmin no respondió nada o si faltó el texto de "Tu entrenador" (el siguiente arranque lo reintenta). La caché es opcional: sin tabla o con un fallo de Supabase, todo sigue como antes.
+- `/resumen` rehace la carga y el resumen en cualquier momento y lo guarda.
+- Se mantiene a propósito: Body Battery y HRV de la mañana cambian por sincronización del reloj; los cubre el sueño de hoy.
+- También: el resumen "Plan vs ejecutado" no da un porcentaje con 0 TSS previsto (un descanso daba +8460 %): muestra "previsto 0 TSS (descanso) · hecho 85 TSS"; con TSS previsto, "desviación de carga +50% (90 de 60 TSS)".
+- Tests: `tests/test_startup_cache.py`, storage, CLI y el resumen de plan vs ejecutado (974 en total).
+
 ## 2026-10-30
 
 ### Docs (repaso de la documentación con lo nuevo del 30/10; petición del usuario)
