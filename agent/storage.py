@@ -1315,3 +1315,43 @@ def upsert_wellness_daily(
         sb.table("wellness_daily").upsert(payload, on_conflict="app_user_id,metric_date").execute()
     except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.warning("upsert_wellness_daily: %s", exc)
+
+
+@_db_read("startup_summary")
+def get_startup_summary() -> dict | None:
+    """Último resumen del arranque (31/10): {generated_at, fingerprint, markdown}; None si no hay o falta la tabla."""
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb:
+        return None
+    try:
+        res = sb.table("startup_summary").select("generated_at,fingerprint,markdown").eq(
+            "app_user_id", uid).limit(1).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "startup_summary"):
+            log.warning("[storage] startup_summary no existe en Supabase (ejecuta supabase/schema.sql y rls.sql)")
+            return None
+        raise
+    return dict(res.data[0]) if res.data else None
+
+
+@_db_write("startup_summary")
+def save_startup_summary(fingerprint: dict, markdown: str) -> None:
+    """Guarda (sustituye) el resumen del arranque con su huella; sin la tabla, no hace nada."""
+    sb = _supabase()
+    uid = _require_active_user_id()
+    if not sb:
+        return
+    row = {
+        "app_user_id": uid,
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+        "fingerprint": fingerprint,
+        "markdown": markdown,
+    }
+    try:
+        sb.table("startup_summary").upsert(row).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "startup_summary"):
+            log.warning("[storage] startup_summary no existe en Supabase (ejecuta supabase/schema.sql y rls.sql)")
+            return
+        raise

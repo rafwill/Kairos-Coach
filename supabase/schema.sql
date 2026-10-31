@@ -262,6 +262,17 @@ create table if not exists wellness_daily (
 create index if not exists idx_wellness_daily_user_date
     on wellness_daily (app_user_id, metric_date desc);
 
+-- ─── startup_summary (31/10) ────────────────────────────────────────────────
+-- Último resumen del arranque: si se reentra en menos de 1 h y nada ha cambiado (actividades, sueño de hoy, plan,
+-- fórmula de TSS), Kairos lo muestra sin volver a consultar a Garmin ni al LLM. `fingerprint` guarda esos datos.
+create table if not exists startup_summary (
+    app_user_id  text        primary key references app_user(id) on delete cascade,
+    generated_at timestamptz not null default now(),
+    fingerprint  jsonb       not null default '{}',
+    markdown     text        not null default '',
+    updated_at   timestamptz not null default now()
+);
+
 -- ─── Triggers updated_at ────────────────────────────────────────────────────
 drop trigger if exists trg_user_profile_updated_at on user_profile;
 create trigger trg_user_profile_updated_at
@@ -311,6 +322,11 @@ create trigger trg_activity_tss_updated_at
 drop trigger if exists trg_wellness_daily_updated_at on wellness_daily;
 create trigger trg_wellness_daily_updated_at
     before update on wellness_daily
+    for each row execute function _set_updated_at();
+
+drop trigger if exists trg_startup_summary_updated_at on startup_summary;
+create trigger trg_startup_summary_updated_at
+    before update on startup_summary
     for each row execute function _set_updated_at();
 
 commit;

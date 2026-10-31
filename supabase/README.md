@@ -89,7 +89,7 @@ Kairos ──(email + contraseña)──> Supabase Auth ──> token de sesión
    ```bash
    make check-rls        # o: .venv/Scripts/python.exe tools/check_rls.py
    ```
-   - Bloque "Sin sesión": las 11 tablas deben salir `cerrada` (0 filas).
+   - Bloque "Sin sesión": las 12 tablas deben salir `cerrada` (0 filas).
    - Bloque "Con tu sesión": tu fila de `app_user` debe ser exactamente 1 y ver tus datos.
 7. Entra en Kairos y haz una pregunta normal (por ejemplo, "¿cuánto TSS hice esta semana?"). Si quieres la prueba completa, lanza la batería (`tools/run_bateria.py` + `tools/juez_bateria.py`).
 
@@ -123,6 +123,7 @@ alter table training_plan_version disable row level security;
 alter table load_metrics_daily    disable row level security;
 alter table activity_tss          disable row level security;
 alter table wellness_daily        disable row level security;
+alter table startup_summary       disable row level security;
 ```
 
 Las políticas se quedan creadas pero sin efecto; para volver a activarlas basta con ejecutar `rls.sql` otra vez. Volver atrás deja los datos expuestos como antes: hazlo solo el tiempo necesario.

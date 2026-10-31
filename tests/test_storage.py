@@ -692,6 +692,40 @@ def test_wellness_daily_roundtrip(monkeypatch):
     assert isinstance(row.get("pulled_at"), str)
 
 
+def test_startup_summary_roundtrip(monkeypatch):
+    fake_sb = _MemorySupabase()
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: fake_sb)
+
+    assert storage.get_startup_summary() is None
+    storage.save_startup_summary({"date": "2026-10-31"}, "## Resumen")
+
+    row = storage.get_startup_summary()
+    assert row["fingerprint"] == {"date": "2026-10-31"} and row["markdown"] == "## Resumen"
+    assert isinstance(row["generated_at"], str)
+
+
+def test_startup_summary_without_the_table_is_ignored(monkeypatch):
+    class _NoTable:
+        def select(self, *_a, **_k):
+            return self
+
+        eq = limit = upsert = select
+
+        def execute(self):
+            raise _MissingTableError({"message": "Could not find the table 'public.startup_summary'", "code": "PGRST205"})
+
+    class _Sb:
+        def table(self, _name):
+            return _NoTable()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: _Sb())
+
+    assert storage.get_startup_summary() is None
+    storage.save_startup_summary({}, "x")  # no lanza
+
+
 def test_upsert_wellness_daily_ignores_empty_payload(monkeypatch):
     fake_sb = _MemorySupabase()
 

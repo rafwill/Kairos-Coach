@@ -6,7 +6,7 @@
 --   2) que cada usuario y cada ordenador haya entrado una vez con la versión de Kairos con
 --      Supabase Auth (así su cuenta queda vinculada). Ver supabase/README.md.
 --
--- Qué hace: activa RLS en las 11 tablas y crea las políticas. A partir de aquí la clave
+-- Qué hace: activa RLS en las 12 tablas y crea las políticas. A partir de aquí la clave
 -- "anon" sin sesión no ve ni modifica nada, y cada usuario con sesión solo ve sus filas.
 -- Idempotente: se puede ejecutar varias veces. Marcha atrás: supabase/README.md, "Volver atrás".
 -- =============================================================================
@@ -26,6 +26,7 @@ alter table training_plan_version enable row level security;
 alter table load_metrics_daily    enable row level security;
 alter table activity_tss          enable row level security;
 alter table wellness_daily        enable row level security;
+alter table startup_summary       enable row level security;
 
 -- ─── app_user: tu propia fila ───────────────────────────────────────────────
 -- Leer y modificar solo la fila vinculada a tu cuenta. Crear solo la tuya, con tu propio
@@ -89,6 +90,11 @@ create policy kairos_own_rows on activity_tss for all to authenticated
 
 drop policy if exists kairos_own_rows on wellness_daily;
 create policy kairos_own_rows on wellness_daily for all to authenticated
+    using (app_user_id = (select kairos_app_user_id()))
+    with check (app_user_id = (select kairos_app_user_id()));
+
+drop policy if exists kairos_own_rows on startup_summary;
+create policy kairos_own_rows on startup_summary for all to authenticated
     using (app_user_id = (select kairos_app_user_id()))
     with check (app_user_id = (select kairos_app_user_id()));
 

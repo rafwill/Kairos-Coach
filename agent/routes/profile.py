@@ -108,6 +108,7 @@ def _build_config_options_markdown() -> str:
             "Sistema:",
             "- `/menu`: abrir menú resumido.",
             "- `/ayuda`: ver ayuda completa y ejemplos.",
+            "- `/resumen`: rehacer el resumen inicial con datos nuevos de Garmin.",
             "- `/proveedor`: cambiar de proveedor de IA, modelo o clave.",
             "- `salir`: salir de Kairos (la sesión queda guardada).",
             "",

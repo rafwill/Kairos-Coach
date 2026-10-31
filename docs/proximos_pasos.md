@@ -1,6 +1,6 @@
 # Próximos pasos — Kairos Coach
 
-Última revisión: 30/10/2026.
+Última revisión: 31/10/2026.
 
 Solo lo que falta y lo descartado. Lo terminado se borra: el detalle está en `CHANGELOG.md` y en git. El estado vigente del cálculo de carga y las limitaciones aceptadas están en `CLAUDE.md`.
 
@@ -9,6 +9,11 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 ## Dónde lo dejamos
 
 Se reescribe al final de cada sesión.
+
+**Sesión del 31/10/2026** (ordenador 1, en casa, sin proxy). Partimos de `dba2e3a`; cambios sin commit. Comprobado: `gemini-3.5-flash-lite` y `gemini-3.6-flash` responden con su nombre y la batería con Flash Lite en el chat da 25/25 (84 s las 25 preguntas). Hecho (CHANGELOG del 31/10): "Plan vs ejecutado" sin porcentaje con 0 TSS previsto (el +8460 % era un descanso con bici de 85 TSS); resumen del arranque reutilizable (tabla `startup_summary`, 60 min, huella con actividades, sueño de hoy, plan y fórmula; `/resumen` para rehacerlo). Tests: 974.
+- **Antes de usarlo:** ejecutar `supabase/schema.sql` y `supabase/rls.sql` en Supabase (tabla nueva) y `make check-rls`. Sin la tabla, Kairos sigue como antes y avisa en `agent.log`.
+- **Siguiente paso:** probar la reentrada (salir y volver en < 1 h: debe salir "Resumen de las HH:MM" sin consultar a Garmin) y el `/resumen`. Pendiente del punto 10: forzar el relevo (Flash agotado → Flash Lite). Pendiente 11 d2: un «replanifica el plan» real lanzado por el usuario.
+- No se ha encontrado el "1:47" que el usuario vio como duración de hoy: el plan guardado dice 1:05:00 (rodaje Z2); el único plan activo es `19bd7f1c`. Si vuelve a aparecer, anotar dónde.
 
 **Sesión del 30/10/2026** (ordenador 2, el del trabajo). `git pull` desde `22e5595` hasta `aa27605`. Decidido el pendiente 10: Gemini 3.6 Flash para planes y arranque, y Gemini 3.5 Flash Lite para el chat y como relevo (columna `ia_provider.chat_model`; CHANGELOG del 30/10). Hecho en Supabase: columna `ia_provider.chat_model` añadida y guardado `gemini-3.5-flash-lite` con `/proveedor`, comprobado al leerlo. Para cambiarlo con Gemini ya guardado, `/proveedor` propone el modelo del chat que hay, no Flash Lite: hay que escribirlo.
 - Después, en la misma sesión:

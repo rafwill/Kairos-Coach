@@ -193,9 +193,14 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         structured_summary = str(
             ((plan_execution_feedback.get("planned") or {}).get("structured_summary") or "")
         ).strip()
-        lines.append(
-            f"- Plan vs ejecutado (ayer): adherencia {score:.2f} ({label}) · desviacion carga {dev_pct:+.0f}%"
-        )
+        planned_tss = _safe_float((plan_execution_feedback.get("planned") or {}).get("tss_est"), 0.0)
+        done_tss = _safe_float((plan_execution_feedback.get("executed") or {}).get("tss"), 0.0)
+        if planned_tss <= 0.0:
+            # Con 0 previsto (descanso) un porcentaje no significa nada: se da la carga hecha.
+            load_text = f"carga: previsto 0 TSS (descanso) · hecho {done_tss:.0f} TSS"
+        else:
+            load_text = f"desviación de carga {dev_pct:+.0f}% ({done_tss:.0f} de {planned_tss:.0f} TSS)"
+        lines.append(f"- Plan vs ejecutado (ayer): adherencia {score:.2f} ({label}) · {load_text}")
         if structured_summary:
             lines.append(f"  - Plan de referencia: {structured_summary}")
         block_summary = ((plan_execution_feedback.get("block_feedback") or {}).get("summary") or {})
