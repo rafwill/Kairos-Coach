@@ -10,9 +10,13 @@ Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pa
 
 Se reescribe al final de cada sesión.
 
-**Sesión del 31/10/2026** (ordenador 1, en casa, sin proxy). Partimos de `dba2e3a`; cambios sin commit. Comprobado: `gemini-3.5-flash-lite` y `gemini-3.6-flash` responden con su nombre y la batería con Flash Lite en el chat da 25/25 (84 s las 25 preguntas). Hecho (CHANGELOG del 31/10): "Plan vs ejecutado" sin porcentaje con 0 TSS previsto (el +8460 % era un descanso con bici de 85 TSS); resumen del arranque reutilizable (tabla `startup_summary`, 60 min, huella con actividades, sueño de hoy, plan y fórmula; `/resumen` para rehacerlo). Tests: 974.
-- **Antes de usarlo:** ejecutar `supabase/schema.sql` y `supabase/rls.sql` en Supabase (tabla nueva) y `make check-rls`. Sin la tabla, Kairos sigue como antes y avisa en `agent.log`.
-- **Siguiente paso:** probar la reentrada (salir y volver en < 1 h: debe salir "Resumen de las HH:MM" sin consultar a Garmin) y el `/resumen`. Pendiente del punto 10: forzar el relevo (Flash agotado → Flash Lite). Pendiente 11 d2: un «replanifica el plan» real lanzado por el usuario.
+**Sesión del 31/10/2026** (ordenador 1, en casa, sin proxy). Partimos de `dba2e3a` y quedó en `d9b2701` (subido a `origin/main`; tests 974, ruff limpio). Comprobado: `gemini-3.5-flash-lite` y `gemini-3.6-flash` responden con su nombre y la batería con Flash Lite en el chat da 25/25 (84 s las 25 preguntas). Hecho (CHANGELOG del 31/10):
+  - "Plan vs ejecutado" sin porcentaje con 0 TSS previsto (el +8460 % era un descanso con bici de 85 TSS).
+  - Resumen del arranque reutilizable: tabla `startup_summary` (creada en Supabase y comprobada con `check_rls`, 12 tablas cerradas), 60 min, huella con actividades de 48 h, sueño de hoy, plan y fórmula; `/resumen` lo rehace.
+  - Documentación al día (README, `CLAUDE.md`, `docs/arquitectura.md`, `docs/Harness.md` G20).
+- **Siguiente paso (decisión del usuario): usar Kairos a diario unas semanas y decidir con lo que salga.** Nada de código nuevo hasta entonces salvo lo que rompa. Qué mirar en el uso diario:
+  - Que la reentrada en < 1 h salga con "Resumen de las HH:MM" (`[STARTUP] resumen reutilizado` en `agent.log`) y que `/resumen` funcione; si el resumen guardado se queda viejo (Body Battery) o se reutiliza cuando no debe, ajustar la huella.
+  - Los puntos A1 (sensores), B2.9 (un plan real y un "ajusta el plan"), 10 (relevo y calidad de Flash Lite), 11 d2 (un «replanifica el plan» real) y 12 (plan de trail cuando haya objetivo). Los de TSS (3 a 5), cuando haya sesiones nuevas con su TSS en TP.
 - No se ha encontrado el "1:47" que el usuario vio como duración de hoy: el plan guardado dice 1:05:00 (rodaje Z2); el único plan activo es `19bd7f1c`. Si vuelve a aparecer, anotar dónde.
 
 **Sesión del 30/10/2026** (ordenador 2, el del trabajo). `git pull` desde `22e5595` hasta `aa27605`. Decidido el pendiente 10: Gemini 3.6 Flash para planes y arranque, y Gemini 3.5 Flash Lite para el chat y como relevo (columna `ia_provider.chat_model`; CHANGELOG del 30/10). Hecho en Supabase: columna `ia_provider.chat_model` añadida y guardado `gemini-3.5-flash-lite` con `/proveedor`, comprobado al leerlo. Para cambiarlo con Gemini ya guardado, `/proveedor` propone el modelo del chat que hay, no Flash Lite: hay que escribirlo.
@@ -25,12 +29,9 @@ Se reescribe al final de cada sesión.
   - Pendiente 11 a: dónde entrena y el desnivel de sus salidas (asfalto 7,6 m/km, trail 48,3 m/km con sus datos).
   - El tiempo de hoy en el arranque (Open-Meteo; `/perfil lugar <ciudad>`).
   - Punto 12: planes de trail (D+ semanal, tiradas seguidas, marcha, bici con su nombre, sin RP).
-  - Queda: las pruebas en vivo con Gemini, fuera del proxy, y un plan de trail real cuando haya objetivo.
+  - Queda: un plan de trail real cuando haya objetivo (las pruebas con Gemini fuera del proxy se hicieron el 31/10).
   - Arreglado el fallo que rehízo el plan de Gemini con el motor determinista ("plan ver 19bd7f1c" sin barra; `plan_data` perdido al normalizar). Plan de Gemini recuperado como versión 4 y comprobado.
   - Detalle en el CHANGELOG del 30/10. Tests: 944.
-- **Siguiente paso, fuera del proxy (en casa):**
-  - Punto 10: Flash Lite en el chat y el relevo.
-  - Pendiente 11 d2 en vivo: un «replanifica el plan» real, revisado por el usuario.
 
 **Sesión del 28-29/10/2026** (ordenador 1). Release **v3.0.0 — Kairos Coach Funcional** (29/10). 861 tests; batería 25/25 con Gemini. Proveedor del usuario: Gemini `gemini-3.6-flash` (la clave de NVIDIA, en `NVIDIA_API_KEY`). Plan activo: el de Gemini hacia la media de Santa Pola (`19bd7f1c`). Lo hecho, en `CHANGELOG.md` (28-29/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull` y poner en su `.env` la clave de Gemini en `PROVIDER_API_KEY`.
 
@@ -44,6 +45,7 @@ Se reescribe al final de cada sesión.
    - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales, y si con las guías G13 (calendario) y G14 (HRV calculada) del 26/10 bajan los saltos de S25, S27 y S28.
    - **S27, falsos positivos vistos el 28/10** (batería 20261028_141326, preguntas 8 y 9): "mañana" dicho desde otro día del texto ("Dom 01 · … Revisa HRV mañana lunes" en una fila de plan; "Mañana (viernes 30)" después de la sesión del jueves 29). S27 lo mide siempre desde hoy y el reintento no lo arregla porque no hay error. Idea: no juzgar "mañana" en una línea o fila que empieza por otro día o fecha.
    - **Cifras inventadas fuera de la carga** (28/10, `estres_2`, pregunta 2): para comparar el estrés de dos semanas el LLM no pidió el detalle de esta semana y se inventó los minutos por día (510 min en reposo el 26/10; Garmin: 1.097). S14 solo vigila cifras de carga: mirar con preguntas reales si hace falta un sensor de cifras que no salen de las tools.
+   - **Resumen del arranque guardado (31/10):** ver con el uso si se reutiliza cuando toca (`[STARTUP] resumen reutilizado`) y si alguna vez enseña algo viejo (Body Battery de la mañana, una actividad sin sincronizar); si pasa, añadir ese dato a la huella (`agent/startup_cache.py`).
    - Enrutado: cada pregunta real mal enrutada va al banco de frases (`PHRASE_BANK` en `tests/test_tool_router.py`) antes de tocar los detectores. Mirar también si salta `[G15]` (marco de hoy en el bucle con tools) y si S15 lo hace cumplir.
 
 ### B. Chat y LLM
@@ -56,10 +58,8 @@ Se reescribe al final de cada sesión.
    - **Revisión del usuario** de un plan real (`/plan crear`) y de una revisión en el chat ("ajusta el plan: …").
    - **Fiabilidad con otros modelos:** medir con 2-3 modelos más (batería de planes) antes de producción. Hecho el 29/10 con lo gratuito: Gemini 3.5/3.6 Flash, plan válido en 68 s; Groq gratuito imposible (8.000 tokens por minuto); nemotron, sin plan en 13 min.
 
-10. **Dos modelos de Gemini (decidido el 30/10; CHANGELOG): comprobarlo en vivo.** Flash (20 peticiones al día) para planes y arranque, y Flash Lite (500) para el chat y como relevo. Desde el ordenador del trabajo no se pudo probar porque el proxy bloquea Gemini. Fuera del proxy, comprobar:
-    - Que `gemini-3.5-flash-lite` responde con ese nombre (Google sirvió el 3.5 Flash como 3.6).
-    - Batería 25/25 con Flash Lite en el chat (`tools/run_bateria.py --modelo gemini-3.5-flash-lite`).
-    - Que el relevo salta al agotarse Flash (`[LLM] … relevo con …` en `agent.log`).
+10. **Dos modelos de Gemini (decidido el 30/10; CHANGELOG): comprobado el 31/10 fuera del proxy** (`gemini-3.5-flash-lite` responde con su nombre; batería 25/25 con Flash Lite en el chat). Flash (20 peticiones al día) para planes y arranque, y Flash Lite (500) para el chat y como relevo. Falta, con el uso diario:
+    - Ver el relevo cuando Flash se agote (`[LLM] … relevo con …` en `agent.log`); hoy no se dio el 429.
     - Si Flash Lite responde peor que Flash en el chat, valorar las otras opciones: facturación en AI Studio, o NVIDIA para el chat.
 
 12. **Planes de trail: hecho el 30/10** (CHANGELOG; `tests/test_plan_trail.py`). **Falta un plan de trail real**, revisado por el usuario cuando tenga el objetivo, con `/perfil editar objetivo` (distancia y D+) y `/plan crear`. Las cifras se irán revisando con planes reales. Decisiones del usuario y criterios fijados antes de programarlo:

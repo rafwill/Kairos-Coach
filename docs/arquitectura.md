@@ -71,6 +71,9 @@ main.py → run_agent()
   ├─ a la vez: TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
   │            (get_heart_rate_zones; escribe en el perfil solo si las zonas cambian)
   │          · get_user_profile (comprueba el acceso a Garmin y da los datos personales)
+  ├─ (31/10) TrainerAgent.cached_startup_summary(): si `startup_summary` tiene menos de 60 min, pide a Garmin solo las
+  │            actividades y el sueño de hoy y compara la huella (día, actividades de 48 h, sueño, plan, fórmula, perfil);
+  │            si coincide, muestra el resumen guardado con su hora y salta lo que sigue (carga, snapshot y LLM)
   ├─ a la vez: TrainerAgent.compute_and_persist_load_metrics()
   │            incremental (normal) · incremental_refresh (actividad nueva) · full_recalc (usuario nuevo / cambio de fórmula)
   │          · TrainerAgent.build_startup_status_markdown(load_ready=…)
@@ -81,6 +84,8 @@ main.py → run_agent()
 ```
 
 Desde el 28/10 (pendiente 8c) lo independiente va en paralelo, el sondeo de Zscaler (solo para el aviso del entorno) va en un hilo y las lecturas de Supabase del arranque pasan por la caché de `storage`. Tiempos por paso en `agent.log` (`[ARRANQUE]`): de 11,7 s a 9,3 s de media.
+
+El resumen se guarda al final (`StartupMixin._save_startup_summary`) con su huella, salvo si Garmin no respondió nada o si faltó el texto de "Tu entrenador" (el LLM falló: el siguiente arranque lo reintenta). La caché es opcional: sin la tabla o con un fallo de Supabase se rehace todo como antes. `/resumen` lo rehace cuando el atleta quiera. No están en la huella el Body Battery ni la HRV de hoy (cambian con la sincronización del reloj; los cubre el sueño de hoy). En `agent.log`: `[STARTUP] resumen reutilizado` o `caché del resumen no disponible`.
 
 ## Zonas de FC
 
