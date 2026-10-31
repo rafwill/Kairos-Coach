@@ -2,180 +2,66 @@
 
 Última revisión: 31/10/2026.
 
-Solo lo que falta y lo descartado. Lo terminado se borra: el detalle está en `CHANGELOG.md` y en git. El estado vigente del cálculo de carga y las limitaciones aceptadas están en `CLAUDE.md`.
+Solo lo que falta por hacer y lo descartado. Lo hecho está en `CHANGELOG.md` (cada cambio, con su señal y su resultado), en `CLAUDE.md` (estado vigente de la carga, los planes y el arranque) y en `docs/arquitectura.md`.
 
-Bitácoras anteriores en git: hasta el 25/10, `git show 1bf341f:docs/proximos_pasos.md`; biblioteca de experiencia del 23 al 26/10 (señal, lección y evidencia de cada cambio), `git show 6aff019:docs/proximos_pasos.md`.
+Texto anterior de esta lista, con los criterios de diseño que citan algunos comentarios del código ("pendiente 11 a-d", "punto 12"): `git show 59d16e9:docs/proximos_pasos.md`. Bitácoras más antiguas: hasta el 25/10, `git show 1bf341f:docs/proximos_pasos.md`; biblioteca de experiencia del 23 al 26/10, `git show 6aff019:docs/proximos_pasos.md`.
 
 ## Dónde lo dejamos
 
-Se reescribe al final de cada sesión.
+**Sesión del 31/10/2026** (ordenador 1). Último commit: `59d16e9`, subido a `origin/main`; 983 tests y `ruff` limpios. En el otro ordenador, al empezar: `git pull`. La tabla `startup_summary` ya existe en Supabase.
 
-**Sesión del 31/10/2026** (ordenador 1). Partimos de `dba2e3a` y quedó en `d9b2701` (subido a `origin/main`; tests 974, ruff limpio). Comprobado: `gemini-3.5-flash-lite` y `gemini-3.6-flash` responden con su nombre y la batería con Flash Lite en el chat da 25/25 (84 s las 25 preguntas). Hecho (CHANGELOG del 31/10):
-  - "Plan vs ejecutado" sin porcentaje con 0 TSS previsto (el +8460 % era un descanso con bici de 85 TSS).
-  - Resumen del arranque reutilizable: tabla `startup_summary` (creada en Supabase y comprobada con `check_rls`, 12 tablas cerradas), 60 min, huella con actividades de 48 h, sueño de hoy, plan y fórmula; `/resumen` lo rehace.
-  - Documentación al día (README, `CLAUDE.md`, `docs/arquitectura.md`, `docs/Harness.md` G20).
-- **Siguiente paso (decisión del usuario): usar Kairos a diario unas semanas y decidir con lo que salga.** Nada de código nuevo hasta entonces salvo lo que rompa. Qué mirar en el uso diario:
-  - Que la reentrada en < 1 h salga con "Resumen de las HH:MM" (`[STARTUP] resumen reutilizado` en `agent.log`) y que `/resumen` funcione; si el resumen guardado se queda viejo (Body Battery) o se reutiliza cuando no debe, ajustar la huella.
-  - Los puntos A1 (sensores), B2.9 (un plan real y un "ajusta el plan"), 10 (relevo y calidad de Flash Lite), 11 d2 (un «replanifica el plan» real) y 12 (plan de trail cuando haya objetivo). Los de TSS (3 a 5), cuando haya sesiones nuevas con su TSS en TP.
-- No se ha encontrado el "1:47" que el usuario vio como duración de hoy: el plan guardado dice 1:05:00 (rodaje Z2); el único plan activo es `19bd7f1c`. Si vuelve a aparecer, anotar dónde.
+**Siguiente paso (decisión del usuario): usar Kairos a diario unas semanas y decidir con lo que salga.** Nada de código nuevo hasta entonces salvo lo que rompa. Revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TURNO]`, `[STARTUP]`, `[PLAN]`, `[LLM] … relevo`).
 
-**Sesión del 30/10/2026** (ordenador 2). `git pull` desde `22e5595` hasta `aa27605`. Decidido el pendiente 10: Gemini 3.6 Flash para planes y arranque, y Gemini 3.5 Flash Lite para el chat y como relevo (columna `ia_provider.chat_model`; CHANGELOG del 30/10). Hecho en Supabase: columna `ia_provider.chat_model` añadida y guardado `gemini-3.5-flash-lite` con `/proveedor`, comprobado al leerlo. Para cambiarlo con Gemini ya guardado, `/proveedor` propone el modelo del chat que hay, no Flash Lite: hay que escribirlo.
-- Después, en la misma sesión:
-  - Resumen de cambios del plan en h:mm y TSS.
-  - Pendiente 11 d1: aviso en el arranque si el plan ya no encaja.
-  - Pendiente 11 d2: «replanifica el plan» rehace hasta la carrera.
-  - Pendiente 11 c: lo que el atleta dice para siempre se guarda para sus planes.
-  - Pendiente 11 b: otros deportes dentro del plan (bici, remo, elíptica, natación).
-  - Pendiente 11 a: dónde entrena y el desnivel de sus salidas (asfalto 7,6 m/km, trail 48,3 m/km con sus datos).
-  - El tiempo de hoy en el arranque (Open-Meteo; `/perfil lugar <ciudad>`).
-  - Punto 12: planes de trail (D+ semanal, tiradas seguidas, marcha, bici con su nombre, sin RP).
-  - Queda: un plan de trail real cuando haya objetivo (las pruebas con Gemini fuera del proxy se hicieron el 31/10).
-  - Arreglado el fallo que rehízo el plan de Gemini con el motor determinista ("plan ver 19bd7f1c" sin barra; `plan_data` perdido al normalizar). Plan de Gemini recuperado como versión 4 y comprobado.
-  - Detalle en el CHANGELOG del 30/10. Tests: 944.
+## 1. Para comprobar con el uso diario
 
-**Sesión del 28-29/10/2026** (ordenador 1). Release **v3.0.0 — Kairos Coach Funcional** (29/10). 861 tests; batería 25/25 con Gemini. Proveedor del usuario: Gemini `gemini-3.6-flash` (la clave de NVIDIA, en `NVIDIA_API_KEY`). Plan activo: el de Gemini hacia la media de Santa Pola (`19bd7f1c`). Lo hecho, en `CHANGELOG.md` (28-29/10); el mapa de módulos, en `docs/arquitectura.md`. En el ordenador 2, al empezar: `git pull` y poner en su `.env` la clave de Gemini en `PROVIDER_API_KEY`.
+1. **Resumen del arranque.**
+   - Reentrada en menos de 1 h: debe salir "Resumen de las HH:MM" (`[STARTUP] resumen reutilizado`). Si enseña algo viejo (el Body Battery de la mañana, una actividad sin sincronizar), añadir ese dato a la huella (`agent/startup_cache.py`).
+   - Tras entrenar: "Sesión de hoy (realizada)", "Mañana", el plan vs ejecutado de hoy y la recomendación de descanso. Cualquier actividad de hoy cuenta como sesión hecha, también un paseo: ver si molesta.
+   - El "1:47" que el usuario vio como duración de hoy no se encontró: el plan guardado decía 1:05:00 y el único plan activo es `19bd7f1c`. Si vuelve a aparecer, anotar dónde.
 
-- **Siguiente paso (decisión del usuario):** usar Kairos unas semanas con el plan y ajustar lo que salga. Revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TOOL] iter=N pide`, `[TURNO]`, `[LLM] ◀`, `[PLAN]`, reintentos `[LLM] gemini 503`) para los puntos 1 y 2 y la revisión del plan (B2.9). Los puntos 3 a 5 (TSS frente a TP), cuando haya sesiones nuevas con su TSS en TP.
+2. **Sensores `[SENSOR]` de `agent.log`.** Cuánto salta cada uno con preguntas reales, falsos positivos nuevos y qué guía conviene reforzar (`docs/Harness.md` §7).
+   - **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha): si saltan, y si las guías G13 (calendario) y G14 (HRV calculada) bajan S25, S27 y S28.
+   - **S27, falsos positivos vistos el 28/10:** "mañana" dicho desde otro día del texto ("Dom 01 · … Revisa HRV mañana lunes" en una fila de plan). S27 lo mide siempre desde hoy y el reintento no lo arregla porque no hay error. Idea: no juzgar "mañana" en una línea o fila que empieza por otro día o fecha.
+   - **Cifras inventadas fuera de la carga** (28/10, `estres_2`): el LLM se inventó los minutos por día (510 min en reposo; Garmin: 1.097). S14 solo vigila cifras de carga: ver con preguntas reales si hace falta un sensor de cifras que no salen de las tools.
 
-## Pendiente
+3. **Enrutado.** Cada pregunta real mal enrutada va al banco de frases (`PHRASE_BANK` en `tests/test_tool_router.py`) antes de tocar los detectores. Mirar también si salta `[G15]` (marco de hoy en el bucle con tools) y si S15 lo hace cumplir.
 
-### A. Puesta en producción
+4. **Modelos de Gemini** (Flash para planes y arranque, Flash Lite para el chat y como relevo).
+   - Ver el relevo cuando Flash agote su cupo de 20 peticiones al día (`[LLM] … relevo con …`). El 31/10 no se dio el 429.
+   - Si Flash Lite responde peor que Flash en el chat, valorar las otras opciones: facturación en AI Studio, o NVIDIA para el chat.
 
-1. **Uso real y revisión de las líneas `[SENSOR]` de `agent.log`.** Usar Kairos unos días con preguntas reales y revisar juntos cuánto salta cada sensor, falsos positivos nuevos y qué guía conviene reforzar (bucle de gobierno, `docs/Harness.md` §7). En concreto:
-   - Si **S25** (diferencia de HRV), **S26** (etiqueta rTSS/hrTSS), **S27** ("mañana" con el día que no toca) y **S28** (día de la semana con su fecha) saltan con preguntas reales, y si con las guías G13 (calendario) y G14 (HRV calculada) del 26/10 bajan los saltos de S25, S27 y S28.
-   - **S27, falsos positivos vistos el 28/10** (batería 20261028_141326, preguntas 8 y 9): "mañana" dicho desde otro día del texto ("Dom 01 · … Revisa HRV mañana lunes" en una fila de plan; "Mañana (viernes 30)" después de la sesión del jueves 29). S27 lo mide siempre desde hoy y el reintento no lo arregla porque no hay error. Idea: no juzgar "mañana" en una línea o fila que empieza por otro día o fecha.
-   - **Cifras inventadas fuera de la carga** (28/10, `estres_2`, pregunta 2): para comparar el estrés de dos semanas el LLM no pidió el detalle de esta semana y se inventó los minutos por día (510 min en reposo el 26/10; Garmin: 1.097). S14 solo vigila cifras de carga: mirar con preguntas reales si hace falta un sensor de cifras que no salen de las tools.
-   - **Resumen del arranque guardado (31/10):** ver con el uso si se reutiliza cuando toca (`[STARTUP] resumen reutilizado`) y si alguna vez enseña algo viejo (Body Battery de la mañana, una actividad sin sincronizar); si pasa, añadir ese dato a la huella (`agent/startup_cache.py`).
-   - Enrutado: cada pregunta real mal enrutada va al banco de frases (`PHRASE_BANK` en `tests/test_tool_router.py`) antes de tocar los detectores. Mirar también si salta `[G15]` (marco de hoy en el bucle con tools) y si S15 lo hace cumplir.
+5. **Planes en vivo** (fuera del proxy, que bloquea Gemini).
+   - Un `/plan crear` real y un "ajusta el plan: …", revisados por el usuario; con bici o remo si los quiere dentro del plan.
+   - Un «replanifica el plan» real, en tiempo y peticiones parecidos a `/plan crear` (10–15), revisado por el usuario.
+   - Preferencias que duran con frases reales (`[PLAN] preferencias guardadas`). Una frase que se guarde o se pierda sin deber va a los tests antes de tocar las reglas.
+   - El aviso "🔄 Tu plan ya no encaja" con un desvío real: revisar con el usuario si los umbrales avisan cuando deben (≥ 2 sesiones clave sin hacer, ≥ 3 días seguidos sin actividad, ≥ 3 noches con la HRV bajo el 90 % de su media, ≥ 2 días con otro deporte, TSS por debajo del 50 % o por encima del 130 % del previsto).
+   - Un plan de trail real, cuando el usuario tenga el objetivo (`/perfil editar objetivo` con distancia y D+, y `/plan crear`). Las cifras de trail se irán revisando con planes reales.
+   - Fiabilidad con 2–3 modelos más (batería de planes) antes de producción. Hecho con lo gratuito: Gemini 3.5/3.6 Flash, plan válido en 68 s; Groq gratuito imposible (8.000 tokens por minuto); nemotron, sin plan en 13 min.
+   - El tiempo de hoy en el arranque necesita el lugar: `/perfil lugar <ciudad>` si no sale el bloque "🌡️ Tiempo hoy".
 
-### B. Chat y LLM
-
-2. **Metatooling, si hace falta más** (los grupos de tools ya están; CHANGELOG del 26/10): (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
-
-### B2. Planes
-
-9. **Plan construido por el LLM** (28-29/10; CHANGELOG). Con nemotron, 3 de 5 planes válidos el 28/10 y 2 de 2 con preferencias el 29/10 (3 a 5,5 min); si falla, no se guarda ningún plan (29/10). El 29/10, en `/plan crear` real, falló por la semana 9 sin descanso y se guardó el plan genérico de respaldo, ya quitado. Pendiente:
-   - **Revisión del usuario** de un plan real (`/plan crear`) y de una revisión en el chat ("ajusta el plan: …").
-   - **Fiabilidad con otros modelos:** medir con 2-3 modelos más (batería de planes) antes de producción. Hecho el 29/10 con lo gratuito: Gemini 3.5/3.6 Flash, plan válido en 68 s; Groq gratuito imposible (8.000 tokens por minuto); nemotron, sin plan en 13 min.
-
-10. **Dos modelos de Gemini (decidido el 30/10; CHANGELOG): comprobado el 31/10 fuera del proxy** (`gemini-3.5-flash-lite` responde con su nombre; batería 25/25 con Flash Lite en el chat). Flash (20 peticiones al día) para planes y arranque, y Flash Lite (500) para el chat y como relevo. Falta, con el uso diario:
-    - Ver el relevo cuando Flash se agote (`[LLM] … relevo con …` en `agent.log`); hoy no se dio el 429.
-    - Si Flash Lite responde peor que Flash en el chat, valorar las otras opciones: facturación en AI Studio, o NVIDIA para el chat.
-
-12. **Planes de trail: hecho el 30/10** (CHANGELOG; `tests/test_plan_trail.py`). **Falta un plan de trail real**, revisado por el usuario cuando tenga el objetivo, con `/perfil editar objetivo` (distancia y D+) y `/plan crear`. Las cifras se irán revisando con planes reales. Decisiones del usuario y criterios fijados antes de programarlo:
-    - **Cuándo es trail:** la carrera objetivo tiene desnivel positivo (D+) o su nombre dice "trail" o "ultra". Lo decide la carrera, no el deporte principal. Corregido antes de cerrar: el criterio inicial incluía "o el deporte principal es trail running", y el perfil real del usuario es "trail running" con una media en asfalto de objetivo.
-      - `/perfil editar objetivo` pregunta la distancia (km) y el D+ (m) de la carrera. La distancia sale por defecto del nombre ("Ultra PDA 55km" → 55).
-    - **Ritmo de carrera:** en trail no hay RP (el ritmo depende del terreno). Lo exigente va por FC; las zonas de ritmo quedan para tramos llanos.
-    - **Tirada larga (decisión del usuario):**
-      - Hasta el 50 % de la semana (asfalto: 40 %).
-      - Puede subir hasta 30 min de una semana de carga a la siguiente (asfalto: 15).
-      - En la fase específica puede haber dos tiradas largas en días seguidos, juntas como mucho el 60 % de la semana. Por defecto sábado y domingo; `/plan crear` pregunta qué dos días (p. ej. viernes y sábado).
-      - La estructura da la más larga ("long_min", con "auto" si quiere). La segunda lleva sus minutos.
-    - **Desnivel semanal (decisión del usuario):**
-      - La estructura de cada semana lleva su D+ ("vert_m"), con la misma progresión que el volumen: la semana 1 como mucho un 10 % sobre el D+ sostenido (media semanal de las últimas 4 semanas, carrera y marcha), cada semana de carga como mucho un 10 % sobre la anterior de carga, y la descarga y el afinamiento al menos un 15 % por debajo.
-      - La semana pico llega al D+ de la carrera si es de hasta 60 km, o a la mitad si es más larga. Si con el 10 % por semana no da tiempo a llegar, el mínimo es lo que permite esa progresión (consecuencia de las dos reglas, no un número nuevo).
-      - Cada sesión lleva su D+ ("vert"); los días de la semana suman su D+ ±12 %, la misma tolerancia que los minutos. La progresión se comprueba también con esas sumas reales.
-    - **Marcha (decisión del usuario):** caminata, senderismo y marcha nórdica con o sin palos son un solo deporte, "hiking" (Marcha / senderismo). En trail se camina mucho y hay que practicarlo. Va con tramos por FC y su D+.
-      - En un plan de trail o si el atleta la elige, sus minutos cuentan en el volumen sostenido.
-    - **Bici con su nombre (decisión del usuario):** carretera ("cycling"), gravel ("gravel") y MTB ("mtb") son deportes distintos.
-    - **Km:** en trail, los tramos por FC no estiman km (con los ritmos de asfalto salían de más).
-    - **Instrucciones del LLM, en `prompts/plan/`:** en trail cuentan las subidas andando con palos, el desnivel en cinta si es llano, las bajadas técnicas, la fuerza excéntrica, practicar en las tiradas largas la nutrición y el material (palos, mochila, frontal) y, si la carrera lo pide, la noche.
-    - **`/plan ver`:** columna D+ en la tabla de semanas y "+600 m" en cada sesión con desnivel.
-    - **Cierre:**
-      - Tests de cada regla a favor y en contra, con un plan de trail completo con el LLM simulado.
-      - El plan de asfalto activo no cambia; los tests de asfalto siguen igual.
-      - Un plan de trail real, revisado por el usuario cuando tenga el objetivo.
-
-### C. Cálculo de carga (TSS frente a TrainingPeaks)
+## 2. Cálculo de carga (TSS frente a TrainingPeaks)
 
 Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado antes de ver resultados y prueba sin escribir (reglas de método de `CLAUDE.md`).
 
-3. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
-4. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
-5. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
+1. **Trail rápido (< 6:00/km).** Validar cuando haya más salidas con rTSS en TP. Hoy n = 1 (16/08: Kairos 128.0 frente a TP 112.4).
+2. **Series cortas de running** (6x500, 6x1000, 4x400, 8x500): salen entre un 11 % y un 20 % por encima de TP; 23966766696 (13/08, 8x45" en cuesta) ×1.20. Plantear hipótesis antes de tocar el detector (p. ej. relación FC-velocidad con retraso fisiológico).
+3. **Revalidación periódica** con un export nuevo de TP: prueba sin escribir, criterio fijado antes, solo las filas esperadas.
 
-### D. Futuro (sin prioridad, cuando haga falta)
+## 3. Solo si hace falta
 
-6. **Peso con báscula.** Kairos toma el peso al arrancar de la configuración de usuario de Garmin (`get_user_profile`, `userData.weight`) y solo si falta, del registro de hoy de `get_body_composition` (`fetch_garmin_personal_data`). Comprobado el 28/10 en vivo: al cambiarlo en la configuración, Garmin guarda también un registro con fecha de hoy y las dos fuentes coinciden (65,0 kg). Sin comprobar: si un pesaje de báscula actualiza también la configuración. Si un atleta usa báscula y `/perfil` no refleja su último pesaje, invertir el orden: primero el último registro de `get_body_composition` (rango reciente, no solo hoy) y la configuración como respaldo. El peso no se edita en `/perfil editar salud`: Garmin manda y el arranque lo sobrescribiría.
+1. **Metatooling** (los grupos de tools ya están): (a) el prompt de sistema (≈ 7.000 tokens, la mayor parte de cada llamada) por partes según la pregunta, como los grupos; (b) fusionar tools parecidas en el servidor (`get_sleep_data`/`get_sleep_summary`, las tres de actividades) si el LLM las confunde. Vigilar en `agent.log` cuántas veces se pide un grupo (`[TOOL] el LLM pide el grupo`): más de 1 de cada 5 preguntas = reglas mal hechas.
+2. **Peso con báscula.** Kairos toma el peso de la configuración de usuario de Garmin (`get_user_profile`, `userData.weight`) y solo si falta, del registro de hoy de `get_body_composition`. Sin comprobar: si un pesaje de báscula actualiza también la configuración. Si un atleta usa báscula y `/perfil` no refleja su último pesaje, invertir el orden: primero el último registro de `get_body_composition` (rango reciente) y la configuración como respaldo.
+3. **Arranque del servidor MCP** (2,6–3,8 s: otro proceso, que importa `garminconnect` y FastMCP). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
 
-7. **Arranque del servidor MCP** (2,6–3,8 s: es otro proceso, que importa `garminconnect` y FastMCP, la API de servidor del SDK oficial `mcp`, no el paquete aparte `fastmcp`). Solo si el arranque molesta: mirar qué importa el servidor al arrancar y si se puede lanzar antes (necesita las credenciales de Garmin, que llegan tras el inicio de sesión).
+## 4. Ideas sin decidir
 
-### E. Fuera de nuestras manos
+1. **Porcentaje de cumplimiento de los entrenamientos** (petición del usuario): un porcentaje de cumplimiento del plan con los datos de Kairos y lo que el atleta ha entrenado. Hoy solo hay la adherencia del día (arranque) y el aviso de desvíos de los últimos 7 días. Falta decidir qué mide (sesiones hechas, tiempo, TSS) y en qué ventana (semana, bloque, plan).
+2. **Conectar Claude con Kairos** para la sincronización de datos y la generación de TSS en vez de NVIDIA. `/proveedor` → "anthropic" (ya en `agent/ia_provider.py`), clave de `platform.claude.com/settings/keys` (pago por uso), modelo `claude-opus-5-5` o `claude-sonnet-5-5`; va por la capa compatible con OpenAI de Anthropic, pensada para probar (si se adopta, cliente nativo). Aplazado por coste (29/10, decisión del usuario).
+3. **Revisar garmin-personal-mcp:** un MCP que se puede conectar a Claude o ChatGPT para preguntar por los datos de Garmin.
 
-8. **Ticket de GitHub Support 4918285** (abierto el 28/10): purga de las vistas en caché de los 80 commits viejos, de `eeee21b` a `716cd0c`. Cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API.
+## 5. Fuera de nuestras manos
 
-### F. Notas adicionales
-
-9. Revisar como conectar Claude con Kairos para la sincronización de datos y la generación de TSS en vez de Nvidia. Cómo: `/proveedor` → "anthropic" (ya en `agent/ia_provider.py`), clave de `platform.claude.com/settings/keys` (pago por uso), modelo `claude-opus-5-5` o `claude-sonnet-5-5`; va por la capa compatible con OpenAI de Anthropic, pensada para probar (si se adopta, cliente nativo). Aplazado por coste (29/10, decisión del usuario).
-
-10. Revisar garmin-personal-mcp. MCP que se puede conectar a Claude para preguntar cosas a Calude o ChatGPT
-
-11. **Planes que se adaptan al atleta en cada momento** (revisado el 30/10 frente a lo hecho el 28-29/10). Es lo que dará la fuerza y el valor a Kairos.
-    - **Ya hecho** (CHANGELOG del 28 y 29/10):
-      - El plan lo construye el LLM del atleta y el código lo comprueba.
-      - `/plan crear` pregunta como un entrenador: días disponibles, día fijo de descanso, tiempo máximo por día, dobles, distribución de la intensidad y progresión. Las respuestas se guardan en el perfil.
-      - Lo que el atleta escribe al pedir el plan llega al LLM como "Lo que pide el atleta".
-      - En el chat, "ajusta el plan: …" (`_route_plan_revision`) revisa los días que quedan, con lo hecho los últimos 7 días (Garmin + `activity_tss`).
-      - El motor diario ajusta la sesión de hoy con HRV, sueño, Body Battery y carga.
-    - **Falta:**
-      - (a) **Entorno: hecho el 30/10, con la temperatura del día (Open-Meteo)** (CHANGELOG). Situación de partida: el LLM no recibe ni dónde vive el atleta, ni la orografía (el desnivel de sus rutas habituales se podría sacar de Garmin), ni la temperatura (con calor, ajustar ritmos o ir por FC). `/plan crear` no lo pregunta.
-        - **Diseño y criterios fijados antes de programarlo (30/10):**
-          - **Orografía, de Garmin y sin umbrales inventados.** Con las mismas actividades de las últimas 6 semanas que ya lee el contexto de carga, se calculan metros de desnivel positivo por km, por separado para carrera en asfalto y para trail, con los km de cada uno ("asfalto: 8 m/km en 120 km; trail: 45 m/km en 30 km"). Sin etiquetas llano/ondulado: el LLM interpreta el número. Si un grupo no tiene km, no sale.
-          - **Lugar.** `/plan crear` pregunta "¿Dónde entrenas normalmente? (ciudad o zona; Enter para no decirlo)" y lo guarda en `goals.training_location`. El LLM lo recibe con los datos.
-          - **Instrucción en `prompts/plan/system.md`**, no en el código: tener en cuenta el terreno habitual (cuestas donde las hay, o sustitutos si es llano) y el clima de ese lugar en las fechas del plan (con calor, sesiones por FC o a primera hora).
-          - **Temperatura real del día: fuera de este paso.** Necesita un servicio de tiempo externo que recibe la ubicación. Decide el usuario.
-          - **Temperatura real: hecho el 30/10** (`agent/weather.py`; CHANGELOG). Para verlo hace falta `/perfil lugar <ciudad>`: hoy el perfil del usuario no tiene lugar. Diseño y criterios fijados antes de programarlo:
-            - **Fuente:** Open-Meteo, gratuito y sin clave; comprobado desde la red con proxy (200).
-              - El nombre del lugar (`goals.training_location`) se geocodifica una vez y las coordenadas se guardan con el nombre del que salen (`goals.training_location_coords`). Si cambia el lugar, se vuelven a buscar.
-              - Cada día solo se envían las coordenadas. Nada más del atleta sale hacia Open-Meteo.
-            - **Datos de hoy, en la hora local del lugar:** temperatura mínima y máxima, sensación térmica máxima y la temperatura a las 7:00, 12:00 y 19:00.
-            - **Dónde:** bloque "🌡️ Tiempo hoy en …" en el arranque y en la ruta de estado del día, tras la sesión de hoy. La capa de coaching lo recibe con los datos.
-            - **Sin umbrales de calor en el código.** El motor diario no cambia. La guía para el LLM va en `prompts/coaching_rules.md`: con calor, lo exigente por FC y a la hora más fresca del día. El LLM decide con los datos.
-            - **Si falla** (sin lugar, sin red, más de 4 s o respuesta rara): sin bloque, el arranque sigue igual y queda una línea en el log.
-            - **`/perfil lugar <ciudad>`** guarda el lugar sin pasar por `/plan crear`.
-            - **Cierre:** tests de la lectura de la respuesta, del fallo, de la caché de coordenadas, del bloque y del comando. En vivo, la función de producción con un lugar real.
-          - **Cierre:** tests del cálculo (asfalto, trail, sin km, sin desnivel), de la pregunta y de que llega al LLM. Además, el cálculo con los datos reales del usuario (solo lectura), comparable con Garmin Connect.
-      - (b) **Deportes cruzados: hecho el 30/10** (CHANGELOG). Queda verlo con un `/plan crear` real con bici o remo, fuera del proxy. Situación de partida: el plan admite `cross` y `strength`, pero `/plan crear` no pregunta qué hace el atleta (bici, remo, gimnasio) ni cuánto.
-        - Un `cross` sin tramos sale titulado "Fuerza" y con el TSS de la fuerza (35/h, `plan_builder.py`), no con el del deporte que sea.
-        - La regla de volumen (≤ 10 %) mira el volumen sostenido sin separar deportes.
-        - **Diseño y criterios fijados antes de programarlo (30/10):**
-          - **Pregunta en `/plan crear`:** "¿Qué otros deportes quieres dentro del plan? (bici, remo, elíptica, natación; «no» si ninguno; Enter para que decida el entrenador)" y, si da alguno, "¿Cuántas sesiones por semana como mucho?". Se guarda en `plan_preferences.cross` = {sports, max_per_week}; Enter = sin regla.
-          - **Formato del día `cross`:** lleva `"sport"` (cycling, rowing, elliptical o swimming) y tramos por FC (FC1–FC5) con warmup y cooldown. El título por defecto sale del deporte ("Bici", "Remo", "Elíptica", "Natación").
-            - Sin tramos, sin "sport" o con ritmo (zonas Z, RP o "pace") → fallo con su texto para el LLM.
-            - El TSS sale de los tramos por FC con la tabla hrTSS de TP, como la bici sin potencia, en vez de 35/h de la fuerza. Sin km.
-          - **Reglas por semana** (si el atleta respondió): solo sus deportes y como mucho `max_per_week` sesiones `cross`; con «no», ninguna.
-          - **El LLM recibe** sus deportes y el máximo en "Preferencias del atleta", y el formato del `cross` en el prompt de semanas.
-          - **Volumen sostenido** (`recent_weekly_minutes`): sin caminatas ni senderismo, que el plan nunca pone (inflaban el punto de partida). Con los datos del usuario no cambia nada: 0 caminatas en las últimas 4 semanas.
-          - Planes ya guardados: no se tocan (el plan actual no tiene `cross`).
-          - **Cierre:** tests de cada regla a favor y en contra, del TSS por FC frente a los 35/h, de la pregunta de `/plan crear` y del volumen sin caminatas.
-      - (c) **Preferencias que duran: hecho el 30/10** (`agent/plan_prefs.py`; CHANGELOG). Queda verlo con frases reales en `agent.log` (`[PLAN] preferencias guardadas`). Una frase que se guarde o se pierda sin deber va a los tests antes de tocar las reglas.
-        - **Diseño y criterios fijados antes de programarlo (30/10).** Sin LLM: `agent/plan_prefs.py` lee el mensaje de planes (crear, ajustar o replanificar) antes de llamar al LLM.
-          - **Días que nunca puede.** Cuentan si se dicen en plural ("los martes no puedo", "no puedo entrenar los martes ni los jueves") o con "nunca", "ningún", "siempre" o "a partir de ahora". El día sale de `availability.training_days` y entra en `rest_days`, así que las reglas lo exigen como descanso desde esa misma petición.
-          - **Lo que no dura:** "este martes", "el martes que viene", "mañana" o un día en singular sin esas palabras. Eso es para una vez y no se guarda.
-          - **Preferencias de texto.** La frase que lleva "prefiero", "siempre", "nunca", "a partir de ahora" o "de ahora en adelante" se guarda tal cual en `plan_preferences.notes`: sin duplicados, como mucho 8 (se va la más antigua) y 200 caracteres cada una.
-          - **Las preferencias llegan al LLM** en "Preferencias del atleta" de cada plan, revisión o replanificado.
-          - **La respuesta dice qué se ha guardado.** `/plan crear` las enseña y pregunta si se mantienen. Responder que ya no borra las notas; los días se cambian con su pregunta de días.
-          - `/plan crear` ya no borra las notas al guardar sus respuestas.
-          - **Cierre:** un test por tipo de frase, a favor y en contra, con frases reales del estilo del usuario. Más uno de que llegan al LLM, uno de que las reglas exigen el día y uno de `/plan crear`.
-      - (d) **Replanificación por los datos y no solo a petición.**
-        - Hoy Kairos solo replanifica si el atleta lo pide, y solo hasta el final de la semana siguiente. El motor diario solo toca la sesión de hoy.
-        - Falta que Kairos detecte en Garmin cuándo el plan ya no vale y proponga rehacerlo: sesiones clave sin hacer, varios días sin actividad, HRV baja varios días seguidos, una actividad distinta de la prevista.
-        - Falta poder rehacer el bloque entero cuando el parón es largo (viaje, una semana enfermo), con la carrera en su fecha y la progresión desde lo que el atleta sostiene de verdad.
-    - Orden propuesto: (d) primero, que es el valor diferencial; después (c), (b) y (a).
-    - **(d1) Detector de desvíos: hecho el 30/10** (`agent/plan_drift.py`; criterios y resultado en el CHANGELOG). Queda verlo saltar con un desvío real y revisar con el usuario si los umbrales avisan cuando deben.
-    - **(d2) Replanificar el bloque entero tras un parón: hecho el 30/10** (`_route_plan_rebuild`; CHANGELOG). **Falta la prueba en vivo con Gemini fuera del proxy:** un «replanifica el plan» real, en tiempo y peticiones parecidos a `/plan crear`, revisado por el usuario. Diseño y criterios fijados antes de programarlo:
-      - **Cuándo:** con un plan del LLM activo y "replanific…" en el mensaje (lo que propone el bloque de d1). "Ajusta el plan" sigue siendo la revisión corta, hasta el final de la semana siguiente.
-      - **Qué rehace:** la estructura y los días desde el lunes que viene hasta la carrera, con el mismo constructor que `/plan crear` (`_build_plan_with_llm`) y todas sus reglas. Si hoy es lunes, desde hoy.
-        - La progresión parte de lo que el atleta sostiene de verdad: la media de las últimas 4 semanas, que ya recoge el parón.
-        - La carrera, en su fecha. Objetivo y tiempo, los del plan activo.
-        - Lo que el atleta escribe ("he estado enfermo una semana") llega al LLM como "Lo que pide el atleta".
-      - **Esta semana:** se quedan las sesiones que tenía. Para cambiarlas, "ajusta el plan".
-      - **Cómo se guarda:** versión nueva del mismo plan, que empieza el lunes de esta semana. La semana 1 es la actual, con sus sesiones; desde la 2, las nuevas. Lleva `revised_on` = hoy. La versión anterior queda en `training_plan_version`.
-      - **Si el LLM no consigue un plan válido:** no cambia nada y la respuesta dice qué no cumplía, como en `/plan crear`.
-      - **Si no queda al menos una semana entera antes de la de la carrera:** no rehace nada y propone "ajusta el plan".
-      - **Cierre:** tests con el LLM simulado del enrutado (replanificar frente a ajustar), las fechas, la unión de semanas y `plan_data`, el fallo que no toca nada y el caso sin semanas. En vivo con Gemini, fuera del proxy (desde el trabajo no llega): un replanificado válido en tiempo y peticiones parecidos a `/plan crear`, revisado por el usuario.
-
-12. Añadir un porcentaje de cumplimiento de los entrenamientos en Kairos basado en los datos de kairos y los entrenamientos del atleta
+- **Ticket de GitHub Support 4918285** (abierto el 28/10): purga de las vistas en caché de los 80 commits viejos, de `eeee21b` a `716cd0c`. Cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API.
 
 ## Descartado
 
