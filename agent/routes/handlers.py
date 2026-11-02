@@ -14,6 +14,7 @@ from agent.mcp.client import (
     call_tool,
 )
 from agent import plan_builder as _plan_builder
+from agent import plan_events as _plan_events
 from agent import plan_prefs as _plan_prefs
 from agent import run_plan as _run_plan
 from agent import storage as _storage
@@ -216,6 +217,78 @@ class RoutesMixin:
         if isinstance(result, tuple):
             return (head + result[0], *result[1:])
         return head + result
+
+    async def _route_plan_event(self, user_message: str):
+        """Un viaje o una salida fija que el atleta cuenta (31/10): el LLM entiende la frase, el código la valida y la
+        guarda, y el plan se readapta (`_apply_plan_events`)."""
+        history = list(getattr(self, "conversation_history", None) or [])
+        try:
+            data, errors = await self._extract_plan_events(user_message, history)
+        except LLMAuthError:
+            raise
+        except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
+            data, errors = None, [f"{type(exc).__name__}: {exc}"]
+        if data is None:
+            log.warning("[PLAN] eventos: no se entendió: %s", " | ".join(errors[:4]))
+            return ("## ⚠️ No he podido entender el evento\n\nCuéntamelo de otra forma (qué es, qué día y, si es una "
+                    "salida, cuánto dura y a qué intensidad) o usa `/plan evento`.")
+        return await self._apply_plan_events(
+            [e for e in data.get("events") or [] if isinstance(e, dict)], [str(i) for i in data.get("remove") or []])
+
+    async def _apply_plan_events(self, raws: list[dict], removals: list[str]) -> str:
+        """Valida y guarda los eventos (o pregunta lo que falta, sin guardar nada) y readapta el plan (31/10, decisiones
+        del usuario): si el evento cae esta semana o la siguiente, la revisión corta lo incorpora al momento; los más
+        lejanos quedan guardados y se ofrece replanificar."""
+        today = date.today()
+        profile = self.user_profile
+        ready: list[dict] = []
+        errors: list[str] = []
+        questions: list[str] = []
+        for raw in raws:
+            event, errs, qs = _plan_events.normalize(raw, today)
+            if event:
+                ready.append(event)
+            errors += errs
+            questions += qs
+        if questions or errors:
+            head = "## 📅 Necesito un dato más para guardar el evento" if questions else "## 📅 No puedo guardar el evento"
+            return head + "\n\n" + "\n".join(f"- {t}" for t in dict.fromkeys(errors + questions))
+        gone = _plan_events.remove(profile, removals) if removals else []
+        if not raws and not gone:
+            return ("No he entendido ningún evento. Cuéntame qué es (viaje, salida en grupo…) y qué día, o usa "
+                    "`/plan evento`.")
+        saved = [_plan_events.add(profile, e, today) for e in ready]
+        _save_user_profile(profile)
+        self.__dict__.pop("_active_plan_cache", None)
+        log.info("[PLAN] eventos guardados=%d quitados=%d", len(saved), len(gone))
+        lines = ["## 📅 Evento guardado" if saved else "## 📅 Evento quitado"]
+        lines += [f"- `{e['id']}` {_plan_events.describe(e)}" for e in saved]
+        lines += [f"- Quitado: {_plan_events.describe(e)}" for e in gone]
+        return "\n".join(lines) + await self._readapt_for_events(saved, gone)
+
+    async def _readapt_for_events(self, saved: list[dict], removed: list[dict]) -> str:
+        if not saved:
+            return ("\n\nEl plan sigue como estaba: pídeme «ajusta el plan» si quieres recuperar esos días." if removed else "")
+        try:
+            plan = _normalize_storage_plan_row(_storage.get_active_training_plan())
+        except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+            plan = None
+        if not plan or not plan.get("id") or (plan.get("plan_data") or {}).get("author") != "llm":
+            return "\n\nLo tendré en cuenta cuando crees el plan (`/plan crear`)."
+        today = date.today()
+        window_end = today - timedelta(days=today.weekday()) + timedelta(days=13)  # domingo de la semana siguiente
+        near = [e for e in saved if date.fromisoformat(e["start"]) <= window_end]
+        far = [e for e in saved if e not in near]
+        parts: list[str] = []
+        if near:
+            sessions = _storage.list_training_plan_sessions(str(plan["id"]))
+            message = ("El atleta ha fijado estos eventos obligatorios: " + "; ".join(_plan_events.describe(e) for e in near)
+                       + ". Readapta los días que cambian para cumplirlos.")
+            parts.append(await self._route_plan_revision(message, plan, sessions, await self._build_plan_load_context()))
+        if far:
+            parts.append("Los eventos más lejanos (" + "; ".join(_plan_events.describe(e) for e in far) + ") los tendré en "
+                         "cuenta cuando replanifiques: dime «replanifica el plan» cuando quieras.")
+        return "\n\n" + "\n\n".join(parts)
 
     async def _plan_request(self, user_message: str, force_new: bool = False):
         """Planificación: el LLM construye el plan nuevo (agent/plan_llm.py) y el código lo comprueba; si no lo consigue, el
@@ -512,5 +585,6 @@ ROUTE_HANDLERS: dict[str, str] = {
     "mcp_factual": "_route_mcp_factual",
     "daily_readiness": "_route_daily_readiness",
     "planning": "_route_planning",
+    "plan_event": "_route_plan_event",
     "personal_records": "_route_personal_records",
 }

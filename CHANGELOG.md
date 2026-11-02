@@ -2,6 +2,20 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-02
+
+### Added (eventos fijos en el plan: un viaje o una salida en grupo; petición del usuario)
+- Petición: si el atleta tiene algo planificado una semana (un viaje, una salida en grupo), que pueda decirlo a Kairos y que lo meta en el plan y readapte el resto con sus datos y ese entrenamiento obligatorio.
+- Decisiones del usuario: frase libre en el chat y también el comando `/plan evento`; si falta un dato, Kairos pregunta antes de guardar; readaptación automática si cae esta semana o la siguiente (revisión corta) y, si es más lejos, guardar y ofrecer replanificar; en un viaje, sin entrenar o con un máximo de minutos, y el material que tiene.
+- Qué se hizo (`agent/plan_events.py`):
+  - Dos tipos en `goals.plan_events`: `session` (día, deporte, duración, intensidad) y `travel` (fechas, máximo de minutos al día, material). Los pasados se borran solos.
+  - Chat: `router._is_plan_event_intent` (palabra de evento + cue de fecha, sin preguntas ni pasado; también la respuesta a la pregunta de un dato que faltaba) → ruta `plan_event`. El LLM del chat (`_extract_plan_events`, `prompts/plan/events.md`, con el calendario) entiende la frase y puede quitar eventos; el código valida (`normalize`): nada se inventa, lo que falta se pregunta.
+  - `/plan evento` con preguntas guiadas y `/plan eventos` (listar, `quitar e1`).
+  - El LLM del plan recibe los eventos con su id (`PlanFrame.events`, `frame_text`, `rules_text`, `prompts/plan/system.md`) y marca el día con `"event": "<id>"`. `check_week` exige la sesión (duración ±10 %, deporte) o los límites del viaje.
+  - Exenciones decididas: un evento fijo no cuenta en las sesiones de calidad ni en el 20 % de Z3 o más; sus minutos son el mínimo de la semana y los topes de volumen, descarga, afinamiento y tirada larga no lo limitan.
+- Tests: `tests/test_plan_events.py` (35; total 1018). Sin probar en vivo con Gemini.
+- Falta: que `plan_drift` ignore los días de viaje (hoy podría avisar de "días sin actividad" en un viaje).
+
 ## 2026-10-31
 
 ### Changed (el arranque tras entrenar hoy; petición del usuario)

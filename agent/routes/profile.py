@@ -104,6 +104,8 @@ def _build_config_options_markdown() -> str:
             "Gestionar planes:",
             "- `/plan crear`: crear plan base.",
             "- `/plan activar <id>`: activar plan por ID.",
+            "- `/plan evento`: un viaje o una salida obligatoria; el plan se readapta (también en el chat: «el sábado 15 tengo una salida en grupo de 3 h»).",
+            "- `/plan eventos`: ver tus eventos fijos o quitar uno.",
             "",
             "Sistema:",
             "- `/menu`: abrir menú resumido.",

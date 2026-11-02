@@ -35,6 +35,8 @@ class ToolRouter:
     def route_key(self, user_message: str, history: list[dict], profile: dict) -> str | None:
         if _is_config_options_intent(user_message):
             return "config_options"
+        if _is_plan_event_intent(user_message, history):
+            return "plan_event"
         if _is_plan_status_intent(user_message):
             return "plan_status"
         if _planned_days(user_message) is not None:
@@ -78,6 +80,32 @@ class ToolRouter:
         if _is_planning_intent(user_message, history) and _has_goal_in_profile(profile):
             return "planning"
         return None
+
+
+PLAN_EVENT_ASK_MARK = "guardar el evento"  # lo lleva la pregunta de Kairos cuando falta un dato: la respuesta va a la misma ruta
+_EVENT_WORDS = ("viaje", "viajo", "viajar", "viajaré", "viajare", "vacaciones", "salida en grupo", "salida de grupo",
+                "salida con el grupo", "salida con el club", "salida con amigos", "quedada", "excursión", "excursion",
+                "boda", "congreso", "evento")
+_EVENT_DATE_CUE = re.compile(
+    r"\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|fin de semana|ma[ñn]ana|pasado ma[ñn]ana|"
+    r"semana que viene|pr[oó]xima semana|pr[oó]ximo|(?:el|del|al|d[ií]a)\s+\d{1,2}\b|\d{1,2}\s*(/|de\b|al\b|-))")
+_EVENT_PAST_OR_QUESTION = re.compile(
+    r"^\W*(c[oó]mo|qu[eé] tal|cu[aá]nt[oa]s?)\b|\b(hice|hicimos|dorm[ií]|entren[eé]|corr[ií]|estuve|fui)\b")
+
+
+def _is_plan_event_intent(user_message: str, history: list[dict] | None = None) -> bool:
+    """Un viaje, unas vacaciones o una salida en grupo que el atleta cuenta para su plan (31/10, petición del usuario),
+    o la respuesta a la pregunta de Kairos por un dato que faltaba del evento."""
+    text = (user_message or "").strip().lower()
+    if not text or text.startswith("/"):
+        return False
+    last_assistant = next((str(m.get("content") or "").lower() for m in reversed((history or [])[-4:])
+                           if m.get("role") == "assistant"), "")
+    if PLAN_EVENT_ASK_MARK in last_assistant and len(text) < 300:
+        return True
+    if _EVENT_PAST_OR_QUESTION.search(text):
+        return False
+    return any(w in text for w in _EVENT_WORDS) and bool(_EVENT_DATE_CUE.search(text))
 
 
 _PLAN_VIEW = re.compile(r"\b(ver|veo|muestra|muéstrame|muestrame|enseña|enséñame|ensename|lista|listar|listame|lístame)\b")

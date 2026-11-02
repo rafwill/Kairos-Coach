@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from agent import plan_events as _pe
 from agent import run_plan as rp
 from agent.load_metrics import TP_HRTSS_RATE_ABOVE_THRESHOLD, TP_HRTSS_RATES
 
@@ -90,6 +91,8 @@ class PlanFrame:
     race_elevation_m: float | None = None
     recent_weekly_vert_m: float | None = None
     back_to_back_days: list = field(default_factory=lambda: [6, 7])
+    # Eventos fijos (31/10): viajes y salidas obligatorias que el atleta ha contado (agent/plan_events.py).
+    events: list = field(default_factory=list)
 
     @property
     def long_share(self) -> float:
@@ -197,6 +200,7 @@ def frame_text(f: PlanFrame) -> str:
     lines.append(f"- Descanso: al menos {f.min_rest_days} día(s) por semana; calidad: como mucho {f.max_quality} sesiones por semana")
     if f.primary_sport:
         lines.append(f"- Deporte principal del atleta: {f.primary_sport}")
+    lines += _pe.frame_lines(f.events, f.monday)
     lines += ["", "## Preferencias del atleta",
               "- Dobles: " + ("sí, puede entrenar dos veces el mismo día (p. ej. rodaje y gimnasio)" if f.doubles
                               else "no, una sesión por día"),
@@ -251,6 +255,7 @@ def rules_text(f: PlanFrame) -> str:
         lines.append("- Sin sesiones \"cross\": el atleta no quiere otros deportes." if not f.cross_sports else
                      f"- \"cross\" solo de {', '.join(f.cross_sports)}"
                      + (f", como mucho {f.cross_max} por semana." if f.cross_max is not None else "."))
+    lines += _pe.rules_lines(f.events)
     return "\n".join(lines)
 
 
@@ -318,27 +323,35 @@ def check_macro(macro: dict, f: PlanFrame) -> list[str]:
         if minutes <= 0:
             errors.append(f"Semana {n}: \"minutes\" debe ser mayor que 0.")
             continue
-        if minutes > goal_min * 1.10:
+        # Eventos fijos (31/10): lo obligatorio del atleta cuenta como carga ya aprobada. Sus minutos son el mínimo de la
+        # semana y los topes de volumen y de tirada no lo limitan (consecuencia de sus reglas, no un número nuevo).
+        today = date.today()
+        fixed = _pe.fixed_minutes(f.events, f.monday(n), today) if f.events else 0.0
+        fixed_long = _pe.fixed_long_minutes(f.events, f.monday(n), today) if f.events else 0.0
+        if fixed and minutes < fixed:
+            errors.append(f"Semana {n}: {minutes:.0f} min no caben los eventos fijos del atleta ({fixed:.0f} min); "
+                          f"como poco {fixed:.0f} min.")
+        if minutes > max(goal_min * 1.10, fixed):
             errors.append(f"Semana {n}: {minutes:.0f} min superan las horas disponibles ({goal_min:.0f} min + 10 %).")
-        if long_min > minutes * f.long_share:
+        if long_min > minutes * f.long_share and not (fixed_long and long_min <= fixed_long + 5):
             errors.append(f"Semana {n}: la tirada larga ({long_min:.0f} min) supera el {f.long_share * 100:.0f} % de la "
                           f"semana ({minutes:.0f} min).")
         if phase in ("taper", "race"):
-            if peak and minutes > peak * 0.85:
+            if peak and minutes > max(peak * 0.85, fixed):
                 errors.append(f"Semana {n}: el afinamiento debe bajar al menos un 15 % sobre la semana más alta "
                               f"({peak:.0f} min); como mucho {peak * 0.85:.0f} min.")
             continue
         if deload:
-            if last_load and minutes > last_load * 0.85:
+            if last_load and minutes > max(last_load * 0.85, fixed):
                 errors.append(f"Semana {n}: la descarga debe bajar al menos un 15 % sobre la última semana de carga "
                               f"({last_load:.0f} min); como mucho {last_load * 0.85:.0f} min.")
             streak = 0
             continue
-        if last_load and minutes > last_load * 1.10 + 1:
+        if last_load and minutes > max(last_load * 1.10 + 1, fixed):
             what = "el volumen que sostiene el atleta" if n == 1 or not peak else "la semana de carga anterior"
             errors.append(f"Semana {n}: {minutes:.0f} min suben más de un 10 % sobre {what} ({last_load:.0f} min); "
                           f"como mucho {last_load * 1.10:.0f} min.")
-        if last_long and long_min > last_long + f.long_step:
+        if last_long and long_min > last_long + f.long_step and not (fixed_long and long_min <= fixed_long + 5):
             errors.append(f"Semana {n}: la tirada larga sube más de {f.long_step:.0f} min sobre la anterior de carga "
                           f"({last_long:.0f} min).")
         streak += 1
@@ -739,8 +752,9 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
     if rest < f.min_rest_days:
         errors.append(f"Semana {n}: necesita al menos {f.min_rest_days} día(s) de descanso ({{\"type\": \"rest\"}}, sin tramos; "
                       "\"recovery\" es un rodaje regenerativo, no descanso).")
-    quality_days = sorted(d for d, day in by_day.items() if any(s["session_type"] == "running_quality" for s in day))
-    quality = sum(1 for s in sessions if s["session_type"] == "running_quality")
+    quality_days = sorted(d for d, day in by_day.items()
+                          if any(s["session_type"] == "running_quality" and not _pe.event_id(s) for s in day))
+    quality = sum(1 for s in sessions if s["session_type"] == "running_quality" and not _pe.event_id(s))
     if quality > f.max_quality:
         errors.append(f"Semana {n}: {quality} sesiones de calidad; como mucho {f.max_quality}.")
     if any(b - a < 2 for a, b in zip(quality_days, quality_days[1:])):
@@ -772,17 +786,19 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
         # Distribución de la intensidad (decisión del usuario, 29/10): como mucho un 20 % del tiempo en Z3 o más.
         endurance = [s for s in sessions if s["session_type"] not in ("rest", "strength")]
         total_end = sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in endurance)
-        hard = sum(hard_minutes(s) for s in endurance)
+        hard = sum(hard_minutes(s) for s in endurance if not _pe.event_id(s))  # lo fijado por el atleta no cuenta (31/10)
         if total_end and hard > total_end * f.max_hard_share + 0.5:
             where = ", ".join(f"{rp._DAY_NAMES[s['day_index']].lower()} {hard_minutes(s):.0f}"
                               for s in sorted(endurance, key=session_key) if hard_minutes(s) >= 1)
             # Dónde y cuánto, ya calculado (el LLM no acierta a ojo: en vivo se quedaba a 2 min tras 4 intentos).
             excess = math.ceil(hard - total_end * f.max_hard_share)
-            top = max(endurance, key=hard_minutes)
+            top = max((s for s in endurance if not _pe.event_id(s)), key=hard_minutes)
             errors.append(f"Semana {n}: {hard:.0f} de {total_end:.0f} min ({hard / total_end * 100:.1f} %) en Z3 o más (RP incluido: "
                           f"{where}); como mucho el {f.max_hard_share * 100:.0f} %, {total_end * f.max_hard_share:.0f} min. "
                           f"Quita al menos {excess} min intensos (p. ej. el {rp._DAY_NAMES[top['day_index']].lower()}: "
                           f"{hard_minutes(top):.0f} → {hard_minutes(top) - excess:.0f} min) o pásalos a Z2.")
+    if f.events:
+        errors += _pe.check_week(n, sessions, f.monday(n), f.events)
     if past_days:
         return errors
     total = sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions)

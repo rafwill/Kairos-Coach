@@ -107,6 +107,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agent import diabetes as _diabetes
 from agent import ia_provider as _ia_provider
+from agent import plan_events as _plan_events
 from agent.mcp.client import garmin_mcp_session
 from agent.trainer_agent import (
     TrainerAgent,
@@ -893,7 +894,7 @@ def _show_profile() -> None:
     )
 
 
-_PLAN_COMMAND_WITHOUT_SLASH = re.compile(r"^plan\s+(ver|listar|activar|crear)\b", re.IGNORECASE)
+_PLAN_COMMAND_WITHOUT_SLASH = re.compile(r"^plan\s+(ver|listar|activar|crear|evento|eventos)\b", re.IGNORECASE)
 
 
 def _with_plan_slash(user_input: str) -> str:
@@ -926,6 +927,10 @@ def _parse_plan_command(cmd: str) -> tuple[str | None, str | None]:
         return "activate", arg
     if action in {"crear", "create", "new"}:
         return "create", None
+    if action in {"evento", "event"}:
+        return "event", None
+    if action in {"eventos", "events"}:
+        return "events", arg
     return "help", None
 
 
@@ -935,7 +940,9 @@ def _show_plan_help() -> None:
         "  [bold cyan]/plan listar[/bold cyan]          Lista planes (nº e id corto) y marca el activo\n"
         "  [bold cyan]/plan ver <nº o id>[/bold cyan]     Muestra el plan y sus sesiones (ej.: /plan ver 1)\n"
         "  [bold cyan]/plan activar <nº o id>[/bold cyan] Activa un plan y desactiva el anterior\n"
-        "  [bold cyan]/plan crear[/bold cyan]           Tu LLM construye el plan (Kairos lo comprueba) y lo activa",
+        "  [bold cyan]/plan crear[/bold cyan]           Tu LLM construye el plan (Kairos lo comprueba) y lo activa\n"
+        "  [bold cyan]/plan evento[/bold cyan]          Un viaje o una salida obligatoria: el plan se readapta\n"
+        "  [bold cyan]/plan eventos[/bold cyan]         Lista tus eventos fijos (quitar uno: /plan eventos quitar e1)",
         title="[bold blue]Kairos Coach — Gestión de planes[/]",
         border_style="blue",
     ))
@@ -1230,6 +1237,56 @@ async def _create_training_plan_cli(agent: TrainerAgent) -> None:
     console.print(Markdown(str(reply or "")))
 
 
+async def _add_plan_event_cli(agent: TrainerAgent) -> None:
+    """`/plan evento` (31/10): un viaje o una salida obligatoria con preguntas guiadas; el plan se readapta igual que
+    cuando el atleta lo cuenta en el chat (`_apply_plan_events`)."""
+    console.print(Panel.fit(
+        "Cuéntame un viaje, unas vacaciones o una salida obligatoria (una salida en grupo, una quedada…). Tu plan lo "
+        "respeta y se reparte el resto de la semana alrededor.\n[dim]También puedes escribirlo en el chat: «el sábado "
+        "15 tengo una salida en grupo de 3 h».[/]",
+        title="[bold blue]Kairos Coach — Evento fijo[/]", border_style="blue"))
+    kind = "session" if Prompt.ask("¿Qué es? 1 = salida o sesión fija, 2 = viaje o días con limitación",
+                                   choices=["1", "2"], default="1") == "1" else "travel"
+    today = date.today()
+    when = _plan_events.parse_dates(Prompt.ask(
+        "¿Qué día? (15/11 o 2026-11-15" + ("" if kind == "session" else "; un rango: 20/11-23/11") + ")"), today)
+    if when is None:
+        console.print("[yellow]No entiendo esa fecha. Vuelve a probar con /plan evento.[/]")
+        return
+    raw: dict = {"kind": kind, "start": when[0], "end": when[1],
+                 "title": Prompt.ask("Nombre (Enter para uno por defecto)", default="").strip()}
+    if kind == "session":
+        raw["sport"] = Prompt.ask("Deporte", choices=list(_plan_events.SPORTS), default="running")
+        raw["duration_min"] = _plan_events.parse_minutes(Prompt.ask("¿Cuánto dura? (90, 2h, 1:30)"))
+        raw["intensity"] = Prompt.ask("Intensidad (easy = suave, moderate = moderada, hard = fuerte)",
+                                      choices=list(_plan_events.INTENSITIES), default="easy")
+    else:
+        raw["max_minutes"] = _plan_events.parse_minutes(Prompt.ask(
+            "¿Cuántos minutos como mucho al día podrás entrenar? (0 = nada)", default="0"))
+        raw["equipment"] = Prompt.ask("Material o instalaciones (gimnasio, cinta, solo correr…; Enter si ninguno)",
+                                      default="").strip()
+    with console.status("[dim]Guardando el evento y readaptando tu plan…[/]"):
+        reply = await agent._apply_plan_events([raw], [])
+    console.print(Markdown(str(reply or "")))
+
+
+def _plan_events_cli(agent: TrainerAgent, arg: str | None) -> None:
+    """`/plan eventos` lista los eventos fijos; `/plan eventos quitar e1` borra uno (el plan no se toca: «ajusta el plan»)."""
+    profile = agent.user_profile
+    words = (arg or "").split()
+    if words[:1] == ["quitar"] and len(words) > 1:
+        gone = _plan_events.remove(profile, words[1:])
+        if gone:
+            _save_user_profile(profile)
+            console.print(Markdown("\n".join(f"Quitado: {_plan_events.describe(e)}" for e in gone)
+                                   + "\n\nEl plan sigue como estaba: pídeme «ajusta el plan» si quieres recuperar esos días."))
+        else:
+            console.print("[yellow]No hay ningún evento con ese id (míralos con /plan eventos).[/]")
+        return
+    console.print(Markdown("## 📅 Eventos fijos\n" + _plan_events.markdown(_plan_events.prune(_plan_events.load(profile),
+                                                                                              date.today()))))
+
+
 def _plan_short_id(plan_id: str) -> str:
     """Los 8 primeros caracteres del id: bastan para distinguir los planes de un atleta (el id completo es un UUID)."""
     return str(plan_id or "")[:8]
@@ -1370,6 +1427,8 @@ def _show_menu() -> None:
 
     table.add_row("Plan", "/plan crear", "Crear el plan con tu LLM y activarlo")
     table.add_row("Plan", "/plan activar <id>", "Activar plan por ID")
+    table.add_row("Plan", "/plan evento", "Un viaje o una salida obligatoria: el plan se readapta (también en el chat)")
+    table.add_row("Plan", "/plan eventos", "Ver tus eventos fijos o quitar uno (/plan eventos quitar e1)")
 
     table.add_row("Sistema", "/resumen", "Rehacer el resumen inicial con datos nuevos de Garmin")
     table.add_row("Sistema", "/proveedor", "Cambiar de proveedor de IA, modelo o clave")
@@ -1981,6 +2040,14 @@ async def main() -> None:
 
             if _parse_plan_command(cmd)[0] == "create":
                 await _create_training_plan_cli(agent)
+                continue
+
+            plan_action, plan_arg = _parse_plan_command(cmd)
+            if plan_action == "event":
+                await _add_plan_event_cli(agent)
+                continue
+            if plan_action == "events":
+                _plan_events_cli(agent, plan_arg)
                 continue
 
             if _handle_cli_command(user_input, agent):

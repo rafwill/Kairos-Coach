@@ -18,9 +18,11 @@ from datetime import date, timedelta
 from typing import Callable
 
 from agent import plan_builder as _pb
+from agent import plan_events as _pe
 from agent import run_plan as _run_plan
 from agent import storage as _storage
 from agent.daily_engine import _extract_activity_duration_minutes
+from agent.coaching import _calendar_block
 from agent.data_access import _add_ia_tokens
 from agent.dates import _safe_float
 from agent.garmin_data import _extract_activity_date_iso
@@ -121,17 +123,19 @@ class PlanLLMMixin:
             terrain=dict(load_context.get("terrain") or {}),
             trail=trail, race_elevation_m=elevation, recent_weekly_vert_m=load_context.get("recent_weekly_vert_m"),
             back_to_back_days=b2b if len(b2b) == 2 else [6, 7],
+            # Eventos fijos (31/10): viajes y salidas obligatorias que cuenta el atleta, dentro del plan.
+            events=_pe.for_plan(_pe.load(profile), start, race_date, today),
         )
 
     def _plan_system_message(self) -> dict:
         return {"role": "system", "content": _render_prompt("plan/system") + "\n\n" + _load_coaching_rules()
                 + self._profile_context_block()}
 
-    async def _plan_llm_call(self, messages: list[dict], label: str) -> str:
+    async def _plan_llm_call(self, messages: list[dict], label: str, model: str | None = None) -> str:
         t0 = time.perf_counter()
         response = await asyncio.wait_for(
             self.client.chat.completions.create(
-                model=self.model,
+                model=model or self.model,
                 messages=messages,
                 **({"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
                    if getattr(self, "provider", "") == "nvidia" else {}),
@@ -148,14 +152,15 @@ class PlanLLMMixin:
         return str(response.choices[0].message.content or "")
 
     async def _plan_llm_json(self, messages: list[dict], check: Callable[[dict], list[str]],
-                             label: str) -> tuple[dict | None, list[str], list[dict]]:
+                             label: str, model: str | None = None) -> tuple[dict | None, list[str], list[dict]]:
         """Pide el JSON, lo comprueba y devuelve los fallos al LLM hasta que pase o se acaben los intentos.
 
         Devuelve (datos o None, fallos, conversación con la última respuesta: para seguirla si hace falta).
         """
         errors: list[str] = []
+        extra = {"model": model} if model else {}  # solo si se pide otro: así no cambia la llamada de los planes
         for attempt in range(1, _PLAN_ATTEMPTS + 1):
-            text = await self._plan_llm_call(messages, f"{label} intento {attempt}")
+            text = await self._plan_llm_call(messages, f"{label} intento {attempt}", **extra)
             try:
                 data = _pb.parse_json(text)
                 errors = check(data)
@@ -166,6 +171,30 @@ class PlanLLMMixin:
             log.info("[PLAN] %s intento %d: %s", label, attempt, " | ".join(errors[:8]))
             messages = messages + [{"role": "assistant", "content": text}, {"role": "user", "content": _correction(errors)}]
         return None, errors, messages
+
+    async def _extract_plan_events(self, message: str, history: list[dict] | None = None) -> tuple[dict | None, list[str]]:
+        """Lo que el atleta cuenta de un viaje o una salida fija → {"events": [...], "remove": [...]} (31/10).
+
+        El LLM solo entiende la frase (fechas con el calendario, ids de lo guardado); lo que falta lo deja en null y
+        lo valida el código (`plan_events.normalize`). Va con el modelo del chat: es una llamada corta.
+        """
+        today = date.today()
+        current = _pe.prune(_pe.load(self.user_profile or {}), today)
+        earlier = [str(m.get("content") or "")[:300] for m in (history or []) if m.get("role") == "user"][-3:]
+        messages = [{"role": "user", "content": _render_prompt(
+            "plan/events", calendario=_calendar_block(today), guardados=_pe.markdown(current),
+            anteriores="\n".join(f"- {t}" for t in earlier) or "(ninguno)", mensaje=message)}]
+
+        def check(data: dict) -> list[str]:
+            events, remove = data.get("events", []), data.get("remove", [])
+            if not isinstance(events, list) or not all(isinstance(e, dict) for e in events):
+                return ["\"events\" debe ser una lista de objetos."]
+            if not isinstance(remove, list):
+                return ["\"remove\" debe ser una lista de ids."]
+            return []
+
+        data, errors, _ = await self._plan_llm_json(messages, check, "eventos", model=self._chat_llm_model())
+        return data, errors
 
     async def _build_plan_with_llm(self, user_message: str, load_context: dict, plan: dict | None = None,
                                    from_monday: date | None = None) -> tuple[dict | None, list[dict], list[str]]:

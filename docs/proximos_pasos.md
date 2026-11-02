@@ -31,6 +31,7 @@ Texto anterior de esta lista, con los criterios de diseño que citan algunos com
    - Si Flash Lite responde peor que Flash en el chat, valorar las otras opciones: facturación en AI Studio, o NVIDIA para el chat.
 
 5. **Planes en vivo** (fuera del proxy, que bloquea Gemini).
+   - Eventos fijos (2/11): un viaje y una salida en grupo reales, contados en el chat y con `/plan evento`; ver que Kairos pregunta lo que falta, readapta esta semana y la siguiente y ofrece replanificar si cae más lejos, y que el plan cumple el día (`[PLAN] eventos guardados` en `agent.log`). Pendiente de hacer: que el aviso de plan que ya no encaja (`plan_drift`) ignore los días de viaje.
    - Un `/plan crear` real y un "ajusta el plan: …", revisados por el usuario; con bici o remo si los quiere dentro del plan.
    - Un «replanifica el plan» real, en tiempo y peticiones parecidos a `/plan crear` (10–15), revisado por el usuario.
    - Preferencias que duran con frases reales (`[PLAN] preferencias guardadas`). Una frase que se guarde o se pierda sin deber va a los tests antes de tocar las reglas.
