@@ -86,6 +86,11 @@ PLAN_EVENT_ASK_MARK = "guardar el evento"  # lo lleva la pregunta de Kairos cuan
 _EVENT_WORDS = ("viaje", "viajo", "viajar", "viajaré", "viajare", "vacaciones", "salida en grupo", "salida de grupo",
                 "salida con el grupo", "salida con el club", "salida con amigos", "quedada", "excursión", "excursion",
                 "boda", "congreso", "evento")
+# Palabras que solo cuentan si el atleta dice que lo tiene o lo quita ("tengo una salida a la sierra programada").
+_EVENT_WEAK_WORDS = ("salida", "ruta", "marcha")
+_EVENT_COMMIT = re.compile(
+    r"\b(tengo|tendr[eé]|tenemos|voy a|vamos a|hay|habr[aá]|programad[ao]|planead[ao]|organizad[ao]|he quedado|"
+    r"hemos quedado|me han invitado|salgo|saldr[eé]|salimos|quita|borra|elimina|cancela|anula)\b")
 _EVENT_DATE_CUE = re.compile(
     r"\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|fin de semana|ma[ñn]ana|pasado ma[ñn]ana|"
     r"semana que viene|pr[oó]xima semana|pr[oó]ximo|(?:el|del|al|d[ií]a)\s+\d{1,2}\b|\d{1,2}\s*(/|de\b|al\b|-))")
@@ -103,9 +108,10 @@ def _is_plan_event_intent(user_message: str, history: list[dict] | None = None) 
                            if m.get("role") == "assistant"), "")
     if PLAN_EVENT_ASK_MARK in last_assistant and len(text) < 300:
         return True
-    if _EVENT_PAST_OR_QUESTION.search(text):
+    if _EVENT_PAST_OR_QUESTION.search(text) or not _EVENT_DATE_CUE.search(text):
         return False
-    return any(w in text for w in _EVENT_WORDS) and bool(_EVENT_DATE_CUE.search(text))
+    return any(w in text for w in _EVENT_WORDS) or (
+        any(re.search(rf"\b{w}\b", text) for w in _EVENT_WEAK_WORDS) and bool(_EVENT_COMMIT.search(text)))
 
 
 _PLAN_VIEW = re.compile(r"\b(ver|veo|muestra|muéstrame|muestrame|enseña|enséñame|ensename|lista|listar|listame|lístame)\b")

@@ -202,6 +202,8 @@ class TestIntent:
         "Mañana viajo a Madrid y no podré entrenar",
         "Este fin de semana hay una quedada con el club",
         "Quita el viaje del 20",
+        "El sabado dia 14 tengo una salida a la sierra programada. ¿Puedes actualizar el plan de la semana que viene?",
+        "Ajusta el plan: el domingo tengo una ruta con amigos",
     ])
     def test_event_phrases(self, phrase):
         assert _is_plan_event_intent(phrase, []) and ToolRouter().route_key(phrase, [], {}) == "plan_event"
@@ -209,6 +211,7 @@ class TestIntent:
     @pytest.mark.parametrize("phrase", [
         "¿Cómo dormí en mi viaje del martes?", "Entrené el sábado en la salida en grupo", "¿Qué me toca el sábado?",
         "Ajusta el plan, tengo una molestia en el gemelo", "Cuántos km hice el domingo", "/plan evento",
+        "Mi salida del sábado fue dura", "¿Cómo fue mi salida del sábado?", "Analiza mi última salida de trail",
     ])
     def test_other_phrases(self, phrase):
         assert not _is_plan_event_intent(phrase, [])

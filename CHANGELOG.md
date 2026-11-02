@@ -14,6 +14,7 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
   - El LLM del plan recibe los eventos con su id (`PlanFrame.events`, `frame_text`, `rules_text`, `prompts/plan/system.md`) y marca el día con `"event": "<id>"`. `check_week` exige la sesión (duración ±10 %, deporte) o los límites del viaje.
   - Exenciones decididas: un evento fijo no cuenta en las sesiones de calidad ni en el 20 % de Z3 o más; sus minutos son el mínimo de la semana y los topes de volumen, descarga, afinamiento y tirada larga no lo limitan.
 - Tests: `tests/test_plan_events.py` (35; total 1018). Sin probar en vivo con Gemini.
+- Visto por el usuario en la primera prueba: «El sábado 14 tengo una salida a la sierra programada» no entró en la ruta de eventos (el detector solo conocía «salida en grupo», viaje, quedada…) y la revisión normal del plan inventó 1:45 sin preguntar. Ahora «salida», «ruta» y «marcha» cuentan si van con un verbo de «lo tengo» o «lo quito» (tengo, programada, hay, quita…) y una fecha; sin eso («Mi salida del sábado fue dura», «¿Cómo fue mi salida?») no. Con esa frase, Kairos pregunta deporte, duración e intensidad antes de guardar. Tests: 1023.
 - Falta: que `plan_drift` ignore los días de viaje (hoy podría avisar de "días sin actividad" en un viaje).
 
 ## 2026-10-31
