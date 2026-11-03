@@ -52,16 +52,20 @@ def window(today: date, start: date, since: date | None) -> list[date]:
 
 
 def detect(sessions: list[dict], start: date, activities: list[dict], hrv_rows: list[dict], today: date,
-           since: date | None = None) -> list[Signal]:
+           since: date | None = None, excused: set[date] | None = None) -> list[Signal]:
     """Señales de que el plan ya no encaja con lo que pasa de verdad.
 
     sessions: las del plan (week_index, day_index, session_type, structured_workout.summary.tss).
     activities: filas de activity_tss (start_date ISO, sport, tss). hrv_rows: filas de wellness_daily
     (metric_date, hrv_last_night_avg_ms, hrv_weekly_avg_ms). since: creación del plan o última revisión.
+    excused: días de viaje que el atleta avisó (3/11): no se comparan con el plan, como un descanso. La HRV sí cuenta,
+    porque no mide si se cumple el plan sino cómo está el cuerpo.
     """
     days = window(today, start, since)
     if not days:
         return []
+    excused = excused or set()
+    judged = [d for d in days if d not in excused]
     planned: dict[date, list[dict]] = {}
     for s in sessions or []:
         w, d = int(s.get("week_index") or 0), int(s.get("day_index") or 0)
@@ -83,14 +87,14 @@ def detect(sessions: list[dict], start: date, activities: list[dict], hrv_rows: 
         return sum(float(a.get("tss") or 0) for a in done.get(d, []))
 
     def trains(d: date) -> bool:
-        return any(str(s.get("session_type") or "") != "rest" for s in planned.get(d, []))
+        return d not in excused and any(str(s.get("session_type") or "") != "rest" for s in planned.get(d, []))
 
     signals: list[Signal] = []
 
     # Sesiones clave sin hacer (y no movidas al día de antes o al de después).
     missed = []
-    for d in days:
-        key = [s for s in planned.get(d, []) if str(s.get("session_type") or "") in KEY_TYPES]
+    for d in judged:
+        key =[s for s in planned.get(d, []) if str(s.get("session_type") or "") in KEY_TYPES]
         if not key or done.get(d):
             continue
         need = MOVED_SHARE * sum(_planned_tss(s) for s in key)
@@ -141,7 +145,7 @@ def detect(sessions: list[dict], start: date, activities: list[dict], hrv_rows: 
                                          f"(del {_day(best[0])} al {_day(best[-1])})."))
 
     # Carrera prevista y solo otro deporte hecho.
-    other = [d for d in days
+    other = [d for d in judged
              if any(str(s.get("session_type") or "") in RUN_TYPES for s in planned.get(d, []))
              and done.get(d) and not any("running" in str(a.get("sport") or "") for a in done[d])]
     if len(other) >= MIN_OTHER_SPORT_DAYS:
@@ -150,12 +154,13 @@ def detect(sessions: list[dict], start: date, activities: list[dict], hrv_rows: 
                                              f"({', '.join(sports)}): {', '.join(_day(d) for d in other)}."))
 
     # Carga de la ventana frente a la prevista.
-    p, x = sum(tss_planned(d) for d in days), sum(tss_done(d) for d in days)
-    if len(days) >= LOAD_MIN_DAYS and p >= LOAD_MIN_PLANNED_TSS:
+    p, x = sum(tss_planned(d) for d in judged), sum(tss_done(d) for d in judged)
+    if len(judged) >= LOAD_MIN_DAYS and p >= LOAD_MIN_PLANNED_TSS:
         ratio = x / p
         if ratio < LOAD_LOW or ratio > LOAD_HIGH:
             code = "load_low" if ratio < LOAD_LOW else "load_high"
-            signals.append(Signal(code, f"Carga de los últimos {len(days)} días: {x:.0f} TSS hechos frente a {p:.0f} "
+            span = f"los últimos {len(days)} días" if len(judged) == len(days) else f"{len(judged)} días, sin los del viaje"
+            signals.append(Signal(code, f"Carga de {span}: {x:.0f} TSS hechos frente a {p:.0f} "
                                         f"previstos ({ratio * 100:.0f} %)."))
     return signals
 
@@ -165,5 +170,5 @@ def markdown(signals: list[Signal]) -> list[str]:
     if not signals:
         return []
     return ["", "## 🔄 Tu plan ya no encaja", *[f"- {s.text}" for s in signals],
-            "- Si quieres, pídeme «replanifica el plan» y tu entrenador lo ajusta desde hoy con lo que has hecho de "
-            "verdad. Hasta entonces, el plan sigue como está."]
+            "- Si quieres, pídeme «replanifica el plan» y tu entrenador lo rehace desde el lunes que viene (si hoy es "
+            "lunes, desde hoy) con lo que has hecho de verdad. Hasta entonces, el plan sigue como está."]

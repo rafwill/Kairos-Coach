@@ -291,8 +291,8 @@ class RoutesMixin:
         return "\n\n" + "\n\n".join(parts)
 
     async def _plan_request(self, user_message: str, force_new: bool = False):
-        """Planificación: el LLM construye el plan nuevo (agent/plan_llm.py) y el código lo comprueba; si no lo consigue, el
-        motor de Kairos hace uno de respaldo y se avisa. Se guarda versionado en la base de datos."""
+        """Planificación: el LLM construye el plan nuevo (agent/plan_llm.py) y el código lo comprueba; si no lo consigue, no
+        se guarda ninguno y el activo sigue. Se guarda versionado en la base de datos."""
         try:
             previous_plan_row = None
             previous_plan = None

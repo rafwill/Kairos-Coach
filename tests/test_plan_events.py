@@ -104,6 +104,16 @@ class TestStorage:
         assert pe.prune([old, mine], TODAY) == [mine]
         assert pe.for_plan([old, mine, beyond], START, race, TODAY) == [mine]
 
+    def test_a_recent_trip_stays_saved_for_plan_drift_but_an_old_one_goes(self):
+        recent = _travel(TODAY - timedelta(days=5), TODAY - timedelta(days=3), id="e1")
+        old = _travel(TODAY - timedelta(days=30), TODAY - timedelta(days=28), id="e2")
+        profile = {"goals": {"plan_events": [old, recent]}}
+        pe.add(profile, _session_event(id=""), TODAY)
+        kept = pe.load(profile)
+        assert recent in kept and old not in kept and len(kept) == 2
+        assert TODAY - timedelta(days=4) in pe.travel_days(kept)
+        assert pe.travel_days([_session_event()]) == set()
+
     def test_dates_and_minutes_typed_by_hand(self):
         assert pe.parse_dates("15/11/2030", TODAY) == ("2030-11-15", "2030-11-15")
         assert pe.parse_dates("20/11/2030-23/11/2030", TODAY) == ("2030-11-20", "2030-11-23")

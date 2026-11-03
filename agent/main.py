@@ -1413,7 +1413,7 @@ def _show_menu() -> None:
 
     table.add_row("Ver", "/perfil", "Ver perfil completo")
     table.add_row("Ver", "/plan listar", "Listar planes y ver cuál está activo")
-    table.add_row("Ver", "/plan ver <id>", "Ver detalle y sesiones de un plan")
+    table.add_row("Ver", "/plan ver <nº o id>", "Ver detalle y sesiones de un plan")
     table.add_row("Ver", "/carga", "Ver tabla semanal de carga/fatiga")
     table.add_row("Ver", "/carga meses", "Ver vista mensual de carga/fatiga")
 
@@ -1426,7 +1426,7 @@ def _show_menu() -> None:
     table.add_row("Editar", "/perfil lugar <ciudad>", "Dónde entrenas: para el plan y el tiempo de hoy (ej. Elche)")
 
     table.add_row("Plan", "/plan crear", "Crear el plan con tu LLM y activarlo")
-    table.add_row("Plan", "/plan activar <id>", "Activar plan por ID")
+    table.add_row("Plan", "/plan activar <nº o id>", "Activar un plan (el nº y el id corto salen en /plan listar)")
     table.add_row("Plan", "/plan evento", "Un viaje o una salida obligatoria: el plan se readapta (también en el chat)")
     table.add_row("Plan", "/plan eventos", "Ver tus eventos fijos o quitar uno (/plan eventos quitar e1)")
 

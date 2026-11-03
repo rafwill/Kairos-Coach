@@ -18,6 +18,7 @@ import re
 from datetime import date, timedelta
 
 from agent import run_plan as rp
+from agent.plan_drift import WINDOW_DAYS
 
 KINDS = {"session": "salida o sesión fija", "travel": "viaje o días con limitación"}
 SPORTS = {"running": "carrera", "trail": "trail", "cycling": "bici de carretera", "gravel": "gravel", "mtb": "MTB",
@@ -149,9 +150,20 @@ def prune(events: list[dict], today: date) -> list[dict]:
     return [e for e in events if (_iso(e.get("end")) or today) >= today]
 
 
+def travel_days(events: list[dict]) -> set[date]:
+    """Los días de viaje guardados: plan_drift no los compara con el plan."""
+    days: set[date] = set()
+    for e in events:
+        start, end = _iso(e.get("start")), _iso(e.get("end"))
+        if e.get("kind") == "travel" and start and end:
+            days.update(start + timedelta(days=i) for i in range((end - start).days + 1))
+    return days
+
+
 def add(profile: dict, event: dict, today: date) -> dict:
-    """Guarda el evento con su id (e1, e2…); devuelve el guardado. Los pasados se limpian."""
-    events = prune(load(profile), today)
+    """Guarda el evento con su id (e1, e2…); devuelve el guardado. Los pasados se limpian, salvo los que aún caen en
+    la ventana de plan_drift: un viaje recién acabado no debe contar como días sin entrenar."""
+    events = prune(load(profile), today - timedelta(days=WINDOW_DAYS))
     used = {int(e["id"][1:]) for e in events if str(e.get("id", "")).startswith("e") and e["id"][1:].isdigit()}
     event = {**event, "id": f"e{max(used, default=0) + 1}"}
     save(profile, events + [event])

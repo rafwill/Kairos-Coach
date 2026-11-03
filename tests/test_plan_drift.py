@@ -127,6 +127,47 @@ def test_load_far_below_or_above_the_plan():
     assert _codes(pd.detect(_week_plan(), START, near, [], TODAY)) == set()
 
 
+def test_travel_days_are_not_compared_with_the_plan():
+    trip = {date(2026, 10, 22), date(2026, 10, 23), date(2026, 10, 24), date(2026, 10, 25)}
+    done = _all_done(skip=tuple(trip))
+    assert _codes(pd.detect(_week_plan(), START, done, [], TODAY)) >= {"missed_key", "inactive"}
+    assert pd.detect(_week_plan(), START, done, [], TODAY, excused=trip) == []
+    # Otro deporte en el viaje (la elíptica del hotel) tampoco cuenta.
+    hotel = done + [_did(d, 50.0, "fitness_equipment") for d in trip]
+    assert pd.detect(_week_plan(), START, hotel, [], TODAY, excused=trip) == []
+
+
+def test_travel_days_leave_out_of_the_load_and_do_not_hide_the_other_days():
+    trip = {date(2026, 10, 21), date(2026, 10, 22)}
+    low = [dict(a, tss=a["tss"] * 0.3) for a in _all_done(skip=tuple(trip))]
+    signal = next(s for s in pd.detect(_week_plan(), START, low, [], TODAY, excused=trip) if s.code == "load_low")
+    assert "5 días, sin los del viaje" in signal.text and "30 %" in signal.text
+    # Los días sin hacer fuera del viaje siguen avisando.
+    gap = (date(2026, 10, 23), date(2026, 10, 24), date(2026, 10, 25))
+    assert "inactive" in _codes(pd.detect(_week_plan(), START, _all_done(skip=gap), [], TODAY, excused=trip))
+    around = (date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 25))
+    signals = pd.detect(_week_plan(), START, _all_done(skip=around), [], TODAY, excused={date(2026, 10, 23), date(2026, 10, 24)})
+    assert "inactive" not in _codes(signals)  # el 23 y el 24 entrenó: la actividad en el viaje rompe la racha
+
+
+def test_hrv_still_counts_during_a_trip():
+    trip = {date(2026, 10, 25), date(2026, 10, 26), date(2026, 10, 27)}
+    hrv = [{"metric_date": d.isoformat(), "hrv_last_night_avg_ms": 40, "hrv_weekly_avg_ms": 60} for d in trip]
+    assert "hrv_low" in _codes(pd.detect(_week_plan(), START, _all_done(skip=tuple(trip)), hrv, TODAY, excused=trip))
+
+
+def test_startup_excuses_the_travel_events_of_the_profile():
+    plan = {"start_date": START.isoformat(), "created_at": "2026-10-18T10:00:00+00:00", "sessions": _week_plan()}
+    gap = (date(2026, 10, 23), date(2026, 10, 24), date(2026, 10, 25))
+    trip = {"id": "e1", "kind": "travel", "start": "2026-10-23", "end": "2026-10-25", "title": "Viaje", "max_minutes": 0}
+    group_ride = {"id": "e2", "kind": "session", "start": "2026-10-24", "end": "2026-10-24", "title": "Salida"}
+    with patch("agent.startup._storage.get_activity_tss_map",
+               return_value={i: a for i, a in enumerate(_all_done(skip=gap))}), \
+         patch("agent.startup._storage.get_wellness_daily_range", return_value=[]):
+        assert _plan_drift_lines(plan, TODAY, events=[trip]) == []
+        assert _plan_drift_lines(plan, TODAY, events=[group_ride]) != []  # una salida fija no excusa nada
+
+
 def test_load_needs_five_days_in_the_window():
     half = [dict(a, tss=a["tss"] * 0.3) for a in _all_done()]
     assert "load_low" not in _codes(pd.detect(_week_plan(), START, half, [], TODAY, since=date(2026, 10, 24)))
