@@ -12,7 +12,7 @@ Ficheros de esta carpeta:
 
 Los dos `.sql` se ejecutan en **Supabase Dashboard → SQL Editor → New query → pegar → Run**.
 
-**Estado del proyecto real:** fases 1 y 2 aplicadas el 24/10/2026 y comprobadas con `make check-rls` (0 filas visibles sin sesión en las 11 tablas) y con la batería (25/25). Un segundo usuario de `app_user` sigue sin vincular: verá sus datos cuando entre una vez con su cuenta.
+**Estado del proyecto real:** fases 1 y 2 aplicadas el 24/10/2026 y comprobadas con `make check-rls` (0 filas visibles sin sesión en las 11 tablas de entonces) y con la batería (25/25). `startup_summary`, la tabla 12, se añadió el 31/10; el 3/11/2026, `check_rls` da las 12 cerradas sin sesión. Un segundo usuario de `app_user` sigue sin vincular: verá sus datos cuando entre una vez con su cuenta.
 
 ## 1. El problema que resuelve
 
@@ -51,7 +51,7 @@ Kairos ──(email + contraseña)──> Supabase Auth ──> token de sesión
   - `kairos_claim_app_user()`: la llama Kairos al iniciar sesión. Vincula la cuenta de Auth con el `app_user` que ya existía **con el mismo email**, solo si ese email está **confirmado**. Así nadie puede quedarse con los datos de otro registrándose con su email.
 - **Políticas** (en `rls.sql`):
   - `app_user`: ver y modificar solo tu fila; crear solo la tuya y con tu propio email como usuario; no se puede borrar.
-  - Las 8 tablas con `app_user_id`: todo (ver, crear, modificar, borrar) solo sobre tus filas.
+  - Las 9 tablas con `app_user_id`: todo (ver, crear, modificar, borrar) solo sobre tus filas.
   - `training_plan_session` y `training_plan_version`: solo las de tus planes.
   - Sin sesión (rol `anon`): ninguna política, así que no se ve nada.
 - **Sesión guardada.** Kairos guarda la sesión en `~/.kairos/supabase_session.json` (fuera del repo, como los tokens de Garmin en `~/.garminconnect/`) y la renueva sola: antes de cada consulta mira por la hora del reloj si el token caduca en menos de un minuto (desde el 26/10; tras suspender el equipo, el auto-refresco del cliente llegaba tarde y un "JWT expired" cerraba Kairos). Al arrancar no pide contraseña mientras la sesión siga válida. Las herramientas (`juez_bateria.py`, `rebuild_tss_baseline.py`, `check_rls.py`) usan la misma sesión. Se puede cambiar la ruta con `KAIROS_SESSION_FILE`.

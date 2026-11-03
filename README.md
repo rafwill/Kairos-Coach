@@ -10,7 +10,7 @@ Entrenador deportivo personal con IA que funciona en la terminal sobre tus datos
 - **Carga como TrainingPeaks:** un TSS por actividad con el método de su deporte, guardado una vez; PMC 42/7. Validado contra el export de TP del atleta (tabla abajo).
 - **Planes de entrenamiento:** los construye y revisa el LLM del atleta como su entrenador (por bloques con descarga, cada día con su fecha y sus tramos); Kairos le da los datos (objetivo, zonas de ritmo y FC, carga real, disponibilidad, lo hecho los últimos días), calcula ritmos, km y TSS planificado y comprueba las reglas (nunca más de un 10 % por semana sobre el volumen real, descargas, afinamiento, disponibilidad) antes de guardar cada versión. Si el modelo no consigue un plan válido, no se guarda ninguno: Kairos dice qué no cumplía y propone repetir o probar un modelo más capaz.
 - **Planes de trail:** con la distancia y el desnivel de la carrera, el plan lleva el D+ de cada semana y de cada sesión (con la progresión del volumen y la semana pico al D+ de la carrera), tiradas largas de hasta el 50 % de la semana y dos seguidas en la fase específica, marcha o senderismo con palos como entrenamiento, bici de carretera, gravel o MTB, y todo lo exigente por FC (sin ritmo de carrera).
-- **Planes que se adaptan:** "ajusta el plan: …" cambia los próximos días y "replanifica el plan" lo rehace hasta la carrera con lo que has sostenido de verdad. Lo que dices para siempre ("los martes no puedo", "prefiero las series en pista") queda guardado para todos tus planes. Un viaje o una salida en grupo que tengas fijados (\"el sábado 15 tengo una salida en grupo de 3 h\", \"del 20 al 23 estoy de viaje\") se meten en el plan como obligatorios y Kairos readapta el resto de la semana alrededor. El plan tiene en cuenta otros deportes que hagas, dónde entrenas y el desnivel de tus salidas.
+- **Planes que se adaptan:** "ajusta el plan: …" cambia los próximos días y "replanifica el plan" lo rehace hasta la carrera con lo que has sostenido de verdad. Lo que dices para siempre ("los martes no puedo", "prefiero las series en pista") queda guardado para todos tus planes. Un viaje o una salida en grupo que tengas fijados ("el sábado 15 tengo una salida en grupo de 3 h", "del 20 al 23 estoy de viaje") se meten en el plan como obligatorios y Kairos readapta el resto de la semana alrededor. El plan tiene en cuenta otros deportes que hagas, dónde entrenas y el desnivel de tus salidas.
 - **Coaching con contexto:** perfil, salud (protocolo de diabetes con o sin insulina según la medicación; lesiones aparte), objetivo, umbrales con zonas en lpm y plan activo.
 - **Multiusuario:** cada usuario con su perfil, historial, planes y base de conocimiento en Supabase.
 - **Tu propio proveedor de IA:** cualquiera con API compatible con OpenAI (NVIDIA, OpenAI, Gemini, Anthropic, Groq, Mistral, OpenRouter, DeepSeek u otro). Se indica la primera vez y se cambia con `/proveedor`. Admite dos modelos: uno para crear planes y escribir el arranque y otro, más ligero, para el chat, que releva al primero si se queda sin cupo o saturado (con Gemini gratuito: 3.6 Flash, 20 peticiones al día, y 3.5 Flash Lite, 500).
@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1   # Windows
 
 El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`agent` y `garmin_mcp` importables desde cualquier carpeta), copia `.env.example` a `.env` y genera `ENCRYPTION_KEY`. Después:
 
-1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`. La clave del proveedor de IA no hace falta escribirla: Kairos la pide la primera vez y la guarda en `.env`.
+1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `KAIROS_USERNAME` (tu email; lo usan las herramientas de `tools/`). La clave del proveedor de IA no hace falta escribirla: Kairos la pide la primera vez y la guarda en `.env`.
 2. En Supabase, **Authentication → Sign In / Providers → Email**: proveedor de email activado y **"Confirm email" activado** (hace seguro el vínculo de cada cuenta con sus datos).
 3. En el SQL Editor de Supabase (New query → pegar → Run), en este orden:
    1. [`supabase/schema.sql`](supabase/schema.sql): tablas, índices y funciones. En un proyecto ya existente añade solo lo que falte sin tocar los datos.
@@ -63,7 +63,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 
 | Comando | Qué hace |
 | --- | --- |
-| `/ayuda` | Ejemplos de preguntas, comandos e indicadores |
+| `/ayuda` · `/menu` | Ejemplos de preguntas, comandos e indicadores; `/menu`, los comandos agrupados por categoría |
 | `/perfil` · `/perfil editar [objetivo\|salud]` | Ver o editar el perfil (el objetivo lleva la distancia y el desnivel de la carrera: con D+, el plan es de trail) |
 | `/perfil umbral <mm:ss>` | Nuevo ritmo umbral de running (rige desde hoy) |
 | `/perfil umbral fc <lpm>` | Nueva FC umbral tras un test, la misma que en TrainingPeaks (rige desde hoy) |
@@ -135,7 +135,7 @@ tools/
   healthcheck_mcp.py        healthcheck en vivo: llama a todas las tools contra Garmin y dice cuáles fallan
   gen_mcp_docs.py           regenera el catálogo de tools de garmin_mcp/README.md
   check_rls.py              comprueba que la seguridad por fila de Supabase cierra cada tabla
-docs/                    arquitectura, harness, bitácora y preguntas de la batería
+docs/                    arquitectura, harness, próximos pasos y preguntas de las baterías
 ```
 
 Con la terminología MCP: Kairos (`agent/`) es el **host**, `agent/mcp/` su **cliente** y `garmin_mcp/` el **servidor**; el servidor no depende del host y Kairos lo usa solo por el protocolo MCP. Detalle en [`docs/arquitectura.md`](docs/arquitectura.md).
@@ -158,7 +158,7 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 - **Tests:** no necesitan red. Los pasan el pre-commit y la CI.
 - **`lint_mcp`:** pide `tools/list` al servidor y lo pasa por la guía de estilo MCP de apiaddicts (Spectral; necesita Node 18+). Configuración en `tools/mcp_lint/.spectral.yaml`.
 - **`healthcheck_mcp`:** llama a las 44 tools contra Garmin (solo lectura) y marca cada una como OK, VACÍA (aviso), ERROR o ENTORNO (429 o autenticación). Sale con 1 si alguna tool falla. Informe en `.tmp/healthcheck/`.
-- **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`; no lee ni escribe la memoria del atleta); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende.
+- **Batería y juez:** 25 preguntas de `docs/bateria_p55_preguntas_base.txt` contra datos reales (necesita `KAIROS_USERNAME` en `.env`; no lee ni escribe la memoria del atleta); el juez comprueba cada respuesta contra Supabase con una rúbrica fija (`docs/Harness.md`) y sale con 1 si alguna suspende. Con `--preguntas`, otras baterías: `docs/bateria_bucle_preguntas.txt` y `docs/bateria_tools_libres.txt`, preguntas que van al bucle con tools (la de 25 no pasa por él).
 - Las salidas con datos reales van a `.tmp/`, que está en `.gitignore`.
 
 ## Documentación

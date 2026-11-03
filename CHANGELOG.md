@@ -2,6 +2,26 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-03
+
+### Fixed (el aviso de plan que ya no encaja y los días de viaje; pendiente del 2/11)
+- Problema: un viaje avisado contaba como días sin actividad y sesiones clave sin hacer, y bajaba la carga de la ventana.
+- Ahora (`plan_drift.detect(excused=)`, `plan_events.travel_days`): los días de viaje no se comparan con el plan en sesiones clave, días sin actividad, otro deporte ni carga. Una actividad durante el viaje rompe la racha de inactividad. Solo los viajes: una salida fija no excusa nada.
+- Decisión a revisar con el uso: la HRV sí cuenta durante el viaje, porque no mide si se cumple el plan sino cómo está el cuerpo.
+- También: guardar un evento ya no borra un viaje acabado hace 7 días o menos (`plan_events.add`). Antes, ese borrado habría devuelto el aviso por los días del viaje.
+- El aviso decía que el entrenador "lo ajusta desde hoy"; ahora dice lo que hace «replanifica el plan»: lo rehace desde el lunes que viene (si hoy es lunes, desde hoy). `/menu`: `/plan ver` y `/plan activar` aceptan también el nº de `/plan listar`.
+- Lección: lo que se limpia solo puede hacer falta a otro módulo; antes de borrar un dato pasado, mirar quién lo lee.
+
+### Docs (repaso de la documentación frente al código; petición del usuario)
+- **`docs/proximos_pasos.md`:** "Dónde lo dejamos" al día; la idea de conectar Claude ya no habla de sustituir a NVIDIA ni de generar TSS con el LLM.
+- **`README.md`:** `KAIROS_USERNAME` en la instalación, `/menu`, las otras dos baterías, comillas mal escapadas y la "bitácora" que ya no existe.
+- **`docs/arquitectura.md`:** módulos que faltaban en la tabla de capas, eventos fijos y `planned_sessions` en el flujo del chat; quitado `hr_pct` como formato vigente.
+- **`docs/Harness.md`:** G4 (horizontes), G5 (ya no son 18 rutas ni todas sin LLM), G16 (viajes), S4 (la guardia está en `tool_loop`), la biblioteca de experiencia está en el CHANGELOG.
+- **`supabase/README.md`:** 9 tablas con `app_user_id` (decía 8) y estado de RLS comprobado el 3/11 con las 12 tablas.
+- **`garmin_mcp/README.md`:** `garminconnect` 0.3.20 (decía 0.3.2) y 15 s por petición (decía 30).
+- **`CLAUDE.md`:** línea de MCP pegada a la anterior, frase repetida en planes, fechas de encabezado desfasadas, referencias a una numeración de pendientes que ya no existe y sección "Pendiente" de `proximos_pasos.md` que ya no se llama así.
+- Docstring de `_plan_request`: decía que el motor determinista hace un plan de respaldo (ya no, desde el 29/10).
+
 ## 2026-11-02
 
 ### Added (eventos fijos en el plan: un viaje o una salida en grupo; petición del usuario)

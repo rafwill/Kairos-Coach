@@ -1,6 +1,6 @@
 # Próximos pasos — Kairos Coach
 
-Última revisión: 31/10/2026.
+Última revisión: 3/11/2026.
 
 Solo lo que falta por hacer y lo descartado. Lo hecho está en `CHANGELOG.md` (cada cambio, con su señal y su resultado), en `CLAUDE.md` (estado vigente de la carga, los planes y el arranque) y en `docs/arquitectura.md`.
 
@@ -8,7 +8,7 @@ Texto anterior de esta lista, con los criterios de diseño que citan algunos com
 
 ## Dónde lo dejamos
 
-**Sesión del 31/10/2026** (ordenador 1). Último commit: `59d16e9`, subido a `origin/main`; 983 tests y `ruff` limpios. En el otro ordenador, al empezar: `git pull`. La tabla `startup_summary` ya existe en Supabase.
+**Sesión del 3/11/2026** (ordenador 2). Último commit subido: `1b2ed19` (eventos fijos del plan, del 2/11). Encima, sin subir: `plan_drift` ya no juzga los días de viaje y repaso de la documentación frente al código. En el otro ordenador, al empezar: `git pull`. La tabla `startup_summary` existe en Supabase y las 12 tablas salen cerradas sin sesión (`check_rls`, 3/11).
 
 **Siguiente paso (decisión del usuario): usar Kairos a diario unas semanas y decidir con lo que salga.** Nada de código nuevo hasta entonces salvo lo que rompa. Revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TURNO]`, `[STARTUP]`, `[PLAN]`, `[LLM] … relevo`).
 
@@ -31,7 +31,7 @@ Texto anterior de esta lista, con los criterios de diseño que citan algunos com
    - Si Flash Lite responde peor que Flash en el chat, valorar las otras opciones: facturación en AI Studio, o NVIDIA para el chat.
 
 5. **Planes en vivo** (fuera del proxy, que bloquea Gemini).
-   - Eventos fijos (2/11): un viaje y una salida en grupo reales, contados en el chat y con `/plan evento`; ver que Kairos pregunta lo que falta, readapta esta semana y la siguiente y ofrece replanificar si cae más lejos, y que el plan cumple el día (`[PLAN] eventos guardados` en `agent.log`). Pendiente de hacer: que el aviso de plan que ya no encaja (`plan_drift`) ignore los días de viaje.
+   - Eventos fijos (2/11): un viaje y una salida en grupo reales, contados en el chat y con `/plan evento`; ver que Kairos pregunta lo que falta, readapta esta semana y la siguiente y ofrece replanificar si cae más lejos, y que el plan cumple el día (`[PLAN] eventos guardados` en `agent.log`). Tras un viaje real, ver que el aviso de plan que ya no encaja no salta por esos días (3/11: `plan_drift` no los compara con el plan; la HRV sí cuenta durante el viaje: ver si molesta).
    - Un `/plan crear` real y un "ajusta el plan: …", revisados por el usuario; con bici o remo si los quiere dentro del plan.
    - Un «replanifica el plan» real, en tiempo y peticiones parecidos a `/plan crear` (10–15), revisado por el usuario.
    - Preferencias que duran con frases reales (`[PLAN] preferencias guardadas`). Una frase que se guarde o se pierda sin deber va a los tests antes de tocar las reglas.
@@ -57,7 +57,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 ## 4. Ideas sin decidir
 
 1. **Porcentaje de cumplimiento de los entrenamientos** (petición del usuario): un porcentaje de cumplimiento del plan con los datos de Kairos y lo que el atleta ha entrenado. Hoy solo hay la adherencia del día (arranque) y el aviso de desvíos de los últimos 7 días. Falta decidir qué mide (sesiones hechas, tiempo, TSS) y en qué ventana (semana, bloque, plan).
-2. **Conectar Claude con Kairos** para la sincronización de datos y la generación de TSS en vez de NVIDIA. `/proveedor` → "anthropic" (ya en `agent/ia_provider.py`), clave de `platform.claude.com/settings/keys` (pago por uso), modelo `claude-opus-5-5` o `claude-sonnet-5-5`; va por la capa compatible con OpenAI de Anthropic, pensada para probar (si se adopta, cliente nativo). Aplazado por coste (29/10, decisión del usuario).
+2. **Conectar Claude con Kairos** como proveedor de IA en vez de Gemini (el TSS lo calcula Python con cualquier proveedor). `/proveedor` → "anthropic" (ya en `agent/ia_provider.py`), clave de `platform.claude.com/settings/keys` (pago por uso), modelo `claude-opus-5-5` o `claude-sonnet-5-5`; va por la capa compatible con OpenAI de Anthropic, pensada para probar (si se adopta, cliente nativo). Aplazado por coste (29/10, decisión del usuario).
 3. **API Personal de Garmin (clave) como segundo backend de `garmin_mcp/`** (revisado el 31/10). Garmin la abrió el 21/10/2026: clave que se crea en Garmin Connect, se cambia por un token de 24 h, solo lectura y solo tus datos. Es posible mantener nuestro MCP y los nombres de tool, y cambiar por dentro (`_dispatch` en `garmin_mcp/server.py`), con el cliente oficial `garmin/connect-personal-api-python` (Apache-2.0). Decisión (2/11, del usuario): no usarla hasta que Garmin añada más rutas a la API Personal; revisar entonces el Swagger y repetir `.tmp/probe_personal_paths.py` (si se ha perdido, es un GET con la clave a las rutas que hoy dan 404). El Swagger de Garmin cubre sueño, HRV, Body Battery, estrés, pasos, resumen diario, peso, actividades (lista, detalle, FIT original), zonas de FC y perfil; **no** cubre readiness, estado de entrenamiento, VO2máx, umbral de lactato, predicciones de carrera, récords ni FTP, así que haría falta mantener `garminconnect` y su contraseña para esas tools. Si se hace, como `GARMIN_BACKEND=auto` (clave en `.env`, por tool la Personal API si cubre y `garminconnect` si no), con una prueba de paridad de los dos orígenes (mismo día, mismos campos) antes de cambiar nada. Pasos previos:
    - Ver con el uso cuántas veces falla el login o salta el 429 de `garminconnect` (ya se reutilizan los tokens, así que hoy es raro).
    - **Prueba de solo lectura hecha el 31/10** con una clave de un año (en `.env`; script local `.tmp/compare_personal_api.py`): la clave funciona y devuelve datos reales. HRV, Body Battery, resumen diario, lista de actividades y detalle de actividad salen con los mismos campos y valores que `garminconnect` (los nuestros traen algunos campos extra de interfaz). Distinto: el sueño (Personal da el `dailySleepDTO` sin envoltorio y sin `avgOvernightHrv` ni `bodyBatteryChange`), las zonas de FC (crudas, por deporte, con `zone1Floor…`; nuestra tool las normaliza) y el perfil (la API da los ajustes, no `userData` con peso y fecha de nacimiento). Sin probar: FIT original y paso de la clave a un servidor con varios usuarios.
