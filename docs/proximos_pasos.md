@@ -4,11 +4,11 @@
 
 Solo lo que falta por hacer y lo descartado. Lo hecho está en `CHANGELOG.md` (cada cambio, con su señal y su resultado), en `CLAUDE.md` (estado vigente de la carga, los planes y el arranque) y en `docs/arquitectura.md`.
 
-Texto anterior de esta lista, con los criterios de diseño que citan algunos comentarios del código ("pendiente 11 a-d", "punto 12"): `git show 59d16e9:docs/proximos_pasos.md`. Bitácoras más antiguas: hasta el 25/10, `git show 1bf341f:docs/proximos_pasos.md`; biblioteca de experiencia del 23 al 26/10, `git show 6aff019:docs/proximos_pasos.md`.
+Texto anterior de esta lista, con los criterios de diseño que citan algunos comentarios del código ("pendiente 11 a-d", "punto 12"): `git show f112c0f:docs/proximos_pasos.md`. Bitácoras más antiguas: hasta el 25/10, `git show 1bf341f:docs/proximos_pasos.md`; biblioteca de experiencia del 23 al 26/10, `git show 6aff019:docs/proximos_pasos.md`.
 
 ## Dónde lo dejamos
 
-**Sesión del 3/11/2026** (ordenador 2). Último commit subido: `1b2ed19` (eventos fijos del plan, del 2/11). Encima, sin subir: `plan_drift` ya no juzga los días de viaje y repaso de la documentación frente al código. En el otro ordenador, al empezar: `git pull`. La tabla `startup_summary` existe en Supabase y las 12 tablas salen cerradas sin sesión (`check_rls`, 3/11).
+**Sesión del 3/11/2026** (ordenador 2). Último commit con cambios: `4938ef9`, seguido del que ajusta estas notas. El historial se reescribió desde el 30/10: **en el ordenador 1, antes de nada, `git fetch` y `git reset --hard origin/main`** (lo que haya allí sin subir, guardarlo antes). 1028 tests y `ruff` limpios. La tabla `startup_summary` existe en Supabase y las 12 tablas salen cerradas sin sesión (`check_rls`, 3/11).
 
 **Siguiente paso (decisión del usuario): usar Kairos a diario unas semanas y decidir con lo que salga.** Nada de código nuevo hasta entonces salvo lo que rompa. Revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TURNO]`, `[STARTUP]`, `[PLAN]`, `[LLM] … relevo`).
 
@@ -82,7 +82,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
 
 ## 5. Fuera de nuestras manos
 
-- **Ticket de GitHub Support 4918285** (abierto el 28/10): purga de las vistas en caché de los 80 commits viejos, de `eeee21b` a `716cd0c`. Cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API.
+- **Ticket de GitHub Support 4918285** (abierto el 28/10): purga de las vistas en caché de los 80 commits viejos, de `eeee21b` a `716cd0c`. Cuando respondan, comprobar solo códigos HTTP: resuelto si dan 404 en la web y 422 en la API. Ampliación pedida el 3/11: los 13 commits subidos que se reescribieron ese día.
 
 ## Descartado
 

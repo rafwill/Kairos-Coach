@@ -12,6 +12,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - El aviso decía que el entrenador "lo ajusta desde hoy"; ahora dice lo que hace «replanifica el plan»: lo rehace desde el lunes que viene (si hoy es lunes, desde hoy). `/menu`: `/plan ver` y `/plan activar` aceptan también el nº de `/plan listar`.
 - Lección: lo que se limpia solo puede hacer falta a otro módulo; antes de borrar un dato pasado, mirar quién lo lee.
 
+### Changed (historial de GitHub reescrito desde el 30/10, decisión del usuario)
+- Notas de sesión corregidas en 14 commits (13 ya subidos), desde el 30/10. Firmados de nuevo con la clave GPG personal, con autores, committers y fechas originales; el árbol final no cambia y los commits anteriores conservan su código y su firma.
+- Las citas a commits del tramo en los documentos apuntan a los códigos nuevos. Los mensajes de esos commits no citaban ninguno que cambiara.
+- El ordenador 1 tiene que alinearse con `git fetch` y `git reset --hard origin/main` antes de nada.
+
 ### Changed (el proxy, con nombres genéricos; decisión del usuario)
 - Código, tests y documentos hablan de "proxy" o "VPN", sin fabricante. Funciones: `is_proxy_network`, `_detect_proxy`. El certificado opcional de la raíz del repo es `proxy-ca.pem`. El arranque muestra "Proxy o VPN detectado" o "Sin proxy ni VPN".
 - `is_proxy_network` ya no busca un nombre: es proxy si la sonda a Google no responde con JSON (la API lo devuelve aunque la clave no valga) o si falla el certificado. Solo informa en el arranque y activa el almacén de certificados en `check_rls`. Comprobado en vivo detrás de un proxy; sin proxy no se ha probado.
