@@ -24,7 +24,7 @@ HOURS = (7, 12, 19)
 
 
 def _verify():
-    """El certificado del proxy corporativo si el .env lo da (Zscaler); si no, el de siempre."""
+    """El certificado del proxy si el .env lo da; si no, el de siempre."""
     return os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE") or True
 
 

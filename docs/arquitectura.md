@@ -83,7 +83,7 @@ main.py → run_agent()
   │              últimos 7 días frente a activity_tss y wellness_daily) y recomendación (motor diario + LLM principal)
 ```
 
-Desde el 28/10 lo independiente va en paralelo, el sondeo de Zscaler (solo para el aviso del entorno) va en un hilo y las lecturas de Supabase del arranque pasan por la caché de `storage`. Tiempos por paso en `agent.log` (`[ARRANQUE]`): de 11,7 s a 9,3 s de media.
+Desde el 28/10 lo independiente va en paralelo, el sondeo del proxy (solo para el aviso del entorno) va en un hilo y las lecturas de Supabase del arranque pasan por la caché de `storage`. Tiempos por paso en `agent.log` (`[ARRANQUE]`): de 11,7 s a 9,3 s de media.
 
 El resumen se guarda al final (`StartupMixin._save_startup_summary`) con su huella, salvo si Garmin no respondió nada o si faltó el texto de "Tu entrenador" (el LLM falló: el siguiente arranque lo reintenta). La caché es opcional: sin la tabla o con un fallo de Supabase se rehace todo como antes. `/resumen` lo rehace cuando el atleta quiera. No están en la huella el Body Battery ni la HRV de hoy (cambian con la sincronización del reloj; los cubre el sueño de hoy). En `agent.log`: `[STARTUP] resumen reutilizado` o `caché del resumen no disponible`.
 

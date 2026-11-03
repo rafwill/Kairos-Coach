@@ -28,7 +28,7 @@ from supabase_auth import SyncSupportedStorage
 log = logging.getLogger(__name__)
 
 
-_zscaler_cache: bool | None = None
+_proxy_cache: bool | None = None
 _sb = None
 _sb_ready = False
 _sb_token_check_at = 0.0  # hora (time.time) de la próxima comprobación de caducidad del token
@@ -139,11 +139,11 @@ def _require_active_user_id() -> str:
     return _active_user_id
 
 
-def is_zscaler_network() -> bool:
-    """Detecta si el tráfico sale por proxy SSL corporativo Zscaler."""
-    global _zscaler_cache
-    if _zscaler_cache is not None:
-        return _zscaler_cache
+def is_proxy_network() -> bool:
+    """Detecta si el tráfico sale por un proxy SSL o una VPN que lo intercepta."""
+    global _proxy_cache
+    if _proxy_cache is not None:
+        return _proxy_cache
 
     try:
         with httpx.Client(timeout=4.0, follow_redirects=False, verify=True) as client:
@@ -151,17 +151,16 @@ def is_zscaler_network() -> bool:
                 "https://generativelanguage.googleapis.com/v1beta/models",
                 headers={"x-goog-api-key": "probe"},
             )
-            body = resp.text or ""
-            _zscaler_cache = "zscaler" in body.lower()
+            # Google responde con JSON aunque la clave no valga; la página de bloqueo de un proxy, no.
+            _proxy_cache = "json" not in resp.headers.get("content-type", "").lower()
     except (httpx.HTTPError, OSError, ValueError) as exc:
         err = str(exc).lower()
-        _zscaler_cache = (
-            "zscaler" in err
-            or "certificate_verify_failed" in err
+        _proxy_cache = (
+            "certificate_verify_failed" in err
             or "unable to get local issuer certificate" in err
         )
 
-    return _zscaler_cache
+    return _proxy_cache
 
 
 def _refresh_token_if_expiring() -> None:
@@ -201,8 +200,8 @@ def _supabase():
         return None
 
     try:
-        # Almacén de certificados del sistema siempre (sirve con y sin Zscaler, como hace main al importar). Antes
-        # se decidía con is_zscaler_network(), un sondeo de red de ~0,5 s en el arranque (28/10, pendiente 8c).
+        # Almacén de certificados del sistema siempre (sirve con y sin proxy, como hace main al importar). Antes
+        # se decidía con is_proxy_network(), un sondeo de red de ~0,5 s en el arranque (28/10, pendiente 8c).
         import truststore
 
         truststore.inject_into_ssl()

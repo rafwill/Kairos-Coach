@@ -95,7 +95,7 @@ def _debug_console(message: str) -> None:
     if _DEBUG_CONSOLE:
         console.print(message)
 
-# Parchear SSL para usar el almacén de certificados del sistema (necesario con Zscaler)
+# Parchear SSL para usar el almacén de certificados del sistema (necesario con proxy o VPN)
 try:
     import truststore
     truststore.inject_into_ssl()
@@ -122,7 +122,7 @@ from agent.storage import (
     get_active_user,
     get_ia_provider,
     get_training_plan,
-    is_zscaler_network as _detect_zscaler,
+    is_proxy_network as _detect_proxy,
     list_training_plans,
     list_training_plan_sessions,
     load_athlete_knowledge,
@@ -1579,10 +1579,10 @@ async def _ensure_ia_provider(network_probe: "asyncio.Future | None" = None) -> 
     """Proveedor de IA del atleta (26/10): se pregunta la primera vez y queda en ia_provider; la clave, en .env.
 
     Siguientes veces, sin preguntas; si este ordenador no tiene la clave, solo se pide la clave.
-    network_probe: el sondeo de Zscaler lanzado al empezar el arranque (si no, se hace aquí).
+    network_probe: el sondeo del proxy lanzado al empezar el arranque (si no, se hace aquí).
     """
     console.print("[dim]Detectando entorno de red...[/]")
-    on_vpn = await network_probe if network_probe is not None else _detect_zscaler()
+    on_vpn = await network_probe if network_probe is not None else _detect_proxy()
     config = get_ia_provider()
     first_time = not _ia_provider.is_valid(config)
     if first_time:
@@ -1593,7 +1593,7 @@ async def _ensure_ia_provider(network_probe: "asyncio.Future | None" = None) -> 
     if first_time:
         save_ia_provider(config["provider"], config["base_url"], config["model"], config.get("chat_model"))
 
-    network_line = "🏢  Red corporativa [dim](Zscaler detectado)[/dim]" if on_vpn else "🌐  Sin VPN corporativa"
+    network_line = "🔒  Proxy o VPN detectado" if on_vpn else "🌐  Sin proxy ni VPN"
     console.print(Panel.fit(
         f"{network_line}\n"
         f"[bold green]IA:[/] {_ia_provider.label(config)}  [dim](se cambia con /proveedor)[/dim]",
@@ -1812,8 +1812,8 @@ async def main() -> None:
     # openai y mcp (≈ 1,5 s de importar) se cargan en un hilo mientras el arranque espera a Supabase y al servidor
     # MCP; el código los importa al usarlos y, si el hilo aún no ha terminado, espera a que acabe (8c, 28/10).
     threading.Thread(target=_warm_imports, daemon=True, name="warm-imports").start()
-    # El sondeo de Zscaler (~0,5 s, solo para el aviso del entorno) va en un hilo mientras se conecta (8c, 28/10).
-    network_probe = asyncio.ensure_future(asyncio.to_thread(_detect_zscaler))
+    # El sondeo del proxy (~0,5 s, solo para el aviso del entorno) va en un hilo mientras se conecta (8c, 28/10).
+    network_probe = asyncio.ensure_future(asyncio.to_thread(_detect_proxy))
 
     # Fail-fast de infraestructura: evita pedir credenciales si la DB no está lista.
     _check_and_migrate_supabase()

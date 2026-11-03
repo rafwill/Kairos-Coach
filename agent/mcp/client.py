@@ -236,14 +236,14 @@ def _get_server_params() -> StdioServerParameters:
             "Copia .env.example a .env y rellena tus credenciales."
         )
 
-    # Certificado SSL de Zscaler — necesario en redes con proxy SSL corporativo.
+    # Certificado SSL del proxy — necesario en redes con proxy SSL o VPN.
     # Se exporta automáticamente desde el almacén de Windows con:
-    #   Get-ChildItem Cert:\LocalMachine\Root | Where Subject -match Zscaler
+    #   Get-ChildItem Cert:\LocalMachine\Root | Where Subject -match <nombre del proxy>
     _project_root = PROJECT_ROOT
-    _zscaler_pem = _project_root / "zscaler-ca.pem"
+    _proxy_pem = _project_root / "proxy-ca.pem"
     ssl_overrides = {}
-    if _zscaler_pem.exists():
-        _pem_path = str(_zscaler_pem)
+    if _proxy_pem.exists():
+        _pem_path = str(_proxy_pem)
         ssl_overrides = {
             "REQUESTS_CA_BUNDLE": _pem_path,
             "CURL_CA_BUNDLE": _pem_path,

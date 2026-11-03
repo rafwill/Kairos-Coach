@@ -326,7 +326,7 @@ class TestWeekdayDateS28:
 
 
 class TestHomeReview26_10:
-    """Repaso de las 941 respuestas guardadas en casa (26/10): los tres falsos positivos que quedaban."""
+    """Repaso de las 941 respuestas guardadas en el ordenador 1 (26/10): los tres falsos positivos que quedaban."""
 
     BIKE = [("Z1 Recuperación", 105, 124), ("Z2 Aeróbica", 125, 135), ("Z3 Tempo", 136, 145),
             ("Z4 Subumbral", 146, 158), ("Z5 Supraumbral", 159, 179)]

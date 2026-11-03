@@ -6,9 +6,9 @@
 *.key
 *.p12
 
-# Certificado corporativo (específico del entorno)
-# Regenerar con: Export-Certificate -Cert (Get-ChildItem Cert:\LocalMachine\Root | Where Subject -like "*Zscaler*") -FilePath zscaler-ca.pem
-zscaler-ca.pem
+# Certificado del proxy (específico del entorno)
+# Regenerar con: Export-Certificate -Cert (Get-ChildItem Cert:\LocalMachine\Root | Where Subject -like "*<nombre del proxy>*") -FilePath proxy-ca.pem
+proxy-ca.pem
 
 # Python
 __pycache__/

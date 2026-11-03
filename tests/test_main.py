@@ -530,7 +530,7 @@ class TestEnsureIaProvider:
         monkeypatch.delenv("PROVIDER_API_KEY", raising=False)
         if key:
             monkeypatch.setenv("PROVIDER_API_KEY", key)
-        with patch("agent.main._detect_zscaler", return_value=False), \
+        with patch("agent.main._detect_proxy", return_value=False), \
              patch("agent.main.get_ia_provider", return_value=stored), \
              patch("agent.main.save_ia_provider") as save, \
              patch("agent.main._ask_ia_provider", return_value=asked or NVIDIA) as ask_provider, \

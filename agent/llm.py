@@ -35,7 +35,7 @@ class LLMAuthError(RuntimeError):
     """El proveedor rechaza la clave (caducada o no válida): la CLI la pide de nuevo y la guarda en .env (26/10)."""
 
 
-# 401 o mensaje de clave no válida. Un 403 a secas no cuenta: en la red con proxy es el proxy (Zscaler), no la
+# 401 o mensaje de clave no válida. Un 403 a secas no cuenta: en la red con proxy es el proxy, no la
 # clave. NVIDIA, en cambio, rechaza una clave mala con 403 "Authorization failed" (comprobado en vivo el 26/10).
 _LLM_AUTH_ERROR = re.compile(
     r"(?i)\b401\b|unauthori[sz]ed|invalid[ _-]?api[ _-]?key|incorrect api key|api key not valid|api_key_invalid|"

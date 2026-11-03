@@ -269,11 +269,11 @@ async def test_list_available_tools_maps_schema():
     ]
 
 
-def test_server_params_use_zscaler_certificate_when_present(garmin_creds, monkeypatch, tmp_path):
-    (tmp_path / "zscaler-ca.pem").write_text("cert", encoding="utf-8")
+def test_server_params_use_proxy_certificate_when_present(garmin_creds, monkeypatch, tmp_path):
+    (tmp_path / "proxy-ca.pem").write_text("cert", encoding="utf-8")
     monkeypatch.setattr(mcp_client, "PROJECT_ROOT", tmp_path)
     env = mcp_client._get_server_params().env
-    pem = str(tmp_path / "zscaler-ca.pem")
+    pem = str(tmp_path / "proxy-ca.pem")
     assert env["REQUESTS_CA_BUNDLE"] == env["CURL_CA_BUNDLE"] == env["SSL_CERT_FILE"] == pem
 
 

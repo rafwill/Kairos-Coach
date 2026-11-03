@@ -161,7 +161,7 @@ class ToolLoopMixin:
                         "Prueba con una de estas opciones:\n"
                         "- Haz una pregunta más específica y acotada (ej: *¿Cómo estoy hoy?* en lugar de *analiza 8 semanas*)\n"
                         "- Divide el análisis en pasos: primero métricas de hoy, luego tendencias, luego plan\n"
-                        "- Si no estás en red corporativa, reinicia el agente o usa /proveedor para cambiar a un modelo con contexto más grande"
+                        "- Si no estás detrás de un proxy o VPN, reinicia el agente o usa /proveedor para cambiar a un modelo con contexto más grande"
                     )
                     return await self._finalize_chat_reply(user_message, msg, route="llm_request_too_large")
                 if "410" in err_str or "end of life" in err_str.lower() or "no longer available" in err_str.lower():
@@ -173,11 +173,11 @@ class ToolLoopMixin:
                 if (
                     "403" in err_str
                     or "forbidden" in err_str.lower()
-                    or "zscaler" in err_str.lower()
+                    or "proxy" in err_str.lower()
                     or "access denied" in err_str.lower()
                 ):
                     msg = (
-                        "El proveedor del modelo rechazó la petición (403/Forbidden), probablemente por red corporativa o política del proxy.\n\n"
+                        "El proveedor del modelo rechazó la petición (403/Forbidden), probablemente por un proxy o una VPN.\n\n"
                         "Prueba una de estas opciones:\n"
                         "- Cambiar de proveedor o de modelo con `/proveedor`\n"
                         "- Reintentar desde una red sin bloqueo del proveedor actual\n"

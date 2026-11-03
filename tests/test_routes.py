@@ -924,7 +924,7 @@ class TestMcpFactualDeterministicRoute:
         agent.client = MagicMock()
         agent.client.chat = MagicMock()
         agent.client.chat.completions = MagicMock()
-        agent.client.chat.completions.create = AsyncMock(side_effect=Exception("403 Forbidden from provider (Zscaler)"))
+        agent.client.chat.completions.create = AsyncMock(side_effect=Exception("403 Forbidden from provider (proxy)"))
 
         with patch_all("_save_history_entries"):
             out = await TrainerAgent.chat(agent, "Que tipo de sesion me recomiendas esta semana?")

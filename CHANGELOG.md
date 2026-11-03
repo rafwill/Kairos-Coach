@@ -12,6 +12,11 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - El aviso decía que el entrenador "lo ajusta desde hoy"; ahora dice lo que hace «replanifica el plan»: lo rehace desde el lunes que viene (si hoy es lunes, desde hoy). `/menu`: `/plan ver` y `/plan activar` aceptan también el nº de `/plan listar`.
 - Lección: lo que se limpia solo puede hacer falta a otro módulo; antes de borrar un dato pasado, mirar quién lo lee.
 
+### Changed (el proxy, con nombres genéricos; decisión del usuario)
+- Código, tests y documentos hablan de "proxy" o "VPN", sin fabricante. Funciones: `is_proxy_network`, `_detect_proxy`. El certificado opcional de la raíz del repo es `proxy-ca.pem`. El arranque muestra "Proxy o VPN detectado" o "Sin proxy ni VPN".
+- `is_proxy_network` ya no busca un nombre: es proxy si la sonda a Google no responde con JSON (la API lo devuelve aunque la clave no valga) o si falla el certificado. Solo informa en el arranque y activa el almacén de certificados en `check_rls`. Comprobado en vivo detrás de un proxy; sin proxy no se ha probado.
+- Notas de sesión: los ordenadores se llaman solo "ordenador 1" y "ordenador 2".
+
 ### Docs (repaso de la documentación frente al código; petición del usuario)
 - **`docs/proximos_pasos.md`:** "Dónde lo dejamos" al día; la idea de conectar Claude ya no habla de sustituir a NVIDIA ni de generar TSS con el LLM.
 - **`README.md`:** `KAIROS_USERNAME` en la instalación, `/menu`, las otras dos baterías, comillas mal escapadas y la "bitácora" que ya no existe.
@@ -445,7 +450,7 @@ Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, co
 - Lección: medir qué pide el LLM antes de precargar; el coste estaba en la forma de las tools (un dato por llamada), no en la primera vuelta. Y una poda pensada para respuestas de Garmin no debe tocar datos que ya compacta Kairos.
 
 ### Changed (arranque en paralelo; pendiente 8c)
-- Señal (`[ARRANQUE]`, tres pasadas: 12,0, 11,8 y 11,2 s): todo en serie. El sondeo de Zscaler (0,5 s, una petición a Google solo para el aviso del entorno; `main` ya usa el almacén de certificados del sistema siempre), las zonas de FC, la comprobación del acceso a Garmin y los datos personales (`get_user_profile` pedido dos veces) y el resumen inicial detrás del cálculo de la carga, aunque sus llamadas a Garmin no dependen de él. 19 consultas a Supabase.
+- Señal (`[ARRANQUE]`, tres pasadas: 12,0, 11,8 y 11,2 s): todo en serie. El sondeo del proxy (0,5 s, una petición a Google solo para el aviso del entorno; `main` ya usa el almacén de certificados del sistema siempre), las zonas de FC, la comprobación del acceso a Garmin y los datos personales (`get_user_profile` pedido dos veces) y el resumen inicial detrás del cálculo de la carga, aunque sus llamadas a Garmin no dependen de él. 19 consultas a Supabase.
 - Qué se hizo: el sondeo va en un hilo y `storage` ya no lo usa para decidir los certificados; `initialize()` y `get_user_profile` a la vez, y esa respuesta sirve también para los datos personales (`fetch_garmin_personal_data(profile_raw=)`); el resumen inicial empieza a la vez que la carga y la espera solo antes de leer la serie (`load_ready`); caché de lecturas de Supabase durante el arranque.
 - Criterio fijado antes: arranque al menos un 15 % más corto, con el resumen inicial igual. Resultado: 9,6 y 9,0 s (−20 %); 10 consultas a Supabase; resumen idéntico (mismas cifras de carga y de las 48 h), solo cambia el contador "Consultando Garmin…" (1 s más, porque la carga comparte Garmin con el resumen). Tests: 803.
 - Queda fuera: importar los módulos (≈ 2,2 s, `openai` 0,9 s y `mcp` 0,6 s) y arrancar el servidor MCP (≈ 1,6 s).
@@ -471,7 +476,7 @@ Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, co
 
 ### Tests (lectores de activity_details y cliente MCP; pendiente 11)
 - Fixture `tests/fixtures/activity_details_trail.json`: trail real de 5 h (30/08) anonimizado (sin latitud, longitud, trazado ni identificadores; tiempo desplazado al 01/01/2026; elevación relativa), en el formato de `get_activity_details`. Con ella, `_estimate_hr_tss_tp_zones` da 228.511, el TSS guardado en `activity_tss` para esa actividad (trail:tp_zones, umbral TP 166): golden de producción del modelo de trail y bici sin potencia.
-- Tests de `_extract_hr_samples_from_activity_details`, `_extract_walk_samples_from_activity_details` y `_estimate_hr_tss_from_activity_details_lthr` sobre la fixture, y del cliente MCP (clasificación de errores de Garmin, avisos de transparencia, cierre benigno, listado de tools, certificado de Zscaler). Cobertura: `load_metrics` 70 % → 76 %, `agent/mcp/client.py` 51 % → 95 %. Tests: 789.
+- Tests de `_extract_hr_samples_from_activity_details`, `_extract_walk_samples_from_activity_details` y `_estimate_hr_tss_from_activity_details_lthr` sobre la fixture, y del cliente MCP (clasificación de errores de Garmin, avisos de transparencia, cierre benigno, listado de tools, certificado del proxy). Cobertura: `load_metrics` 70 % → 76 %, `agent/mcp/client.py` 51 % → 95 %. Tests: 789.
 
 ### Fixed (reloj de las muestras sin directTimestamp)
 - Señal (al escribir los tests): sin `directTimestamp`, el lector de FC tomaba `sumDuration` y lo dividía por el `factor` 1000 de su descriptor, pero el valor ya viene en segundos (18.045 s en un trail de 5 h): las 1.793 muestras quedaban en 19, dentro de 18 s, y el hrTSS salía None. Además prefería `sumDuration` (cronómetro sin pausas) a `sumElapsedDuration` (con pausas, como el timestamp).
@@ -501,11 +506,11 @@ Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, co
 ## 2026-10-27
 
 ### Changed (historial de GitHub reescrito, decisión del usuario)
-- Señal: mensajes de commit y documentos públicos identificaban uno de los dos ordenadores desde los que se trabaja (y su VPN, su red y su `.env`). Inventario previo: repositorio público, sin forks, issues ni pull requests; identidades de commit personales; 80 commits afectados, del 23/10 al 27/10.
+- Señal: mensajes de commit y documentos públicos decían más de lo necesario sobre uno de los dos ordenadores. Inventario previo: repositorio público, sin forks, issues ni pull requests; identidades de commit personales; 80 commits afectados, del 23/10 al 27/10.
 - Qué se hizo: copia completa (mirror y bundle), `git filter-repo` solo sobre el tramo `048fe2c..main` (los commits anteriores y las etiquetas conservan su código y su firma) sustituyendo esas expresiones en contenido y mensajes; los dos ordenadores pasan a llamarse "ordenador 1" y "ordenador 2". Los 80 commits, firmados de nuevo con la clave GPG personal, con autores, committers y fechas originales. Comprobado: 0 apariciones en contenido, mensajes y texto completo del historial de `main`; mismo árbol; push con `--force-with-lease`.
 - Las citas a commits del tramo en los documentos (`git show …`) apuntan a los códigos nuevos.
 - Queda fuera de nuestro alcance: GitHub mantiene los commits viejos accesibles por enlace directo hasta que los purga, y la actividad pública reciente muestra los mensajes de los pushes; para eso, GitHub Support (eliminación de datos sensibles). El ordenador 1 tiene que alinearse con `git fetch` y `git reset --hard origin/main` antes de hacer nada (ver `docs/proximos_pasos.md`).
-- Lección: las notas de sesión que se suben a un repositorio público no deben decir desde dónde se trabaja; se usan "ordenador 1" y "ordenador 2".
+- Lección: las notas de sesión que se suben a un repositorio público no deben decir dónde está cada ordenador; se usan "ordenador 1" y "ordenador 2".
 
 ### Removed ("API pública" de load_metrics, decisión del usuario)
 - Qué era: al final de `agent/load_metrics.py`, un bloque `# Public API (stable surface for reuse in other projects)` con 39 funciones de una línea (174 líneas), cada una con el nombre de una interna sin el guion bajo (`estimate_session_tss` → `_estimate_session_tss`, `percentile`, `resolve_sport_model_cfg`, `compute_load_fatigue_metrics`…), el alias `SPORT_MODEL_DEFAULTS` y un `__all__` de 46 nombres.
@@ -584,7 +589,7 @@ Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, co
 - Lección: un error que se repite se ataca con una guía (darle el dato ya calculado), no solo con un sensor (`docs/Harness.md` §7); el sensor se queda como red.
 
 ### Fixed (repaso de sensores con las baterías de casa)
-- Sensores de antes (`4ccbf75`) frente a los actuales sobre las 941 respuestas guardadas en casa, con las mismas llamadas que el juez y, aparte, S10–S12 sobre las 166 respuestas libres del LLM (las que en vivo también pasan por los sensores). Criterio fijado antes: solo pueden desaparecer falsos positivos y cada aviso nuevo se revisa a mano.
+- Sensores de antes (`4ccbf75`) frente a los actuales sobre las 941 respuestas guardadas en el ordenador 1, con las mismas llamadas que el juez y, aparte, S10–S12 sobre las 166 respuestas libres del LLM (las que en vivo también pasan por los sensores). Criterio fijado antes: solo pueden desaparecer falsos positivos y cada aviso nuevo se revisa a mano.
 - Tres falsos positivos corregidos:
   - S10, "tirada" no contaba como carrera: "Tirada larga progresiva Z1→Z2 (115→145 lpm)" heredaba "bici" de la fila de encima (dos respuestas). `_RUNNING_LINE` incluye "tirada(s)" y "rodajes".
   - S10, el deporte escrito detrás del rango, dentro de su paréntesis: "(115→145 lpm running)" con una viñeta de cycling encima. Ese tramo cuenta para decidir el deporte.
@@ -627,7 +632,7 @@ Revisión completa del proyecto (estructura, `chat()`, cliente MCP, enrutado, co
 - Lección: en un agente con rutas deterministas, el metatooling solo toca las preguntas libres, y el ahorro lo limita el resto del contexto; medir antes de estimar.
 
 ### Changed (.env.example limpio)
-- Solo lo que se configura de verdad, en el orden del `.env` del ordenador 2: Garmin (con `ENCRYPTION_KEY`), `KAIROS_USERNAME`, Supabase, `PROVIDER_API_KEY` y proxy corporativo. Fuera lo arrastrado de versiones anteriores (proveedores de prueba, variables opcionales con su valor por defecto, explicaciones largas). Las opcionales siguen funcionando si se definen.
+- Solo lo que se configura de verdad, en el orden del `.env` del ordenador 2: Garmin (con `ENCRYPTION_KEY`), `KAIROS_USERNAME`, Supabase, `PROVIDER_API_KEY` y proxy. Fuera lo arrastrado de versiones anteriores (proveedores de prueba, variables opcionales con su valor por defecto, explicaciones largas). Las opcionales siguen funcionando si se definen.
 - `setup.ps1` / `setup.sh` generan `ENCRYPTION_KEY` también si la línea está vacía (la rellenan en su sitio); antes solo si faltaba la línea.
 
 ### Changed (proveedor de IA del atleta; fuera los 5 proveedores de prueba)
@@ -781,7 +786,7 @@ Auditoría antes de producción: análisis estático, cobertura y tres sesiones 
 - Batería 25/25; suma de las 4 preguntas de coaching 208 s (hoy entre 151 y 240 s con NVIDIA). Tests: 583.
 
 ### Removed (GitHub Models y prompt compacto)
-- Desde la VPN se accede a NVIDIA, así que GitHub Models sobra (decisión del usuario): fuera el proveedor `vpn` (cliente, menú, `/modelo`, presupuesto de tokens, `GITHUB_TOKEN`/`GITHUB_MODEL`) y `prompts/system_prompt_compact.md`, que solo existía por su límite de tokens. La detección de Zscaler queda solo como información en el arranque. Proveedor por defecto de `TrainerAgent`: `nvidia`. Tests: 582 (fuera los 3 del prompt compacto). Batería con NVIDIA: 25/25.
+- Desde la VPN se accede a NVIDIA, así que GitHub Models sobra (decisión del usuario): fuera el proveedor `vpn` (cliente, menú, `/modelo`, presupuesto de tokens, `GITHUB_TOKEN`/`GITHUB_MODEL`) y `prompts/system_prompt_compact.md`, que solo existía por su límite de tokens. La detección del proxy queda solo como información en el arranque. Proveedor por defecto de `TrainerAgent`: `nvidia`. Tests: 582 (fuera los 3 del prompt compacto). Batería con NVIDIA: 25/25.
 
 ### Docs (`docs/Harness.md` reescrito)
 - Especificación del harness a partir de Böckeler/Fowler (guías y sensores, computacional e inferencial, bucle de gobierno) y de Harness² de Google Research (ocho componentes, Proponer–Probar–Componer, biblioteca de experiencia, guía separada de la rúbrica). Catálogo con 12 guías (G1–G12) y 24 sensores (S1–S24): dónde vive cada uno, qué hace si detecta un fallo y su estado real.
@@ -813,7 +818,7 @@ Auditoría antes de producción: análisis estático, cobertura y tres sesiones 
 - `docs/arquitectura.md`: nueva sección "Zonas de FC" (lectura al arrancar, guardado e historial en el perfil, respaldo, fuente única `_resolve_hr_zones` y sin efecto en el TSS), el paso en el diagrama de arranque, y corregido que Kairos calculaba las zonas.
 
 ### Docs (fuera `docs/mcp-frozen-runbook.md`)
-- Lo vigente pasa a su sitio. A `garmin_mcp/README.md`, nueva sección "Problemas frecuentes": 429/403, tokens rechazados y `CERTIFICATE_VERIFY_FAILED` detrás de un proxy corporativo. A `docs/arquitectura.md`, nueva sección "Cliente MCP": arranque del servidor, `MCP_BACKEND`, catálogo esencial, contratos y modo de contingencia, que es del host y no del servidor.
+- Lo vigente pasa a su sitio. A `garmin_mcp/README.md`, nueva sección "Problemas frecuentes": 429/403, tokens rechazados y `CERTIFICATE_VERIFY_FAILED` detrás de un proxy. A `docs/arquitectura.md`, nueva sección "Cliente MCP": arranque del servidor, `MCP_BACKEND`, catálogo esencial, contratos y modo de contingencia, que es del host y no del servidor.
 - Corregido al pasarlo: la contingencia de `get_training_load_trend` ya no se resuelve contra `load_metrics_daily` (usa la caché como el resto) y la caché no caduca. Documentado por qué el modo está desactivado.
 - Descartado por desfasado o nunca medido: verificación con "44 herramientas" y 4 preguntas (ahora healthcheck y batería con juez), validaciones de release (las cubren `make test` y la CI) y el criterio de p95.
 

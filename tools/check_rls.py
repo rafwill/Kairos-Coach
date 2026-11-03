@@ -52,7 +52,7 @@ def main() -> int:
     if not url or not key:
         print("Faltan SUPABASE_URL o SUPABASE_ANON_KEY en .env")
         return 2
-    if storage.is_zscaler_network():
+    if storage.is_proxy_network():
         import truststore
 
         truststore.inject_into_ssl()

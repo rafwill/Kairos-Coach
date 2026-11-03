@@ -253,8 +253,8 @@ class TestLlmKey:
         assert isinstance(exc.value, RuntimeError) and agent.llm_auth_failed is True
 
     def test_other_errors_pass_through_untouched(self, monkeypatch):
-        agent = self._agent(monkeypatch, Exception("403 Forbidden: Zscaler"))
-        with pytest.raises(Exception, match="Zscaler"):
+        agent = self._agent(monkeypatch, Exception("403 Forbidden: proxy"))
+        with pytest.raises(Exception, match="proxy"):
             asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
         assert agent.llm_auth_failed is False
 
@@ -374,7 +374,7 @@ class TestLlmKey:
         (None, "ok"), (_Unauthorized("401"), "auth"), (Exception("API key not valid. API_KEY_INVALID"), "auth"),
         # NVIDIA con clave mala, texto real del 26/10; un 403 del proxy no es la clave.
         (Exception("Error code: 403 - {'status': 403, 'title': 'Forbidden', 'detail': 'Authorization failed'}"), "auth"),
-        (Exception("403 Forbidden: Zscaler"), "error"), (TimeoutError("lento"), "error"),
+        (Exception("403 Forbidden: proxy"), "error"), (TimeoutError("lento"), "error"),
     ])
     def test_probe_classifies(self, monkeypatch, error, status):
 
