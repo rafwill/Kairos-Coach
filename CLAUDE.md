@@ -15,13 +15,6 @@
 
 Leer `docs/proximos_pasos.md`: "Dónde lo dejamos" dice en qué punto quedó la última sesión y por dónde seguir; las secciones siguientes, lo que queda. Al terminar, reescribir "Dónde lo dejamos" (fecha, ordenador, último commit, siguiente paso) para que la siguiente sesión, en este u otro ordenador, empiece desde ahí.
 
-**Primero, solo en el ordenador 1, una vez (historial reescrito el 3/11):** alinearlo antes de hacer nada más; nunca `git pull`, que mezclaría el historial antiguo con el nuevo.
-
-1. `git fetch origin`. Si `git merge-base --is-ancestor HEAD origin/main` da éxito, no hay nada que alinear salvo avanzar con `git merge --ff-only origin/main`: saltar al paso 4.
-2. Mirar `git status` y `git log origin/main..HEAD`. Un commit local cuyo asunto ya está en `origin/main` es la copia antigua del mismo commit. Lo demás (cambios sin commit, commits con otro asunto) está sin subir: enseñárselo al usuario y guardarlo en una rama o un stash, según decida, antes de seguir.
-3. Con el visto bueno del usuario, `git reset --hard origin/main` y, si había algo guardado, volver a aplicarlo.
-4. Comprobar que `git status` queda limpio y al día con `origin/main`, y pasar los tests. Después, quitar este bloque de `CLAUDE.md` y la frase del ordenador 1 de "Dónde lo dejamos".
-
 ## Objetivo
 
 Cuantificar cada sesión con TSS (TSS/hrTSS/rTSS) como lo haría TrainingPeaks, para que ATL/CTL/TSB se parezcan lo más posible a los de TP. Cada actividad tiene UN TSS, calculado una vez, guardado en `activity_tss`, y todas las pantallas leen ese número. La carga nativa de Garmin nunca es TSS (solo columna `native_load` / "Carga Garmin").

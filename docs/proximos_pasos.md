@@ -8,7 +8,7 @@ Texto anterior de esta lista, con los criterios de diseño que citan algunos com
 
 ## Dónde lo dejamos
 
-**Sesión del 3/11/2026** (ordenador 2). Último commit con cambios: `4938ef9`, seguido del que ajusta estas notas. El historial se reescribió desde el 30/10: **en el ordenador 1, antes de nada, `git fetch` y `git reset --hard origin/main`** (lo que haya allí sin subir, guardarlo antes). 1028 tests y `ruff` limpios. La tabla `startup_summary` existe en Supabase y las 12 tablas salen cerradas sin sesión (`check_rls`, 3/11).
+**Sesión del 3/11/2026** (ordenador 2). Último commit con cambios: `4938ef9`, seguido del que ajusta estas notas. El historial se reescribió desde el 30/10; el ordenador 1 quedó alineado el 5/11 (`87634f0`, tests en verde). 1028 tests y `ruff` limpios. La tabla `startup_summary` existe en Supabase y las 12 tablas salen cerradas sin sesión (`check_rls`, 3/11).
 
 **Siguiente paso (decisión del usuario): usar Kairos a diario unas semanas y decidir con lo que salga.** Nada de código nuevo hasta entonces salvo lo que rompa. Revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TURNO]`, `[STARTUP]`, `[PLAN]`, `[LLM] … relevo`).
 
