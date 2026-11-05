@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -46,6 +47,11 @@ AUTO_DAY_TYPES = {"easy", "recovery", "long"}  # días cuyo tramo continuo puede
 _STEP_NAMES = {"warmup": "Calentamiento", "cooldown": "Vuelta a la calma", "work": "Trabajo", "recovery": "Recuperación",
                "steady": "Continuo"}
 _HR_INTENSITY = {1: "recovery", 2: "endurance", 3: "tempo", 4: "threshold", 5: "vo2"}
+_RECOVERY_TITLE = re.compile(r"recupera|regenera")  # título de un rodaje de recuperación (sin tildes)
+
+
+def _fold(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", str(text or "")) if not unicodedata.combining(c)).lower()
 _HARD_CLASSES = {"tempo", "threshold", "vo2"}  # Z3 o más (Friel Z3 = tempo)
 _STRENGTH_TSS_PER_HOUR = 35.0  # el mismo que la fuerza del plan por bloques (run_plan.strength_session)
 
@@ -451,12 +457,21 @@ def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict
             return None
         zone = rp.Paces(f.threshold_pace, f.threshold_pace).zone_of(fixed_pace)
     auto = str(raw.get("min") or "").strip().lower() == "auto"
+    share = 1.0
     if auto:
         # La duración la pone el código para que la semana sume sus minutos (expand_week): el LLM no suma.
         if kind != "steady" or raw.get("m") or raw.get("km") or raw.get("sec"):
             errors.append(f"{where}: \"min\": \"auto\" solo va en un tramo \"steady\" sin distancia.")
             return None
+        # "share" (05/11): la parte de los minutos de los rodajes que le toca a este, frente a 1 (antes todos iguales).
+        share = _num(raw.get("share"), 1.0) if raw.get("share") not in (None, "") else 1.0
+        if share <= 0:
+            errors.append(f"{where}: \"share\" es un número mayor que 0 (1 = como los demás rodajes; 0.6, más corto).")
+            return None
         raw = {**raw, "min": 1}
+    elif raw.get("share") not in (None, ""):
+        errors.append(f"{where}: \"share\" solo va con \"min\": \"auto\".")
+        return None
     minutes = _num(raw.get("min")) + _num(raw.get("sec")) / 60
     meters = _num(raw.get("m")) + _num(raw.get("km")) * 1000
     if minutes <= 0 and meters <= 0:
@@ -484,7 +499,7 @@ def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict
         if note:
             out["note"] = note
         if auto:
-            out["auto"] = True
+            out["auto"] = share
         return out
     p = f.paces
     if p is None:
@@ -503,7 +518,7 @@ def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict
         if meters:
             out["duration_min"] = round(meters / 1000 * fixed_pace / 60, 2)
     if auto:
-        out["auto"] = True
+        out["auto"] = share
     return out
 
 
@@ -598,6 +613,12 @@ def expand_day(day: dict, f: PlanFrame, week: int) -> tuple[dict | None, list[st
         if nested_auto or len(autos) > 1 or (autos and kind not in AUTO_DAY_TYPES):
             return None, [f"{where}: \"min\": \"auto\" va en un solo tramo \"steady\" de un rodaje (easy, recovery) "
                           "o de la tirada larga (long), fuera de las series."]
+        if kind in ("easy", "recovery") and (kind == "recovery" or _RECOVERY_TITLE.search(_fold(title))) and any(
+                s.get("intensityClass") != "recovery" for s, _ in rp._leaf_steps(steps)
+                if s.get("type") not in ("warmup", "cooldown")):
+            # 05/11: "Rodaje de recuperación y soltura" iba en Z2, igual que los rodajes aeróbicos de la semana.
+            return None, [f"{where}: \"{title or 'recovery'}\" es un rodaje de recuperación: su tramo continuo va en Z1 o "
+                          "FC1. Si quieres Z2, cámbialo a \"easy\" con un título de rodaje aeróbico."]
         if kind == "cross" and any((s.get("target") or {}).get("metric") != "hr_zone" for s, _ in rp._leaf_steps(steps)):
             # Una zona de ritmo en bici o remo daría un rTSS de carrera: solo FC (hrTSS de TP, como la bici sin potencia).
             return None, [f"{where}: en un \"cross\" cada tramo va por FC (FC1 a FC5), sin zonas de ritmo, RP ni \"pace\"."]
@@ -669,19 +690,27 @@ def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_m
     easy = [s for s in autos if s["session_type"] != "long_run"]
     if easy and not errors:
         fixed = kept_minutes + sum(float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions) - len(easy)
-        each = (target - fixed) / len(easy)  # minutos del tramo "auto" de cada rodaje
-        others = max(float(s["structured_workout"]["summary"]["duration_min"]) - 1 for s in easy)
+        shares = [float(_auto_step(s)["auto"]) for s in easy]
+        pool = target - fixed  # minutos de los tramos "auto" de los rodajes, repartidos según su "share" (05/11)
         longs = [float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions if s["session_type"] == "long_run"]
         # Un rodaje dura al menos 20 min y nunca tanto como la tirada larga de la semana (sin tirada: 90 min).
-        low, high = max(1.0, 20 - others), (max(longs) if longs else 90.0) - others - 1
-        if not low <= each <= high:
-            fix = ("quita un rodaje o pon sus minutos" if each < low else
+        high = (max(longs) if longs else 90.0) - 1
+        sizes = []
+        for s, share in zip(easy, shares):
+            each = pool * share / sum(shares)
+            others = float(s["structured_workout"]["summary"]["duration_min"]) - 1
+            sizes.append((s, each, each + others))
+        out_of_range = [(s, total) for s, each, total in sizes if each < 1 or not 20 <= total <= high]
+        if out_of_range:
+            short = any(total < 20 for _, total in out_of_range)
+            fix = ("quita un rodaje, pon sus minutos o dale más \"share\" al corto" if short else
                    "añade un rodaje" + (" (o dobla: un segundo rodaje el mismo día)" if f.doubles else "")
-                   + " o alarga otras sesiones")
-            errors.append(f"Semana {n}: para que la semana sume {target:.0f} min, cada rodaje \"auto\" duraría "
-                          f"{each + others:.0f} min (entre 20 y {high + others:.0f}, menos que la tirada larga); {fix}.")
+                   + ", alarga otras sesiones o reparte mejor el \"share\"")
+            detail = ", ".join(f"día {s['day_index']} {total:.0f} min" for s, total in out_of_range)
+            errors.append(f"Semana {n}: para que la semana sume {target:.0f} min, los rodajes \"auto\" durarían {detail} "
+                          f"(cada uno entre 20 y {high:.0f} min, menos que la tirada larga); {fix}.")
         else:
-            for s in easy:
+            for s, each, _ in sizes:
                 _auto_step(s)["duration_min"] = float(round(each))
                 refresh_session(s, f)
     if not errors:

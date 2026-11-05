@@ -20,6 +20,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Problema: `_compute_plan_execution_feedback` comparaba todas las actividades del día con la primera sesión: la fuerza de la tarde contaba como exceso sobre el rodaje.
 - Ahora: se compara con todas las sesiones del día (duración y TSS sumados) y el tipo puntúa la media de las sesiones, cada una con 1 si se hizo algo de su modalidad.
 
+### Changed (rodajes de duración distinta y recuperación de verdad; análisis de la semana 2 del plan)
+- Problema: `_fill_auto` repartía los minutos de la semana a partes iguales entre los rodajes "auto": tres rodajes de 47 min en la semana 2. Uno de ellos, "Rodaje de recuperación y soltura", iba en Z2 como los demás.
+- Ahora: el tramo "auto" admite `"share"` (la parte que le toca frente a los demás, 1 por defecto): el LLM decide la proporción y el código reparte los minutos y comprueba cada rodaje (20 min o más y menos que la tirada larga). Un rodaje de recuperación (`recovery`, o "recuperación" o "regeneración" en el título) va en Z1 o FC1; si no, vuelve al LLM. Prompts `plan/weeks.md` y `plan/revision.md`.
+- Pendiente de comprobar con planes reales: que Gemini use `share` y que no baje la tasa de planes válidos.
+- Lección: cuando el código reparte por igual lo que el LLM deja en blanco, el plan pierde el criterio del entrenador; el LLM tiene que poder decir la proporción.
+
 ## 2026-11-03
 
 ### Fixed (el aviso de plan que ya no encaja y los días de viaje; pendiente del 2/11)

@@ -23,5 +23,5 @@ Formato (JSON):
 
 - En "weeks" van solo los días que cambian, con el mismo formato de días y tramos del plan ("type", "title", "steps" o "minutes"); un día que pasa a descanso es {"day": n, "type": "rest"}. Un día que devuelves sustituye a todas sus sesiones: en un día doble, devuelve las dos (o solo la que quede).
 - Las mismas reglas de zonas: solo las del bloque "Zonas que puedes usar"; no calcules ritmos, km ni TSS.
-- "min": "auto" en el tramo continuo de un rodaje o de la tirada larga hace que Kairos le dé la duración para que la semana sume lo previsto en la estructura. Si quieres que la semana tenga menos volumen (molestia, cansancio, viaje), pon los minutos tú.
+- "min": "auto" en el tramo continuo de un rodaje o de la tirada larga hace que Kairos le dé la duración para que la semana sume lo previsto en la estructura. Si quieres que la semana tenga menos volumen (molestia, cansancio, viaje), pon los minutos tú. Con "share" en ese tramo dices qué parte le toca a cada rodaje frente a los demás (1 = igual; 0.6, más corto); un rodaje de recuperación va en Z1 o FC1.
 {{trail}}

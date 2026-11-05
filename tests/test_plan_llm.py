@@ -154,11 +154,60 @@ class TestAutoDurations:
     def test_impossible_fill_goes_back_to_the_llm(self):
         w = {**MACRO["weeks"][4], "minutes": 900}
         _, errors = pb.expand_week(self._auto_week(w), _frame(), w)
-        assert any("cada rodaje \"auto\" duraría" in e and "añade un" in e for e in errors)
+        assert any("los rodajes \"auto\" durarían" in e and "añade un" in e for e in errors)
         bad = self._auto_week(MACRO["weeks"][4])
         bad["days"][1]["steps"][1]["steps"][0] = {"kind": "steady", "min": "auto", "zone": "Z4"}
         _, errors = pb.expand_week(bad, _frame(), MACRO["weeks"][4])
         assert any("fuera de las series" in e for e in errors)
+
+    def test_share_gives_each_run_its_part(self):
+        # 05/11: sin "share", los rodajes "auto" de una semana salían todos iguales (tres de 47 min en la semana 2).
+        w = MACRO["weeks"][4]
+        week = self._auto_week(w)
+        week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.5, "zone": "Z1"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        sessions, errors = pb.expand_week(week, _frame(), w)
+        assert errors == []
+        steady = {s["day_index"]: s["structured_workout"]["steps"][1]["duration_min"] for s in sessions
+                  if s["session_type"] in ("recovery", "running_z2")}
+        assert abs(steady[3] - steady[6] / 2) <= 1
+        total = sum(s["structured_workout"]["summary"]["duration_min"] for s in sessions)
+        assert abs(total - w["minutes"]) <= 2
+
+    def test_share_is_checked(self):
+        f = _frame()
+        _, errors = pb.expand_day({"day": 3, "type": "easy", "title": "Rodaje", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": 30, "share": 0.5, "zone": "Z2"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}, f, 1)
+        assert any("solo va con" in e for e in errors)
+        _, errors = pb.expand_day({"day": 3, "type": "easy", "title": "Rodaje", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0, "zone": "Z2"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}, f, 1)
+        assert any("mayor que 0" in e for e in errors)
+
+
+class TestRecoveryRuns:
+    def _day(self, kind, title, zone):
+        return {"day": 4, "type": kind, "title": title, "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": 30, "zone": zone},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+
+    @pytest.mark.parametrize("kind, title, zone", [
+        ("easy", "Rodaje de recuperación y soltura", "Z2"),  # el del 05/11, en la semana 2
+        ("easy", "Rodaje de regeneración", "FC2"),
+        ("recovery", "Rodaje suave", "Z2"),
+    ])
+    def test_a_recovery_run_in_z2_goes_back_to_the_llm(self, kind, title, zone):
+        _, errors = pb.expand_day(self._day(kind, title, zone), _frame(), 2)
+        assert any("rodaje de recuperación" in e and "Z1 o FC1" in e for e in errors)
+
+    @pytest.mark.parametrize("kind, title, zone", [
+        ("easy", "Rodaje de recuperación", "Z1"), ("recovery", "Rodaje regenerativo", "FC1"), ("easy", "Rodaje aeróbico", "Z2"),
+    ])
+    def test_recovery_in_z1_and_aerobic_in_z2_pass(self, kind, title, zone):
+        _, errors = pb.expand_day(self._day(kind, title, zone), _frame(), 2)
+        assert errors == []
 
 
 class TestMacroRules:
