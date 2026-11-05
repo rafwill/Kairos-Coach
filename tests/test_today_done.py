@@ -127,3 +127,29 @@ class TestMarkdown:
         out = _build_proactive_status_markdown(payload)
         assert "Plan vs ejecutado (ayer)" in out and "Regla aplicada" in out
         assert "(realizada)" not in out and "Mañana" not in out
+
+
+class TestPlannedTss:
+    def test_planned_tss_is_the_plans_own(self):
+        # 05/11: el arranque comparaba lo hecho con una estimación por RPE (31 TSS) en vez del TSS del plan (49).
+        from agent.daily_engine import _estimate_planned_session_tss
+        session = {"session_type": "running_z2", "duration_min": 47, "intensity": "RPE 4",
+                   "structured_workout": {"summary": {"tss": 49.3}}}
+        assert _estimate_planned_session_tss(session) == 49.3
+        assert _estimate_planned_session_tss({**session, "structured_workout": {}}) == round(47 / 60 * 40, 1)
+
+    def test_double_day_feedback_compares_with_both_sessions(self, monkeypatch):
+        # 05/11: con rodaje + fuerza, el plan vs ejecutado solo miraba el rodaje y la fuerza contaba como exceso.
+        from agent import daily_engine
+        from tests.agent_patch import patch_everywhere
+        patch_everywhere(monkeypatch, "_load_stored_activity_tss", lambda _iso: {1: {"tss": 49.0}, 2: {"tss": 18.0}})
+        plan = _plan(("running_z2", 47, "Rodaje"), ("strength", 30, "Movilidad"))
+        for s, tss in zip(plan["sessions"], (49.3, 17.5)):
+            s["structured_workout"]["summary"] = {"tss": tss}
+        acts = [{"activityId": 1, "type": "running", "duration": 47 * 60},
+                {"activityId": 2, "type": "strength_training", "duration": 30 * 60}]
+        out = daily_engine._compute_plan_execution_feedback(plan, acts, TODAY_ISO, profile={})
+        assert out["planned"]["tss_est"] == 66.8 and out["planned"]["duration_min"] == 77
+        assert abs(out["load_deviation_pct"]) < 0.05 and out["adherence_score"] >= 0.95
+        only_strength = daily_engine._compute_plan_execution_feedback(plan, acts[1:], TODAY_ISO, profile={})
+        assert only_strength["adherence_score"] < 0.75

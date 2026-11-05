@@ -746,13 +746,18 @@ def _build_adjusted_structured_session_text(planned_session: str, planned_row: d
 
 
 def _estimate_planned_session_tss(session: dict) -> float:
-    """Estimación determinista de TSS planificado por sesión (cuando no hay potencia/HR real)."""
+    """TSS planificado de una sesión: el del plan (`structured_workout.summary.tss`, rTSS/hrTSS de TP por tramo) y, en
+    un plan sin él, una estimación por RPE (05/11: antes siempre el RPE, y un rodaje de 49 TSS en el plan se comparaba
+    con 31)."""
     if not isinstance(session, dict):
         return 0.0
     duration_min = max(0.0, _safe_float(session.get("duration_min"), 0.0))
     session_type = str(session.get("session_type") or "").strip().lower()
     if session_type == "rest" or duration_min <= 0:
         return 0.0
+    summary = (session.get("structured_workout") or {}).get("summary") or {}
+    if _safe_float(summary.get("tss"), 0.0) > 0:
+        return round(_safe_float(summary.get("tss"), 0.0), 1)
 
     rpe_mid = _extract_rpe_mid(str(session.get("intensity") or ""))
     # Aproximación conservadora: TSS/h ~ RPE*10 (RPE 5 => 50 TSS/h).
@@ -779,8 +784,11 @@ def _compute_plan_execution_feedback(
 
     planned_type = str(planned.get("session_type") or "session").strip().lower()
     planned_group = _normalize_session_group(planned_type)
-    planned_duration = max(0.0, _safe_float(planned.get("duration_min"), 0.0))
-    planned_tss = _estimate_planned_session_tss(planned)
+    # Día doble (05/11): las actividades del día se comparan con todas sus sesiones; antes solo con la primera, y la
+    # fuerza de la tarde contaba como exceso sobre el rodaje.
+    day_sessions = _get_planned_sessions_for_date(plan, target_date_iso) or [planned]
+    planned_duration = sum(max(0.0, _safe_float(s.get("duration_min"), 0.0)) for s in day_sessions)
+    planned_tss = round(sum(_estimate_planned_session_tss(s) for s in day_sessions), 1)
 
     executed = [a for a in list(activities_for_day or []) if isinstance(a, dict)]
     actual_duration = round(sum(_extract_activity_duration_minutes(a) for a in executed), 1)
@@ -825,15 +833,19 @@ def _compute_plan_execution_feedback(
             actual_group = _normalize_activity_group(main_exec)
         else:
             actual_group = "none"
+        actual_groups = {_normalize_activity_group(a) for a in executed}
 
-        if actual_group == planned_group:
-            type_score = 1.0
-        elif planned_group == "running" and actual_group in {"other", "none"}:
-            type_score = 0.2
-        elif planned_group == "running":
-            type_score = 0.7
-        else:
-            type_score = 0.2
+        def _type_score(group: str) -> float:
+            if group in actual_groups:
+                return 1.0
+            if group == "running" and actual_group not in {"other", "none"}:
+                return 0.7
+            return 0.2
+
+        # Media de las sesiones del día (día doble, 05/11): cada una puntúa si se hizo algo de su modalidad.
+        groups = [_normalize_session_group(str(s.get("session_type") or "")) for s in day_sessions]
+        groups = [g for g in groups if g != "rest"] or [planned_group]
+        type_score = sum(_type_score(g) for g in groups) / len(groups)
 
         if planned_duration <= 0:
             duration_score = 0.0

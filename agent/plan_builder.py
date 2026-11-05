@@ -9,7 +9,8 @@ y, para cada día, su tipo y sus tramos (tiempo o distancia + zona). Este módul
 - prepara los datos del atleta para el prompt (`PlanFrame`, `frame_text`): fechas de cada semana, zonas de ritmo de
   Friel sobre su umbral y ritmo de carrera, zonas de FC de Garmin, carga real, disponibilidad y salud;
 - convierte los tramos en sesiones `kairos-workout-v1` (`expand_week`): rangos de ritmo, km y TSS planificado
-  (rTSS de TrainingPeaks con ritmo; hrTSS de TP con FC). El LLM nunca calcula ritmos, km ni TSS;
+  (rTSS de TrainingPeaks con ritmo y en carrera por FC; hrTSS de TP con FC en bici, cross y trail). El LLM nunca
+  calcula ritmos, km ni TSS;
 - comprueba la estructura y cada semana (`check_macro`, `check_week`): progresión ≤ 10 %, descargas, afinamiento,
   disponibilidad, descanso, calidad, carrera en su fecha. Los fallos vuelven al LLM para que los corrija.
 
@@ -513,8 +514,9 @@ _HR_TO_PACE_ZONE = {1: "Z1", 2: "Z2", 3: "Z3", 4: "Z4", 5: "Z5a"}
 def workout_totals(steps: list[dict], f: PlanFrame, running: bool = True) -> tuple[float, float, float]:
     """(minutos, km, TSS planificado): rTSS de TP con ritmo; hrTSS de TP (tabla por FC/umbral) con FC.
 
-    En una sesión de carrera, los km de un tramo por FC se estiman con el ritmo medio de su zona de ritmo
-    equivalente (29/10: antes no sumaban y una semana de rodajes por FC salía con 0 km); en bici o cross, no.
+    En una sesión de carrera, un tramo por FC va con el ritmo medio de su zona de ritmo equivalente: sus km (29/10:
+    antes no sumaban y una semana de rodajes por FC salía con 0 km) y su TSS, rTSS como el que Kairos mide al hacerla
+    (05/11: con hrTSS, un rodaje en FC2 preveía 32 TSS y el mismo en Z2, 49). En bici, cross o trail, hrTSS.
     """
     minutes = km = tss = 0.0
     for s, times in rp._leaf_steps(steps):
@@ -525,14 +527,16 @@ def workout_totals(steps: list[dict], f: PlanFrame, running: bool = True) -> tup
             mid = sum(target["range"]) / 2
             km += dur * 60 / mid
             tss += dur / 60 * (f.threshold_pace / mid) ** 2 * 100
+        elif target.get("metric") == "hr_zone" and running and f.paces:
+            fast, slow = f.paces.zone(_HR_TO_PACE_ZONE[min(5, int(target["zone"]))])
+            mid = (fast + slow) / 2
+            km += dur * 60 / mid
+            tss += dur / 60 * (f.threshold_pace / mid) ** 2 * 100
         elif target.get("metric") == "hr_zone" and f.hr_zones and f.hr_threshold_tp:
             _, lo, hi = f.hr_zones[int(target["zone"]) - 1]
             ratio = (lo + hi) / 2 / f.hr_threshold_tp
             rate = next((r for upper, r in TP_HRTSS_RATES if ratio < upper), TP_HRTSS_RATE_ABOVE_THRESHOLD)
             tss += dur / 60 * rate
-        if target.get("metric") == "hr_zone" and running and f.paces:
-            fast, slow = f.paces.zone(_HR_TO_PACE_ZONE[min(5, int(target["zone"]))])
-            km += dur * 60 / ((fast + slow) / 2)
     return round(minutes, 1), round(km, 1), round(tss, 1)
 
 

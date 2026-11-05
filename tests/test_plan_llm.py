@@ -102,11 +102,14 @@ class TestStepsAreComputedByTheCode:
         assert session["structured_workout"]["summary"]["distance_km"] == 0  # bici o cross por FC: sin km
         run = dict(day, type="easy", title="Rodaje por FC")
         run_session, _ = pb.expand_day(run, f, 1)
-        # Rodaje por FC: km con el ritmo medio de la zona equivalente (FC1 → Z1, FC2 → Z2); el TSS sigue siendo hrTSS.
+        # Rodaje por FC: km y TSS con el ritmo medio de la zona equivalente (FC1 → Z1, FC2 → Z2); 05/11: el TSS es rTSS,
+        # el mismo que el rodaje por ritmo, porque así lo mide Kairos al hacerlo (antes hrTSS, más bajo).
         z1, z2 = rp.Paces(250, 270).zone("Z1"), rp.Paces(250, 270).zone("Z2")
         expected = round(20 * 60 / (sum(z1) / 2) + 60 * 60 / (sum(z2) / 2), 1)
         assert run_session["structured_workout"]["summary"]["distance_km"] == expected
-        assert run_session["structured_workout"]["summary"]["tss"] == session["structured_workout"]["summary"]["tss"]
+        by_pace, _ = pb.expand_day(dict(run, steps=[dict(s, zone=s["zone"].replace("FC", "Z")) for s in run["steps"]]), f, 1)
+        assert run_session["structured_workout"]["summary"]["tss"] == by_pace["structured_workout"]["summary"]["tss"]
+        assert run_session["structured_workout"]["summary"]["tss"] > session["structured_workout"]["summary"]["tss"]
         lines = rp.session_lines(session, START, ZONES)
         assert any("FC Z2 135–145 lpm" in x for x in lines)
 

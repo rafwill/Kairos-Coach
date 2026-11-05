@@ -9,6 +9,17 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Ahora (`daily_engine._today_completion`): cada actividad cubre la primera sesión pendiente de su clase, fuerza (`_is_strength_activity`) o resistencia. Una actividad sin sesión de su clase no cubre ninguna: la fuerza no cierra un día de carrera. `done` lleva las posiciones de las sesiones hechas y `_today_session_lines` marca esas, no las N primeras. Un día de descanso se cierra igual que antes con cualquier actividad.
 - Lección: "cuántas" no basta para decir "cuáles"; el emparejamiento entre lo hecho y lo previsto tiene que mirar qué es cada cosa.
 
+### Fixed (TSS previsto distinto del que se mide; análisis de la semana 2 del plan)
+- Problema 1: en un plan de asfalto, un rodaje por FC (FC2) preveía su TSS con la tabla de hrTSS de TP (40,8 TSS/h) y el mismo rodaje por ritmo (Z2), con rTSS: 32 frente a 49 TSS en la semana 2. Kairos mide la carrera siempre con rTSS, así que lo previsto por FC salía bajo.
+- Problema 2: el plan vs ejecutado del arranque no usaba el TSS del plan, sino una estimación por RPE (`_estimate_planned_session_tss`: 47 min × RPE 4 × 10 = 31 TSS). Un rodaje bien hecho salía con +50-100 % de desviación y "reducir siguiente sesión".
+- Ahora: `plan_builder.workout_totals` calcula el tramo de carrera por FC con rTSS al ritmo medio de su zona equivalente (con el que ya estimaba los km); bici, cross y trail siguen con hrTSS de TP. `_estimate_planned_session_tss` usa `structured_workout.summary.tss` y solo sin él cae al RPE.
+- Lección: un número previsto solo sirve para comparar si se calcula con el mismo método que el medido; comprobar de dónde sale cada lado de una comparación.
+- Datos (decisión del usuario): el plan activo (Santa Pola) se corrigió con prueba previa (las sesiones por ritmo daban su TSS guardado exacto: el marco del recálculo es el bueno) y escritura de solo las 20 sesiones afectadas, todas rodajes de asfalto por FC; solo cambia `structured_workout.summary.tss` (p. ej. S2 miércoles 32,0 → 49,3). Leído de vuelta: 20/20 con el TSS nuevo y 84/84 sin tocar iguales. Versión del plan guardada antes del cambio ("antes de tss_fc_rtss").
+
+### Fixed (plan vs ejecutado en un día doble)
+- Problema: `_compute_plan_execution_feedback` comparaba todas las actividades del día con la primera sesión: la fuerza de la tarde contaba como exceso sobre el rodaje.
+- Ahora: se compara con todas las sesiones del día (duración y TSS sumados) y el tipo puntúa la media de las sesiones, cada una con 1 si se hizo algo de su modalidad.
+
 ## 2026-11-03
 
 ### Fixed (el aviso de plan que ya no encaja y los días de viaje; pendiente del 2/11)
