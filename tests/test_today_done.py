@@ -18,8 +18,8 @@ def _plan(*rows):
     return {"title": "Plan", "plan_data": {"start_date": monday.isoformat()}, "sessions": sessions}
 
 
-def _acts(*names):
-    return [{"activityId": i, "name": n} for i, n in enumerate(names, 1)]
+def _acts(*names, type_key="running"):
+    return [{"activityId": i, "name": n, "activityType": {"typeKey": type_key}} for i, n in enumerate(names, 1)]
 
 
 class TestTodayCompletion:
@@ -35,6 +35,18 @@ class TestTodayCompletion:
         plan = _plan(("running_z2", 40, "Rodaje"), ("strength", 40, "Fuerza"))
         out = _today_completion(plan, TODAY_ISO, _acts("Rodaje"))
         assert not out["all_done"] and [r["session_type"] for r in out["pending"]] == ["strength"]
+        assert out["done"] == [0]
+
+    def test_strength_done_covers_the_strength_session_not_the_run(self):
+        # 05/11: con rodaje + fuerza (movilidad y core) y solo la fuerza hecha, el arranque daba el rodaje por hecho.
+        plan = _plan(("running_z2", 47, "Rodaje"), ("strength", 30, "Movilidad activa y core"))
+        out = _today_completion(plan, TODAY_ISO, _acts("Fuerza", type_key="strength_training"))
+        assert not out["all_done"] and out["done"] == [1]
+        assert [r["session_type"] for r in out["pending"]] == ["running_z2"]
+
+    def test_strength_does_not_close_a_running_day(self):
+        out = _today_completion(_plan(("running_z2", 65, "Rodaje")), TODAY_ISO, _acts("Fuerza", type_key="strength_training"))
+        assert not out["all_done"] and out["done"] == [] and len(out["pending"]) == 1
 
     def test_training_on_a_rest_day_closes_the_day(self):
         out = _today_completion(_plan(("rest", 0, "Descanso")), TODAY_ISO, _acts("Bici"))
@@ -61,8 +73,20 @@ class TestDecision:
 class TestTodaySessionLines:
     def test_done_sessions_are_marked(self):
         plan = _plan(("running_z2", 40, "Rodaje"), ("strength", 40, "Fuerza"))
-        lines = _today_session_lines(plan, {}, done=1)
+        lines = _today_session_lines(plan, {}, done={0})
         assert "✅ Realizada" in lines[0] and "✅ Realizada" not in lines[1]
+
+    def test_only_the_session_done_is_marked(self):
+        plan = _plan(("running_z2", 47, "Rodaje"), ("strength", 30, "Movilidad activa y core"))
+        done = _today_completion(plan, TODAY_ISO, _acts("Fuerza", type_key="strength_training"))["done"]
+        lines = _today_session_lines(plan, {}, done=set(done))
+        assert "✅ Realizada" not in lines[0] and "✅ Realizada" in lines[1]
+
+    def test_double_day_strength_pending_decides_about_the_run(self):
+        plan = _plan(("running_z2", 47, "Rodaje"), ("strength", 30, "Movilidad"))
+        completion = _today_completion(plan, TODAY_ISO, _acts("Fuerza", type_key="strength_training"))
+        out = _compute_daily_plan_adjustment({"dates": {"today": TODAY_ISO}, "today_completion": completion}, plan)
+        assert out["rule"] != "done_today" and out["planned_session"] == "Rodaje"
 
 
 class TestMarkdown:

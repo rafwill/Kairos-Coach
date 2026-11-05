@@ -619,8 +619,8 @@ class StartupMixin:
             snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
             snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
             completion = snapshot.get("today_completion") or {}
-            done = 0 if not completion else (completion["planned"] if completion["all_done"] else completion["executed"])
-            snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile, done=done)
+            snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile,
+                                                                   done=set(completion.get("done") or []))
             if completion.get("all_done"):
                 snapshot["tomorrow_session_lines"] = _today_session_lines(
                     active_plan, self.user_profile, day=date.today() + timedelta(days=1))

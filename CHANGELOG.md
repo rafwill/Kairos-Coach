@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-05
+
+### Fixed (la sesión de hoy dada por hecha con otro deporte; aviso del usuario)
+- Problema: con un día doble (rodaje + movilidad y core) y solo la fuerza hecha, el arranque marcaba el rodaje como "✅ Realizada" y el motor diario decidía sobre la movilidad. Cada actividad de hoy cubría la sesión prevista que tocara por orden, fuera del deporte que fuera.
+- Ahora (`daily_engine._today_completion`): cada actividad cubre la primera sesión pendiente de su clase, fuerza (`_is_strength_activity`) o resistencia. Una actividad sin sesión de su clase no cubre ninguna: la fuerza no cierra un día de carrera. `done` lleva las posiciones de las sesiones hechas y `_today_session_lines` marca esas, no las N primeras. Un día de descanso se cierra igual que antes con cualquier actividad.
+- Lección: "cuántas" no basta para decir "cuáles"; el emparejamiento entre lo hecho y lo previsto tiene que mirar qué es cada cosa.
+
 ## 2026-11-03
 
 ### Fixed (el aviso de plan que ya no encaja y los días de viaje; pendiente del 2/11)

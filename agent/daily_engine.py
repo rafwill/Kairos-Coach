@@ -13,6 +13,7 @@ from typing import Any
 from agent import storage as _storage
 from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _estimate_session_tss,
+    _is_strength_activity,
     _resolve_hr_profile_values,
     _resolve_running_threshold_pace_sec_per_km,
 )
@@ -155,19 +156,30 @@ def _get_planned_sessions_for_date(plan: dict, target_date_iso: str) -> list[dic
 
 def _today_completion(plan: dict | None, today_iso: str, activities_today: list[dict]) -> dict | None:
     """Qué parte de lo que toca hoy según el plan ya está hecha (31/10, petición del usuario: tras entrenar, el
-    arranque seguía proponiendo la sesión de hoy). Cada actividad de hoy cubre una sesión prevista, por orden;
-    en un día de descanso, entrenar también cierra el día. None si no hay plan o no se ha entrenado."""
+    arranque seguía proponiendo la sesión de hoy). Cada actividad de hoy cubre la primera sesión prevista de su
+    clase, fuerza o resistencia (05/11: antes cubría por orden, y la fuerza hecha marcaba como realizado el rodaje
+    de un día doble); una actividad sin sesión de su clase no cubre ninguna. En un día de descanso, entrenar también
+    cierra el día. `done` son las posiciones de las sesiones hechas. None si no hay plan o no se ha entrenado."""
     executed = [a for a in activities_today or [] if isinstance(a, dict)]
     if not executed or not isinstance(plan, dict):
         return None
-    rows = [r for r in _get_planned_sessions_for_date(plan, today_iso)
+    day_rows = _get_planned_sessions_for_date(plan, today_iso)
+    rows = [i for i, r in enumerate(day_rows)  # posiciones en el día, las que pinta _today_session_lines
             if str(r.get("session_type") or "") != "rest" and _safe_float(r.get("duration_min"), 0.0) > 0]
+    done: list[int] = []
+    for act in executed:
+        strength = _is_strength_activity(act.get("activityTypeDTO") or act.get("activityType") or "")
+        match = next((i for i in rows if i not in done
+                      and (str(day_rows[i].get("session_type") or "") == "strength") == strength), None)
+        if match is not None:
+            done.append(match)
     return {
         "planned": len(rows),
         "executed": len(executed),
-        "all_done": len(executed) >= len(rows),
+        "all_done": len(done) >= len(rows),
+        "done": sorted(done),
         "names": [str(a.get("name") or a.get("activityName") or "Actividad") for a in executed],
-        "pending": rows[len(executed):],
+        "pending": [day_rows[i] for i in rows if i not in done],
     }
 
 

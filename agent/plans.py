@@ -36,19 +36,20 @@ def _day_slot(session: dict) -> tuple[int, int]:
     return int(session.get("day_index") or 1), int(((session.get("structured_workout") or {}).get("slot")) or 1)
 
 
-def _today_session_lines(plan: dict, profile: dict, day: date | None = None, done: int = 0) -> list[str]:
+def _today_session_lines(plan: dict, profile: dict, day: date | None = None,
+                         done: frozenset[int] | set[int] = frozenset()) -> list[str]:
     """La sesión (o sesiones, si es día doble) que toca hoy según el plan, para el arranque (29/10).
 
     Plan por bloques: título, duración, km, TSS y tramos, como en `/plan ver`; plan antiguo: tipo, duración e
-    intensidad. Sin sesión hoy (antes o después del plan), lista vacía. `done` (31/10): las primeras sesiones ya
-    hechas salen solo con su título y "✅ Realizada", sin tramos.
+    intensidad. Sin sesión hoy (antes o después del plan), lista vacía. `done` (31/10; posiciones desde el 05/11,
+    antes las N primeras): las sesiones ya hechas salen solo con su título y "✅ Realizada", sin tramos.
     """
     day = day or date.today()
     rows = _get_planned_sessions_for_date(plan, day.isoformat())
     lines: list[str] = []
     zones, _ = _resolve_hr_zones(profile or {}, "running")
     for i, row in enumerate(rows):
-        mark = " ✅ Realizada" if i < done else ""
+        mark = " ✅ Realizada" if i in done else ""
         if _is_block_plan(plan):
             sl = _run_plan.session_lines(row, day, zones)
             lines.append(f"- **{sl[0]}**" + (" (doble)" if i else "") + mark)
