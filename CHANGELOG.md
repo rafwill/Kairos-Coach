@@ -26,6 +26,15 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Pendiente de comprobar con planes reales: que Gemini use `share` y que no baje la tasa de planes válidos.
 - Lección: cuando el código reparte por igual lo que el LLM deja en blanco, el plan pierde el criterio del entrenador; el LLM tiene que poder decir la proporción.
 
+### Changed (fase específica, recuperación más corta y mensaje del reparto; replanificación del 05/11, decisión del usuario)
+- Problema (replanificación hasta Santa Pola con lo anterior ya en marcha, válida en 232 s): Gemini usó `share` en los 31 rodajes, pero en S2-S5 puso 1.0 también a los regenerativos (74' de "recuperación", igual que los demás); en S10, un regenerativo de 75' y un rodaje de 101'; la estructura dejó una sola semana de fase específica (el plan anterior tenía 3). Y con las demás sesiones por encima de la semana, el fallo decía "los rodajes durarían -98 min" y proponía subir el `share`.
+- Ahora (`plan_builder`):
+  - Un rodaje de recuperación dura menos que el rodaje más corto de su semana (`check_week`, sin números fijos: relación entre sesiones).
+  - Fases en orden (base → build → specific → taper → race) y, en asfalto con ritmo de carrera, un mínimo de semanas de carga de fase específica (`specific_weeks_needed`): 3 en media maratón o más, 2 en distancias más cortas, como mucho un tercio de las semanas que no son afinamiento ni carrera. Cada semana específica de carga lleva tramos a RP (zona "RP" o un ritmo concreto dentro de su rango). La regla llega a la estructura con el número del atleta (`phases_text`, marcador `{{fases}}` de `plan/macro.md`) y el principio, a `plan/system.md`.
+  - Si las demás sesiones ya llenan la semana, el fallo lo dice así y pide acortarlas o quitar rodajes.
+- Por qué 3 semanas (decisión del usuario: "lo que consideres mejor según los planes actuales" para el sub 1:24; no hay base de conocimiento cargada en este ordenador): los planes de media maratón de referencia (Pfitzinger, *Faster Road Racing*; Daniels, fase IV) dedican las últimas 3-5 semanas de carga a la preparación de carrera, con el umbral y el ritmo de carrera como trabajo principal, antes de 1-2 de afinamiento. El atleta tiene el RP objetivo (3:56/km) más rápido que su umbral vigente (4:00/km): el objetivo pide mejorar el umbral, y la específica alarga los tramos a RP.
+- Lección: una regla que el LLM no ve al escribir solo sirve para rechazar; la de las fases va en el prompt con el número de este atleta.
+
 ## 2026-11-03
 
 ### Fixed (el aviso de plan que ya no encaja y los días de viaje; pendiente del 2/11)

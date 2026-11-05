@@ -68,8 +68,10 @@ def _week_days(w: dict) -> list[dict]:
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": w["long_min"] - 15, "zone": "Z2"},
             {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
         zones = ["Z3", "Z4", "Z5a", "Z5b", "Z5c", "Z4", "Z5a", "Z3"]  # la calidad progresa de una semana a otra
+        # Fase específica (05/11): cada semana de carga trabaja el ritmo de carrera.
+        first = "RP" if w["phase"] == "specific" and not w["deload"] else zones[w["week"] - 1]
         days = [{"type": "strength", "title": "Fuerza", "minutes": 40, "rpe": "6-7", "note": "3×8"},
-                _quality(zone=zones[w["week"] - 1]), _easy(easy), _quality("Umbral 5×(3'/2')", zones[w["week"]]),
+                _quality(zone=first), _easy(easy), _quality("Umbral 5×(3'/2')", zones[w["week"]]),
                 {"type": "rest"}, _easy(easy), long]
     return [{"day": i, **d} for i, d in enumerate(days, 1)]
 
@@ -478,3 +480,67 @@ def test_a_plan_read_from_the_database_is_still_a_block_plan():
     plan = _normalize_storage_plan_row(row)
     assert _is_block_plan(plan) and _plan_start(plan) == date(2026, 10, 26)
     assert plan["plan_data"]["author"] == "llm" and plan["plan_data"]["start_date"] == "2026-10-26"
+
+
+class TestSpecificPhase:
+    """05/11: una replanificación hasta la media maratón dejó una sola semana específica."""
+
+    def test_weeks_needed_by_distance_and_plan_length(self):
+        assert pb.specific_weeks_needed(_frame()) == 2  # 10K, 8 semanas
+        assert pb.specific_weeks_needed(_frame(distance_km=21.1, weeks=11)) == 3  # media, plan largo
+        assert pb.specific_weeks_needed(_frame(distance_km=21.1, weeks=5)) == 1  # plan corto: un tercio
+        assert pb.specific_weeks_needed(_frame(trail=True)) == 0
+        assert pb.specific_weeks_needed(_frame(race_pace=None)) == 0
+
+    def test_too_few_specific_weeks_go_back_to_the_llm(self):
+        macro = {**MACRO, "weeks": [dict(w) for w in MACRO["weeks"]]}
+        macro["weeks"][4]["phase"] = "build"  # queda una sola semana específica
+        errors = pb.check_macro(macro, _frame())
+        assert any("Fase específica: 1 semana(s)" in e and "al menos 2" in e for e in errors)
+        assert "al menos 2 semana(s)" in pb.phases_text(_frame())
+
+    def test_phases_go_in_order(self):
+        macro = {**MACRO, "weeks": [dict(w) for w in MACRO["weeks"]]}
+        macro["weeks"][1]["phase"] = "build"
+        macro["weeks"][2]["phase"] = "base"
+        assert any("después de \"build\"" in e for e in pb.check_macro(macro, _frame()))
+
+    def test_a_specific_week_needs_race_pace(self):
+        w = MACRO["weeks"][4]
+        days = _week_days(w)
+        days[1] = {"day": 2, **_quality(zone="Z4")}  # sin RP
+        sessions, errors = pb.expand_week({"week": 5, "days": days}, _frame(), w)
+        assert errors == []
+        assert any("ritmo de carrera" in e for e in pb.check_week(5, sessions, w, _frame()))
+        days[1] = {"day": 2, "type": "quality", "title": "3×2 km a 4:30", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "Z2"},
+            {"repeat": 3, "steps": [{"kind": "work", "km": 2, "pace": "4:30"}, {"kind": "recovery", "min": 2, "zone": "Z1"}]},
+            {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
+        sessions, _ = pb.expand_week({"week": 5, "days": days}, _frame(), w)
+        assert not any("ritmo de carrera" in e for e in pb.check_week(5, sessions, w, _frame()))
+
+
+class TestRecoveryIsShorter:
+    def test_a_recovery_run_as_long_as_the_others_goes_back_to_the_llm(self):
+        w = MACRO["weeks"][2]
+        days = _week_days(w)
+        minutes = days[2]["steps"][1]["min"] + 15
+        days[5] = {"day": 6, "type": "recovery", "title": "Rodaje regenerativo", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": minutes - 15, "zone": "Z1"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        sessions, errors = pb.expand_week({"week": 3, "days": days}, _frame(), w)
+        assert errors == []
+        assert any("la recuperación es más corta" in e for e in pb.check_week(3, sessions, w, _frame()))
+        days[5]["steps"][1]["min"] = minutes - 35
+        sessions, _ = pb.expand_week({"week": 3, "days": days}, _frame(), w)
+        assert not any("recuperación" in e for e in pb.check_week(3, sessions, w, _frame()))
+
+
+class TestNoRoomForRuns:
+    def test_the_message_says_the_other_sessions_already_fill_the_week(self):
+        # 05/11: salía "los rodajes durarían -98 min" y "dale más share", que no lo arregla.
+        w = {**MACRO["weeks"][4], "minutes": 200}
+        week = TestAutoDurations()._auto_week(w)
+        _, errors = pb.expand_week(week, _frame(), w)
+        assert any("las demás sesiones ya suman" in e and "no queda sitio" in e for e in errors)
+        assert not any("share" in e for e in errors)

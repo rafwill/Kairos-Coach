@@ -212,6 +212,7 @@ class PlanLLMMixin:
                                                                  dias_entreno=_pb.training_days_text(f),
                                                                  tirada_pct=f"{f.long_share * 100:.0f}",
                                                                  tirada_min=f"{f.long_step:.0f}",
+                                                                 fases=_pb.phases_text(f),
                                                                  trail=_trail_prompt("plan/macro_trail", f))}],
             lambda m: _pb.check_macro(m, f), "estructura",
         )
