@@ -75,6 +75,28 @@ def parse_dates(text: str, today: date) -> tuple[str, str] | None:
     return (start.isoformat(), end.isoformat()) if end >= start else None
 
 
+_YEAR = re.compile(r"\b20\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+
+
+def anchor_year(raw: dict, message: str, today: date) -> dict:
+    """Si el atleta no dice el año, el del evento lo pone el código como en `parse_dates`: el de hoy, o el siguiente si
+    ese día ya ha pasado (05/11: el modelo del chat devolvió "2025-11-14" para "el sábado 14" y el evento se rechazó
+    por pasado). Conserva los días que dura. Con año en el mensaje, no toca nada."""
+    start, end = _iso(raw.get("start")), _iso(raw.get("end") or raw.get("start"))
+    if start is None or _YEAR.search(str(message or "")):
+        return raw
+    try:
+        fixed = start.replace(year=today.year)
+        if fixed < today:
+            fixed = fixed.replace(year=today.year + 1)
+    except ValueError:  # 29/02 en un año que no es bisiesto
+        return raw
+    if fixed == start:
+        return raw
+    span = (end - start) if end and end >= start else timedelta(0)
+    return {**raw, "start": fixed.isoformat(), "end": (fixed + span).isoformat()}
+
+
 def parse_minutes(text: str) -> int | None:
     """Duración escrita a mano: "90", "90 min", "2h", "2h30", "1:30"."""
     raw = str(text or "").strip().lower().replace(",", ".")

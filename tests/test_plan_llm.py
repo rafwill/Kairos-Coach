@@ -389,6 +389,30 @@ class TestTheLLMRevisesThePlan:
         diff = [(s["week_index"], s["day_index"]) for s in new if s is not before[(s["week_index"], s["day_index"])]]
         assert diff == [(2, 2)] and len(new) == len(sessions)
         assert new[8]["structured_workout"]["title"] == "Rodaje suave por molestia"
+        # 05/11: el día cambiado guarda lo que pidió el atleta, para que «replanifica» avise si no lo conserva.
+        assert new[8]["structured_workout"]["requested"] == "Me molesta el gemelo"
+        assert not any(s["structured_workout"].get("requested") for s in new if s is not new[8])
+        start = plan["plan_data"]["start_date"] if isinstance(plan.get("plan_data"), dict) else None
+        monday = date.fromisoformat(str(start or START.isoformat())[:10])
+        assert pb.requested_days(new, monday, monday)[0][1:] == ("Rodaje suave por molestia", "Me molesta el gemelo")
+        assert pb.requested_days(new, monday, monday + timedelta(weeks=2)) == []
+
+    @pytest.mark.asyncio
+    async def test_a_readaptation_for_saved_events_is_not_marked(self, monkeypatch):
+        monkeypatch.setattr("agent.plan_llm._add_ia_tokens", lambda n: None)
+
+        async def no_activities(*a, **k):
+            return []
+
+        monkeypatch.setattr("agent.plan_llm._fetch_activities_for_load_calc", no_activities)
+        monkeypatch.setattr("agent.plan_llm._storage.get_activity_tss_map", lambda start: {})
+        swap = {"day": 2, "type": "easy", "title": "Rodaje suave", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": 35, "zone": "Z2"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        agent = _Agent(_FakeLLM(revisions=[{"reply": "x", "weeks": [{"week": 2, "days": [swap]}]}]))
+        plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
+        new, _, errors, _ = await agent._revise_plan_with_llm("El atleta ha fijado…", plan, sessions, {}, requested=False)
+        assert errors == [] and not any(s["structured_workout"].get("requested") for s in new)
 
     @pytest.mark.asyncio
     async def test_a_revision_cannot_raise_the_week_more_than_10_percent(self, monkeypatch):

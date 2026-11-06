@@ -160,3 +160,22 @@ def test_the_frame_starts_on_the_given_monday_with_the_plan_race():
         _FakeDate.today_value = date(2026, 11, 4)
         f = agent._plan_frame({}, "", plan=_plan(), from_monday=date(2026, 11, 11))  # un miércoles: su lunes
     assert f.start == date(2026, 11, 9) and f.race_date == RACE and f.race_week == 11 and f.weeks == 11
+
+
+@pytest.mark.asyncio
+async def test_days_changed_in_a_revision_reach_the_llm_and_are_listed():
+    # 05/11: la salida a la sierra del sábado 14/11 entró por una revisión, no como evento, y se perdió al replanificar.
+    sierra = _s(3, 6, "long_run", 105)
+    sierra["structured_workout"].update({"title": "Tirada larga por la sierra",
+                                         "requested": "El sabado dia 14 tengo una salida a la sierra programada"})
+    agent = _agent()
+    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None: _new_plan(12, from_monday) + ([],))
+    _FakeDate.today_value = date(2026, 11, 4)
+    agent._build_plan_with_llm = build
+    with patch("agent.routes.handlers.date", _FakeDate), patch("agent.plan_llm.date", _FakeDate), \
+         patch("agent.routes.handlers._storage.update_training_plan", return_value={"id": "p1"}), \
+         patch("agent.routes.handlers._save_user_profile"):
+        out = await agent._route_plan_rebuild("replanifica el plan", _plan(), OLD_SESSIONS + [sierra], {})
+    assert "Sábado 14/11: Tirada larga por la sierra" in build.await_args.args[0]
+    assert "Eventos fijos respetados: ninguno guardado" in out
+    assert "no están guardados como evento fijo" in out and "Sábado 14/11" in out and "salida a la sierra" in out

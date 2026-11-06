@@ -1047,6 +1047,20 @@ def plan_data(macro: dict, sessions: list[dict], f: PlanFrame) -> dict:
     }
 
 
+def requested_days(sessions: list[dict], start: date, from_day: date) -> list[tuple[str, str, str]]:
+    """Días desde `from_day` que el atleta cambió en una revisión (`structured_workout.requested`, 05/11) y no son un
+    evento fijo: (día "Sábado 14/11", título de la sesión, lo que pidió). «Replanifica» los rehace, así que se los
+    pasa al LLM y avisa al atleta."""
+    out = []
+    for s in sorted(sessions, key=session_key):
+        wk = s.get("structured_workout") or {}
+        day = start + timedelta(weeks=int(s.get("week_index") or 1) - 1, days=int(s.get("day_index") or 1) - 1)
+        if wk.get("requested") and not _pe.event_id(s) and day >= from_day:
+            out.append((f"{rp._DAY_NAMES[day.isoweekday()]} {day.strftime('%d/%m')}", str(wk.get("title") or ""),
+                        str(wk["requested"])))
+    return out
+
+
 def merge_replan(old_pd: dict, old_sessions: list[dict], new_pd: dict, new_sessions: list[dict],
                  current_week: int) -> tuple[dict, list[dict]]:
     """Replanificar (30/10, pendiente 11 d2): la semana actual del plan viejo como semana 1 y las nuevas desde la 2.

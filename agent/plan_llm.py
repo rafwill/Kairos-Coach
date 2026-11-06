@@ -335,12 +335,15 @@ class PlanLLMMixin:
         return "\n".join(lines)
 
     async def _revise_plan_with_llm(self, user_message: str, plan: dict, sessions: list[dict],
-                                    load_context: dict) -> tuple[list[dict] | None, str, list[str], list[dict]]:
+                                    load_context: dict, requested: bool = True,
+                                    ) -> tuple[list[dict] | None, str, list[str], list[dict]]:
         """Revisión del plan por el LLM con lo que cuenta el atleta y lo que ha hecho los últimos 7 días.
 
         Devuelve (sesiones nuevas, o None si no cambia nada; lo que el LLM le dice al atleta; fallos; mensajes, para
         los sensores). Solo cambia
-        días desde hoy hasta el final de la semana siguiente: los pasados no se tocan.
+        días desde hoy hasta el final de la semana siguiente: los pasados no se tocan. `requested` (05/11): los días
+        que cambian guardan el mensaje del atleta (`structured_workout.requested`), y «replanifica» avisa si no los
+        conserva; una readaptación por eventos ya guardados no lo marca.
         """
         f = self._plan_frame(load_context, "", plan=plan)
         pd = plan.get("plan_data") or {}
@@ -417,6 +420,8 @@ class PlanLLMMixin:
             if old.get(_pb.session_key(s)) != (s.get("structured_workout") or {}).get("plan_day"):
                 day = f.start + timedelta(weeks=s["week_index"] - 1, days=s["day_index"] - 1)
                 cambios += _run_plan.session_lines(s, day, f.hr_zones)
+                if requested and s.get("structured_workout") and not _pe.event_id(s):
+                    s["structured_workout"]["requested"] = " ".join(str(user_message).split())[:200]
         if cambios:
             text = await self._plan_llm_call(
                 conversation + [{"role": "user", "content": _render_prompt("plan/revision_reply", cambios="\n".join(cambios))}],

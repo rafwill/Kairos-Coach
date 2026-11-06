@@ -232,8 +232,10 @@ class RoutesMixin:
             log.warning("[PLAN] eventos: no se entendió: %s", " | ".join(errors[:4]))
             return ("## ⚠️ No he podido entender el evento\n\nCuéntamelo de otra forma (qué es, qué día y, si es una "
                     "salida, cuánto dura y a qué intensidad) o usa `/plan evento`.")
+        today = date.today()
         return await self._apply_plan_events(
-            [e for e in data.get("events") or [] if isinstance(e, dict)], [str(i) for i in data.get("remove") or []])
+            [_plan_events.anchor_year(e, user_message, today) for e in data.get("events") or [] if isinstance(e, dict)],
+            [str(i) for i in data.get("remove") or []])
 
     async def _apply_plan_events(self, raws: list[dict], removals: list[str]) -> str:
         """Valida y guarda los eventos (o pregunta lo que falta, sin guardar nada) y readapta el plan (31/10, decisiones
@@ -284,7 +286,8 @@ class RoutesMixin:
             sessions = _storage.list_training_plan_sessions(str(plan["id"]))
             message = ("El atleta ha fijado estos eventos obligatorios: " + "; ".join(_plan_events.describe(e) for e in near)
                        + ". Readapta los días que cambian para cumplirlos.")
-            parts.append(await self._route_plan_revision(message, plan, sessions, await self._build_plan_load_context()))
+            parts.append(await self._route_plan_revision(message, plan, sessions, await self._build_plan_load_context(),
+                                                         requested=False))
         if far:
             parts.append("Los eventos más lejanos (" + "; ".join(_plan_events.describe(e) for e in far) + ") los tendré en "
                          "cuenta cuando replanifiques: dime «replanifica el plan» cuando quieras.")
@@ -414,6 +417,13 @@ class RoutesMixin:
         current = (this_monday - old_start).days // 7 + 1
         keep_week = today.weekday() > 0 and current >= 1
         from_monday = this_monday + timedelta(weeks=1) if keep_week else max(this_monday, old_start)
+        # Días que el atleta cambió en una revisión y no son eventos guardados (05/11: la salida a la sierra del 14/11 se
+        # perdió al replanificar): el LLM los recibe y la respuesta los lista para guardarlos como evento.
+        asked = _plan_builder.requested_days(sessions, old_start, from_monday)
+        if asked:
+            user_message = (user_message + "\n\nEn una revisión anterior el atleta pidió estos cambios; consérvalos si "
+                            "siguen teniendo sentido:\n" + "\n".join(f"- {d}: {t} (pidió: «{r}»)"
+                                                                       for d, t, r in asked))
         f = self._plan_frame(load_context, user_message, plan=plan, from_monday=from_monday)
         if f.race_week < 2:
             return ("## 🔄 Replanificar\n- Desde el lunes " + from_monday.strftime("%d/%m") + " no queda ni una semana "
@@ -451,17 +461,25 @@ class RoutesMixin:
         _save_user_profile(self.user_profile)
         self.__dict__.pop("_active_plan_cache", None)  # el bloque "Plan activo" se recarga
         kept = "Esta semana sigue como estaba; " if keep_week else ""
+        events = ("- Eventos fijos respetados: " + ("; ".join(_plan_events.describe(e) for e in f.events) if f.events
+                                                   else "ninguno guardado") + ".\n")
+        if asked:
+            events += ("- ⚠️ Cambios que pediste en una revisión y no están guardados como evento fijo; mira que el plan "
+                       "nuevo los tenga y, si alguno es obligatorio, cuéntamelo como evento («el sábado 14 tengo una "
+                       "salida…») para que se respete siempre:\n"
+                       + "\n".join(f"  - {d}: {t} («{r}»)" for d, t, r in asked) + "\n")
         return (f"## 🔄 Plan replanificado desde el {from_monday.strftime('%d/%m/%Y')}\n"
                 f"{kept}la carrera sigue el {f.race_date.strftime('%d/%m/%Y')}. La progresión parte de lo que has "
-                f"sostenido las últimas 4 semanas. Guardado como una versión nueva del plan.\n\n"
+                f"sostenido las últimas 4 semanas. Guardado como una versión nueva del plan.\n{events}\n"
                 + _plan_detail_markdown(persisted_plan, new_sessions, self.user_profile))
 
-    async def _route_plan_revision(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict) -> str:
+    async def _route_plan_revision(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict,
+                                  requested: bool = True) -> str:
         """Revisión del plan del LLM con lo que cuenta el atleta (28/10): cambia días desde hoy hasta el final de la
         semana siguiente, el código los comprueba y se guarda una versión nueva. Si no pasa las reglas, no se toca."""
         try:
             new_sessions, reply, errors, messages = await self._revise_plan_with_llm(
-                user_message, plan, sessions, load_context)
+                user_message, plan, sessions, load_context, requested=requested)
         except LLMAuthError:
             raise
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:

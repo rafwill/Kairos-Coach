@@ -332,3 +332,25 @@ async def test_the_plan_frame_carries_the_saved_events():
                     "health": {}})
     f = agent._plan_frame({})
     assert [e["id"] for e in f.events] == ["e1"]  # el que ya pasó se queda fuera
+
+
+class TestAnchorYear:
+    """05/11: el modelo del chat devolvió 2025-11-14 para "el sábado 14" y el evento se rechazó por pasado."""
+
+    def test_without_a_year_in_the_message_the_code_puts_it(self):
+        today = date(2026, 11, 5)
+        raw = {"kind": "session", "start": "2025-11-14", "end": "2025-11-14"}
+        out = pe.anchor_year(raw, "El sábado 14 tengo una salida a la sierra", today)
+        assert out["start"] == out["end"] == "2026-11-14"
+        rng = pe.anchor_year({"start": "2025-12-30", "end": "2026-01-02"}, "del 30 al 2 estoy de viaje", today)
+        assert (rng["start"], rng["end"]) == ("2026-12-30", "2027-01-02")  # conserva lo que dura
+        jan = pe.anchor_year({"start": "2026-01-10"}, "el 10 de enero tengo una quedada", today)
+        assert jan["start"] == "2027-01-10"  # ese día de este año ya pasó: el siguiente
+
+    def test_a_year_in_the_message_or_a_right_date_is_left_alone(self):
+        today = date(2026, 11, 5)
+        raw = {"start": "2025-11-14", "end": "2025-11-14"}
+        assert pe.anchor_year(raw, "el 14/11/2025 tuve una salida", today) is raw
+        assert pe.anchor_year(raw, "en 2025 tenía una salida el 14", today) is raw
+        ok = {"start": "2026-11-14", "end": "2026-11-14"}
+        assert pe.anchor_year(ok, "el sábado 14", today) is ok

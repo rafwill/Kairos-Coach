@@ -35,6 +35,13 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Por qué 3 semanas (decisión del usuario: "lo que consideres mejor según los planes actuales" para el sub 1:24; no hay base de conocimiento cargada en este ordenador): los planes de media maratón de referencia (Pfitzinger, *Faster Road Racing*; Daniels, fase IV) dedican las últimas 3-5 semanas de carga a la preparación de carrera, con el umbral y el ritmo de carrera como trabajo principal, antes de 1-2 de afinamiento. El atleta tiene el RP objetivo (3:56/km) más rápido que su umbral vigente (4:00/km): el objetivo pide mejorar el umbral, y la específica alarga los tramos a RP.
 - Lección: una regla que el LLM no ve al escribir solo sirve para rechazar; la de las fases va en el prompt con el número de este atleta.
 
+### Fixed (la salida a la sierra se perdió al replanificar; aviso del usuario)
+- Problema: el 02/11 a las 20:41 el atleta escribió "El sábado día 14 tengo una salida a la sierra programada…". El detector de eventos de entonces no reconocía "salida" (se arregló a las 20:46, `4817355`), así que el mensaje fue a la revisión: metió la salida como sesión, pero no la guardó como evento fijo (`goals.plan_events` vacío). La replanificación del 05/11 rehízo esa semana sin saberlo y la salida desapareció, sin aviso.
+- Ahora: cada día que cambia una revisión pedida por el atleta guarda su mensaje (`structured_workout.requested`; una readaptación por eventos ya guardados no lo marca). «Replanifica» busca esos días desde el lunes que rehace (`plan_builder.requested_days`), se los pasa al LLM para que los conserve y la respuesta los lista con lo que pidió el atleta y cómo guardarlos como evento. Además dice qué eventos fijos ha respetado ("ninguno guardado" incluido).
+- Datos: la salida del 14/11 no se puede recuperar sola (el aviso no existía cuando se pidió). Hay que contarla de nuevo en el chat para que se guarde como evento y la revisión la vuelva a poner.
+- Lección: arreglar un detector no arregla lo que ya clasificó mal; tras corregir una ruta, mirar si algún dato anterior quedó por el camino equivocado.
+- Al contarla de nuevo, el modelo del chat devolvió "2025-11-14" para "el sábado 14" y Kairos respondió "El 14/11/2025 ya ha pasado". Ahora, si el mensaje no dice el año, lo pone el código como en `/plan evento` (`plan_events.anchor_year`: el de hoy, o el siguiente si ese día ya pasó, conservando lo que dura). El LLM no calcula fechas.
+
 ## 2026-11-03
 
 ### Fixed (el aviso de plan que ya no encaja y los días de viaje; pendiente del 2/11)
