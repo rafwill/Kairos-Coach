@@ -86,7 +86,7 @@ Reglas de actuación (las mismas que aplica el motor diario de Kairos):
 
 **Señales de recuperación alterada** (mismos umbrales que el motor diario):
 - HRV de anoche > 10 % por debajo de su media semanal, o estado de HRV bajo/desequilibrado.
-- Body battery < 35.
+- Body battery al despertar < 35 (el nivel de después baja con el día y no dice si está disponible para entrenar).
 - Sueño < 6 h o puntuación < 60.
 - Semana por encima de su carga semanal alta habitual, o spike semanal.
 

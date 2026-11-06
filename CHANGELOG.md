@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-06
+
+### Fixed (Body Battery "al amanecer" leído a media tarde; aviso del usuario)
+- Problema: el LLM escribió "tu Body Battery amanece en 48" cuando al despertar estaba más alto. Kairos le pasaba "nivel N", que era el último punto de la serie de `get_body_battery` (el nivel de ese momento, que baja con el día y con el entrenamiento). Además el motor diario buscaba una clave de nivel que ese payload no trae, así que la regla "body battery < 35" no se aplicaba nunca.
+- Ahora: `get_sleep_summary` devuelve `bodyBatteryAtWake`, el último valor de `sleepBodyBattery` de la noche (igual que el `bodyBatteryAtWakeTime` de Garmin del 04 al 06/11: 87, 85 y 100), sin llamadas nuevas a Garmin. La línea de Body Battery del arranque, del estado y de la ruta de datos del día dice "al despertar 85 · último registro 37 · …" (`_format_body_battery_day(..., wake)`); la compactación del sueño en el chat lo conserva; el motor diario decide con el valor al despertar (`_extract_body_battery_at_wake`), y la regla de `coaching_rules.md` dice "al despertar". La descripción de `get_body_battery` avisa de que su último punto no es el de la mañana.
+- Lección: un dato con hora (Body Battery, FC) tiene que llegar al LLM con su momento; "nivel" sin más se lee como el que el LLM espera.
+
 ## 2026-11-05
 
 ### Fixed (la sesión de hoy dada por hecha con otro deporte; aviso del usuario)

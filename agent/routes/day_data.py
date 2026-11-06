@@ -52,6 +52,7 @@ from agent.garmin_data import (
 from agent.wellness import (
     _build_wellness_payloads_from_row,
     _format_all_day_events,
+    _extract_body_battery_at_wake,
     _format_body_battery_day,
     _format_hrv_day,
     _format_rhr_day,
@@ -443,7 +444,7 @@ async def _build_mcp_factual_query_markdown(mcp_session, profile: dict, user_mes
         f"| Sueño | {_format_sleep_day(sleep_payload, target_iso)} | Garmin sleep |",
         f"| Estrés | {_format_stress_day(stress_summary_payload, all_day_stress_payload, target_iso)} | Garmin stress_summary/all_day_stress |",
         f"| Eventos diarios | {_format_all_day_events(all_day_events_payload, target_iso)} | Garmin all_day_events |",
-        f"| Body Battery | {_format_body_battery_day(body_payload, target_iso)} | Garmin body_battery |",
+        f"| Body Battery | {_format_body_battery_day(body_payload, target_iso, _extract_body_battery_at_wake(sleep_payload, target_iso))} | Garmin body_battery y sleep |",
         f"| HRV | {_format_hrv_day(hrv_payload, target_iso)} | Garmin HRV |",
     ]
 

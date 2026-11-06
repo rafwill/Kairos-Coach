@@ -379,6 +379,11 @@ def _compact_tool_result(raw: str | None, tool_name: str = "") -> str:
                 _quality = _dto.get("sleepQualityTypePK") or _dto.get("sleepQuality")
                 if _quality is not None:
                     _sleep_out["sleepQuality"] = _quality
+                # Body Battery al despertar: el de get_sleep_summary o el último punto de la serie del sueño.
+                _night_bb = [p.get("value") for p in _sd.get("sleepBodyBattery") or [] if isinstance(p, dict) and p.get("value") is not None]
+                _wake_bb = _sd.get("bodyBatteryAtWake") if _sd.get("bodyBatteryAtWake") is not None else (_night_bb[-1] if _night_bb else None)
+                if _wake_bb is not None:
+                    _sleep_out["bodyBatteryAtWake"] = _wake_bb
                 return json.dumps(_sleep_out, ensure_ascii=False, separators=(",", ":"))
         # Añadir campos normalizados útiles para análisis de actividades
         if tool_name == "get_activity" and isinstance(data, dict):

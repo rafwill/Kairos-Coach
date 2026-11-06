@@ -784,7 +784,8 @@ def get_all_day_events(date: Day = None):
 
 
 @_tool("get_body_battery", "Body Battery",
-       "Body Battery por día: nivel, cargado, drenado y serie a lo largo del día.")
+       "Body Battery por día: cargado, drenado y serie a lo largo del día (el último punto es el nivel de ese "
+       "momento, no el de la mañana). El valor al despertar está en get_sleep_summary (bodyBatteryAtWake).")
 def get_body_battery(start_date: StartDate = None, end_date: EndDate = None, date: SingleDay = None):
     return _dispatch("get_body_battery", {"start_date": start_date, "end_date": end_date, "date": date})
 
@@ -947,7 +948,7 @@ def get_weekly_stress(start_date: StartDate = None, end_date: EndDate = None):
 
 @_tool("get_sleep_summary", "Sueño (resumen)",
        "Resumen del sueño de la noche que termina en la fecha: duración total, puntuación y segundos en sueño "
-       "profundo, ligero, REM y despierto.")
+       "profundo, ligero, REM y despierto, y el Body Battery al despertar (bodyBatteryAtWake).")
 def get_sleep_summary(date: Day = None):
     d = _as_iso_day(date)
     payload = _invoke_with_auth_retry("get_sleep_data", d)
@@ -958,6 +959,9 @@ def get_sleep_summary(date: Day = None):
     score_nested = (dto.get("sleepScores") or {}).get("overall") or {}
     sleep_seconds = dto.get("sleepTimeSeconds") or dto.get("sleep_time_seconds")
     score = dto.get("sleepScore") or dto.get("sleepScoreValue") or score_nested.get("value")
+    # Último valor de la serie del sueño = bodyBatteryAtWakeTime de get_stats (comprobado del 04 al 06/11/2026).
+    night_bb = [p.get("value") for p in payload.get("sleepBodyBattery") or [] if isinstance(p, dict)]
+    night_bb = [v for v in night_bb if v is not None]
 
     return {
         "date": d,
@@ -967,6 +971,7 @@ def get_sleep_summary(date: Day = None):
         "lightSleepSeconds": dto.get("lightSleepSeconds") or dto.get("light_sleep_seconds"),
         "remSleepSeconds": dto.get("remSleepSeconds") or dto.get("rem_sleep_seconds"),
         "awakeSleepSeconds": dto.get("awakeSleepSeconds") or dto.get("wakeSeconds"),
+        "bodyBatteryAtWake": night_bb[-1] if night_bb else None,
     }
 
 

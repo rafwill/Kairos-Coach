@@ -40,6 +40,7 @@ from agent.hr_profile import (
     _normalize_garmin_hr_zones,
 )
 from agent.wellness import (
+    _extract_body_battery_at_wake,
     _extract_body_battery_snapshot,
     _extract_hrv_snapshot,
     _format_body_battery_day,
@@ -577,8 +578,8 @@ class StartupMixin:
                     profile=getattr(self, "user_profile", {}) or {}) or {}
 
         body_summary = (
-            f"hoy={_format_body_battery_day(body_today, today_iso)} · "
-            f"ayer={_format_body_battery_day(body_yday, yesterday_iso)}"
+            f"hoy={_format_body_battery_day(body_today, today_iso, _extract_body_battery_at_wake(sleep_today, today_iso))} · "
+            f"ayer={_format_body_battery_day(body_yday, yesterday_iso, _extract_body_battery_at_wake(sleep_yday, yesterday_iso))}"
         )
         hrv_summary = (
             f"hoy={_format_hrv_day(hrv_today, today_iso)} · "

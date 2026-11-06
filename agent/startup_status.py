@@ -15,6 +15,7 @@ from agent.dates import (
     _safe_float,
 )
 from agent.wellness import (
+    _extract_body_battery_at_wake,
     _format_body_battery_day,
     _format_hrv_day,
     _format_sleep_day,
@@ -93,8 +94,8 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     body_summary = body_battery.get("summary") or ""
     if body_battery.get("today") is not None or body_battery.get("yesterday") is not None:
         body_summary = (
-            f"hoy={_format_body_battery_day(body_battery.get('today'), today_iso)} · "
-            f"ayer={_format_body_battery_day(body_battery.get('yesterday'), yesterday_iso)}"
+            f"hoy={_format_body_battery_day(body_battery.get('today'), today_iso, _extract_body_battery_at_wake(sleep.get('today'), today_iso))} · "
+            f"ayer={_format_body_battery_day(body_battery.get('yesterday'), yesterday_iso, _extract_body_battery_at_wake(sleep.get('yesterday'), yesterday_iso))}"
         )
     elif _is_generic_ok_summary(body_summary):
         body_summary = unavailable_label

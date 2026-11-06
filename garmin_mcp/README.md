@@ -278,7 +278,7 @@ Eventos registrados durante el día (actividades, siestas, periodos de estrés o
 <a id="get-body-battery"></a>
 #### `get_body_battery` — Body Battery
 
-Body Battery por día: nivel, cargado, drenado y serie a lo largo del día.
+Body Battery por día: cargado, drenado y serie a lo largo del día (el último punto es el nivel de ese momento, no el de la mañana). El valor al despertar está en get_sleep_summary (bodyBatteryAtWake).
 
 | Parámetro | Tipo | Por defecto | Descripción |
 |---|---|---|---|
@@ -361,7 +361,7 @@ Datos completos del sueño de la noche que termina en la fecha: fases, puntuaci�
 <a id="get-sleep-summary"></a>
 #### `get_sleep_summary` — Sueño (resumen)
 
-Resumen del sueño de la noche que termina en la fecha: duración total, puntuación y segundos en sueño profundo, ligero, REM y despierto.
+Resumen del sueño de la noche que termina en la fecha: duración total, puntuación y segundos en sueño profundo, ligero, REM y despierto, y el Body Battery al despertar (bodyBatteryAtWake).
 
 | Parámetro | Tipo | Por defecto | Descripción |
 |---|---|---|---|

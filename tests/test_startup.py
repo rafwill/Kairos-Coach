@@ -16,7 +16,7 @@ from tests.agent_patch import patch_all, patch_everywhere
 from agent.tool_results import _extract_activities_list
 import agent.data_access as _data_access
 from agent.garmin_data import _is_activity_in_last_48h
-from agent.wellness import _format_body_battery_day, _format_hrv_day, _format_sleep_day, _pick_day_payload
+from agent.wellness import _extract_body_battery_at_wake, _format_body_battery_day, _format_hrv_day, _format_sleep_day, _pick_day_payload
 from agent.daily_engine import _compute_daily_plan_adjustment, _compute_plan_execution_feedback
 from agent.startup_status import _build_proactive_status_markdown
 
@@ -105,6 +105,35 @@ class TestStartupProactive:
         assert "nivel 69" in out
         assert "cargado/drenado +58/-31" in out
 
+    def test_body_battery_shows_the_wake_value_apart_from_the_last_reading(self):
+        # 06/11: "amanece en 48" era el último punto de la tarde; al despertar Garmin daba más.
+        today = date.today().isoformat()
+        payload = [{"date": today, "charged": 61, "drained": 40, "bodyBatteryValuesArray": [[1, 39], [2, 100], [3, 48]]}]
+        wake = _extract_body_battery_at_wake({"date": today, "bodyBatteryAtWake": 100}, today)
+        out = _format_body_battery_day(payload, today, wake)
+        assert out.startswith("al despertar 100 · último registro 48")
+        assert "nivel" not in out
+        assert _extract_body_battery_at_wake({"date": today, "sleepScore": 80}, today) is None
+
+    def test_daily_engine_reads_body_battery_at_wake_not_the_current_level(self):
+        today = date.today().isoformat()
+
+        def _snapshot(wake):
+            return {
+                "dates": {"today": today},
+                "load_fatigue": {"status": "ready", "latest": {"tsb": 4.0, "atl": 55.0},
+                                 "weekly": {"current_tss": 300.0, "high_tss": 450.0}, "ranges": {"atl_high": 70.0}},
+                "body_battery": {"today": [{"date": today, "bodyBatteryValuesArray": [[1, 90], [2, 20]]}]},
+                "sleep": {"today": {"date": today, "sleep_hours": 7.8, "sleep_score": 82, "bodyBatteryAtWake": wake}},
+                "hrv": {"today": {"date": today, "lastNightAvg": 52, "weeklyAvg": 50, "status": "balanced"}},
+            }
+
+        plan = {"title": "Plan 10K", "today_focus": "Tempo 40'"}
+        high = _compute_daily_plan_adjustment(_snapshot(90), plan)
+        low = _compute_daily_plan_adjustment(_snapshot(30), plan)
+        assert high["inputs"]["body_battery"] == 90.0 and high["decision"] == "maintain"
+        assert low["inputs"]["body_battery"] == 30.0 and low["decision"] != "maintain"
+
     def test_pick_day_payload_supports_nested_data_envelopes(self):
         target = date.today().isoformat()
         payload = {
@@ -174,8 +203,7 @@ class TestStartupProactive:
                 "weekly": {"current_tss": 700.0},
                 "ranges": {"atl_high": 75.0},
             },
-            "body_battery": {"today": {"date": date.today().isoformat(), "body_battery_level": 20}},
-            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 5.2, "sleep_score": 50}},
+            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 5.2, "sleep_score": 50, "bodyBatteryAtWake": 20}},
             "hrv": {"today": {"date": date.today().isoformat(), "lastNightAvg": 35, "weeklyAvg": 50, "status": "low"}},
         }
         plan = {"title": "Plan 10K", "today_focus": "Series 6x800"}
@@ -193,8 +221,7 @@ class TestStartupProactive:
                 "weekly": {"current_tss": 300.0, "high_tss": 450.0},
                 "ranges": {"atl_high": 70.0},
             },
-            "body_battery": {"today": {"date": date.today().isoformat(), "body_battery_level": 70}},
-            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 7.8, "sleep_score": 82}},
+            "sleep": {"today": {"date": date.today().isoformat(), "sleep_hours": 7.8, "sleep_score": 82, "bodyBatteryAtWake": 70}},
             "hrv": {"today": {"date": date.today().isoformat(), "lastNightAvg": 52, "weeklyAvg": 50, "status": "balanced"}},
         }
         plan = {"title": "Plan 10K", "today_focus": "Tempo 40'"}

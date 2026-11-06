@@ -36,7 +36,7 @@ from agent.hr_profile import (
     _resolve_running_threshold_pace_for_date,
 )
 from agent.wellness import (
-    _extract_body_battery_level,
+    _extract_body_battery_at_wake,
     _extract_hrv_inputs,
     _extract_sleep_inputs,
 )
@@ -970,11 +970,10 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     weekly_tss = _safe_float(weekly.get("current_tss"), 0.0)
     atl_high = _safe_float(ranges.get("atl_high"), 0.0)
 
-    body_today_payload = (snapshot.get("body_battery") or {}).get("today")
     hrv_today_payload = (snapshot.get("hrv") or {}).get("today")
     sleep_today_payload = (snapshot.get("sleep") or {}).get("today")
 
-    bb_level = _extract_body_battery_level(body_today_payload, today_iso)
+    bb_level = _extract_body_battery_at_wake(sleep_today_payload, today_iso)
     sleep_hours, sleep_score = _extract_sleep_inputs(sleep_today_payload, today_iso)
     hrv_avg, hrv_weekly, hrv_status = _extract_hrv_inputs(hrv_today_payload, today_iso)
     hrv_ratio = (hrv_avg / hrv_weekly) if (hrv_avg and hrv_weekly and hrv_weekly > 0) else None

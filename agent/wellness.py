@@ -118,8 +118,10 @@ def _pick_body_battery_day_payload(payload: Any, target_date: str) -> dict | Non
     return max(candidates, key=_score)
 
 
-def _format_body_battery_day(payload: Any, target_date: str) -> str:
-    """Formatea Body Battery con datos reales del día si están disponibles."""
+def _format_body_battery_day(payload: Any, target_date: str, wake: Any = None) -> str:
+    """Formatea Body Battery con datos reales del día si están disponibles. `wake` es el valor al despertar (del
+    sueño, `_extract_body_battery_at_wake`): el último punto de la serie es el nivel de ese momento, y el LLM lo
+    leía como el de la mañana ("amanece en 48" a media tarde, 06/11)."""
     day = _pick_body_battery_day_payload(payload, target_date)
     if not day:
         return "sin datos"
@@ -144,8 +146,10 @@ def _format_body_battery_day(payload: Any, target_date: str) -> str:
     drained = _first_present("drained", "body_battery_drained")
 
     parts: list[str] = []
+    if wake is not None:
+        parts.append(f"al despertar {int(wake)}")
     if level is not None:
-        parts.append(f"nivel {int(level)}")
+        parts.append(f"último registro {int(level)}" if wake is not None else f"nivel {int(level)}")
     if highest is not None and lowest is not None:
         parts.append(f"max {int(highest)}/min {int(lowest)}")
     if charged is not None and drained is not None:
@@ -359,19 +363,13 @@ def _format_training_effect_fields(src: dict) -> str:
     return " · ".join(parts)
 
 
-def _extract_body_battery_level(payload: Any, target_date: str) -> float | None:
-    """Extrae nivel de Body Battery del día objetivo."""
-    day = _pick_body_battery_day_payload(payload, target_date)
+def _extract_body_battery_at_wake(sleep_payload: Any, target_date: str) -> float | None:
+    """Body Battery al despertar, del resumen de sueño de la noche que termina en la fecha (`get_sleep_summary`).
+    Es el que dice si el atleta está disponible para entrenar; el nivel actual baja durante el día."""
+    day = _pick_day_payload(sleep_payload, target_date)
     if not isinstance(day, dict):
         return None
-    value = (
-        day.get("body_battery_level")
-        or day.get("bodyBatteryLevel")
-        or day.get("bodyBatteryMostRecentValue")
-        or day.get("bodyBatteryValue")
-        or day.get("current")
-        or day.get("value")
-    )
+    value = next((day.get(k) for k in ("bodyBatteryAtWake", "body_battery_at_wake") if day.get(k) is not None), None)
     try:
         return float(value) if value is not None else None
     except (TypeError, ValueError):

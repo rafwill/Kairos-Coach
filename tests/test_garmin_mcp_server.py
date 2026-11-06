@@ -27,7 +27,8 @@ class _FakeGarmin:
                 "lightSleepSeconds": 14400,
                 "remSleepSeconds": 7200,
                 "awakeSleepSeconds": 1000,
-            }
+            },
+            "sleepBodyBattery": [{"value": 39, "startGMT": 1}, {"value": 99, "startGMT": 2}, {"value": 100, "startGMT": 3}],
         }
 
     def get_activity(self, activity_id: int):
@@ -242,6 +243,8 @@ def test_sleep_summary_extracts_main_fields(monkeypatch):
     assert out["date"] == "2026-09-02"
     assert out["sleepTimeSeconds"] == 25200
     assert out["sleepScore"] == 82
+    # Último punto de la serie del sueño = Body Battery al despertar (bodyBatteryAtWakeTime de Garmin).
+    assert out["bodyBatteryAtWake"] == 100
 
 
 def test_dispatch_passthrough_personal_record(monkeypatch):
