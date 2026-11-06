@@ -80,7 +80,7 @@ Zonas de Forma (Joe Friel, TSB en % del CTL, como intervals.icu); el contexto tr
 Reglas de actuación (las mismas que aplica el motor diario de Kairos):
 - **Riesgo alto**: descanso y descarga obligatoria.
 - **7 días seguidos en zona de carga** (< −10 % toda la semana): sesión suave si la recuperación no acompaña; descanso con ≥ 2 señales alteradas; programar descarga.
-- **Óptimo, Zona gris, Fresco o Transición**: mantener la sesión; reducir si hay 1 señal de recuperación alterada; suavizar si hay ≥ 2.
+- **Óptimo, Zona gris, Fresco o Transición**: manda la HRV, y cuenta qué sesión toca. Sesión dura (parte principal en Z3 o más: series, tempo, RP): HRV baja → rodaje suave en Z2 (descanso si además hay Body Battery al despertar bajo y mal sueño); solo Body Battery al despertar bajo o mal sueño → la misma sesión con un 25 % menos de volumen. Sesión suave: se mantiene (con HRV baja, sin pasar de Z2); HRV baja junto a Body Battery bajo o mal sueño → más corta. Semana por encima de su carga alta habitual o spike: como mínimo, menos volumen.
 - **Spike semanal** (> 20 % sobre la semana anterior): avisa y reduce un 15–25 % los 2–3 días siguientes.
 - El rango habitual de Forma del atleta (percentiles) es solo informativo: no decide el estado.
 

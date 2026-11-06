@@ -168,6 +168,10 @@ class TestDecisionS15:
     def test_maintain_allows_quality(self):
         assert sensors.find_intensity_against_decision("- Principal: 4x4 min en Z4 (158–168 lpm).", "maintain", ZONES) == []
 
+    def test_reduce_keeps_the_session_zones(self):
+        # 06/11: reducir = la misma sesión con menos volumen; unas series reducidas siguen en Z4.
+        assert sensors.find_intensity_against_decision("- Principal: 3x4 min en Z4 (158–168 lpm).", "reduce", ZONES) == []
+
     def test_conditionals_hydration_and_cadence_are_ignored(self):
         text = ("- Si la FC pasa de Z4, para.\n- Hidratación: 400–600 ml agua.\n"
                 "- Cadencia ~175–180 pasos.\n- Rodaje Z2 (135–145 lpm).")

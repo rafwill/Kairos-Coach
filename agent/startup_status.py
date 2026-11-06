@@ -239,7 +239,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         # sesión resultante de 25' en Z3, y "mantener" como "calidad" aunque hoy tocara rodaje).
         decision_for_user = ({
             "maintain": "la sesión del plan, tal cual",
-            "reduce": "la sesión del plan, con un 20-30 % menos",
+            "reduce": "la sesión del plan, con un 25 % menos de volumen",
             "easy": "rodaje suave en lugar de la sesión del plan",
             "rest": "descanso",
         } if plan_assigned else {
@@ -294,7 +294,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         decision = str(daily_plan_decision.get("decision") or "").strip().lower()
         decision_label = {
             "maintain": "calidad",
-            "reduce": "rodaje suave",
+            "reduce": "sesión más corta",
             "easy": "rodaje suave",
             "rest": "descanso",
         }.get(decision, decision or "n/d")

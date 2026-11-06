@@ -128,11 +128,11 @@ class TestStartupProactive:
                 "hrv": {"today": {"date": today, "lastNightAvg": 52, "weeklyAvg": 50, "status": "balanced"}},
             }
 
-        plan = {"title": "Plan 10K", "today_focus": "Tempo 40'"}
-        high = _compute_daily_plan_adjustment(_snapshot(90), plan)
-        low = _compute_daily_plan_adjustment(_snapshot(30), plan)
+        # Sin plan la sesión se trata como dura: un Body Battery al despertar bajo recorta el volumen.
+        high = _compute_daily_plan_adjustment(_snapshot(90), None)
+        low = _compute_daily_plan_adjustment(_snapshot(30), None)
         assert high["inputs"]["body_battery"] == 90.0 and high["decision"] == "maintain"
-        assert low["inputs"]["body_battery"] == 30.0 and low["decision"] != "maintain"
+        assert low["inputs"]["body_battery"] == 30.0 and low["decision"] == "reduce"
 
     def test_pick_day_payload_supports_nested_data_envelopes(self):
         target = date.today().isoformat()
@@ -190,7 +190,7 @@ class TestStartupProactive:
         }
         out = _build_proactive_status_markdown(payload)
         # Con plan, "reduce" es la sesión del plan con menos volumen (29/10: salía "rodaje suave" junto a un tempo).
-        assert "Elección recomendada hoy: la sesión del plan, con un 20-30 % menos" in out
+        assert "Elección recomendada hoy: la sesión del plan, con un 25 % menos de volumen" in out
         assert "Motor determinista" not in out
         assert "Motivo: estado neutral con una señal de riesgo" in out
 

@@ -9,6 +9,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 - Ahora: `get_sleep_summary` devuelve `bodyBatteryAtWake`, el último valor de `sleepBodyBattery` de la noche (igual que el `bodyBatteryAtWakeTime` de Garmin del 04 al 06/11: 87, 85 y 100), sin llamadas nuevas a Garmin. La línea de Body Battery del arranque, del estado y de la ruta de datos del día dice "al despertar 85 · último registro 37 · …" (`_format_body_battery_day(..., wake)`); la compactación del sueño en el chat lo conserva; el motor diario decide con el valor al despertar (`_extract_body_battery_at_wake`), y la regla de `coaching_rules.md` dice "al despertar". La descripción de `get_body_battery` avisa de que su último punto no es el de la mañana.
 - Lección: un dato con hora (Body Battery, FC) tiene que llegar al LLM con su momento; "nivel" sin más se lee como el que el LLM espera.
 
+### Changed (el motor diario mezcla la sesión que toca, la HRV y el Body Battery; decisión del usuario)
+- Antes: con la forma bien, cada señal (HRV baja, Body Battery < 35, mal sueño, semana cargada) contaba lo mismo y sin mirar la sesión: una señal → reducir (−20 % y una zona menos), dos → suave (−30 % y una zona menos). Un regenerativo se recortaba por un Body Battery bajo y unas series en Z5b "suaves" se quedaban en Z5a.
+- Ahora (HRV-guided training, Kiviniemi/Plews; `_compute_daily_plan_adjustment`): sesión dura = parte principal en Z3 o más (`_session_intensity_class`; la fuerza no; sin plan, se trata como dura). Dura: HRV baja → suave (techo Z2, −30 %), y descanso si además hay Body Battery al despertar bajo y mal sueño; solo Body Battery bajo o mal sueño → reducir. Suave: se mantiene, salvo HRV baja junto a Body Battery bajo o mal sueño → reducir. Semana por encima de la carga alta o spike: como mínimo reducir. Reducir es ahora la misma sesión con un 25 % menos de volumen y sus zonas; suavizar lleva la parte principal a Z2 (`_apply_structured_workout_adjustment`). El marco de la sesión, los textos del arranque, `coaching_rules.md` y S15 (que ya no salta con reducir) siguen ese significado.
+- Comprobado con los datos reales del 05 y 06/11 (rodaje de recuperación y descanso; Body Battery al despertar 85 y 100, HRV por encima de su media): mantener.
+- Lección: una señal de recuperación no pesa igual ante cualquier sesión; lo que se protege es la intensidad, y la HRV es la que decide sobre ella.
+
 ## 2026-11-05
 
 ### Fixed (la sesión de hoy dada por hecha con otro deporte; aviso del usuario)

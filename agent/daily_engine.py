@@ -349,14 +349,6 @@ def _structured_workout_duration_minutes(workout: dict) -> float:
 _INTENSITY_CLASS_ORDER = ["recovery", "endurance", "tempo", "threshold", "vo2"]
 
 
-def _downgrade_intensity_class(value: str, levels: int = 1) -> str:
-    current = _normalize_intensity_class(value)
-    if current not in _INTENSITY_CLASS_ORDER:
-        return current
-    idx = _INTENSITY_CLASS_ORDER.index(current)
-    return _INTENSITY_CLASS_ORDER[max(0, idx - max(1, int(levels)))]
-
-
 def _estimate_tss_hour_for_intensity_class(value: str) -> float:
     ic = _normalize_intensity_class(value)
     mapping = {
@@ -405,8 +397,9 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
     if decision_key in {"maintain", "rest"}:
         return sw, ["sin cambios estructurales"] if decision_key == "maintain" else ["sesión convertida a descanso"]
 
-    volume_factor = 0.70 if decision_key == "easy" else 0.80
-    intensity_levels = 1
+    # 06/11: "reduce" = la misma sesión con un 25 % menos de volumen; "easy" = techo en Z2 y un 30 % menos.
+    volume_factor = 0.70 if decision_key == "easy" else 0.75
+    lower_intensity = decision_key == "easy"
     trace: list[str] = []
 
     def _is_main_work_step(step_type: str) -> bool:
@@ -418,19 +411,19 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
             return
         stype = str(step.get("type") or "").strip().lower()
 
-        if _is_main_work_step(stype):
+        if _is_main_work_step(stype) and lower_intensity:
             old_ic = _normalize_intensity_class(step.get("intensityClass") or "")
-            if old_ic:
-                new_ic = _downgrade_intensity_class(old_ic, levels=intensity_levels)
+            if old_ic in _INTENSITY_CLASS_ORDER[2:]:
+                new_ic = "endurance"
                 if new_ic != old_ic:
                     step["intensityClass"] = new_ic
                     trace.append(f"intensidad {old_ic}->{new_ic} en {stype}")
 
-            # La intensidad baja una zona de Garmin. Antes se multiplicaba target.range por el factor de
-            # volumen (85-89 % del LTHR pasaba a 59,5-62,3 %).
+            # La intensidad baja hasta Z2 (antes, una zona: unas series en Z5 se quedaban en Z4 en la "versión
+            # suave"). Antes aún se multiplicaba target.range por el factor de volumen (85-89 % del LTHR → 59,5-62,3 %).
             target = step.get("target")
             if isinstance(target, dict) and str(target.get("metric") or "") == "pace":
-                # Plan por bloques (28/10): la zona de ritmo baja un nivel y el rango se recalcula con el umbral.
+                # Plan por bloques (28/10): la zona de ritmo baja a Z2 y el rango se recalcula con el umbral.
                 from agent import run_plan as _run_plan
 
                 threshold = _safe_float(sw.get("threshold_pace"), 0.0)
@@ -438,7 +431,7 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
                 if key == "RP" and threshold:
                     key = _run_plan.Paces(threshold, threshold).zone_of(sum(target.get("range") or [0, 0]) / 2)
                 if threshold and key in _run_plan.ZONE_ORDER:
-                    lower = _run_plan.ZONE_ORDER[max(0, _run_plan.ZONE_ORDER.index(key) - intensity_levels)]
+                    lower = _run_plan.ZONE_ORDER[min(_run_plan.ZONE_ORDER.index(key), 1)]
                     if lower != key:
                         new = _run_plan._target(_run_plan.Paces(threshold, threshold), lower)
                         target.update({k: new[k] for k in ("range", "pace_zone", "zone", "intensityClass")})
@@ -447,13 +440,14 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
                         trace.append(f"ritmo {key}->{lower} en {stype}")
             elif isinstance(target, dict) and str(target.get("metric") or "") == "hr_zone":
                 old_zone = int(_safe_float(target.get("zone"), 2.0))
-                new_zone = max(1, old_zone - intensity_levels)
-                if new_zone != old_zone:
+                new_zone = min(old_zone, 2)
+                if new_zone != old_zone or int(_safe_float(target.get("zone_to"), old_zone)) > 2:
                     target["zone"] = new_zone
                     if "zone_to" in target:
-                        target["zone_to"] = max(new_zone, int(_safe_float(target.get("zone_to"), old_zone)) - intensity_levels)
+                        target["zone_to"] = max(new_zone, min(int(_safe_float(target.get("zone_to"), old_zone)), 2))
                     trace.append(f"zona Z{old_zone}->Z{new_zone} en {stype}")
 
+        if _is_main_work_step(stype):
             if "duration_min" in step:
                 old_dur = max(0.0, _safe_float(step.get("duration_min"), 0.0))
                 if old_dur > 0:
@@ -484,6 +478,8 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
     if isinstance(summary, dict):
         summary["duration_min"] = int(round(total_after))
 
+    if lower_intensity and isinstance(summary, dict) and _normalize_intensity_class(summary.get("intensityClass")) in _INTENSITY_CLASS_ORDER[2:]:
+        summary["intensityClass"] = "endurance"
     if not trace:
         trace.append("sin cambios estructurales")
     return sw, trace
@@ -622,7 +618,7 @@ def _session_intensity_label(session: dict, profile: dict | None) -> str:
 
 _DECISION_LABELS = {
     "maintain": "mantener la sesión prevista",
-    "reduce": "reducir (sin bloques intensos)",
+    "reduce": "la misma sesión con un 25 % menos de volumen",
     "easy": "sesión suave",
     "rest": "descanso",
 }
@@ -652,7 +648,7 @@ def _build_today_session_frame(daily_decision: dict | None, profile: dict | None
         allowed = "ninguna: descanso; si te mueves, movilidad suave en Z1" + lpm(1)
     elif decision == "easy":
         allowed = f"Z1–Z2{lpm(1, 2)}, techo {top(2)}; nada de Z3 o superior"
-    elif decision == "reduce":
+    elif decision == "reduce" and not isinstance(adjusted, dict):
         allowed = f"hasta Z3{lpm(1, 3)}, techo {top(3)}; sin bloques en Z4–Z5"
     else:
         main_ic = ""
@@ -736,12 +732,12 @@ def _build_adjusted_structured_session_text(planned_session: str, planned_row: d
     if not summary:
         if decision == "easy":
             return f"{base} → versión suave (Z1-Z2, sin bloques intensos)"
-        return f"{base} → reducir volumen 20-30% y bajar 1 zona de intensidad"
+        return f"{base} → la misma sesión con un 25 % menos de volumen"
 
     if decision == "easy":
-        return f"{base} → versión suave: {summary}; bajar 1 nivel de intensidad y priorizar continuidad"
+        return f"{base} → versión suave: {summary}; todo en Z1-Z2, sin bloques por encima de Z2"
     if decision == "reduce":
-        return f"{base} → reducir 20-30%: {summary}; recorta repeticiones o minutos de bloque principal"
+        return f"{base} → un 25 % menos: {summary}; mismas zonas, menos repeticiones o minutos de bloque principal"
     return base
 
 
@@ -994,6 +990,12 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     weekly_spike_alert = bool((load_fatigue.get("flags") or {}).get("weekly_spike_alert"))
 
     stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv) + int(high_weekly) + int(weekly_spike_alert)
+    # Sesión dura = la parte principal en Z3 o más (series, tempo, RP). Sin plan no se sabe: se trata como dura.
+    hard_session = (not has_plan) or (
+        isinstance(planned_row, dict)
+        and str(planned_row.get("session_type") or "").lower() not in {"rest", "strength", "strength_home"}
+        and _session_intensity_class(planned_row) in {"tempo", "threshold", "vo2"}
+    )
 
     # Reglas explícitas por estado.
     if status == "overload":
@@ -1008,28 +1010,31 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
             decision = "easy"
             reason = "fatiga alta: convertir sesión a suave"
         rule = "fatigue_high"
-    elif status == "ready":
-        if stress_flags == 0:
-            decision = "maintain"
-            reason = "disponibilidad alta y recuperación estable"
-        elif stress_flags == 1:
-            decision = "reduce"
-            reason = "ready pero con una señal de riesgo"
-        else:
-            decision = "easy"
-            reason = "ready con múltiples señales de riesgo"
-        rule = "ready"
     else:
-        if stress_flags >= 2:
-            decision = "easy"
-            reason = "estado neutral con recuperación comprometida"
-        elif stress_flags == 1:
-            decision = "reduce"
-            reason = "estado neutral con una señal de riesgo"
+        # Óptimo, zona gris, fresco o transición (06/11, decisión del usuario): manda la HRV. La HRV baja quita la
+        # intensidad; Body Battery al despertar bajo o mal sueño solo recortan volumen; una sesión suave casi no se toca.
+        secondary = low_bb or poor_sleep
+        if hard_session:
+            if low_hrv and low_bb and poor_sleep:
+                decision, reason = "rest", "HRV baja, Body Battery al despertar bajo y mal sueño antes de una sesión dura"
+            elif low_hrv:
+                decision = "easy"
+                reason = ("HRV baja" + (" con recuperación incompleta" if secondary else "")
+                          + ": la sesión dura pasa a rodaje suave en Z2")
+            elif secondary:
+                decision = "reduce"
+                reason = ("Body Battery al despertar bajo" if low_bb else "mal sueño") + ": la misma sesión con menos volumen"
+            else:
+                decision, reason = "maintain", "HRV y Body Battery en orden"
+        elif low_hrv and secondary:
+            decision, reason = "reduce", "HRV baja y recuperación incompleta: la sesión suave, más corta"
         else:
             decision = "maintain"
-            reason = "estado neutral sin alertas relevantes"
-        rule = "neutral"
+            reason = "sesión suave: se mantiene" + (" (HRV baja: no pases de Z2)" if low_hrv else "") if (low_hrv or secondary) else "HRV y Body Battery en orden"
+        if (high_weekly or weekly_spike_alert) and decision == "maintain":
+            decision = "reduce"
+            reason = f"{reason}; semana por encima de su carga habitual: menos volumen"
+        rule = "ready" if status == "ready" else "neutral"
 
     # Ajuste fase 3: planificado vs ejecutado (día N-1) modifica la decisión base.
     feedback = snapshot.get("plan_execution_feedback") or {}

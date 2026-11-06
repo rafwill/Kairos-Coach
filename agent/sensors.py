@@ -335,7 +335,8 @@ def find_unsupported_load_figures(text: str, reference: str) -> list[Finding]:
 
 # ─── S15: la sesión respeta la decisión del motor diario ────────────────────
 
-_SOFT_DECISIONS = {"rest": "descanso", "easy": "sesión suave", "reduce": "rodaje suave sin bloques intensos"}
+# "reduce" no está: desde el 06/11 es la misma sesión con menos volumen, y una sesión dura reducida lleva Z4–Z5.
+_SOFT_DECISIONS = {"rest": "descanso", "easy": "sesión suave"}
 _HIGH_ZONE = re.compile(r"\bZ[45]\b")
 _NOT_A_PRESCRIPTION = re.compile(
     r"(?i)\b(?:si|evita|evitar|no|nada de|ni|sin|mañana|manana|pr[oó]xim|semana|cuando|vigila|alerta|señal)\b"
@@ -343,7 +344,7 @@ _NOT_A_PRESCRIPTION = re.compile(
 
 
 def find_intensity_against_decision(text: str, decision: str | None, zones: Zones) -> list[Finding]:
-    """Con decisión de descanso, suave o reducir, el LLM no prescribe hoy Z4–Z5 ni FC desde el inicio de Z4.
+    """Con decisión de descanso o suave, el LLM no prescribe hoy Z4–Z5 ni FC desde el inicio de Z4.
 
     Solo para respuestas sobre hoy (la decisión es del día; un reparto semanal puede tener calidad otro día).
     No cuentan las líneas condicionales, de otros días o de alertas ("si…", "evita…", "mañana…"), ni rangos

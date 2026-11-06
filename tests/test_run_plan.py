@@ -100,13 +100,23 @@ class TestPlanStructure:
 
 
 class TestDailyEngineAndDisplay:
-    def test_reducing_a_session_lowers_its_pace_zone(self):
+    def test_reducing_a_session_keeps_its_pace_zone_and_cuts_volume(self):
+        # 06/11: reducir = la misma sesión con un 25 % menos de volumen (antes también bajaba una zona).
         p = rp.Paces(T, T)
         wk = rp.quality_session(p, "build", 1, 1, False)  # 5×1000 m en Z5b
         adjusted, trace = _apply_structured_workout_adjustment({"structured_workout": wk}, "reduce")
+        block = adjusted["steps"][1]
+        assert block["steps"][0]["target"]["pace_zone"] == "Z5b"
+        assert block["reps"] < wk["steps"][1]["reps"] and not any("ritmo" in t for t in trace)
+
+    def test_easy_takes_a_hard_session_down_to_z2(self):
+        # Antes "suave" bajaba una zona: unas series en Z5b se quedaban en Z5a.
+        p = rp.Paces(T, T)
+        wk = rp.quality_session(p, "build", 1, 1, False)
+        adjusted, trace = _apply_structured_workout_adjustment({"structured_workout": wk}, "easy")
         work = adjusted["steps"][1]["steps"][0]
-        assert work["target"]["pace_zone"] == "Z5a" and tuple(work["target"]["range"]) == p.zone("Z5a")
-        assert any("ritmo Z5b->Z5a" in t for t in trace)
+        assert work["target"]["pace_zone"] == "Z2" and tuple(work["target"]["range"]) == p.zone("Z2")
+        assert any("ritmo Z5b->Z2" in t for t in trace)
 
     def test_each_day_shows_date_title_duration_km_tss_and_steps(self):
         data, sessions = _plan()
