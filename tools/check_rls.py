@@ -7,6 +7,8 @@ Uso:
   aplicado deben ser 0 en todas; si alguna tabla deja ver filas, está ABIERTA y el script sale con 1.
 - Con tu sesión (la que guarda Kairos al entrar; usuario de --username o KAIROS_USERNAME): tu fila de
   app_user debe ser exactamente una y se cuentan tus filas en el resto.
+- Secretos en Supabase Vault (06/11): sin sesión, kairos_get_secret no se puede llamar (o no devuelve nada); con tu
+  sesión, dice qué secretos tuyos hay (sí/no, nunca el valor).
 - Solo lee. Explicación de las políticas y de las fases: supabase/README.md.
 """
 from __future__ import annotations
@@ -38,6 +40,19 @@ def _count(client, table: str) -> int | str:
         return f"error: {str(getattr(exc, 'message', '') or exc)[:60]}"
 
 
+SECRETS = ("llm_api_key", "garmin_password")
+
+
+def _anon_secret(client) -> str:
+    """Sin sesión, la función de los secretos está cerrada: o no deja llamarla o no devuelve nada."""
+    try:
+        data = client.rpc("kairos_get_secret", {"secret_name": "llm_api_key"}).execute().data
+    except Exception as exc:  # noqa: BLE001
+        text = str(getattr(exc, "message", "") or exc).lower()
+        return "falta schema.sql" if "could not find" in text or "does not exist" in text else "cerrada"
+    return "cerrada" if not data else "ABIERTA"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--username", default=None)
@@ -66,6 +81,10 @@ def main() -> int:
         if status != "cerrada":
             open_tables.append(table)
         print(f"   {table:24s} {str(n):>8}  {status}")
+    vault = _anon_secret(anon)
+    print(f"   {'secretos (Vault)':24s} {'':>8}  {vault}")
+    if vault == "ABIERTA":
+        open_tables.append("secretos de Vault")
 
     username = args.username or os.environ.get("KAIROS_USERNAME", "")
     print(f"\n2) Con tu sesión ({username or 'sin usuario'})")
@@ -76,6 +95,12 @@ def main() -> int:
             print(f"   {table:24s} {str(_count(sb, table)):>8}")
         linked = sb.rpc("kairos_app_user_id").execute().data
         print(f"   tu cuenta vinculada a un app_user: {'sí' if linked else 'NO'}")
+        for name in SECRETS:
+            try:
+                state = "guardado" if storage.get_secret(name) else "no guardado"
+            except storage.SecretStoreError as exc:
+                state = f"error: {exc}"
+            print(f"   secreto {name:16s} {state}")
         if open_tables:
             # Fase 1 (RLS sin activar): la sesión aún ve lo mismo que cualquiera; no se juzga.
             own_ok = bool(linked)

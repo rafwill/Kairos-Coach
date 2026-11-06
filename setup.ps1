@@ -45,23 +45,8 @@ if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
 }
 
-$envContent = Get-Content ".env" -Raw
-if ($envContent -notmatch "(?m)^ENCRYPTION_KEY=\S") {
-    Write-Host "[setup] Generando ENCRYPTION_KEY en .env..."
-    $key = & $venvPython -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    if ($envContent -match "(?m)^ENCRYPTION_KEY=") {
-        # La línea vacía de .env.example se rellena en su sitio.
-        $envContent = $envContent -replace "(?m)^ENCRYPTION_KEY=[^\r\n]*", "ENCRYPTION_KEY=$key"
-        [System.IO.File]::WriteAllText((Resolve-Path ".env"), $envContent, (New-Object System.Text.UTF8Encoding $false))
-    } else {
-        Add-Content ".env" ""
-        Add-Content ".env" "# Clave de cifrado local (generada automáticamente)"
-        Add-Content ".env" "ENCRYPTION_KEY=$key"
-    }
-}
-
 Write-Host ""
 Write-Host "[setup] OK. Siguientes pasos:"
-Write-Host "  1) Completa GARMIN_EMAIL/GARMIN_PASSWORD y claves LLM en .env"
-Write-Host "  2) Configura SUPABASE_URL y SUPABASE_ANON_KEY"
+Write-Host "  1) En .env, solo SUPABASE_URL y SUPABASE_ANON_KEY (te los da quien administra Kairos)"
+Write-Host "  2) Al entrar, Kairos te pide tu cuenta, Garmin y tu proveedor de IA y los guarda cifrados en Supabase Vault"
 Write-Host "  3) Ejecuta: .venv\Scripts\python.exe -m agent.main"

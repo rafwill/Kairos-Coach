@@ -29,7 +29,7 @@ Kairos lo arranca solo como subproceso. Para usarlo desde otro cliente MCP (por 
 
 | Variable | Uso |
 | --- | --- |
-| `GARMIN_EMAIL`, `GARMIN_PASSWORD` | Credenciales de Garmin Connect (obligatorias). Kairos se las pasa al arrancarlo. |
+| `GARMIN_EMAIL`, `GARMIN_PASSWORD` | Credenciales de Garmin Connect (obligatorias). Kairos se las pasa al arrancarlo, con el email de la cuenta del atleta y la contraseña de Supabase Vault; solo hay que escribirlas a mano para arrancar el servidor por su cuenta (como en el ejemplo de arriba). |
 | `GARMINTOKENS` | Opcional: carpeta de tokens. Por defecto `~/.garminconnect/kairos/<hash del email>`. |
 
 - **Login:** reutiliza los tokens guardados y solo entra con contraseña si faltan o Garmin los rechaza (por ejemplo, tras cambiar la contraseña), y entonces los vuelve a guardar. Así se evitan los bloqueos 429 de Garmin por logins repetidos.

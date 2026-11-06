@@ -55,7 +55,8 @@ Kairos ──(email + contraseña)──> Supabase Auth ──> token de sesión
   - `training_plan_session` y `training_plan_version`: solo las de tus planes.
   - Sin sesión (rol `anon`): ninguna política, así que no se ve nada.
 - **Sesión guardada.** Kairos guarda la sesión en `~/.kairos/supabase_session.json` (fuera del repo, como los tokens de Garmin en `~/.garminconnect/`) y la renueva sola: antes de cada consulta mira por la hora del reloj si el token caduca en menos de un minuto (desde el 26/10; tras suspender el equipo, el auto-refresco del cliente llegaba tarde y un "JWT expired" cerraba Kairos). Al arrancar no pide contraseña mientras la sesión siga válida. Las herramientas (`juez_bateria.py`, `rebuild_tss_baseline.py`, `check_rls.py`) usan la misma sesión. Se puede cambiar la ruta con `KAIROS_SESSION_FILE`.
-- **Nada antes de entrar.** Kairos ya no lee la base de datos antes de iniciar sesión. La contraseña de Garmin sigue guardada cifrada en `app_user.credentials` (con la `ENCRYPTION_KEY` local) y se descifra después de entrar.
+- **Nada antes de entrar.** Kairos ya no lee la base de datos antes de iniciar sesión.
+- **Secretos en Supabase Vault (06/11).** La clave del proveedor de IA y la contraseña de Garmin de cada atleta se guardan cifradas en Vault (la extensión de Supabase para secretos; la clave de cifrado la gestiona Supabase y no está en ningún disco). Las funciones `kairos_set_secret` y `kairos_get_secret` de `schema.sql` solo dejan guardar y leer los secretos del atleta con sesión (se llaman `kairos:<app_user_id>:<nombre>`), sin `service_role`. Vault es el único sitio donde están (obligatorio: sin las funciones de `schema.sql`, Kairos para y dice que falta ejecutarlo). Al entrar, un ordenador que aún tenía la clave de IA en su `.env` la sube a Vault una vez; a un atleta de antes de Vault, Kairos le pide una vez su contraseña de Garmin y la guarda en Vault. Todos los ordenadores (y la web) las leen de ahí. Quien administra el proyecto de Supabase puede descifrarlas: los atletas deben saberlo. `make check-rls` comprueba que sin sesión no se leen y dice qué secretos tuyos hay guardados.
 
 ## 4. Puesta en marcha
 
@@ -100,12 +101,13 @@ Un usuario que no se vinculó antes de la fase 2 **no pierde sus datos**: cuando
 | Situación | Qué hacer |
 | --- | --- |
 | Arrancar Kairos | Escribir el email. Con sesión guardada entra solo |
-| Ordenador nuevo | Entrar una vez con email y contraseña. Si su `ENCRYPTION_KEY` es distinta, Kairos pide otra vez la contraseña de Garmin para cifrarla en ese ordenador |
-| Usuario nuevo | Entrar con su email, aceptar crear la cuenta, confirmar el correo, volver a entrar. Kairos crea su `app_user` vinculado |
-| Cambias la contraseña de Garmin | Kairos lo detecta al conectar con Garmin y te pide la nueva: la cambia también en Supabase Auth y en la copia cifrada |
+| Ordenador nuevo | Entrar una vez con email y contraseña. La clave de IA y la contraseña de Garmin las lee de Vault: el `.env` solo necesita `SUPABASE_URL` y `SUPABASE_ANON_KEY` |
+| Usuario nuevo | Con el `.env` de dos líneas (`SUPABASE_URL`, `SUPABASE_ANON_KEY`): entrar con su email y su contraseña de Garmin, aceptar crear la cuenta, confirmar el correo, volver a entrar. Kairos crea su `app_user` vinculado y guarda en Vault su contraseña de Garmin y, al preguntarle el proveedor, su clave de IA (pasos en el README, «Cada atleta») |
+| Cambias la contraseña de Garmin | Kairos lo detecta al conectar con Garmin y te pide la nueva: la cambia también en Supabase Auth y en Vault |
 | Olvidas la contraseña | Cámbiala en Garmin y, en el Dashboard, en **Authentication → Users → … → Send password recovery** o fija la nueva desde ahí; luego entra en Kairos con ella |
 | Cerrar la sesión de un ordenador | Borrar `~/.kairos/supabase_session.json` |
-| Herramientas (`juez`, `rebuild_tss_baseline`, `check_rls`) | Usan la sesión guardada por Kairos. Si dicen "Sin sesión… entra una vez en Kairos", eso |
+| Herramientas (`juez`, `rebuild_tss_baseline`, `check_rls`, `healthcheck_mcp`) | Usan la sesión guardada por Kairos (usuario de `--username` o `KAIROS_USERNAME`) y, si el `.env` no tiene las credenciales de Garmin, las de tu cuenta. Si dicen "Sin sesión… entra una vez en Kairos", eso |
+| Cambiar la clave de IA | `/proveedor`: la nueva va a Vault y vale en todos tus ordenadores |
 
 ## 6. Volver atrás
 

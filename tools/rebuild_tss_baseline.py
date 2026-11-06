@@ -72,6 +72,8 @@ async def _compute(username: str, start: str) -> dict:
     row = st.restore_session(username)
     if not row:
         raise SystemExit(f"Sin sesión de {username} en este ordenador: entra una vez en Kairos (python -m agent.main) y vuelve a lanzar esto.")
+    if not st.garmin_credentials_into_env(row):
+        raise SystemExit("Sin credenciales de Garmin: ni en el .env ni en tu cuenta (entra una vez en Kairos).")
 
     series: list[dict] = []
     rows: list[dict] = []

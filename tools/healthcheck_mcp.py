@@ -3,7 +3,9 @@
 Uso:
     python tools/healthcheck_mcp.py [--pausa 0.3]
 
-- Arranca el servidor MCP (python -m garmin_mcp) por stdio (como Kairos), con GARMIN_EMAIL/GARMIN_PASSWORD del .env.
+- Arranca el servidor MCP (python -m garmin_mcp) por stdio (como Kairos), con GARMIN_EMAIL/GARMIN_PASSWORD del .env o,
+  si no están (06/11: el .env ya no guarda secretos), los de tu cuenta: email de tus credenciales y contraseña de
+  Supabase Vault, con tu sesión guardada (usuario de --username o KAIROS_USERNAME).
 - Llama a cada tool con argumentos normales (ayer, las dos últimas semanas, la actividad más reciente).
   Todas son de solo lectura.
 - Clasifica cada tool: OK (con datos), VACÍA (sin datos: aviso, puede ser normal), ERROR (fallo de la tool)
@@ -109,9 +111,15 @@ async def run(pause_s: float) -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pausa", type=float, default=0.3, help="segundos entre llamadas (para no provocar 429)")
+    ap.add_argument("--username", default=None, help="tu usuario de Kairos (si no, KAIROS_USERNAME)")
     args = ap.parse_args()
     if not (os.environ.get("GARMIN_EMAIL") and os.environ.get("GARMIN_PASSWORD")):
-        ap.error("faltan GARMIN_EMAIL/GARMIN_PASSWORD en .env")
+        from agent import storage
+
+        username = args.username or os.environ.get("KAIROS_USERNAME", "")
+        row = storage.restore_session(username) if username else None
+        if not storage.garmin_credentials_into_env(row):
+            ap.error("faltan las credenciales de Garmin: ni en el .env ni en tu cuenta (--username y entra una vez en Kairos)")
 
     results = asyncio.run(run(args.pausa))
     counts = {k: sum(1 for r in results if r["estado"] == k) for k in ("OK", "VACÍA", "ERROR", "ENTORNO")}

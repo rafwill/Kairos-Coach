@@ -14,6 +14,8 @@ import os
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from agent.main import (
     _ask_api_key,
     _ask_ia_provider,
@@ -33,6 +35,15 @@ from agent.main import (
     _validate_hours,
     _validate_time,
 )
+
+
+@pytest.fixture(autouse=True)
+def vault():
+    """Supabase Vault (06/11) en memoria y sin red: empieza vacío; los tests leen y preparan sus secretos aquí."""
+    store: dict[str, str] = {}
+    with patch("agent.storage.get_secret", side_effect=lambda name: store.get(name)), \
+         patch("agent.storage.set_secret", side_effect=lambda name, value: store.__setitem__(name, value)):
+        yield store
 
 
 # ─── _validate_date ───────────────────────────────────────────────────────────
@@ -442,7 +453,6 @@ class TestEnsureGarminCredentials:
         creds = {"garmin_email": "runner@example.com"}
         captured_env = {}
         with patch("agent.main.update_user_credentials"), \
-             patch("agent.main.encrypt_password", return_value="ENC"), \
              patch("agent.main.Prompt.ask") as prompt_mock, \
              patch.dict("os.environ", {}, clear=True):
             _ensure_garmin_credentials(creds, app_password="app-secret")
@@ -455,19 +465,18 @@ class TestEnsureGarminCredentials:
         assert captured_env["email"] == "runner@example.com"
         assert prompt_mock.call_count == 0
 
-    def test_prompts_email_when_missing(self):
-        """Sin email guardado, pide email por prompt y actualiza credenciales."""
+    def test_prompts_email_when_missing(self, vault):
+        """Sin email guardado, pide email por prompt, lo guarda en las credenciales y la contraseña en Vault."""
         creds = {}
         with patch("agent.main.update_user_credentials") as upd_mock, \
-             patch("agent.main.encrypt_password", return_value="ENC"), \
              patch("agent.main.Prompt.ask", return_value="nuevo@example.com") as prompt_mock, \
              patch.dict("os.environ", {}, clear=True):
             out = _ensure_garmin_credentials(creds, app_password="secret")
 
         assert out["garmin_email"] == "nuevo@example.com"
         prompt_mock.assert_called_once()
-        upd_mock.assert_called_once()
-
+        upd_mock.assert_called_once_with({"garmin_email": "nuevo@example.com"})
+        assert vault == {"garmin_password": "secret"}
 
 # ─── Proveedor de IA del atleta (ia_provider) y clave en .env (26/10) ────────
 
@@ -565,43 +574,33 @@ class TestEnsureIaProvider:
 
 
 class TestApiKey:
-    def test_rejected_key_is_asked_again_and_valid_one_saved(self, monkeypatch, tmp_path):
-        env_file = tmp_path / ".env"
-        env_file.write_text("OTRA=1\nPROVIDER_API_KEY=vieja\n", encoding="utf-8")
-        monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
+    def test_rejected_key_is_asked_again_and_valid_one_saved(self, monkeypatch, vault):
         probes = iter([("auth", "401 Unauthorized"), ("ok", "")])
         with patch("agent.main.probe_llm_key", new=AsyncMock(side_effect=lambda c: next(probes))), \
              patch("agent.main.Prompt.ask", side_effect=["mala", "buena"]), \
              patch("agent.main.console.print"):
             asyncio.run(_ask_api_key(NVIDIA, "Caducada"))
-        assert env_file.read_text(encoding="utf-8").splitlines() == [
-            "OTRA=1", "# Proveedor de IA de PROVIDER_API_KEY: NVIDIA NIM (nvidia/nemotron-x)", "PROVIDER_API_KEY=buena"]
+        assert vault == {"llm_api_key": "buena"}
         assert os.environ["PROVIDER_API_KEY"] == "buena"
         monkeypatch.delenv("PROVIDER_API_KEY")
 
-    def test_any_provider_uses_provider_api_key_with_a_comment(self, monkeypatch, tmp_path):
-        env_file = tmp_path / ".env"
-        env_file.write_text("", encoding="utf-8")
-        monkeypatch.setattr("agent.main.find_dotenv", lambda usecwd=True: str(env_file))
+    def test_a_key_that_cannot_be_checked_is_saved_anyway(self, monkeypatch, vault):
         config = {"provider": "Mi Proveedor", "base_url": "https://api.ejemplo.com/v1", "model": "m"}
         with patch("agent.main.probe_llm_key", new=AsyncMock(return_value=("error", "proxy"))), \
              patch("agent.main.Prompt.ask", return_value="k"), \
              patch("agent.main.console.print"):
             asyncio.run(_ask_api_key(config, "Primera vez"))
-        text = env_file.read_text(encoding="utf-8")
-        assert "# Proveedor de IA de PROVIDER_API_KEY: Mi Proveedor (m)\nPROVIDER_API_KEY=k" in text
+        assert vault == {"llm_api_key": "k"}
         monkeypatch.delenv("PROVIDER_API_KEY")
-
 
 # ─── Acceso con Supabase Auth (supabase/README.md) ─────────────────────────
 
 class TestAuthenticateWithSupabaseAuth:
-    def test_saved_session_logs_in_without_password(self):
+    def test_saved_session_logs_in_without_password(self, vault):
         from agent import main as m
 
-        row = {"id": "u1", "credentials": {"garmin_password_encrypted": "enc"}}
-        with patch.object(m, "restore_session", return_value=row), \
-             patch.object(m, "decrypt_password", return_value="garmin-pw"), \
+        vault["garmin_password"] = "garmin-pw"
+        with patch.object(m, "restore_session", return_value={"id": "u1", "credentials": {}}), \
              patch.object(m, "sign_in") as sign_in, \
              patch.object(m.Prompt, "ask", side_effect=["runner@example.com"]) as ask, \
              patch.object(m.console, "print"):
@@ -611,7 +610,7 @@ class TestAuthenticateWithSupabaseAuth:
         assert ask.call_count == 1
         sign_in.assert_not_called()
 
-    def test_first_access_creates_account_and_asks_to_confirm_email(self):
+    def test_first_access_creates_account_and_asks_to_confirm_email(self, vault):
         from agent import main as m
 
         linked = {"id": "legacy", "credentials": {"garmin_email": "runner@example.com"}}
@@ -622,8 +621,6 @@ class TestAuthenticateWithSupabaseAuth:
         with patch.object(m, "restore_session", return_value=None), \
              patch.object(m, "sign_in", side_effect=sign_in_results), \
              patch.object(m, "sign_up", return_value={"ok": True, "needs_confirmation": True}) as sign_up, \
-             patch.object(m, "encrypt_password", return_value="enc"), \
-             patch.object(m, "update_user_credentials") as update_creds, \
              patch.object(m.Confirm, "ask", return_value=True), \
              patch.object(m.Prompt, "ask", side_effect=[
                  "runner@example.com", "pw123456", "pw123456",   # primer intento: crear cuenta
@@ -634,40 +631,38 @@ class TestAuthenticateWithSupabaseAuth:
 
         sign_up.assert_called_once_with("runner@example.com", "pw123456")
         assert (user, is_new, password) == ("runner@example.com", False, "pw123456")
-        assert update_creds.call_args.args[0]["garmin_password_encrypted"] == "enc"
+        assert vault == {"garmin_password": "pw123456"}
 
-    def test_new_account_without_data_creates_kairos_user(self):
+    def test_new_account_without_data_creates_kairos_user(self, vault):
         from agent import main as m
 
         with patch.object(m, "restore_session", return_value=None), \
              patch.object(m, "sign_in", return_value={"ok": True, "app_user": None, "error": None}), \
-             patch.object(m, "encrypt_password", return_value="enc"), \
              patch.object(m, "create_app_user") as create, \
              patch.object(m.Prompt, "ask", side_effect=["new@example.com", "pw123456", "new@example.com"]), \
              patch.object(m.console, "print"):
             user, creds, is_new, password = m._authenticate_or_register_user()
 
         assert is_new is True and user == "new@example.com"
+        # El usuario se crea sin secretos; la contraseña va a Vault.
         create.assert_called_once()
-        assert create.call_args.kwargs["credentials"] == {"garmin_email": "new@example.com", "garmin_password_encrypted": "enc"}
+        assert create.call_args.kwargs["credentials"] == {"garmin_email": "new@example.com"}
+        assert vault == {"garmin_password": "pw123456"}
 
-    def test_bad_email_input_and_undecryptable_saved_password(self):
-        # Email vacío y sin @: se vuelve a pedir. Sesión recuperada con otra ENCRYPTION_KEY: se pide la
-        # contraseña de Garmin y se guarda cifrada con la de este ordenador.
+    def test_bad_email_input_and_saved_session_without_password_in_vault(self, vault):
+        # Email vacío y sin @: se vuelve a pedir. Sesión recuperada sin la contraseña en Vault (un usuario de antes
+        # de Vault): se pide la de Garmin una vez y se guarda en Vault.
         from agent import main as m
 
-        row = {"id": "u1", "credentials": {"garmin_password_encrypted": "de-otro-pc"}}
+        row = {"id": "u1", "credentials": {"garmin_password_encrypted": "de-antes"}}
         with patch.object(m, "restore_session", return_value=row) as restore, \
-             patch.object(m, "decrypt_password", return_value=None), \
-             patch.object(m, "encrypt_password", return_value="enc-aqui"), \
-             patch.object(m, "update_user_credentials") as update_creds, \
              patch.object(m.Prompt, "ask", side_effect=["", "runner", "runner@example.com", "garmin-pw"]), \
              patch.object(m.console, "print"):
             user, creds, is_new, password = m._authenticate_or_register_user()
 
         restore.assert_called_once_with("runner@example.com")
         assert (user, is_new, password) == ("runner@example.com", False, "garmin-pw")
-        assert update_creds.call_args.args[0] == {"garmin_password_encrypted": "enc-aqui"}
+        assert vault == {"garmin_password": "garmin-pw"}
 
     def test_sign_up_errors_ask_again(self):
         # Credenciales no válidas: (1) no crea la cuenta, (2) la repetición no coincide, (3) el alta falla,
@@ -680,8 +675,6 @@ class TestAuthenticateWithSupabaseAuth:
              patch.object(m, "sign_in", side_effect=[invalid] * 4 + [{"ok": True, "app_user": linked}]) as sign_in, \
              patch.object(m, "sign_up", side_effect=[{"ok": False, "error": "red"},
                                                      {"ok": True, "needs_confirmation": False}]) as sign_up, \
-             patch.object(m, "encrypt_password", return_value="enc"), \
-             patch.object(m, "update_user_credentials"), \
              patch.object(m.Confirm, "ask", side_effect=[False, True, True, True]), \
              patch.object(m.Prompt, "ask", side_effect=[
                  "r@example.com", "pw1",            # (1) no quiere crear la cuenta
@@ -702,8 +695,8 @@ class TestAuthenticateWithSupabaseAuth:
         with patch.object(m, "restore_session", return_value=None), \
              patch.object(m, "sign_in", side_effect=[{"ok": False, "reason": "network", "error": "sin red"},
                                                      new_account, new_account]), \
-             patch.object(m, "encrypt_password", return_value="enc"), \
              patch.object(m, "create_app_user", side_effect=[RuntimeError("permiso denegado"), None]) as create, \
+             patch.object(m, "update_user_credentials"), \
              patch.object(m.Prompt, "ask", side_effect=[
                  "n@example.com", "pw",                    # error que no es de contraseña
                  "n@example.com", "pw", "n@example.com",   # falla la creación del usuario
@@ -714,6 +707,50 @@ class TestAuthenticateWithSupabaseAuth:
 
         assert (user, is_new) == ("n@example.com", True)
         assert create.call_count == 2
+
+
+class TestVaultSecrets:
+    """Secretos del atleta en Supabase Vault (06/11): el único sitio donde están (Vault obligatorio)."""
+
+    def test_a_new_password_goes_to_vault_and_not_to_the_credentials(self, vault):
+        from agent import main as m
+
+        linked = {"id": "u1", "credentials": {"garmin_email": "r@example.com"}}
+        with patch.object(m, "restore_session", return_value=None), \
+             patch.object(m, "sign_in", return_value={"ok": True, "app_user": linked}), \
+             patch.object(m, "update_user_credentials") as update_creds, \
+             patch.object(m.Prompt, "ask", side_effect=["r@example.com", "pw1"]), \
+             patch.object(m.console, "print"):
+            m._authenticate_or_register_user()
+        assert vault == {"garmin_password": "pw1"}
+        update_creds.assert_not_called()
+
+    def test_the_llm_key_comes_from_vault_and_an_old_env_key_is_uploaded(self, monkeypatch, vault):
+        monkeypatch.delenv("PROVIDER_API_KEY", raising=False)
+        vault["llm_api_key"] = "clave-vault"
+        with patch("agent.main._detect_proxy", return_value=False), \
+             patch("agent.main.get_ia_provider", return_value=dict(NVIDIA)), \
+             patch("agent.main._ask_api_key", new=AsyncMock()) as ask_key, \
+             patch("agent.main.console.print"):
+            asyncio.run(_ensure_ia_provider())
+            assert os.environ["PROVIDER_API_KEY"] == "clave-vault"
+        ask_key.assert_not_awaited()
+        vault.clear()
+        monkeypatch.setenv("PROVIDER_API_KEY", "clave-env")
+        with patch("agent.main._detect_proxy", return_value=False), \
+             patch("agent.main.get_ia_provider", return_value=dict(NVIDIA)), \
+             patch("agent.main._ask_api_key", new=AsyncMock()), \
+             patch("agent.main.console.print"):
+            asyncio.run(_ensure_ia_provider())
+        assert vault == {"llm_api_key": "clave-env"}
+        monkeypatch.delenv("PROVIDER_API_KEY")
+
+    def test_without_vault_kairos_says_what_is_missing(self):
+        from agent import storage as st
+
+        missing = st._secret_error(RuntimeError("Could not find the function public.kairos_get_secret(secret_name)"))
+        assert isinstance(missing, st.SecretStoreError) and "supabase/schema.sql" in str(missing)
+        assert "No se pudo usar Supabase Vault: sin red" == str(st._secret_error(OSError("sin red")))
 
 
 def test_show_menu_lists_every_command():

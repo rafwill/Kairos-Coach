@@ -34,7 +34,7 @@ if sys.platform == "win32":
     except (AttributeError, ValueError):
         pass
 
-from dotenv import find_dotenv, load_dotenv, set_key
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -117,8 +117,6 @@ from agent.storage import (
     activate_training_plan,
     check_supabase_connection,
     create_app_user,
-    decrypt_password,
-    encrypt_password,
     get_active_user,
     get_ia_provider,
     get_training_plan,
@@ -485,7 +483,7 @@ def _authenticate_or_register_user() -> tuple[str, dict, bool, str]:
     """Acceso con Supabase Auth (supabase/README.md): sesión guardada, inicio de sesión o cuenta nueva.
 
     Nada se lee de la base de datos antes de iniciar sesión. La contraseña de Kairos es la misma que la
-    de Garmin Connect; se guarda cifrada (ENCRYPTION_KEY) para que el MCP entre en Garmin.
+    de Garmin Connect; se guarda cifrada en Supabase Vault (06/11) para que el MCP entre en Garmin.
 
     Returns:
         (username, credentials, is_new_user, app_password)
@@ -509,17 +507,13 @@ def _authenticate_or_register_user() -> tuple[str, dict, bool, str]:
         row = restore_session(username)
         if row:
             creds = dict(row.get("credentials") or {})
-            encrypted_pw = creds.get("garmin_password_encrypted", "")
-            password = decrypt_password(encrypted_pw) if encrypted_pw else None
+            password = _storage.get_secret(_storage.GARMIN_PASSWORD_SECRET)
             if password:
                 console.print(f"[green]✓[/] Sesión recuperada · Accediendo como [bold]{username}[/]")
                 return username, creds, False, password
-            # La contraseña de Garmin no se puede descifrar aquí (otra ENCRYPTION_KEY): se vuelve a pedir.
-            console.print("[yellow]⚠[/]  Sesión recuperada, pero necesito tu contraseña de Garmin Connect en este ordenador.")
+            console.print("[yellow]⚠[/]  Sesión recuperada, pero necesito tu contraseña de Garmin Connect.")
             password = Prompt.ask("Contraseña (la misma que en Garmin Connect)", password=True).strip()
-            creds["garmin_password_encrypted"] = encrypt_password(password)
-            update_user_credentials(creds)
-            return username, creds, False, password
+            return username, _store_garmin_password(creds, password), False, password
 
         # ── Inicio de sesión ──────────────────────────────────────────────
         password = Prompt.ask("Contraseña (la misma que en Garmin Connect)", password=True).strip()
@@ -556,25 +550,26 @@ def _authenticate_or_register_user() -> tuple[str, dict, bool, str]:
         row = result.get("app_user")
         if row:
             # Cuenta con datos (vinculada ahora o antes): se guarda la contraseña cifrada para este ordenador.
-            creds = dict(row.get("credentials") or {})
-            creds["garmin_password_encrypted"] = encrypt_password(password)
-            update_user_credentials(creds)
+            creds = _store_garmin_password(dict(row.get("credentials") or {}), password)
             console.print(f"[green]✓[/] Sesión iniciada como [bold]{username}[/].")
             return username, creds, False, password
 
         # ── Cuenta nueva sin datos: se crea su usuario de Kairos ──────────
         garmin_email = Prompt.ask("Email de Garmin Connect", default=username).strip()
-        creds = {
-            "garmin_email": garmin_email,
-            "garmin_password_encrypted": encrypt_password(password),
-        }
+        creds = {"garmin_email": garmin_email}
         try:
             create_app_user(username, credentials=creds)
         except Exception as exc:  # noqa: BLE001 — error de red o de permisos: se informa y se reintenta
             console.print(f"[red]✗[/] No se pudo crear el usuario: {exc}")
             continue
         console.print(f"[green]✓[/] Usuario [bold]{username}[/] creado.")
-        return username, creds, True, password
+        return username, _store_garmin_password(creds, password), True, password
+
+
+def _store_garmin_password(creds: dict, password: str) -> dict:
+    """Guarda la contraseña de Garmin del atleta en Supabase Vault (06/11): el único sitio donde está."""
+    _storage.set_secret(_storage.GARMIN_PASSWORD_SECRET, password)
+    return dict(creds)
 
 
 def _ensure_garmin_credentials(credentials: dict, app_password: str = "") -> dict:
@@ -588,8 +583,8 @@ def _ensure_garmin_credentials(credentials: dict, app_password: str = "") -> dic
             default=os.environ.get("GARMIN_EMAIL", ""),
         ).strip()
         credentials["garmin_email"] = garmin_email
-        credentials["garmin_password_encrypted"] = encrypt_password(app_password)
         update_user_credentials(credentials)
+        _store_garmin_password(credentials, app_password)
 
     garmin_password = app_password or os.environ.get("GARMIN_PASSWORD", "")
 
@@ -1478,26 +1473,15 @@ def _check_garmin_env() -> None:
 _PLACEHOLDER_VALUES = {"", "tu_clave", "nvapi-...", "sk-..."}
 
 
-_KEY_COMMENT = "# Proveedor de IA de PROVIDER_API_KEY:"
-
-
 def _has_key() -> bool:
     value = os.environ.get(_ia_provider.KEY_VAR, "")
     return bool(value) and value not in _PLACEHOLDER_VALUES
 
 
-def _env_path() -> str:
-    return find_dotenv(usecwd=True) or str(Path.cwd() / ".env")
-
-
 def _save_api_key(config: dict, value: str) -> None:
-    """Guarda la clave en PROVIDER_API_KEY del .env, con un comentario encima que dice de qué proveedor es (26/10)."""
-    path = _env_path()
-    set_key(path, _ia_provider.KEY_VAR, value, quote_mode="never", encoding="utf-8")
-    lines = [ln for ln in Path(path).read_text(encoding="utf-8").splitlines() if not ln.startswith(_KEY_COMMENT)]
-    at = next(i for i, ln in enumerate(lines) if ln.startswith(f"{_ia_provider.KEY_VAR}="))
-    lines.insert(at, f"{_KEY_COMMENT} {_ia_provider.label(config)}")
-    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    """Guarda la clave del proveedor en Supabase Vault (06/11), la misma en todos los ordenadores y en la web; mientras
+    Kairos está abierto, en PROVIDER_API_KEY del entorno."""
+    _storage.set_secret(_storage.LLM_KEY_SECRET, value)
     os.environ[_ia_provider.KEY_VAR] = value
 
 
@@ -1510,7 +1494,7 @@ async def _ask_api_key(config: dict, reason: str) -> None:
     k = _ia_provider.known(config["provider"])
     where = f"Consigue la clave en {_ia_provider.KNOWN[k][3]}\n" if k else ""
     console.print(Panel.fit(
-        f"{reason}\n{where}[dim]Se guarda en el .env de este ordenador ({env_var}), nunca en la base de datos.[/]",
+        f"{reason}\n{where}[dim]Se guarda cifrada en Supabase Vault, solo accesible con tu sesión.[/]",
         title=f"[bold blue]Kairos Coach — Clave de {_ia_provider.label(config)}[/]",
         border_style="blue",
     ))
@@ -1587,6 +1571,15 @@ async def _ensure_ia_provider(network_probe: "asyncio.Future | None" = None) -> 
     first_time = not _ia_provider.is_valid(config)
     if first_time:
         config = _ask_ia_provider()
+    # La clave (06/11): la de Vault manda; la del .env de un ordenador que aún no la había subido, se sube.
+    stored = _storage.get_secret(_storage.LLM_KEY_SECRET)
+    if stored:
+        os.environ[_ia_provider.KEY_VAR] = stored
+    elif _has_key():
+        # Un ordenador de antes de Vault que aún la tiene en su .env: se sube una vez.
+        _storage.set_secret(_storage.LLM_KEY_SECRET, os.environ[_ia_provider.KEY_VAR])
+        console.print(f"[green]✓[/] Clave de IA guardada en Supabase Vault (cifrada). Ya puedes borrar "
+                      f"{_ia_provider.KEY_VAR} del .env de este ordenador.")
     if not _has_key():
         await _ask_api_key(config, "Necesito tu clave para empezar." if first_time
                            else "Este ordenador no tiene la clave de tu proveedor de IA.")
@@ -1819,12 +1812,15 @@ async def main() -> None:
     _check_and_migrate_supabase()
     timer.mark("supabase")
 
-    username, credentials, is_new_user, app_password = _authenticate_or_register_user()
-    _ensure_garmin_credentials(credentials, app_password=app_password)
-    _check_garmin_env()
-    timer.mark("sesion")
-
-    provider = await _ensure_ia_provider(network_probe)
+    try:
+        username, credentials, is_new_user, app_password = _authenticate_or_register_user()
+        _ensure_garmin_credentials(credentials, app_password=app_password)
+        _check_garmin_env()
+        timer.mark("sesion")
+        provider = await _ensure_ia_provider(network_probe)
+    except _storage.SecretStoreError as exc:
+        console.print(f"[bold red]Error:[/] {exc}")
+        sys.exit(1)
     timer.mark("proveedor_ia")
 
     console.print(Panel.fit(

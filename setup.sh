@@ -47,23 +47,8 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
-if ! grep -q '^ENCRYPTION_KEY=.' .env; then
-  echo "[setup] Generando ENCRYPTION_KEY en .env..."
-  KEY="$($VENV_PY -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-  if grep -q '^ENCRYPTION_KEY=' .env; then
-    # La línea vacía de .env.example se rellena en su sitio.
-    sed -i.bak "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$KEY|" .env && rm -f .env.bak
-  else
-    {
-      echo
-      echo "# Clave de cifrado local (generada automáticamente)"
-      echo "ENCRYPTION_KEY=$KEY"
-    } >> .env
-  fi
-fi
-
 echo
 echo "[setup] OK. Siguientes pasos:"
-echo "  1) Completa GARMIN_EMAIL/GARMIN_PASSWORD y claves LLM en .env"
-echo "  2) Configura SUPABASE_URL y SUPABASE_ANON_KEY"
+echo "  1) En .env, solo SUPABASE_URL y SUPABASE_ANON_KEY (te los da quien administra Kairos)"
+echo "  2) Al entrar, Kairos te pide tu cuenta, Garmin y tu proveedor de IA y los guarda cifrados en Supabase Vault"
 echo "  3) Ejecuta: .venv/bin/python -m agent.main"

@@ -31,7 +31,7 @@ La carga nativa de Garmin nunca se usa como TSS: solo se muestra como "Carga Gar
 
 ## Instalación
 
-Requisitos: Python 3.12+ (lo exige `garminconnect`; la CI prueba 3.12 y 3.14), cuenta de Garmin Connect, un proyecto de Supabase y al menos una API key de LLM.
+Requisitos: Python 3.12+ (lo exige `garminconnect`; la CI prueba 3.12 y 3.14), cuenta de Garmin Connect, la clave de un proveedor de IA compatible con OpenAI (por ejemplo, Gemini gratis) y un proyecto de Supabase (lo monta una vez quien administra Kairos; cada atleta solo necesita su URL y su clave `anon`).
 
 ```powershell
 git clone https://github.com/rafwill/Kairos-Coach.git
@@ -40,15 +40,29 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1   # Windows
 ./setup.sh                                              # Unix/macOS
 ```
 
-El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`agent` y `garmin_mcp` importables desde cualquier carpeta), copia `.env.example` a `.env` y genera `ENCRYPTION_KEY`. Después:
+El setup crea `.venv`, instala dependencias, instala Kairos en modo editable (`agent` y `garmin_mcp` importables desde cualquier carpeta), y copia `.env.example` a `.env`.
 
-1. Completa `.env`: `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `KAIROS_USERNAME` (tu email; lo usan las herramientas de `tools/`). La clave del proveedor de IA no hace falta escribirla: Kairos la pide la primera vez y la guarda en `.env`.
+### Quien administra Kairos (una vez, en su proyecto de Supabase)
+
+1. Crea el proyecto en Supabase (el plan gratuito basta para un grupo pequeño).
 2. En Supabase, **Authentication → Sign In / Providers → Email**: proveedor de email activado y **"Confirm email" activado** (hace seguro el vínculo de cada cuenta con sus datos).
 3. En el SQL Editor de Supabase (New query → pegar → Run), en este orden:
-   1. [`supabase/schema.sql`](supabase/schema.sql): tablas, índices y funciones. En un proyecto ya existente añade solo lo que falte sin tocar los datos.
+   1. [`supabase/schema.sql`](supabase/schema.sql): tablas, índices y funciones, incluidas las de los secretos en Supabase Vault (obligatorias: sin ellas Kairos no arranca). En un proyecto ya existente añade solo lo que falte sin tocar los datos.
    2. [`supabase/rls.sql`](supabase/rls.sql): activa la seguridad por fila y las políticas, para que cada usuario vea solo sus filas. **Sin este paso las tablas quedan abiertas** a cualquiera con la clave `anon`.
-4. Comprueba la seguridad: `make check-rls` (en Windows sin `make`: `.venv\Scripts\python.exe tools\check_rls.py`). Sin sesión, las 12 tablas deben salir `cerrada`.
-5. Primer acceso: arranca Kairos (ver Uso), escribe tu email y la contraseña de Garmin Connect, acepta crear la cuenta, abre el enlace del correo de confirmación y vuelve a entrar. Después, `check_rls` con tu sesión debe ver tus datos.
+4. Comprueba la seguridad: `make check-rls` (en Windows sin `make`: `.venv\Scripts\python.exe tools\check_rls.py`). Sin sesión, las 12 tablas y los secretos de Vault deben salir `cerrada`.
+5. Da a cada atleta la **URL del proyecto** y la **clave `anon`** (Settings → API). Nunca la `service_role`.
+
+### Cada atleta (en su ordenador)
+
+1. Instala Kairos con el setup de arriba.
+2. En `.env`, solo **`SUPABASE_URL`** y **`SUPABASE_ANON_KEY`** (te los da quien administra Kairos). Nada más: ni la contraseña de Garmin ni la clave de IA van en el `.env`.
+3. Arranca Kairos (ver Uso). La primera vez te pide, por este orden:
+   1. **Tu email y tu contraseña de Garmin Connect** (la misma sirve para entrar en Kairos). Acepta crear tu cuenta, abre el enlace del correo de confirmación de Supabase y vuelve a entrar con los mismos datos.
+   2. **El email de tu cuenta de Garmin** (Enter si es el mismo).
+   3. **Tu proveedor de IA** (por ejemplo, «gemini»; Kairos rellena la URL y propone los modelos) y **su clave** (Gemini: en aistudio.google.com; Kairos te dice dónde para cada proveedor). Kairos la prueba antes de guardarla.
+4. Listo. Tu contraseña de Garmin y tu clave de IA quedan **cifradas en Supabase Vault**: solo se leen con tu sesión, nunca en texto claro ni en tu ordenador. En otro ordenador, basta con el mismo `.env` de dos líneas y entrar con tu email y contraseña.
+
+Para cambiarlas: la clave de IA con `/proveedor`; si cambias la contraseña de Garmin, Kairos lo detecta al conectar y te pide la nueva (la cambia en tu cuenta y en Vault). Más detalle en [`supabase/README.md`](supabase/README.md) («Día a día»).
 
 Qué protege cada política y cómo se migra un proyecto antiguo con usuarios sin cuenta de Auth: [`supabase/README.md`](supabase/README.md).
 
@@ -174,4 +188,4 @@ Rutas locales que nunca se suben (están en `.gitignore`): `.env`, `_archivo/` (
 
 ## Privacidad
 
-Cada usuario entra con su cuenta de Supabase Auth y la base de datos solo le deja ver sus filas (seguridad por fila, [`supabase/README.md`](supabase/README.md)). La contraseña la guarda Supabase Auth como hash y la de Garmin va cifrada con Fernet (`ENCRYPTION_KEY`). Los tokens de Garmin viven fuera del repo y los datos reales del atleta solo en rutas ignoradas por git. Si guardas dónde entrenas (`/perfil lugar`), Kairos consulta la previsión de hoy en Open-Meteo: el nombre del lugar solo la primera vez (para sus coordenadas) y después solo las coordenadas; nada más sale hacia ese servicio.
+Cada usuario entra con su cuenta de Supabase Auth y la base de datos solo le deja ver sus filas (seguridad por fila, [`supabase/README.md`](supabase/README.md)). La contraseña la guarda Supabase Auth como hash; la de Garmin y la clave del proveedor de IA van cifradas en Supabase Vault y solo se leen con la sesión de su atleta. Los tokens de Garmin viven fuera del repo y los datos reales del atleta solo en rutas ignoradas por git. Si guardas dónde entrenas (`/perfil lugar`), Kairos consulta la previsión de hoy en Open-Meteo: el nombre del lugar solo la primera vez (para sus coordenadas) y después solo las coordenadas; nada más sale hacia ese servicio.
