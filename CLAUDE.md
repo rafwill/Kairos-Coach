@@ -15,6 +15,8 @@
 
 Leer `docs/proximos_pasos.md`: "Dónde lo dejamos" dice en qué punto quedó la última sesión y por dónde seguir; las secciones siguientes, lo que queda. Al terminar, reescribir "Dónde lo dejamos" (fecha, ordenador, último commit, siguiente paso) para que la siguiente sesión, en este u otro ordenador, empiece desde ahí.
 
+Kairos web (`docs/web.md`): se construye en ramas cortas `web/fase-N-…` que salen de `main`, se mantienen al día con merges de `main` y se integran en `main` cuando su fase está probada; la CLI y la web comparten `agent/` y `garmin_mcp/`. Estado de cada rama en «Dónde lo dejamos».
+
 ## Objetivo
 
 Cuantificar cada sesión con TSS (TSS/hrTSS/rTSS) como lo haría TrainingPeaks, para que ATL/CTL/TSB se parezcan lo más posible a los de TP. Cada actividad tiene UN TSS, calculado una vez, guardado en `activity_tss`, y todas las pantallas leen ese número. La carga nativa de Garmin nunca es TSS (solo columna `native_load` / "Carga Garmin").
