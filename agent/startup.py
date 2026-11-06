@@ -59,6 +59,7 @@ from agent.startup_status import SOURCE_RULES, SOURCE_RULES_AND_COACH
 from agent.daily_engine import (
     _build_startup_plan_recommendation,
     _compute_daily_plan_adjustment,
+    _missed_endurance_sessions,
     _compute_plan_execution_feedback,
     _get_active_training_plan,
     _today_completion,
@@ -577,6 +578,10 @@ class StartupMixin:
                     plan=active_plan, activities_for_day=today_acts, target_date_iso=today_iso,
                     profile=getattr(self, "user_profile", {}) or {}) or {}
 
+        yesterday_missed = _missed_endurance_sessions(
+            active_plan, yesterday_iso, [a for a in activities_recent if _extract_activity_date_iso(a) == yesterday_iso]
+        ) if active_plan else []
+
         body_summary = (
             f"hoy={_format_body_battery_day(body_today, today_iso, _extract_body_battery_at_wake(sleep_today, today_iso))} · "
             f"ayer={_format_body_battery_day(body_yday, yesterday_iso, _extract_body_battery_at_wake(sleep_yday, yesterday_iso))}"
@@ -602,6 +607,7 @@ class StartupMixin:
             "plan_execution_feedback": plan_execution_feedback,
             "today_completion": today_completion,
             "today_execution": today_execution,
+            "yesterday_missed": yesterday_missed,
             "trainings": recent_trainings[:5],
             "weather": await weather_task,
         }
@@ -618,6 +624,9 @@ class StartupMixin:
         snapshot["plan_assigned"] = bool(active_plan)
         if active_plan:
             snapshot["plan_recommendation"] = _build_startup_plan_recommendation(active_plan)
+            # Bici suave opcional en un día de descanso (06/11): sus deportes y su FTP.
+            snapshot["cross_sports"] = (((self.user_profile or {}).get("goals") or {}).get("plan_preferences") or {}).get("cross")
+            snapshot["ftp_w"] = ((self.user_profile or {}).get("performance") or {}).get("cycling_ftp")
             snapshot["daily_plan_decision"] = _compute_daily_plan_adjustment(snapshot, active_plan) or {}
             completion = snapshot.get("today_completion") or {}
             snapshot["today_session_lines"] = _today_session_lines(active_plan, self.user_profile,

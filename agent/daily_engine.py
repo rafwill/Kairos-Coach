@@ -893,6 +893,46 @@ def _compute_plan_execution_feedback(
     }
 
 
+def _missed_endurance_sessions(plan: dict | None, day_iso: str, activities: list[dict]) -> list[str]:
+    """Sesiones de carrera (o de resistencia) previstas un día que no cubre ninguna actividad: sus títulos.
+
+    La fuerza no cuenta (06/11: el jueves se hizo la fuerza y no el regenerativo; lo saltado es el regenerativo).
+    """
+    rows = _get_planned_sessions_for_date(plan, day_iso) if isinstance(plan, dict) else []
+    if activities:
+        rows = (_today_completion(plan, day_iso, activities) or {}).get("pending") or []
+    return [str((r.get("structured_workout") or {}).get("title") or r.get("session_type"))
+            for r in rows if str(r.get("session_type") or "").lower() not in {"rest", "strength", "strength_home"}
+            and int(_safe_float(r.get("duration_min"), 0.0)) > 0]
+
+
+_ACTIVE_RECOVERY_SPORTS = {"cycling", "gravel", "mtb"}
+
+
+def _active_recovery_suggestion(snapshot: dict, *, rest_day: bool, recovery_ok: bool, status: str, tsb: float,
+                                ctl: float) -> str:
+    """Bici suave opcional en un día de descanso del plan (06/11, petición del usuario): recuperación activa, no una
+    sesión del plan. Con la recuperación en orden y, además, en Fresco o Transición o con una sesión de resistencia
+    saltada ayer. No si el atleta dijo que no hace otros deportes o si los suyos no incluyen la bici."""
+    if not rest_day or not recovery_ok or status in {"overload", "fatigue_high"}:
+        return ""
+    cross = snapshot.get("cross_sports")
+    if isinstance(cross, dict) and not _ACTIVE_RECOVERY_SPORTS & set(cross.get("sports") or []):
+        return ""
+    from agent import load_metrics as _load_metrics
+
+    fresh = _load_metrics.form_zone(tsb, ctl)["key"] in {"fresh", "transition"} if ctl > 0 else False
+    missed = [str(t) for t in snapshot.get("yesterday_missed") or []]
+    if not (fresh or missed):
+        return ""
+    why = (f"ayer te saltaste {', '.join(missed)}" if missed else "") + (" y " if missed and fresh else "") +           ("estás en forma de Fresco" if fresh else "")
+    ftp = _safe_float(snapshot.get("ftp_w"), 0.0)
+    watts = f"; con potencia, por debajo de {ftp * 0.55:.0f} W (55 % del FTP)" if ftp > 0 else ""
+    return (f"Opcional (no es del plan): bici suave 30-60' en Z1 como recuperación activa, porque {why} y la "
+            f"recuperación está en orden. Rodillo o llano, cadencia 85-95, RPE 2-3{watts}; sin MTB ni subidas. "
+            "No recupera la sesión perdida: si notas las piernas cargadas, descanso.")
+
+
 def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | None:
     """Motor determinista de ajuste diario del plan.
 
@@ -963,6 +1003,7 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     status = str(load_fatigue.get("status") or "neutral").strip().lower() or "neutral"
     tsb = _safe_float(latest.get("tsb"), 0.0)
     atl = _safe_float(latest.get("atl"), 0.0)
+    ctl = _safe_float(latest.get("ctl"), 0.0)
     weekly_tss = _safe_float(weekly.get("current_tss"), 0.0)
     atl_high = _safe_float(ranges.get("atl_high"), 0.0)
 
@@ -1131,6 +1172,10 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         "resulting_session": resulting_session,
         "adjusted_structured_workout": adjusted_structured_workout,
         "adjustment_trace": adjustment_trace,
+        "active_recovery": _active_recovery_suggestion(
+            snapshot, status=status, tsb=tsb, ctl=ctl,
+            rest_day=has_plan and planned_duration_min <= 0,
+            recovery_ok=not (low_hrv or low_bb or poor_sleep)),
         "inputs": {
             "status": status,
             "tsb": tsb,

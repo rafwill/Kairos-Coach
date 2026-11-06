@@ -305,6 +305,8 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
             lines.append(f"  - Motivo: {reason}")
         if resulting and not (plan_assigned and decision == "maintain"):  # mantener: la sesión de hoy, ya arriba
             lines.append(f"  - Sesión resultante: {resulting}")
+        if daily_plan_decision.get("active_recovery") and not today_done:
+            lines.append(f"  - 🚴 {daily_plan_decision['active_recovery']}")
     if plan_assigned:
         # Con plan, la sesión de hoy y la recomendación ya están arriba: sin "Próximo paso" (29/10, usuario).
         lines.extend(["", SOURCE_RULES])
