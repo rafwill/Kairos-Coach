@@ -241,6 +241,7 @@ class TestLlmKey:
         agent.set_provider(NVIDIA)
         # El envoltorio guarda el create original al instalarse: se vuelve a instalar sobre un doble.
         agent.client.chat.completions.create = AsyncMock(side_effect=error)
+        agent._raw_create = agent.client.chat.completions.create
         agent._watch_llm_auth()
         return agent
 
@@ -251,6 +252,19 @@ class TestLlmKey:
         with pytest.raises(LLMAuthError) as exc:
             asyncio.run(agent.client.chat.completions.create(model="m", messages=[]))
         assert isinstance(exc.value, RuntimeError) and agent.llm_auth_failed is True
+
+    def test_all_system_messages_reach_the_llm_as_one(self, monkeypatch):
+        # 06/11: Gemini usa solo el último "system"; el prompt principal (con el calendario) no llegaba al chat.
+        agent = self._agent(monkeypatch, None)
+        tool_msg = MagicMock()
+        msgs = [{"role": "system", "content": "reglas y calendario"}, {"role": "system", "content": "sesión anterior"},
+                {"role": "user", "content": "hola"}, tool_msg, {"role": "system", "content": "marco de hoy"},
+                {"role": "user", "content": "¿qué toca mañana?"}]
+        asyncio.run(agent.client.chat.completions.create(model="m", messages=msgs))
+        sent = agent._raw_create.await_args.kwargs["messages"]
+        assert sent[0] == {"role": "system", "content": "reglas y calendario\n\nsesión anterior\n\nmarco de hoy"}
+        assert sent[1:] == [msgs[2], tool_msg, msgs[5]]
+        assert msgs[1]["content"] == "sesión anterior"  # la lista del bucle no se toca
 
     def test_other_errors_pass_through_untouched(self, monkeypatch):
         agent = self._agent(monkeypatch, Exception("403 Forbidden: proxy"))
@@ -317,6 +331,7 @@ class TestLlmKey:
         agent = object.__new__(ta.TrainerAgent)
         agent.set_provider({**GEMINI, "chat_model": "gemini-lite"})
         agent.client.chat.completions.create = AsyncMock(side_effect=error)
+        agent._raw_create = agent.client.chat.completions.create
         agent._watch_llm_auth()
         return agent
 

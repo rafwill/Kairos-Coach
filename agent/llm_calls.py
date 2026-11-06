@@ -53,6 +53,22 @@ class LLMQuotaError(RuntimeError):
     """Cupo diario del proveedor agotado (29/10): no se reintenta. RuntimeError: todas las capas ya lo capturan."""
 
 
+def _single_system_message(messages: list) -> list:
+    """Todos los mensajes "system" en uno solo, el primero, en su orden.
+
+    06/11: la API de Gemini compatible con OpenAI usa solo el último "system". El chat manda el prompt principal
+    (reglas, perfil, carga, plan, calendario) y detrás las preguntas de la sesión anterior o el marco de hoy, así que
+    el LLM no sabía qué día era ("hoy es viernes 7… de marzo"; prueba: 4.844 tokens de entrada con uno, 29 con tres).
+    """
+    if not isinstance(messages, list):
+        return messages
+    systems = [m for m in messages if isinstance(m, dict) and m.get("role") == "system"]
+    if len(systems) < 2:
+        return messages
+    merged = {"role": "system", "content": "\n\n".join(str(m.get("content") or "") for m in systems)}
+    return [merged] + [m for m in messages if not (isinstance(m, dict) and m.get("role") == "system")]
+
+
 def _daily_quota_reset(exc: Exception) -> str | None:
     """Si el 429 es de cupo diario, cuándo se libera ("17 h", "25 min"); None si es un límite por minuto.
 
@@ -118,6 +134,8 @@ class LLMMixin:
         create = completions.create
 
         async def _create(*args, **kwargs):
+            if "messages" in kwargs:
+                kwargs["messages"] = _single_system_message(kwargs["messages"])
             chat = self._chat_llm_model()
             relay = chat if kwargs.get("model") == self.model and chat != self.model else None
             waits = iter((*_BUSY_RETRY_WAITS, None))
