@@ -1,6 +1,6 @@
 # Próximos pasos — Kairos Coach
 
-Última revisión: 3/11/2026.
+Última revisión: 6/11/2026.
 
 Solo lo que falta por hacer y lo descartado. Lo hecho está en `CHANGELOG.md` (cada cambio, con su señal y su resultado), en `CLAUDE.md` (estado vigente de la carga, los planes y el arranque) y en `docs/arquitectura.md`.
 
@@ -8,9 +8,19 @@ Texto anterior de esta lista, con los criterios de diseño que citan algunos com
 
 ## Dónde lo dejamos
 
-**Sesión del 3/11/2026** (ordenador 2). Último commit con cambios: `4938ef9`, seguido del que ajusta estas notas. El historial se reescribió desde el 30/10; el ordenador 1 quedó alineado el 5/11 (`87634f0`, tests en verde). 1028 tests y `ruff` limpios. La tabla `startup_summary` existe en Supabase y las 12 tablas salen cerradas sin sesión (`check_rls`, 3/11).
+**Sesión del 5 y 6/11/2026** (ordenador 1). Último commit con cambios: `02fc73b` (Vault obligatorio), seguido del que ajusta estas notas. Release **`v3.1.0-rc.1`** publicada como pre-release (`afc87a3`). 1082 tests y `ruff` limpios. Detalle de cada cambio en el CHANGELOG del 05 y 06/11: Body Battery al despertar, motor diario guiado por la HRV y la sesión que toca, bici opcional en descanso, mensajes de sistema juntos para Gemini, mover sesiones desde el chat, límites de sesión para media maratón y objetivo frente a umbral, y secretos en Supabase Vault.
 
-**Siguiente paso (decisión del usuario): usar Kairos a diario unas semanas y decidir con lo que salga.** Nada de código nuevo hasta entonces salvo lo que rompa. Revisar juntos `agent.log` (`[SENSOR]`, `[G15]`, `[TURNO]`, `[STARTUP]`, `[PLAN]`, `[LLM] … relevo`).
+**Supabase (6/11):** funciones de Vault aplicadas (`schema.sql`); los dos secretos del usuario guardados y cerrados sin sesión (`check_rls`); el `.env` del ordenador 1 solo tiene `SUPABASE_URL` y `SUPABASE_ANON_KEY` (más `AGENT_LANGUAGE` y `LOG_LEVEL`, que no usa ningún código); borrada de su fila de `app_user` la copia antigua `garmin_password_encrypted` (prueba, solo esa clave, leída de vuelta).
+
+**Siguientes pasos, en orden:**
+
+1. **Replanificar el plan de Santa Pola** (7/11, desde las 9:00, cuando se renueva el cupo de Gemini 3.6 Flash). Mensaje: «Replanifica el plan. Mantén la salida a la sierra del sábado 14 y, el domingo 15, un rodaje suave después. Quiero bajar de 1:23 en Santa Pola.» (objetivo confirmado por el usuario: bajar de 1:23, `target_time` 1:22:59). Revisar con `agent.log` (`[PLAN]`) y Supabase: tiradas ≤ 130', regenerativos ≤ 45', ≥ 2 semanas de construcción, test de 5-10 km al final de la construcción, umbral desde la base, VO2 repetido, la sierra el 14 (evento `e1`) y la semana de la carrera con activación. El intento del 6/11 no guardó nada: dos reglas imposibles de cumplir (la tirada que es evento fijo frente a la estructura y el regenerativo en la semana de la carrera), arregladas en `e181102`; además el principal agotó su cupo (429) y siguió con Flash Lite.
+2. **Ordenador 2:** `git pull`, `pip install -r requirements.txt` (sale `cryptography`) y dejar su `.env` solo con `SUPABASE_URL` y `SUPABASE_ANON_KEY`. Al entrar no debe pedir ni la contraseña de Garmin ni la clave de IA (las lee de Vault).
+3. **Release 3.1:** batería de 25 preguntas (`tools/run_bateria.py` + `tools/juez_bateria.py`, otro día que el del replanificado por el cupo) → `v3.1.0-rc.2` (Vault y lo que salga del replanificado) → `v3.1.0` final (`pyproject.toml` a `3.1.0`, etiqueta firmada, release marcada como la última).
+4. **Web, fase 0** (rama `web/fase-0-poc-garmin`, `docs/web.md`): prueba de Garmin desde un servidor en la nube con un solo atleta.
+   - Servidor: Oracle Madrid sin capacidad con la cuenta gratuita (ni ARM A1 ni AMD E2.1.Micro; Madrid tiene un solo availability domain; reintentos seguidos dan "Too many requests"). GCP pide tarjeta. El usuario estaba creando una **Azure B1s** (1 vCPU, 1 GB, Ubuntu 24.04 x64, Spain Central, usuario `kairos`, solo SSH, clave `id_ed25519` de este ordenador) con su cuenta de empresa. **Confirmar antes** que es una suscripción de Visual Studio (crédito personal para desarrollo) o que tiene permiso: datos de salud de terceros y recursos de la empresa. Para producción con 5 atletas, cuenta personal: Clouding plan 2 (1 vCore, 2 GB, 30 GB; ~9,70 €/mes con IVA, se amplía por horas), Oracle con Pay As You Go (gratis dentro del Always Free; crear presupuesto con alerta) o GCP `e2-micro` (1 GB; confirmar coste de la IPv4).
+   - Con la IP: instalar por SSH (zona horaria Madrid, git, venv, la rama); el usuario crea el `.env` con `GARMIN_EMAIL`/`GARMIN_PASSWORD` (excepción: el servidor de Garmin sin Kairos no tiene sesión para leer Vault; borrarlo al acabar) y hace `--primer-login`; cron cada 3 h; a las 72 h, `--informe`.
+5. **Mientras corre la prueba: fase 1**, `today_view()` (el «Hoy» como datos JSON en el núcleo, con la CLI pintando desde ahí y sin cambiar su texto) en la rama `web/fase-1-hoy`, creada desde `main`.
 
 ## 1. Para comprobar con el uso diario
 
@@ -67,7 +77,7 @@ Antes de tocar cualquier fórmula: hipótesis escrita, criterio de cierre fijado
      - **Modo solo clave:** sin readiness, estado de entrenamiento, VO2máx, récords ni predicciones, y sin la FC por zonas de actividad que usa el hrTSS del trail (se podría recalcular desde las muestras, pero cambiaría TSS ya validado: no sin validación y sin subir `TSS_FORMULA_VERSION` de forma deliberada).
    - **Qué ganaríamos:**
      - API oficial y estable, en lugar de un login no oficial que se rompe cuando Garmin lo cambia.
-     - Una clave revocable que no da acceso a la cuenta, en lugar de la contraseña de Garmin (que hoy se guarda cifrada en Supabase). Solo se quitaría del todo si se migraran también las tools que hoy no cubre.
+     - Una clave revocable que no da acceso a la cuenta, en lugar de la contraseña de Garmin (que hoy se guarda cifrada en Supabase Vault). Solo se quitaría del todo si se migraran también las tools que hoy no cubre.
      - FIT original con el registro segundo a segundo, e historial completo (con límite de rango por llamada).
      - Menos riesgo de 429 por logins repetidos, aunque hoy ya se reutilizan los tokens.
    - **Qué perderíamos o costaría:**
