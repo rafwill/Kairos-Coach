@@ -64,6 +64,6 @@ fi
 
 echo
 echo "[setup] OK. Siguientes pasos:"
-echo "  1) Completa GARMIN_EMAIL/GARMIN_PASSWORD y claves LLM en .env"
-echo "  2) Configura SUPABASE_URL y SUPABASE_ANON_KEY"
+echo "  1) En .env, solo SUPABASE_URL y SUPABASE_ANON_KEY (te los da quien administra Kairos)"
+echo "  2) Al entrar, Kairos te pide tu cuenta, Garmin y tu proveedor de IA y los guarda cifrados en Supabase Vault"
 echo "  3) Ejecuta: .venv/bin/python -m agent.main"

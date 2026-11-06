@@ -926,3 +926,35 @@ def test_history_question_and_answer_are_saved_with_one_read_and_one_write(monke
     storage.save_history_entries([("user", "¿Qué tal ayer?"), ("assistant", "Bien.")])
     assert fake.executes == [("session_context", "select"), ("session_context", "upsert")]
     assert [e["content"] for e in fake.rows["session_context"][0]["history"]] == ["antes", "¿Qué tal ayer?", "Bien."]
+
+
+def test_tools_take_garmin_credentials_from_the_account_when_the_env_has_none(monkeypatch):
+    # 06/11: el .env ya no guarda secretos; healthcheck_mcp y rebuild_tss_baseline los toman de la cuenta.
+    import os
+
+    import agent.storage as st
+
+    monkeypatch.delenv("GARMIN_EMAIL", raising=False)
+    monkeypatch.delenv("GARMIN_PASSWORD", raising=False)
+    monkeypatch.setattr(st, "get_secret", lambda name: "de-vault" if name == st.GARMIN_PASSWORD_SECRET else None)
+    assert st.garmin_credentials_into_env({"credentials": {"garmin_email": "a@b.c"}})
+    assert (os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"]) == ("a@b.c", "de-vault")
+    monkeypatch.delenv("GARMIN_PASSWORD")
+    monkeypatch.setattr(st, "get_secret", lambda name: None)
+    assert not st.garmin_credentials_into_env({"credentials": {"garmin_email": "a@b.c"}})
+
+
+def test_a_new_garmin_password_goes_to_vault(monkeypatch):
+    # 06/11: antes solo cambiaba la copia cifrada con Fernet y Kairos seguía leyendo de Vault la vieja.
+    from unittest.mock import MagicMock
+
+    import agent.storage as st
+
+    sb = MagicMock()
+    saved = {}
+    monkeypatch.setattr(st, "_require_supabase", lambda: sb)
+    monkeypatch.setattr(st, "set_secret", lambda name, value: saved.update({name: value}) or True)
+    monkeypatch.setattr(st, "encrypt_password", lambda p: (_ for _ in ()).throw(AssertionError("sin Fernet")))
+    assert st.update_login_password("nueva-123") == {"ok": True, "error": None}
+    sb.auth.update_user.assert_called_once_with({"password": "nueva-123"})
+    assert saved == {st.GARMIN_PASSWORD_SECRET: "nueva-123"}

@@ -62,6 +62,6 @@ if ($envContent -notmatch "(?m)^ENCRYPTION_KEY=\S") {
 
 Write-Host ""
 Write-Host "[setup] OK. Siguientes pasos:"
-Write-Host "  1) Completa GARMIN_EMAIL/GARMIN_PASSWORD y claves LLM en .env"
-Write-Host "  2) Configura SUPABASE_URL y SUPABASE_ANON_KEY"
+Write-Host "  1) En .env, solo SUPABASE_URL y SUPABASE_ANON_KEY (te los da quien administra Kairos)"
+Write-Host "  2) Al entrar, Kairos te pide tu cuenta, Garmin y tu proveedor de IA y los guarda cifrados en Supabase Vault"
 Write-Host "  3) Ejecuta: .venv\Scripts\python.exe -m agent.main"

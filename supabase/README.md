@@ -102,11 +102,12 @@ Un usuario que no se vinculó antes de la fase 2 **no pierde sus datos**: cuando
 | --- | --- |
 | Arrancar Kairos | Escribir el email. Con sesión guardada entra solo |
 | Ordenador nuevo | Entrar una vez con email y contraseña. La clave de IA y la contraseña de Garmin las lee de Vault: el `.env` solo necesita `SUPABASE_URL` y `SUPABASE_ANON_KEY` (sin Vault, como antes: si su `ENCRYPTION_KEY` es distinta, pide otra vez la contraseña de Garmin) |
-| Usuario nuevo | Entrar con su email, aceptar crear la cuenta, confirmar el correo, volver a entrar. Kairos crea su `app_user` vinculado |
-| Cambias la contraseña de Garmin | Kairos lo detecta al conectar con Garmin y te pide la nueva: la cambia también en Supabase Auth y en la copia cifrada |
+| Usuario nuevo | Con el `.env` de dos líneas (`SUPABASE_URL`, `SUPABASE_ANON_KEY`): entrar con su email y su contraseña de Garmin, aceptar crear la cuenta, confirmar el correo, volver a entrar. Kairos crea su `app_user` vinculado y guarda en Vault su contraseña de Garmin y, al preguntarle el proveedor, su clave de IA (pasos en el README, «Cada atleta») |
+| Cambias la contraseña de Garmin | Kairos lo detecta al conectar con Garmin y te pide la nueva: la cambia también en Supabase Auth y en Vault (sin Vault, en la copia cifrada) |
 | Olvidas la contraseña | Cámbiala en Garmin y, en el Dashboard, en **Authentication → Users → … → Send password recovery** o fija la nueva desde ahí; luego entra en Kairos con ella |
 | Cerrar la sesión de un ordenador | Borrar `~/.kairos/supabase_session.json` |
-| Herramientas (`juez`, `rebuild_tss_baseline`, `check_rls`) | Usan la sesión guardada por Kairos. Si dicen "Sin sesión… entra una vez en Kairos", eso |
+| Herramientas (`juez`, `rebuild_tss_baseline`, `check_rls`, `healthcheck_mcp`) | Usan la sesión guardada por Kairos (usuario de `--username` o `KAIROS_USERNAME`) y, si el `.env` no tiene las credenciales de Garmin, las de tu cuenta. Si dicen "Sin sesión… entra una vez en Kairos", eso |
+| Cambiar la clave de IA | `/proveedor`: la nueva va a Vault y vale en todos tus ordenadores |
 
 ## 6. Volver atrás
 

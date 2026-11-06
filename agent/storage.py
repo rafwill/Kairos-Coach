@@ -342,6 +342,21 @@ def set_secret(name: str, value: str) -> bool:
     return True
 
 
+def garmin_credentials_into_env(row: dict | None) -> bool:
+    """Para las herramientas de tools/ que arrancan el servidor de Garmin (06/11): si GARMIN_EMAIL/GARMIN_PASSWORD no
+    están en el entorno (el .env ya no guarda secretos), los toma del atleta con sesión: el email de sus credenciales
+    y la contraseña de Vault (o, sin Vault, la copia cifrada con ENCRYPTION_KEY). False si falta alguno."""
+    creds = dict((row or {}).get("credentials") or {})
+    if not os.environ.get("GARMIN_EMAIL") and creds.get("garmin_email"):
+        os.environ["GARMIN_EMAIL"] = str(creds["garmin_email"])
+    if not os.environ.get("GARMIN_PASSWORD"):
+        encrypted = creds.get("garmin_password_encrypted")
+        password = get_secret(GARMIN_PASSWORD_SECRET) or (decrypt_password(encrypted) if encrypted else None)
+        if password:
+            os.environ["GARMIN_PASSWORD"] = password
+    return bool(os.environ.get("GARMIN_EMAIL") and os.environ.get("GARMIN_PASSWORD"))
+
+
 # ─── Sesión de Supabase Auth ───────────────────────────────────────────────────
 # Cada usuario de Kairos tiene una cuenta de Supabase Auth (email + la misma contraseña que en
 # Garmin Connect). Con sesión, las consultas llevan su token y las políticas RLS de
@@ -487,12 +502,16 @@ def create_app_user(email: str, credentials: dict | None = None) -> dict:
 
 
 def update_login_password(new_password: str) -> dict:
-    """Cambia la contraseña de Supabase Auth (la misma que la de Garmin) y la cifrada en local."""
+    """Cambia la contraseña de Supabase Auth (la misma que la de Garmin) y la guardada: en Vault (06/11) o, sin Vault,
+    la cifrada con la ENCRYPTION_KEY de este ordenador. Antes de Vault solo cambiaba la cifrada, y Kairos habría
+    seguido leyendo de Vault la vieja."""
     if not new_password or len(new_password) < 6:
         return {"ok": False, "error": "Datos inválidos (mínimo 6 caracteres)"}
     try:
         sb = _require_supabase()
         sb.auth.update_user({"password": new_password})
+        if set_secret(GARMIN_PASSWORD_SECRET, new_password):
+            return {"ok": True, "error": None}
         rows = sb.table("app_user").select("credentials").eq("id", _require_active_user_id()).limit(1).execute()
         creds = dict((rows.data[0] if rows.data else {}).get("credentials") or {})
         creds["garmin_password_encrypted"] = encrypt_password(new_password)
