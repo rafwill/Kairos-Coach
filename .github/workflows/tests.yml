@@ -46,7 +46,6 @@ jobs:
           # conexiones reales en ningún test.
           SUPABASE_URL: "https://xxx.supabase.co"
           SUPABASE_ANON_KEY: "test-anon-key-for-ci"
-          ENCRYPTION_KEY: "dGVzdF9rZXlfdGVzdF9rZXlfdGVzdF9rZXlfdGVzdCE="
           GARMIN_EMAIL: "ci@test.local"
           GARMIN_PASSWORD: "ci-test-password"
         run: |

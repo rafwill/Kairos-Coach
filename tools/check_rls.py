@@ -96,7 +96,11 @@ def main() -> int:
         linked = sb.rpc("kairos_app_user_id").execute().data
         print(f"   tu cuenta vinculada a un app_user: {'sí' if linked else 'NO'}")
         for name in SECRETS:
-            print(f"   secreto {name:16s} {'guardado' if storage.get_secret(name) else 'no guardado'}")
+            try:
+                state = "guardado" if storage.get_secret(name) else "no guardado"
+            except storage.SecretStoreError as exc:
+                state = f"error: {exc}"
+            print(f"   secreto {name:16s} {state}")
         if open_tables:
             # Fase 1 (RLS sin activar): la sesión aún ve lo mismo que cualquiera; no se juzga.
             own_ok = bool(linked)

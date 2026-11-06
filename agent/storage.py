@@ -281,77 +281,65 @@ def _normalize_username(username: str) -> str:
 
 
 def _sanitize_credentials_for_storage(credentials: dict | None) -> dict:
-    """Elimina secretos en texto claro — solo se permite garmin_password_encrypted."""
+    """Las credenciales de app_user no llevan secretos: la contraseña de Garmin está en Vault (06/11)."""
     creds = dict(credentials or {})
     creds.pop("garmin_password", None)
     creds.pop("garmin_password_strategy", None)
     return creds
 
 
-def _get_fernet():
-    """Devuelve instancia Fernet usando ENCRYPTION_KEY del entorno."""
-    from cryptography.fernet import Fernet
-    key = (os.environ.get("ENCRYPTION_KEY") or "").strip().encode()
-    if not key:
-        raise RuntimeError(
-            "ENCRYPTION_KEY no configurada en .env. "
-            "Genera una con: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-        )
-    return Fernet(key)
-
-
-def encrypt_password(plaintext: str) -> str:
-    """Cifra una contraseña con Fernet (AES-128-CBC + HMAC-SHA256)."""
-    return _get_fernet().encrypt(plaintext.encode("utf-8")).decode("utf-8")
-
-
-def decrypt_password(encrypted: str) -> str | None:
-    """Descifra una contraseña. Devuelve None si falla (clave cambiada o corrupto)."""
-    try:
-        return _get_fernet().decrypt(encrypted.encode("utf-8")).decode("utf-8")
-    except Exception:
-        return None
-
-
 # ─── Secretos del atleta en Supabase Vault (06/11) ─────────────────────────────
 # La clave del proveedor de IA y la contraseña de Garmin, cifradas por Supabase y accesibles solo con la sesión del
-# atleta (funciones kairos_set_secret/kairos_get_secret de schema.sql). Así el .env de cada ordenador (y el del
-# servidor web) no guarda secretos del atleta. Sin sesión o sin las funciones, None/False: se sigue como antes.
+# atleta (funciones kairos_set_secret/kairos_get_secret de schema.sql, parte obligatoria de la instalación). El .env
+# de cada ordenador (y el del servidor web) no guarda secretos del atleta. Vault es el único sitio: sin él, error
+# claro (antes había respaldo con el .env y Fernet; decisión del usuario del 06/11: Vault obligatorio).
 LLM_KEY_SECRET = "llm_api_key"
 GARMIN_PASSWORD_SECRET = "garmin_password"
 
 
+class SecretStoreError(RuntimeError):
+    """Supabase Vault no está disponible: falta schema.sql o no hay conexión."""
+
+
+def _secret_error(exc: Exception) -> SecretStoreError:
+    text = str(getattr(exc, "message", "") or exc)
+    if "kairos_get_secret" in text or "kairos_set_secret" in text or "could not find the function" in text.lower():
+        return SecretStoreError("Falta ejecutar supabase/schema.sql en Supabase (funciones de los secretos en Vault); "
+                                "ver la instalación en el README.")
+    return SecretStoreError(f"No se pudo usar Supabase Vault: {text[:200]}")
+
+
 def get_secret(name: str) -> str | None:
-    """Secreto del atleta con sesión, o None (no lo tiene, sin sesión o falta schema.sql en Supabase)."""
+    """Secreto del atleta con sesión, o None si no lo tiene. SecretStoreError si Vault no está disponible."""
     try:
         res = _require_supabase().rpc("kairos_get_secret", {"secret_name": name}).execute()
-    except Exception as exc:  # noqa: BLE001 — sin Vault se sigue con el .env, como antes
-        log.warning("Vault: no se pudo leer %s: %s", name, exc)
-        return None
+    except Exception as exc:  # noqa: BLE001 — se convierte en un error claro para el atleta
+        raise _secret_error(exc) from exc
     value = res.data if isinstance(res.data, str) else None
     return value or None
 
 
-def set_secret(name: str, value: str) -> bool:
-    """Guarda (o, con valor vacío, borra) un secreto del atleta con sesión. False si no se pudo."""
+def set_secret(name: str, value: str) -> None:
+    """Guarda (o, con valor vacío, borra) un secreto del atleta con sesión. SecretStoreError si no se pudo."""
     try:
         _require_supabase().rpc("kairos_set_secret", {"secret_name": name, "secret_value": value}).execute()
     except Exception as exc:  # noqa: BLE001
-        log.warning("Vault: no se pudo guardar %s: %s", name, exc)
-        return False
-    return True
+        raise _secret_error(exc) from exc
 
 
 def garmin_credentials_into_env(row: dict | None) -> bool:
     """Para las herramientas de tools/ que arrancan el servidor de Garmin (06/11): si GARMIN_EMAIL/GARMIN_PASSWORD no
-    están en el entorno (el .env ya no guarda secretos), los toma del atleta con sesión: el email de sus credenciales
-    y la contraseña de Vault (o, sin Vault, la copia cifrada con ENCRYPTION_KEY). False si falta alguno."""
+    están en el entorno (el .env no guarda secretos), los toma del atleta con sesión: el email de sus credenciales
+    y la contraseña de Vault. False si falta alguno."""
     creds = dict((row or {}).get("credentials") or {})
     if not os.environ.get("GARMIN_EMAIL") and creds.get("garmin_email"):
         os.environ["GARMIN_EMAIL"] = str(creds["garmin_email"])
     if not os.environ.get("GARMIN_PASSWORD"):
-        encrypted = creds.get("garmin_password_encrypted")
-        password = get_secret(GARMIN_PASSWORD_SECRET) or (decrypt_password(encrypted) if encrypted else None)
+        try:
+            password = get_secret(GARMIN_PASSWORD_SECRET)
+        except SecretStoreError as exc:
+            log.warning("%s", exc)
+            password = None
         if password:
             os.environ["GARMIN_PASSWORD"] = password
     return bool(os.environ.get("GARMIN_EMAIL") and os.environ.get("GARMIN_PASSWORD"))
@@ -502,20 +490,12 @@ def create_app_user(email: str, credentials: dict | None = None) -> dict:
 
 
 def update_login_password(new_password: str) -> dict:
-    """Cambia la contraseña de Supabase Auth (la misma que la de Garmin) y la guardada: en Vault (06/11) o, sin Vault,
-    la cifrada con la ENCRYPTION_KEY de este ordenador. Antes de Vault solo cambiaba la cifrada, y Kairos habría
-    seguido leyendo de Vault la vieja."""
+    """Cambia la contraseña de Supabase Auth (la misma que la de Garmin) y la de Garmin guardada en Vault (06/11)."""
     if not new_password or len(new_password) < 6:
         return {"ok": False, "error": "Datos inválidos (mínimo 6 caracteres)"}
     try:
-        sb = _require_supabase()
-        sb.auth.update_user({"password": new_password})
-        if set_secret(GARMIN_PASSWORD_SECRET, new_password):
-            return {"ok": True, "error": None}
-        rows = sb.table("app_user").select("credentials").eq("id", _require_active_user_id()).limit(1).execute()
-        creds = dict((rows.data[0] if rows.data else {}).get("credentials") or {})
-        creds["garmin_password_encrypted"] = encrypt_password(new_password)
-        update_user_credentials(creds)
+        _require_supabase().auth.update_user({"password": new_password})
+        set_secret(GARMIN_PASSWORD_SECRET, new_password)
         return {"ok": True, "error": None}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(getattr(exc, "message", "") or exc)}

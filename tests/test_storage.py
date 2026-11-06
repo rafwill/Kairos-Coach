@@ -945,7 +945,7 @@ def test_tools_take_garmin_credentials_from_the_account_when_the_env_has_none(mo
 
 
 def test_a_new_garmin_password_goes_to_vault(monkeypatch):
-    # 06/11: antes solo cambiaba la copia cifrada con Fernet y Kairos seguía leyendo de Vault la vieja.
+    # 06/11: la contraseña de Garmin solo vive en Vault (antes, en una copia cifrada con Fernet).
     from unittest.mock import MagicMock
 
     import agent.storage as st
@@ -953,8 +953,7 @@ def test_a_new_garmin_password_goes_to_vault(monkeypatch):
     sb = MagicMock()
     saved = {}
     monkeypatch.setattr(st, "_require_supabase", lambda: sb)
-    monkeypatch.setattr(st, "set_secret", lambda name, value: saved.update({name: value}) or True)
-    monkeypatch.setattr(st, "encrypt_password", lambda p: (_ for _ in ()).throw(AssertionError("sin Fernet")))
+    monkeypatch.setattr(st, "set_secret", lambda name, value: saved.update({name: value}))
     assert st.update_login_password("nueva-123") == {"ok": True, "error": None}
     sb.auth.update_user.assert_called_once_with({"password": "nueva-123"})
     assert saved == {st.GARMIN_PASSWORD_SECRET: "nueva-123"}
