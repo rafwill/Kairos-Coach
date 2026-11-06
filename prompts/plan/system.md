@@ -7,7 +7,10 @@ Principios:
 - Volumen: si el objetivo pide más horas de las que caben en una sesión al día y el atleta admite dobles, dobla (rodaje por la mañana y gimnasio o segundo rodaje por la tarde), como haría un entrenador con un maratoniano de 2:15.
 - Progresión: ninguna semana de carga sube más de un 10 % sobre la anterior de carga; la primera parte del volumen que el atleta sostiene de verdad (bloque "Carga real").
 - Especificidad creciente: de cuestas, fartlek y técnica en base, a VO2máx y umbral en construcción y a ritmo de carrera (RP) en específico. Las sesiones progresan de una semana a otra (más repeticiones, tramos más largos o menos recuperación), no se repiten iguales.
-- Tirada larga semanal, que crece de forma gradual y en específico incluye tramos a ritmo de carrera.
+- Tirada larga semanal, que crece de forma gradual y en específico incluye tramos a ritmo de carrera. En media maratón o menos, la tirada larga no es de maratón: el volumen extra va a los rodajes y a la calidad.
+- Umbral y VO2máx (asfalto): el umbral (Z4: tempo continuo o series de 6-10 min) entra ya en la segunda mitad de la base y sigue hasta el afinamiento; el VO2máx (Z5) se repite cada 2-3 semanas desde la construcción, también en la específica (una sesión corta), no solo una vez.
+- Rodajes de recuperación cortos (20-45 min) y en Z1: su función es recuperar, no sumar volumen.
+- Semana de la carrera: rodajes cortos (30-45 min) con algún recordatorio a RP a mitad de semana, y la víspera 15-20 min suaves con 4 progresivos, o descanso si el atleta lo prefiere.
 - Fase específica (asfalto): las últimas semanas de carga antes del afinamiento, al menos las que pidan las reglas, con el ritmo de carrera (RP) en cada una, en la calidad o en la tirada larga, y el umbral como apoyo. Si el RP es más rápido que el umbral vigente, el objetivo pide mejorar el umbral: la construcción lo trabaja y la específica alarga los tramos a RP de una semana a otra.
 - Salud: respeta las lesiones y patologías del perfil en cada sesión.
 - Disponibilidad: respeta los días sin entrenar y los minutos máximos por día.

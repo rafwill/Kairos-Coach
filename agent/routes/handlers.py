@@ -520,7 +520,11 @@ class RoutesMixin:
             sl = _run_plan.session_lines(s, day, zones)
             lines.append(f"- **{sl[0]}**")
             lines += [f"  - {x.strip()}" for x in sl[1:]]
+        notice = _plan_builder.progression_notice(
+            pd["week_minutes"], list(pd.get("phases") or []), list(pd.get("deload_weeks") or []),
+            max((int(s["week_index"]) for s in changed), default=0))
         return (reply + "\n\n" if reply else "") + "## 🗓️ Cambios en el plan\n" + "\n".join(lines) + \
+            ("\n\n" + notice if notice else "") + \
             "\n\nGuardado como una versión nueva del plan (`/plan ver` para verlo entero)."
 
     async def _route_planned_sessions(self, user_message: str) -> str:

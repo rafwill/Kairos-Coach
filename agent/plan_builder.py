@@ -47,6 +47,7 @@ AUTO_DAY_TYPES = {"easy", "recovery", "long"}  # días cuyo tramo continuo puede
 _STEP_NAMES = {"warmup": "Calentamiento", "cooldown": "Vuelta a la calma", "work": "Trabajo", "recovery": "Recuperación",
                "steady": "Continuo"}
 _HR_INTENSITY = {1: "recovery", 2: "endurance", 3: "tempo", 4: "threshold", 5: "vo2"}
+RECOVERY_MAX_MIN = 45.0  # rodaje de recuperación como mucho (06/11; Pfitzinger: 4-6 millas, 30-45 min)
 _RECOVERY_TITLE = re.compile(r"recupera|regenera")  # título de un rodaje de recuperación (sin tildes)
 
 
@@ -129,6 +130,15 @@ class PlanFrame:
         return 0.50 if self.trail else 0.40
 
     @property
+    def long_cap(self) -> float | None:
+        """Tirada larga máxima en asfalto (06/11): hasta 10 km, 110 min; hasta media maratón, 130 min (Pfitzinger, Faster
+        Road Racing: tiradas de ~14 millas en 10 km y ~16 en la media; Daniels: la larga no pasa de 2 h fuera del maratón). Trail y
+        maratón, sin tope (los limita la parte de la semana)."""
+        if self.trail or not self.distance_km or self.distance_km > 21.2:
+            return None
+        return 110.0 if self.distance_km <= 10.5 else 130.0
+
+    @property
     def long_step(self) -> float:
         """Minutos que puede crecer la tirada larga de una semana de carga a la siguiente: 30 en trail, 15 en asfalto."""
         return 30.0 if self.trail else 15.0
@@ -166,6 +176,34 @@ def weeks_until(start: date, race_date: date) -> int:
 
 # ─── Datos para el prompt ─────────────────────────────────────────────────────
 
+def predicted_pace(threshold: float, distance_km: float) -> float:
+    """Ritmo que da el umbral vigente para una distancia (06/11): el umbral es el ritmo de ~60 min y Riegel (exponente
+    1.06, el mismo con el que se fijó el umbral del 22/10) lo lleva a la duración de la carrera."""
+    pace = threshold
+    for _ in range(20):
+        pace = threshold * (distance_km * pace / 60 / 60) ** 0.06
+    return pace
+
+
+def goal_gap_lines(f: PlanFrame) -> list[str]:
+    """Lo que pide el objetivo frente a lo que da el umbral de hoy (06/11: el objetivo de Santa Pola, 3:56/km, es más
+    rápido que el umbral, 4:00, y el plan no lo sabía). Con más de un 2 % de diferencia, test a mitad de plan."""
+    if f.trail or not (f.race_pace and f.threshold_pace and f.distance_km):
+        return []
+    pred = predicted_pace(f.threshold_pace, f.distance_km)
+    gap = (pred - f.race_pace) / pred * 100
+    lines = [f"- Con el umbral de hoy, la predicción para {f.distance_km:.1f} km es {rp.fmt_pace(pred)}/km "
+             f"({rp.fmt_duration(pred * f.distance_km / 60)}); el objetivo pide {rp.fmt_pace(f.race_pace)}/km, "
+             + (f"un {gap:.1f} % más rápido" if gap > 0 else "a su alcance") + "."]
+    if f.race_pace < f.threshold_pace:
+        lines.append("- El RP es más rápido que el umbral: los tramos a RP son trabajo por encima del umbral; dosifícalos "
+                     "como tal (no más minutos a RP que los de una sesión de umbral).")
+    if gap > 2:
+        lines.append("- Programa un test (5 o 10 km a tope, en carrera o solo) al final de la construcción, con los días "
+                     "de antes suaves: el atleta actualizará su umbral y los ritmos del plan.")
+    return lines
+
+
 def frame_text(f: PlanFrame) -> str:
     """Bloque de datos del atleta para el LLM: todo lo que necesita, ya calculado (no hace cuentas)."""
     lines = ["## Carrera objetivo",
@@ -190,6 +228,7 @@ def frame_text(f: PlanFrame) -> str:
         if f.race_pace:
             fast, slow = p.race_range()
             lines.append(f"- RP (ritmo de carrera): {rp.fmt_pace(fast)}–{rp.fmt_pace(slow)}/km")
+            lines += goal_gap_lines(f)
     else:
         lines.append("Sin ritmo umbral en el perfil: usa solo zonas de FC.")
     if f.hr_zones:
@@ -271,7 +310,9 @@ def rules_text(f: PlanFrame) -> str:
              f"- La carrera (\"race\") solo el {rp._DAY_NAMES[f.race_date.isoweekday()].lower()} "
              f"{f.race_date.strftime('%d/%m/%Y')}; después, solo descanso o recuperación.",
              "- Un rodaje con \"auto\" dura al menos 20 min y menos que la tirada larga de la semana: si la semana "
-             "necesita más, añade un rodaje o alarga otras sesiones; si necesita menos, quita uno o pon sus minutos."]
+             "necesita más, añade un rodaje o alarga otras sesiones; si necesita menos, quita uno o pon sus minutos.",
+             f"- Un rodaje de recuperación dura como mucho {RECOVERY_MAX_MIN:.0f} min (con \"auto\", Kairos lo deja en ese "
+             "tope y pasa lo demás a los otros rodajes)."]
     lines += [f"- El {rp._DAY_NAMES[int(d)].lower()}, como mucho {cap} min." for d, cap in sorted(f.max_minutes_per_day.items())]
     if f.trail:
         a, b = (rp._DAY_NAMES[d].lower() for d in f.back_to_back_days)
@@ -363,6 +404,10 @@ def check_macro(macro: dict, f: PlanFrame) -> list[str]:
                           f"como poco {fixed:.0f} min.")
         if minutes > max(goal_min * 1.10, fixed):
             errors.append(f"Semana {n}: {minutes:.0f} min superan las horas disponibles ({goal_min:.0f} min + 10 %).")
+        if f.long_cap and long_min > f.long_cap and not (fixed_long and long_min <= fixed_long + 5):
+            errors.append(f"Semana {n}: la tirada larga ({long_min:.0f} min) pasa de {f.long_cap:.0f} min, lo más que "
+                          f"necesita una carrera de {f.distance_km:g} km; el volumen que falta va a los rodajes o a la "
+                          "calidad.")
         if long_min > minutes * f.long_share and not (fixed_long and long_min <= fixed_long + 5):
             errors.append(f"Semana {n}: la tirada larga ({long_min:.0f} min) supera el {f.long_share * 100:.0f} % de la "
                           f"semana ({minutes:.0f} min).")
@@ -395,6 +440,21 @@ def check_macro(macro: dict, f: PlanFrame) -> list[str]:
     return errors + (check_vert(weeks, f) if f.trail else [])
 
 
+def progression_notice(week_minutes: list, phases: list, deload_weeks: list, last_edited: int) -> str:
+    """Aviso tras una revisión (06/11): si la semana que sigue a la última que cambia sube más de un 10 % sobre lo que
+    queda, se dice y se propone replanificar. No se bloquea: una revisión puede bajar el volumen a propósito (molestia,
+    viaje), y la semana siguiente no la puede tocar (la revisión de hoy dejó la 2 en 365 min y la 3 seguía en 420)."""
+    n = last_edited + 1
+    if last_edited < 1 or n > len(week_minutes) or n > len(phases) or n in set(deload_weeks or []) or phases[n - 1] in ("taper", "race"):
+        return ""
+    before, after = float(week_minutes[last_edited - 1] or 0), float(week_minutes[n - 1] or 0)
+    if before <= 0 or after <= before * 1.10 + 1:
+        return ""
+    return (f"⚠️ La semana {n} ({after:.0f} min) sube un {(after / before - 1) * 100:.0f} % sobre la {last_edited} tal "
+            f"como queda ({before:.0f} min), y la progresión es de un 10 % como mucho. Si la bajada es puntual, puede "
+            "quedarse; si no, di «replanifica el plan» para rehacer la progresión desde el lunes.")
+
+
 def specific_weeks_needed(f: PlanFrame) -> int:
     """Semanas de carga de la fase específica que necesita una carrera de asfalto con ritmo de carrera (05/11).
 
@@ -408,6 +468,13 @@ def specific_weeks_needed(f: PlanFrame) -> int:
     return max(1, min(wanted, (f.weeks - 2) // 3))
 
 
+def build_weeks_needed(f: PlanFrame) -> int:
+    """Semanas de carga de construcción (06/11): 2 en un plan de asfalto con RP de 10 semanas o más. Con una sola, el
+    plan de Santa Pola pasaba del fartlek en Z3 a series en Z5b y umbral en Z4 la misma semana, y no volvía a haber
+    VO2. Plan corto, trail o sin RP: sin mínimo."""
+    return 2 if specific_weeks_needed(f) and f.weeks >= 10 else 0
+
+
 def phases_text(f: PlanFrame) -> str:
     """La regla de las fases para el prompt de la estructura, con el número de semanas específicas de este atleta."""
     text = "Las fases van en orden: base → build → specific → taper → race."
@@ -415,6 +482,9 @@ def phases_text(f: PlanFrame) -> str:
     if need:
         text += (f" La fase específica tiene al menos {need} semana(s) de carga (sin contar descargas), justo antes del "
                  "afinamiento, con el ritmo de carrera (RP) en cada una.")
+    if build_weeks_needed(f):
+        text += (f" La construcción tiene al menos {build_weeks_needed(f)} semanas de carga, y el umbral (Z4) entra ya en "
+                 "la segunda mitad de la base.")
     return text
 
 
@@ -431,6 +501,11 @@ def _check_phases(weeks: list[dict], f: PlanFrame) -> list[str]:
     if back is not None:
         errors.append(f"Semana {back + 1}: fase \"{phases[back]}\" después de \"{phases[back - 1]}\"; las fases van en orden "
                       f"({' → '.join(order)}).")
+    build = build_weeks_needed(f)
+    have_build = sum(1 for w, p in zip(weeks, phases) if p == "build" and not w.get("deload"))
+    if have_build < build:
+        errors.append(f"Construcción: {have_build} semana(s) de carga y el plan necesita al menos {build} (umbral y VO2 "
+                      "antes de la fase específica); acorta la base.")
     need = specific_weeks_needed(f)
     have = sum(1 for w, p in zip(weeks, phases) if p == "specific" and not w.get("deload"))
     if have < need:
@@ -762,11 +837,26 @@ def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_m
         longs = [float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions if s["session_type"] == "long_run"]
         # Un rodaje dura al menos 20 min y nunca tanto como la tirada larga de la semana (sin tirada: 90 min).
         high = (max(longs) if longs else 90.0) - 1
-        sizes = []
-        for s, share in zip(easy, shares):
-            each = pool * share / sum(shares)
-            others = float(s["structured_workout"]["summary"]["duration_min"]) - 1
-            sizes.append((s, each, each + others))
+        others = {id(s): float(s["structured_workout"]["summary"]["duration_min"]) - 1 for s in easy}
+        # 06/11: un regenerativo con "auto" se queda en su tope (45 min) y lo que le sobra va a los demás rodajes; antes
+        # salían regenerativos de 50-59 min (y 69 min en la semana de la carrera).
+        each_of: dict[int, float] = {}
+        free = list(zip(easy, shares))
+        left = pool
+        while free:
+            total_share = sum(sh for _, sh in free)
+            capped = [(s, sh) for s, sh in free if _is_recovery_run(s)
+                      and left * sh / total_share + others[id(s)] > RECOVERY_MAX_MIN
+                      and any(not _is_recovery_run(o) for o, _ in free)]
+            if not capped:
+                for s, sh in free:
+                    each_of[id(s)] = left * sh / total_share
+                break
+            for s, _ in capped:
+                each_of[id(s)] = max(1.0, RECOVERY_MAX_MIN - others[id(s)])
+                left -= each_of[id(s)]
+            free = [(s, sh) for s, sh in free if id(s) not in each_of]
+        sizes = [(s, each_of[id(s)], each_of[id(s)] + others[id(s)]) for s in easy]
         out_of_range = [(s, total) for s, each, total in sizes if each < 1 or not 20 <= total <= high]
         if pool < len(easy):  # ni 1 min por rodaje
             # 05/11: con lo demás ya por encima de la semana salía "durarían -98 min" y "dale más share"; el share no
@@ -910,6 +1000,12 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
     # un rodaje corto el domingo tras pasar la tirada al sábado, y la revisión fallaba los 4 intentos).
     recovery = [s for s in sessions if _is_recovery_run(s) and int(s.get("day_index") or 0) > past_days]
     easy = [s for s in sessions if s["session_type"] == "running_z2" and not _is_recovery_run(s)]
+    for s in recovery:
+        minutes = float(s["structured_workout"]["summary"]["duration_min"])
+        if minutes > RECOVERY_MAX_MIN + 0.5:
+            errors.append(f"Semana {n}: el rodaje de recuperación del {rp._DAY_NAMES[s['day_index']].lower()} dura "
+                          f"{minutes:.0f} min; una recuperación dura como mucho {RECOVERY_MAX_MIN:.0f} min: pon sus "
+                          "minutos y deja \"auto\" en los demás rodajes.")
     if recovery and easy:
         shortest = min(float(s["structured_workout"]["summary"]["duration_min"]) for s in easy)
         for s in recovery:

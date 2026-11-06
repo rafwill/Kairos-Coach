@@ -36,8 +36,8 @@ MACRO = {"title": "Plan hacia el 10K de Navidad", "rationale": "Base, construcci
     {"week": 2, "phase": "base", "deload": False, "minutes": 345, "long_min": 100, "focus": "cuestas"},
     {"week": 3, "phase": "build", "deload": False, "minutes": 370, "long_min": 110, "focus": "umbral"},
     {"week": 4, "phase": "build", "deload": True, "minutes": 290, "long_min": 80, "focus": "descarga"},
-    {"week": 5, "phase": "specific", "deload": False, "minutes": 395, "long_min": 120, "focus": "RP"},
-    {"week": 6, "phase": "specific", "deload": False, "minutes": 420, "long_min": 125, "focus": "RP"},
+    {"week": 5, "phase": "specific", "deload": False, "minutes": 395, "long_min": 110, "focus": "RP"},
+    {"week": 6, "phase": "specific", "deload": False, "minutes": 420, "long_min": 110, "focus": "RP"},
     {"week": 7, "phase": "taper", "deload": False, "minutes": 340, "long_min": 95, "focus": "afinamiento"},
     {"week": 8, "phase": "race", "deload": False, "minutes": 250, "long_min": 0, "focus": "carrera"},
 ]}
@@ -144,12 +144,12 @@ class TestAutoDurations:
         return {"week": w["week"], "days": [{"day": i, **d} for i, d in enumerate(days, 1)]}
 
     def test_week_and_long_run_match_the_structure(self):
-        w = MACRO["weeks"][4]  # 395 min, tirada 120
+        w = MACRO["weeks"][4]  # 395 min, tirada 110
         sessions, errors = pb.expand_week(self._auto_week(w), _frame(), w)
         assert errors == []
         total = sum(s["structured_workout"]["summary"]["duration_min"] for s in sessions)
         long = next(s for s in sessions if s["session_type"] == "long_run")["structured_workout"]
-        assert abs(total - 395) <= 1 and long["summary"]["duration_min"] == 120
+        assert abs(total - 395) <= 1 and long["summary"]["duration_min"] == 110
         assert not any(st.get("auto") for s in sessions for st in s["structured_workout"].get("steps") or [])
         assert pb.check_week(5, sessions, w, _frame()) == []
 
@@ -164,7 +164,7 @@ class TestAutoDurations:
 
     def test_share_gives_each_run_its_part(self):
         # 05/11: sin "share", los rodajes "auto" de una semana salían todos iguales (tres de 47 min en la semana 2).
-        w = MACRO["weeks"][4]
+        w = {**MACRO["weeks"][4], "minutes": 340}  # sin llegar al tope del regenerativo
         week = self._auto_week(w)
         week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.5, "zone": "Z1"},
@@ -176,6 +176,24 @@ class TestAutoDurations:
         assert abs(steady[3] - steady[6] / 2) <= 1
         total = sum(s["structured_workout"]["summary"]["duration_min"] for s in sessions)
         assert abs(total - w["minutes"]) <= 2
+
+    def test_an_auto_recovery_run_stops_at_its_cap_and_the_rest_goes_to_the_other_runs(self):
+        # 06/11: el reparto dejaba regenerativos de 50-59 min (69 en la semana de la carrera).
+        w = MACRO["weeks"][4]
+        week = self._auto_week(w)
+        week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.8, "zone": "Z1"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        sessions, errors = pb.expand_week(week, _frame(), w)
+        assert errors == []
+        minutes = {s["day_index"]: s["structured_workout"]["summary"]["duration_min"] for s in sessions}
+        assert minutes[3] == pb.RECOVERY_MAX_MIN and minutes[6] > pb.RECOVERY_MAX_MIN
+        assert abs(sum(minutes.values()) - w["minutes"]) <= 2
+        assert pb.check_week(5, sessions, w, _frame()) == []
+        # Con sus minutos puestos a mano, más del tope vuelve al LLM.
+        week["days"][2]["steps"][1] = {"kind": "steady", "min": 40, "zone": "Z1"}
+        sessions, _ = pb.expand_week(week, _frame(), w)
+        assert any("como mucho 45 min" in e for e in pb.check_week(5, sessions, w, _frame()))
 
     def test_share_is_checked(self):
         f = _frame()
@@ -575,3 +593,45 @@ class TestNoRoomForRuns:
         _, errors = pb.expand_week(week, _frame(), w)
         assert any("las demás sesiones ya suman" in e and "no queda sitio" in e for e in errors)
         assert not any("share" in e for e in errors)
+
+
+class TestHalfMarathonPlanning:
+    """06/11: revisión del plan de Santa Pola (media, 12 semanas, objetivo 1:22:59 con umbral 4:00)."""
+
+    def _half(self, **kw):
+        return _frame(**{"weeks": 12, "race": "Media de Santa Pola", "distance_km": 21.0975, "target_time": "1:22:59",
+                         "threshold_pace": 240.0, "race_pace": 236.0, "weekly_hours": 10.0,
+                         "recent_weekly_minutes": 360.0, "race_date": START + timedelta(weeks=11, days=6), **kw})
+
+    def test_long_run_cap_by_distance(self):
+        assert self._half().long_cap == 130.0 and _frame().long_cap == 110.0
+        assert _frame(distance_km=42.195).long_cap is None and _frame(trail=True).long_cap is None
+        weeks = [dict(w) for w in MACRO["weeks"]]
+        weeks[5]["long_min"] = 120
+        errors = pb.check_macro({"title": "x", "weeks": weeks}, _frame())
+        assert any("pasa de 110 min" in e for e in errors)
+
+    def test_a_long_plan_needs_two_build_weeks(self):
+        phases = ["base"] * 5 + ["build"] + ["specific"] * 4 + ["taper", "race"]
+        weeks = [{"week": i + 1, "phase": p, "deload": i + 1 in (5, 9)} for i, p in enumerate(phases)]
+        assert any("Construcción: 1 semana(s)" in e for e in pb._check_phases(weeks, self._half()))
+        phases = ["base"] * 4 + ["build"] * 2 + ["specific"] * 4 + ["taper", "race"]
+        weeks = [{"week": i + 1, "phase": p, "deload": i + 1 in (4, 9)} for i, p in enumerate(phases)]
+        assert pb._check_phases(weeks, self._half()) == []
+        assert pb.build_weeks_needed(_frame()) == 0  # 8 semanas: sin mínimo
+
+    def test_the_llm_sees_what_the_goal_asks_against_todays_threshold(self):
+        text = "\n".join(pb.goal_gap_lines(self._half()))
+        assert "la predicción para 21.1 km es 4:05/km (1:26:15)" in text and "un 3.8 % más rápido" in text
+        assert "más rápido que el umbral" in text and "Programa un test" in text
+        assert pb.goal_gap_lines(self._half(race_pace=246.0)) == [
+            "- Con el umbral de hoy, la predicción para 21.1 km es 4:05/km (1:26:15); el objetivo pide 4:06/km, "
+            "a su alcance."]
+
+    def test_a_revision_that_leaves_a_jump_says_so(self):
+        phases = ["base"] * 5 + ["build"] + ["specific"] * 4 + ["taper", "race"]
+        minutes = [365, 365, 420, 451, 375, 410, 450, 490, 406, 461, 331, 210]
+        assert "La semana 3 (420 min) sube un 15 %" in pb.progression_notice(minutes, phases, [5, 9], 2)
+        assert pb.progression_notice(minutes, phases, [5, 9], 3) == ""  # +7 %
+        assert pb.progression_notice(minutes, phases, [5, 9], 4) == ""  # la 5 es descarga
+        assert pb.progression_notice(minutes, phases, [5, 9], 0) == ""
