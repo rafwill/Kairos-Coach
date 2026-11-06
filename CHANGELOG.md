@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-06
 
+### Added (secretos de cada atleta en Supabase Vault; decisión del usuario)
+- Antes: la clave del proveedor de IA vivía en el `.env` de cada ordenador ("nunca en la base de datos") y la contraseña de Garmin, cifrada con Fernet en `app_user.credentials` con la `ENCRYPTION_KEY` de cada ordenador. Cada ordenador nuevo pedía otra vez la clave y, con otra `ENCRYPTION_KEY`, la contraseña; y el servidor web (`docs/web.md`, hasta 5 atletas) no tenía dónde guardarlas.
+- Ahora: cifradas en Supabase Vault (la clave de cifrado la gestiona Supabase; no está en ningún disco), con `kairos_set_secret`/`kairos_get_secret` en `schema.sql`, que solo dejan guardar y leer los secretos del atleta con sesión (`kairos:<app_user_id>:<nombre>`, sin `service_role`). `storage.get_secret`/`set_secret`; `main`: Vault primero, y lo que un ordenador tenía (clave en `.env`, contraseña con Fernet) se sube a Vault al entrar. La clave nueva de `/proveedor` va a Vault y no al `.env`. Sin `schema.sql` aplicado, todo sigue como antes (respaldo). `check_rls` comprueba que sin sesión no se leen y qué secretos hay guardados.
+- Regla de CLAUDE.md cambiada: de "la clave en `.env`, nunca en la base de datos" a "secretos de cada atleta cifrados en Vault, accesibles solo con su sesión; nunca en texto claro ni con `service_role`".
+- Lección: un secreto por ordenador no escala ni a dos ordenadores ni a un servidor; cifrarlo en la base de datos con acceso por sesión mantiene el mismo modelo de seguridad que el RLS.
+
 ### Release v3.1.0-rc.1 — Entrenador en uso real
 - Candidata de la 3.1 con los 39 commits desde la v3.0.0: eventos fijos y sesiones que se mueven desde el chat, «replanifica», aviso de plan que ya no encaja, otros deportes, trail, límites de sesión por distancia y objetivo frente a umbral, Body Battery al despertar, motor diario guiado por la HRV, bici opcional en descanso, dos modelos de IA y el arreglo de los mensajes de sistema para Gemini. Notas de la release en GitHub (pre-release). `pyproject.toml` pasa a 3.1.0rc1. La v3.1.0 final, tras validar el replanificado completo y la batería de 25 preguntas.
 

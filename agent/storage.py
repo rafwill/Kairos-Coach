@@ -313,6 +313,35 @@ def decrypt_password(encrypted: str) -> str | None:
         return None
 
 
+# ─── Secretos del atleta en Supabase Vault (06/11) ─────────────────────────────
+# La clave del proveedor de IA y la contraseña de Garmin, cifradas por Supabase y accesibles solo con la sesión del
+# atleta (funciones kairos_set_secret/kairos_get_secret de schema.sql). Así el .env de cada ordenador (y el del
+# servidor web) no guarda secretos del atleta. Sin sesión o sin las funciones, None/False: se sigue como antes.
+LLM_KEY_SECRET = "llm_api_key"
+GARMIN_PASSWORD_SECRET = "garmin_password"
+
+
+def get_secret(name: str) -> str | None:
+    """Secreto del atleta con sesión, o None (no lo tiene, sin sesión o falta schema.sql en Supabase)."""
+    try:
+        res = _require_supabase().rpc("kairos_get_secret", {"secret_name": name}).execute()
+    except Exception as exc:  # noqa: BLE001 — sin Vault se sigue con el .env, como antes
+        log.warning("Vault: no se pudo leer %s: %s", name, exc)
+        return None
+    value = res.data if isinstance(res.data, str) else None
+    return value or None
+
+
+def set_secret(name: str, value: str) -> bool:
+    """Guarda (o, con valor vacío, borra) un secreto del atleta con sesión. False si no se pudo."""
+    try:
+        _require_supabase().rpc("kairos_set_secret", {"secret_name": name, "secret_value": value}).execute()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Vault: no se pudo guardar %s: %s", name, exc)
+        return False
+    return True
+
+
 # ─── Sesión de Supabase Auth ───────────────────────────────────────────────────
 # Cada usuario de Kairos tiene una cuenta de Supabase Auth (email + la misma contraseña que en
 # Garmin Connect). Con sesión, las consultas llevan su token y las políticas RLS de

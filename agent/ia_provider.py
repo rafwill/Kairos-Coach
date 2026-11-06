@@ -4,7 +4,8 @@ agent/ia_provider.py — el proveedor de IA del atleta (26/10).
 Cada atleta dice cuál es su proveedor; Kairos no ofrece un menú cerrado. Si lo conoce (KNOWN), rellena la URL
 de su API compatible con OpenAI y propone un modelo; si no, el atleta da la URL y el modelo. La configuración
 (proveedor, URL, modelo y modelo del chat) y el consumo diario de tokens van en la tabla `ia_provider`; la clave,
-siempre en el .env del ordenador, en `PROVIDER_API_KEY` (con un comentario que dice de qué proveedor es).
+en Supabase Vault (06/11; la de todos los ordenadores y la web), y mientras Kairos está abierto en `PROVIDER_API_KEY`
+del entorno. Sin Vault, en el .env del ordenador (con un comentario que dice de qué proveedor es).
 
 Dos modelos (30/10): `model` crea los planes y escribe la recomendación del arranque; `chat_model` (vacío = el
 mismo) responde en el chat y releva a `model` si este da 429 o 503.

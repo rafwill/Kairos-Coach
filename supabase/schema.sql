@@ -97,6 +97,57 @@ revoke all on function kairos_claim_app_user() from public, anon;
 grant execute on function kairos_app_user_id() to authenticated;
 grant execute on function kairos_claim_app_user() to authenticated;
 
+-- ─── Secretos del atleta en Supabase Vault (06/11) ───────────────────────────
+-- La clave de su proveedor de IA y su contraseña de Garmin, cifradas por Supabase (la clave de cifrado no está en
+-- ningún disco). Cada secreto se llama 'kairos:<app_user_id>:<nombre>' y estas funciones solo dejan guardar y leer
+-- los del atleta con sesión: sin service_role, como el RLS. Vault viene activado en los proyectos de Supabase.
+create extension if not exists supabase_vault;
+
+create or replace function kairos_set_secret(secret_name text, secret_value text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    uid      text := public.kairos_app_user_id();
+    full_name text;
+    existing uuid;
+begin
+    if uid is null then
+        raise exception 'kairos_set_secret: sin sesión';
+    end if;
+    if secret_name !~ '^[a-z0-9_]{1,40}$' then
+        raise exception 'kairos_set_secret: nombre no válido';
+    end if;
+    full_name := 'kairos:' || uid || ':' || secret_name;
+    select id into existing from vault.secrets where name = full_name;
+    if coalesce(secret_value, '') = '' then
+        delete from vault.secrets where id = existing;
+    elsif existing is null then
+        perform vault.create_secret(secret_value, full_name, 'Kairos: secreto de un atleta');
+    else
+        perform vault.update_secret(existing, secret_value);
+    end if;
+end;
+$$;
+
+create or replace function kairos_get_secret(secret_name text)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+    select decrypted_secret from vault.decrypted_secrets
+     where name = 'kairos:' || public.kairos_app_user_id() || ':' || secret_name
+$$;
+
+revoke all on function kairos_set_secret(text, text) from public, anon;
+revoke all on function kairos_get_secret(text) from public, anon;
+grant execute on function kairos_set_secret(text, text) to authenticated;
+grant execute on function kairos_get_secret(text) to authenticated;
+
 -- ─── user_profile ───────────────────────────────────────────────────────────
 create table if not exists user_profile (
     app_user_id text        primary key references app_user(id) on delete cascade,
