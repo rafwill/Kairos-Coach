@@ -383,6 +383,10 @@ class TestTheLLMRevisesThePlan:
         new, reply, errors, _ = await agent._revise_plan_with_llm("Me molesta el gemelo", plan, sessions, {})
         assert errors == [] and "gemelo" in reply
         assert any("solo puedes cambiar las semanas [1, 2]" in m[-1]["content"] for m in llm.calls)
+        # 06/11: cada día que puede cambiar lleva su fecha; "mañana sábado" se confundía con el de la semana siguiente.
+        asked = next(m[-1]["content"] for m in llm.calls if "Fecha de cada día" in m[-1]["content"])
+        tomorrow = date.today() + timedelta(days=1)
+        assert f"{tomorrow.strftime('%d/%m')} (mañana)" in asked and "(hoy)" in asked
         # El texto para el atleta se escribe con los días guardados, ya calculados.
         assert "Rodaje suave por molestia · 0:50:00" in llm.calls[-1][-1]["content"]
         before = {(s["week_index"], s["day_index"]): s for s in sessions}
@@ -555,6 +559,9 @@ class TestRecoveryIsShorter:
         sessions, errors = pb.expand_week({"week": 3, "days": days}, _frame(), w)
         assert errors == []
         assert any("la recuperación es más corta" in e for e in pb.check_week(3, sessions, w, _frame()))
+        # 06/11: en una revisión, una recuperación ya pasada no la puede cambiar nadie y no cuenta.
+        assert not any("recuperación" in e for e in pb.check_week(3, sessions, w, _frame(), past_days=6))
+        assert any("la recuperación es más corta" in e for e in pb.check_week(3, sessions, w, _frame(), past_days=5))
         days[5]["steps"][1]["min"] = minutes - 35
         sessions, _ = pb.expand_week({"week": 3, "days": days}, _frame(), w)
         assert not any("recuperación" in e for e in pb.check_week(3, sessions, w, _frame()))

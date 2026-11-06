@@ -906,7 +906,9 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
                           f"Quita al menos {excess} min intensos (p. ej. el {rp._DAY_NAMES[top['day_index']].lower()}: "
                           f"{hard_minutes(top):.0f} → {hard_minutes(top) - excess:.0f} min) o pásalos a Z2.")
     # Recuperación (05/11): más corta que los demás rodajes de la semana; con "share" 1, salían todos iguales.
-    recovery = [s for s in sessions if _is_recovery_run(s)]
+    # En una revisión, una recuperación ya pasada no cuenta (06/11: el regenerativo del jueves, hecho, bloqueaba
+    # un rodaje corto el domingo tras pasar la tirada al sábado, y la revisión fallaba los 4 intentos).
+    recovery = [s for s in sessions if _is_recovery_run(s) and int(s.get("day_index") or 0) > past_days]
     easy = [s for s in sessions if s["session_type"] == "running_z2" and not _is_recovery_run(s)]
     if recovery and easy:
         shortest = min(float(s["structured_workout"]["summary"]["duration_min"]) for s in easy)

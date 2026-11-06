@@ -367,8 +367,14 @@ class PlanLLMMixin:
         first_day = {w: (today.isoweekday() if w == current else 1) for w in editable}
         dias = json.dumps([{"week": w, "days": [d for d in _pb.compact_week(sessions, w) if int(d.get("day") or 0) >= first_day[w]]}
                            for w in editable], ensure_ascii=False)
+        # 06/11: con "semana 1, día 6" a secas, "mañana sábado" se confundía con el sábado de la semana siguiente.
+        calendario = "; ".join(
+            f"semana {w} día {d} = {_run_plan._DAY_NAMES[d].lower()} {(f.start + timedelta(days=7 * (w - 1) + d - 1)).strftime('%d/%m')}"
+            + (" (hoy)" if f.start + timedelta(days=7 * (w - 1) + d - 1) == today else "")
+            + (" (mañana)" if f.start + timedelta(days=7 * (w - 1) + d - 1) == today + timedelta(days=1) else "")
+            for w in editable for d in range(first_day[w], 8))
         messages = [self._plan_system_message(), {"role": "user", "content": _render_prompt(
-            "plan/revision", datos=_pb.frame_text(f), estructura=_pb.macro_text(macro),
+            "plan/revision", datos=_pb.frame_text(f), estructura=_pb.macro_text(macro), calendario=calendario,
             hoy=f"{_run_plan._DAY_NAMES[today.isoweekday()]} {today.strftime('%d/%m/%Y')} (semana {current} del plan)",
             realizado=await self._executed_vs_planned(sessions, f.start), dias=dias, mensaje=user_message,
             trail=_trail_prompt("plan/weeks_trail", f))}]

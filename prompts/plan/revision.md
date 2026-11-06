@@ -6,7 +6,9 @@ Estructura del plan:
 
 {{estructura}}
 
-Hoy es {{hoy}}. Lo que ha hecho el atleta los últimos 7 días frente a lo planificado:
+Hoy es {{hoy}}. Fecha de cada día que puedes cambiar ("mañana", "el sábado"… son estos, no los de otra semana): {{calendario}}.
+
+Lo que ha hecho el atleta los últimos 7 días frente a lo planificado:
 
 {{realizado}}
 

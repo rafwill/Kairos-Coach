@@ -37,6 +37,8 @@ class ToolRouter:
             return "config_options"
         if _is_plan_event_intent(user_message, history):
             return "plan_event"
+        if _is_session_change_intent(user_message) and _has_goal_in_profile(profile):
+            return "planning"
         if _is_plan_status_intent(user_message):
             return "plan_status"
         if _planned_days(user_message) is not None:
@@ -112,6 +114,31 @@ def _is_plan_event_intent(user_message: str, history: list[dict] | None = None) 
         return False
     return any(w in text for w in _EVENT_WORDS) or (
         any(re.search(rf"\b{w}\b", text) for w in _EVENT_WEAK_WORDS) and bool(_EVENT_COMMIT.search(text)))
+
+
+# Mover o cambiar una sesión del plan sin decir "plan" (06/11: "¿Podría cambiar la tirada larga del domingo a mañana
+# sábado?" fue al chat libre, que no cambió nada y lo confundió con la salida a la sierra del 14).
+_SESSION_CHANGE_VERB = re.compile(
+    r"\b(cambi\w*|intercambi\w*|acort\w*|alarg\w*|quit\w*|en vez del?|en lugar del?)\b")
+# Mover, pasar, adelantar o retrasar solo con destino ("al jueves", "a mañana"): "¿qué pasa si…?" no es un cambio.
+_SESSION_MOVE = re.compile(
+    r"\b(mov\w*|muev\w*|pas\w*|adelant\w*|retras\w*)\b.*\b(al|a|para el|para)\s+(?:el\s+)?(lunes|martes|mi[eé]rcoles|"
+    r"jueves|viernes|s[aá]bado|domingo|ma[ñn]ana|hoy|pasado ma[ñn]ana|otro d[ií]a|d[ií]a\s+\d{1,2})\b")
+_SESSION_NOUN = re.compile(
+    r"\b(tirada|rodaje|series|fartlek|tempo|cuestas|intervalos|sesi[oó]n|entreno|entrenamiento|fuerza|descanso|"
+    r"calidad|trote)\b")
+_SESSION_DAY_CUE = re.compile(r"\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|ma[ñn]ana|hoy|"
+                              r"fin de semana|(?:el|del|al|d[ií]a)\s+\d{1,2})\b")
+_SESSION_PAST = re.compile(r"\b(hice|hiciste|entren[eé]|corr[ií]|cambi[eé]|mov[ií]|pas[eé])\b")
+
+
+def _is_session_change_intent(user_message: str) -> bool:
+    """Petición de mover o cambiar una sesión concreta del plan: verbo de cambio, sesión y día."""
+    text = (user_message or "").strip().lower()
+    if not text or text.startswith("/") or _SESSION_PAST.search(text):
+        return False
+    changes = _SESSION_CHANGE_VERB.search(text) or _SESSION_MOVE.search(text)
+    return bool(changes and _SESSION_NOUN.search(text) and _SESSION_DAY_CUE.search(text))
 
 
 _PLAN_VIEW = re.compile(r"\b(ver|veo|muestra|muéstrame|muestrame|enseña|enséñame|ensename|lista|listar|listame|lístame)\b")
