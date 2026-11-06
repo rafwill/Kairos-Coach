@@ -628,6 +628,21 @@ class TestHalfMarathonPlanning:
             "- Con el umbral de hoy, la predicción para 21.1 km es 4:05/km (1:26:15); el objetivo pide 4:06/km, "
             "a su alcance."]
 
+    def test_race_week_runs_are_all_short_and_the_recovery_rule_does_not_apply(self):
+        # 06/11: con la activación de 20 min la víspera, la regla pedía un regenerativo de menos de 20 min.
+        f = _frame()
+        days = [{"day": 3, "type": "recovery", "title": "Rodaje regenerativo", "steps": [
+                    {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": 25, "zone": "Z1"},
+                    {"kind": "cooldown", "min": 5, "zone": "Z1"}]},
+                {"day": 6, "type": "easy", "title": "Activación", "steps": [
+                    {"kind": "warmup", "min": 5, "zone": "Z1"}, {"kind": "steady", "min": 10, "zone": "Z2"},
+                    {"kind": "cooldown", "min": 5, "zone": "Z1"}]}]
+        days += [{"day": d, "type": "rest"} for d in (1, 2, 4, 5, 7)]
+        sessions = [pb.expand_day(d, f, f.race_week)[0] for d in days]
+        rule = "la recuperación es más corta"
+        assert not [e for e in pb.check_week(f.race_week, sessions, {}, f) if rule in e]
+        assert any(rule in e for e in pb.check_week(f.race_week - 2, sessions, {}, f))
+
     def test_a_revision_that_leaves_a_jump_says_so(self):
         phases = ["base"] * 5 + ["build"] + ["specific"] * 4 + ["taper", "race"]
         minutes = [365, 365, 420, 451, 375, 410, 450, 490, 406, 461, 331, 210]

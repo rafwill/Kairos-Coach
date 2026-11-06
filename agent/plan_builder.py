@@ -1006,7 +1006,8 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
             errors.append(f"Semana {n}: el rodaje de recuperación del {rp._DAY_NAMES[s['day_index']].lower()} dura "
                           f"{minutes:.0f} min; una recuperación dura como mucho {RECOVERY_MAX_MIN:.0f} min: pon sus "
                           "minutos y deja \"auto\" en los demás rodajes.")
-    if recovery and easy:
+    # La semana de la carrera no: sus rodajes son todos cortos (activación de 15-20 min la víspera, 06/11).
+    if recovery and easy and n != f.race_week:
         shortest = min(float(s["structured_workout"]["summary"]["duration_min"]) for s in easy)
         for s in recovery:
             minutes = float(s["structured_workout"]["summary"]["duration_min"])
@@ -1052,7 +1053,8 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
         if len(longs) != 1 and not back_to_back:
             errors.append(f"Semana {n}: debe tener una tirada larga (\"long\")"
                           + (" (dos seguidas solo en la fase específica)." if f.trail and len(longs) > 1 else "."))
-        elif abs(float(longs[0]["structured_workout"]["summary"]["duration_min"]) - long_min) > max(10.0, long_min * 0.15):
+        # Un evento fijo como tirada (la salida a la sierra, 06/11) dura lo que dijo el atleta, no lo de la estructura.
+        elif not _pe.event_id(longs[0]) and                 abs(float(longs[0]["structured_workout"]["summary"]["duration_min"]) - long_min) > max(10.0, long_min * 0.15):
             got = float(longs[0]["structured_workout"]["summary"]["duration_min"])
             errors.append(f"Semana {n}: la tirada larga dura {got:.0f} min y la estructura dice {long_min:.0f} min; "
                           f"{'quita' if got > long_min else 'añade'} unos {abs(got - long_min):.0f} min.")

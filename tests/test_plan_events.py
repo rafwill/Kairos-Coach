@@ -179,6 +179,17 @@ class TestCheckWeek:
                                                                       {"minutes": 0}, _frame(max_quality=1)))
 
 
+    def test_a_fixed_long_run_lasts_what_the_athlete_said_not_what_the_structure_says(self):
+        # 06/11: al replanificar, la estructura daba 100 min de tirada y la salida a la sierra dura 120; el código pedía
+        # "quita unos 20 min" a un evento fijo.
+        f = _frame([_session_event(duration_min=120)])
+        planned = {"minutes": 0, "long_min": 100}
+        fixed = _week(f, _day(6, "long", 120, event="e1"))
+        assert not [e for e in pb.check_week(1, fixed, planned, f) if "la tirada larga dura" in e]
+        loose = _week(f, _day(6, "long", 120))
+        assert any("la tirada larga dura 120 min y la estructura dice 100" in e for e in pb.check_week(1, loose, planned, f))
+
+
 class TestStructure:
     def _macro(self, minutes: float) -> dict:
         weeks = [{"week": w, "phase": "base", "minutes": 100 if w > 1 else minutes, "long_min": 40} for w in range(1, 9)]
