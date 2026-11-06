@@ -172,7 +172,8 @@ create table if not exists athlete_knowledge (
 
 -- ─── ia_provider (26/10) ────────────────────────────────────────────────────
 -- Proveedor de IA de cada atleta: el que él diga (URL compatible con OpenAI y modelo) y su consumo diario de
--- tokens (fecha ISO → tokens, últimos 90 días). La clave NUNCA va aquí: está en el .env de cada ordenador.
+-- tokens (fecha ISO → tokens, últimos 90 días). La clave NUNCA va aquí: está cifrada en Supabase Vault
+-- (kairos_set_secret, 06/11) o, sin Vault, en el .env de cada ordenador.
 -- Sustituye a gemini_usage (consumo por clave de los 5 proveedores de prueba), que se elimina.
 create table if not exists ia_provider (
     app_user_id  text        primary key references app_user(id) on delete cascade,
