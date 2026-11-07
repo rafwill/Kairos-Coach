@@ -353,6 +353,12 @@ class TestTheLLMBuildsThePlan:
         assert _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 8}}) == []
         md = _plan_detail_markdown(plan, sessions, {}, weeks=[1])
         assert "| Enfoque |" in md and "Fartlek 5×(3'/2')" in md
+        # 07/11: una semana sin calidad (p. ej. la de un evento fijo) y calidades con el mismo principio en las notas
+        # no tumban un plan del LLM que ya pasó las reglas de plan_builder.
+        no_quality = [dict(s, session_type="running_z2") if s["week_index"] == 1 and s["session_type"] == "running_quality"
+                      else dict(s, notes="Calentamiento 15' Z1 · " + "x" * 80) if s["session_type"] == "running_quality"
+                      else s for s in sessions]
+        assert _validate_structured_plan(plan, no_quality, {"goals": {"weekly_training_hours": 8}}) == []
 
     @pytest.mark.asyncio
     async def test_progression_is_checked_on_what_the_days_really_add_up_to(self, monkeypatch):

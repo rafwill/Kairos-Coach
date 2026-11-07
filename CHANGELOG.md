@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-07
+
+### Fixed (replanificar: el validador antiguo tumbaba un plan del LLM que ya cumplía las reglas)
+- Problema: el primer «Replanifica el plan» del 07/11 acabó en "No he replanificado" con `[PLAN] construcción … fallos=0`: el LLM cumplió todas las reglas de `plan_builder` y después `_validate_structured_plan` (el validador del motor determinista, sin vuelta al LLM) lo rechazó por dos reglas suyas: "al menos 1 sesión de calidad" en la semana 1 (la de la salida a la sierra, evento fijo que no cuenta como calidad) y "falta variedad" (comparaba los primeros 80 caracteres de las notas, que en los planes del LLM empiezan todas por "Calentamiento…").
+- Ahora: en un plan del LLM esas dos reglas no se aplican; el reparto de la calidad lo decide el entrenador y `plan_builder` comprueba el máximo, la separación y la variedad (`check_quality_variety`, con las notas enteras). Los planes del motor determinista siguen igual. Test en `test_plan_llm`.
+- Comprobado en vivo: el segundo intento guardó la versión 12 del plan de Santa Pola (`llm_replan`, 6 peticiones, 5 min 45 s) con la sierra el 14/11 y el rodaje suave del 15, tiradas ≤ 125', regenerativos ≤ 44', construcción en las semanas 4 y 6, test de 5 km el 12/12 y ritmo de carrera progresivo en la fase específica.
+- Lección: dos validadores con reglas de entrenador distintas y solo uno con vuelta al LLM gastan las peticiones del día en un plan que se tira; las reglas de un plan del LLM viven en un solo sitio.
+
 ## 2026-11-06
 
 ### Added (secretos de cada atleta en Supabase Vault; decisión del usuario)

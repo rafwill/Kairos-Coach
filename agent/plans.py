@@ -1512,7 +1512,10 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
             # descarga: una sola sesión de calidad (el LLM puede quitarla del todo)
             min_quality_sessions = 0 if (plan.get("plan_data") or {}).get("author") == "llm" else 1
         elif (plan.get("plan_data") or {}).get("author") == "llm":
-            min_quality_sessions = 1  # plan del LLM: el reparto de la calidad lo decide el entrenador
+            # Plan del LLM: el reparto de la calidad lo decide el entrenador y plan_builder comprueba el máximo y la
+            # separación (07/11: una semana con un evento fijo, que no cuenta como calidad, tumbaba el replanificado
+            # después de que el LLM cumpliera todas las reglas).
+            min_quality_sessions = 0
         if len(quality_days) > max_quality_sessions:
             errors.append(f"La semana {wi} excede el máximo de sesiones de calidad ({max_quality_sessions}).")
             break
@@ -1541,7 +1544,9 @@ def _validate_structured_plan(plan: dict, sessions: list[dict], profile: dict) -
         if len(set(weekly_totals)) <= 2 and len(weekly_totals) >= 6:
             errors.append("El plan es demasiado plano: falta progresión/descarga semanal visible.")
 
-    if len(quality_signatures) < min(4, max(2, duration_weeks // 3)):
+    # Plan del LLM: la variedad la comprueba plan_builder.check_quality_variety con las notas enteras (07/11: aquí solo
+    # se miraban 80 caracteres, que empiezan igual en todas, y tumbaba planes válidos).
+    if plan_data.get("author") != "llm" and len(quality_signatures) < min(4, max(2, duration_weeks // 3)):
         errors.append("Las sesiones de calidad se repiten demasiado; falta variedad específica por fases.")
 
     return errors
