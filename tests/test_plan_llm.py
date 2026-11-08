@@ -164,7 +164,7 @@ class TestAutoDurations:
 
     def test_share_gives_each_run_its_part(self):
         # 05/11: sin "share", los rodajes "auto" de una semana salían todos iguales (tres de 47 min en la semana 2).
-        w = {**MACRO["weeks"][4], "minutes": 340}  # sin llegar al tope del regenerativo
+        w = {**MACRO["weeks"][4], "minutes": 360}  # el regenerativo, entre su mínimo y su tope (40-45 min)
         week = self._auto_week(w)
         week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.5, "zone": "Z1"},
@@ -195,6 +195,32 @@ class TestAutoDurations:
         sessions, _ = pb.expand_week(week, _frame(), w)
         assert any("como mucho 45 min" in e for e in pb.check_week(5, sessions, w, _frame()))
 
+    def test_a_recovery_run_lasts_at_least_40_minutes(self):
+        # 07/11 (decisión del usuario): un regenerativo de 26' en un plan de media en 1:23 "es ridículo".
+        w = {**MACRO["weeks"][4], "minutes": 340}
+        week = self._auto_week(w)
+        week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.3, "zone": "Z1"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        sessions, errors = pb.expand_week(week, _frame(), w)
+        assert errors == []
+        minutes = {s["day_index"]: s["structured_workout"]["summary"]["duration_min"] for s in sessions}
+        assert minutes[3] == pb.RECOVERY_MIN_MIN and minutes[6] > pb.RECOVERY_MIN_MIN
+        assert pb.check_week(5, sessions, w, _frame()) == []
+        # Con sus minutos puestos a mano, menos del mínimo vuelve al LLM; en la semana de la carrera, no.
+        week["days"][2]["steps"][1] = {"kind": "steady", "min": 15, "zone": "Z1"}
+        sessions, _ = pb.expand_week(week, _frame(), w)
+        assert any("al menos 40 min" in e for e in pb.check_week(5, sessions, w, _frame()))
+        assert not any("al menos 40 min" in e for e in pb.check_week(5, sessions, w, _frame(weeks=5, race_date=START + timedelta(weeks=4, days=6))))
+        # Sin minutos para un regenerativo de 40 y rodajes más largos: descanso en uno, no "dale menos share".
+        w = {**MACRO["weeks"][4], "minutes": 320}
+        week = self._auto_week(w)
+        week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.3, "zone": "Z1"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        _, errors = pb.expand_week(week, _frame(), w)
+        assert any("no da para tantos rodajes" in e for e in errors)
+
     def test_share_is_checked(self):
         f = _frame()
         _, errors = pb.expand_day({"day": 3, "type": "easy", "title": "Rodaje", "steps": [
@@ -205,6 +231,60 @@ class TestAutoDurations:
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0, "zone": "Z2"},
             {"kind": "cooldown", "min": 5, "zone": "Z1"}]}, f, 1)
         assert any("mayor que 0" in e for e in errors)
+
+
+class TestKeySessions:
+    """07/11 (decisiones del usuario): VO2máx cada 2-3 semanas de carga y, en media, una sesión con 12 km a RP."""
+
+    PHASES = ["base", "base", "base", "build", "build", "build", "specific", "specific", "specific", "specific",
+              "taper", "race"]  # las del plan de Santa Pola replanificado el 07/11
+
+    def _half(self):
+        return _frame(weeks=12, race="Media de Santa Pola", race_date=START + timedelta(weeks=11, days=6),
+                      distance_km=21.0975, target_time="1:22:59", threshold_pace=240.0, race_pace=236.0)
+
+    def _weeks(self):
+        return [{"week": i, "phase": ph, "deload": i in (5, 9, 11), "minutes": 350, "long_min": 100}
+                for i, ph in enumerate(self.PHASES, 1)]
+
+    def test_which_weeks_carry_key_sessions(self):
+        keys = pb.key_sessions(self._weeks(), self._half())
+        # Construcción: las dos semanas de carga (4 y 6); específica: 7, 8 y 10, y el VO2 vuelve en la 10.
+        assert {n for n, k in keys.items() if k.get("vo2")} == {4, 6, 10}
+        assert {n: k["rp_key_km"] for n, k in keys.items() if k.get("rp_key_km")} == {10: pb.HALF_RP_KEY_KM}
+        assert pb.key_sessions(self._weeks(), _frame(weeks=12, trail=True, race_pace=None)) == {}
+        assert "VO2máx obligatorio" in pb.macro_text({"weeks": pb.with_key_sessions(self._weeks(), self._half())})
+        # Un 10K no tiene sesión de 12 km a RP.
+        assert not any(k.get("rp_key_km") for k in pb.key_sessions(self._weeks(), _frame(weeks=12)).values())
+
+    def _session(self, f, steps, kind="quality"):
+        s, errs = pb.expand_day({"day": 2, "type": kind, "title": "Calidad", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "Z2"}, *steps, {"kind": "cooldown", "min": 10, "zone": "Z1"}]}, f, 10)
+        assert errs == []
+        return s
+
+    def test_vo2_and_race_pace_are_measured_from_the_steps(self):
+        f = self._half()
+        vo2 = self._session(f, [{"repeat": 5, "steps": [{"kind": "work", "min": 3, "zone": "Z5b"},
+                                                         {"kind": "recovery", "min": 2, "zone": "Z1"}]}])
+        strides = self._session(f, [{"repeat": 4, "steps": [{"kind": "work", "sec": 20, "zone": "Z5c"},
+                                                             {"kind": "recovery", "min": 1, "zone": "Z1"}]}])
+        assert pb.vo2_minutes(vo2) == 15 and pb.vo2_minutes(strides) < pb.VO2_MIN_WORK_MIN
+        rp3x4 = self._session(f, [{"repeat": 3, "steps": [{"kind": "work", "km": 4, "zone": "RP"},
+                                                           {"kind": "recovery", "min": 3, "zone": "Z1"}]}])
+        rp3x2 = self._session(f, [{"repeat": 3, "steps": [{"kind": "work", "km": 2, "zone": "RP"},
+                                                           {"kind": "recovery", "min": 3, "zone": "Z1"}]}])
+        assert abs(pb.race_pace_km(rp3x4, f) - 12) < 0.1 and abs(pb.race_pace_km(rp3x2, f) - 6) < 0.1
+        def week(*sessions):
+            days = [dict(s, day_index=d) for d, s in zip((2, 4), sessions)]
+            rest = [pb.expand_day({"day": d, "type": "rest"}, f, 10)[0] for d in range(1, 8) if d not in (2, 4)[:len(days)]]
+            return days + rest
+
+        planned = {"week": 10, "phase": "specific", "vo2": True, "rp_key_km": 12.0}
+        errors = pb.check_week(10, week(rp3x2), planned, f)
+        assert any("le toca VO2máx" in e for e in errors) and any("al menos 12 km a RP" in e for e in errors)
+        errors = pb.check_week(10, week(rp3x4, vo2), planned, f)
+        assert not any("VO2máx" in e or "km a RP" in e for e in errors)
 
 
 class TestRecoveryRuns:

@@ -218,6 +218,9 @@ class PlanLLMMixin:
         )
         if macro is None:
             return None, [], [f"Estructura: {e}" for e in errors]
+        # Sesiones clave de cada semana (07/11: VO2máx y, en media, la de 12 km a RP), en el prompt y en las reglas. Solo
+        # al crear o replanificar: «ajusta el plan» puede quitarlas si el atleta lo necesita.
+        macro = {**macro, "weeks": _pb.with_key_sessions(macro["weeks"], f)}
         estructura = _pb.macro_text(macro)
         planned = {int(w["week"]): w for w in macro["weeks"]}
         chunks = _pb.chunk_weeks(f.weeks, _WEEKS_PER_CALL)

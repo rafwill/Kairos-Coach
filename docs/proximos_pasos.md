@@ -16,8 +16,7 @@ Texto anterior de esta lista, con los criterios de diseño que citan algunos com
 
 1. **Plan de Santa Pola (versión 12, 7/11), seguir con el uso:**
    - El objetivo (3:56/km) es más rápido que el umbral actual (4:00/km a 60'; Riegel da ~1:26 en media): el plan cuenta con mejorar unos 3 min. El **test de 5 km del 12/12** lo dirá: por encima de ~18:45, ajustar el ritmo de carrera con «ajusta el plan».
-   - Poco VO2: solo semanas 4 y 10 (más el test); `prompts/plan/system.md` pide repetirlo cada 2-3 semanas y el código no lo comprueba. Valorar una regla en `plan_builder` (VO2 en la construcción y otra vez en la específica) si se repite en otros planes.
-   - Específico algo corto para sub-1:23: como mucho 9 km seguidos a RP en una sesión (3×3000) y 30' en la tirada; valorar con el usuario si llevarlo a 12-14 km.
+   - Reglas nuevas del 7/11 (CHANGELOG): regenerativo de 40-45', VO2máx cada 2-3 semanas de carga y sesión clave de 12 km a RP en media. La versión 12 no las cumple (regenerativo de 26', VO2 en 4 y 10, 9 km a RP): **replanificar otra vez** con el mismo mensaje y revisar que salen el VO2 en las semanas 4, 6 y 10 (del plan nuevo, que empieza el lunes) y la sesión de 12 km a RP.
    - Detalle: el 26/12 se titula «con progresivos» y sus pasos no los llevan (título y pasos del LLM sin comprobar).
 2. **Ordenador 2:** `git pull`, `pip install -r requirements.txt` (sale `cryptography`) y dejar su `.env` solo con `SUPABASE_URL` y `SUPABASE_ANON_KEY`. Al entrar no debe pedir ni la contraseña de Garmin ni la clave de IA (las lee de Vault).
 3. **Release 3.1:** batería de 25 preguntas (`tools/run_bateria.py` + `tools/juez_bateria.py`, otro día que el del replanificado por el cupo) → `v3.1.0-rc.2` (Vault y lo que salga del replanificado) → `v3.1.0` final (`pyproject.toml` a `3.1.0`, etiqueta firmada, release marcada como la última).
