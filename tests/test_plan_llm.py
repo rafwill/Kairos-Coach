@@ -762,6 +762,29 @@ class TestWhatCountsForProgression:
         assert any("fuerza y otros deportes incluidos, suman 210 min" in e for e in errors)
 
 
+class TestRestDays:
+    """09/11 (decisión del usuario): en semana de carga, como mucho 1 descanso si sus minutos piden 5 o más sesiones de
+    la duración habitual (si no, 2); el día que sobra lleva bici, elíptica o la fuerza."""
+
+    def _errors(self, w, rest_days, **kw):
+        f = _frame(typical_session_min=60.0, **kw)
+        days = [d if d["day"] not in rest_days else {"day": d["day"], "type": "rest"} for d in _week_days(w)]
+        sessions, _ = pb.expand_week({"week": w["week"], "days": days}, f, w)
+        return [e for e in pb.check_week(w["week"], sessions, w, f) if "días de descanso" in e]
+
+    def test_a_high_volume_load_week_has_one_rest_day(self):
+        w = MACRO["weeks"][4]  # 395 min de carrera: 7 sesiones de 60
+        assert self._errors(w, {5}) == []
+        errors = self._errors(w, {3, 5})
+        assert errors and "como mucho 1" in errors[0] and "bici o elíptica suave" in errors[0]
+        assert "la fuerza, no descanso" in self._errors(w, {3, 5}, cross_sports=[])[0]
+
+    def test_low_volume_deload_and_unavailable_days_allow_more(self):
+        assert self._errors({**MACRO["weeks"][4], "minutes": 260}, {3, 5}) == []  # 4 sesiones de 60: hasta 2
+        assert self._errors(MACRO["weeks"][3], {3, 5}) == []  # descarga
+        assert self._errors(MACRO["weeks"][4], {3, 5}, available_days=[1, 2, 4, 6, 7]) == []  # no puede miércoles y viernes
+
+
 class TestNoRoomForRuns:
     def test_the_message_says_the_other_sessions_already_fill_the_week(self):
         # 05/11: salía "los rodajes durarían -98 min" y "dale más share", que no lo arregla.

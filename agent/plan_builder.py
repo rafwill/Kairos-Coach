@@ -386,6 +386,10 @@ def rules_text(f: PlanFrame) -> str:
              "demás rodajes de su semana (con \"auto\", Kairos lo deja en ese rango y reparte lo demás); si la semana no "
              "da para tanto, ese día es descanso. En la semana de la carrera, sin mínimo."]
     if _floor_of(f):
+        lines.append("- En una semana de carga, como mucho 1 día de descanso si sus minutos dan para 5 o más sesiones de "
+                     f"{_floor_of(f):.0f} min (si no, 2): el día que no da para otro rodaje lleva {_no_rest_substitute(f)} "
+                     "(no cuentan en los minutos de carrera). En descarga, afinamiento y la semana de la carrera, los que "
+                     "hagan falta.")
         lines.append(f"- En las semanas de carga (no en descarga, afinamiento ni la de la carrera), un rodaje o una sesión de "
                      f"calidad dura al menos {_floor_of(f):.0f} min, lo habitual del atleta. A una sesión de calidad más "
                      f"corta Kairos le alarga el calentamiento (hasta {QUALITY_WARMUP_MIN:.0f} min), la vuelta a la calma "
@@ -945,6 +949,26 @@ def session_floor(n: int, planned: dict, f: PlanFrame, day: int) -> float:
     return min(floor, float(cap)) if cap is not None else floor
 
 
+def max_rest_days(n: int, planned: dict, f: PlanFrame) -> int | None:
+    """Días de descanso como mucho en una semana de carga (09/11, decisión del usuario: «dos días de descanso en un
+    sub 4:00/km es contraproducente»). Lo marca el volumen: si los minutos de la semana piden 5 o más sesiones de su
+    duración habitual, 1; si no, 2 (un atleta de 1:45 con 200 min y salidas de 50 tiene 2). Sin límite en descarga,
+    afinamiento y la semana de la carrera, ni sin duración habitual; los días que no puede entrenar cuentan aparte.
+    El descanso extra lo decide el motor diario con la HRV y la recuperación."""
+    floor = _floor_of(f)
+    if not floor or n == f.race_week or planned.get("deload") or planned.get("phase") in ("taper", "race"):
+        return None
+    limit = 1 if round(_num(planned.get("minutes")) / floor) >= 5 else 2
+    return max(limit, f.min_rest_days, 7 - len(f.available_days))
+
+
+def _no_rest_substitute(f: PlanFrame) -> str:
+    """Lo que lleva el día que no da para otro rodaje: sin impacto, fuera de los minutos de carrera."""
+    sports = [s for s in ("cycling", "elliptical") if f.cross_sports is None or s in f.cross_sports]
+    cross = " o ".join({"cycling": "bici", "elliptical": "elíptica"}[s] for s in sports)
+    return (f"{cross} suave (\"cross\", FC1-FC2, 45-60 min) o la fuerza" if cross else "la fuerza")
+
+
 def _lengthen_quality(n: int, sessions: list[dict], planned: dict, f: PlanFrame) -> None:
     """Una sesión de calidad más corta que el mínimo se alarga por el calentamiento y la vuelta a la calma, y luego con
     rodaje en el calentamiento (09/11, decisión del usuario: las cuestas del martes duraban 37 min; la parte principal
@@ -1147,6 +1171,16 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
         if cap is not None and sum(s["duration_min"] for s in day) > cap:
             errors.append(f"Semana {n}: el {name} admite como mucho {cap} min (sumando sus sesiones).")
     rest = sum(1 for day in by_day.values() if [s["session_type"] for s in day] == ["rest"])
+    # Como mucho los descansos de `max_rest_days` en semana de carga (09/11); el de un evento fijo (viaje) no cuenta, y
+    # los días ya pasados tampoco se pueden cambiar.
+    limit = max_rest_days(n, planned, f)
+    extra = sum(1 for d, day in by_day.items() if [s["session_type"] for s in day] == ["rest"]
+                and not any(_pe.event_id(s) for s in day))
+    past_rest = sum(1 for d, day in by_day.items() if d <= past_days and [s["session_type"] for s in day] == ["rest"])
+    if limit is not None and extra > max(limit, past_rest):
+        errors.append(f"Semana {n}: {extra} días de descanso; en una semana de carga como mucho {limit} (sus minutos piden "
+                      f"5 o más sesiones de {_floor_of(f):.0f} min). El día que no da para otro rodaje lleva "
+                      f"{_no_rest_substitute(f)}, no descanso.")
     if rest < f.min_rest_days:
         errors.append(f"Semana {n}: necesita al menos {f.min_rest_days} día(s) de descanso ({{\"type\": \"rest\"}}, sin tramos; "
                       "\"recovery\" es un rodaje regenerativo, no descanso).")
