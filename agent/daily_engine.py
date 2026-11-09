@@ -1131,6 +1131,12 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
                 adherence_adjustment = "up"
                 reason = f"{reason}; ajuste por infra-carga adherente en dia previo"
 
+    # La fuerza se hace completa (09/11, decisión del usuario): reducir o suavizar es para las sesiones fuera del
+    # gimnasio; solo el descanso obligatorio la quita, y una lesión la adapta el LLM (reglas de lesiones).
+    if decision in {"reduce", "easy"} and "strength" in str((planned_row or {}).get("session_type") or "").lower():
+        decision = "maintain"
+        reason = f"{reason}; la fuerza se hace completa (los recortes son para las sesiones fuera del gimnasio)"
+
     day_cap = max_minutes_per_day.get(today_idx)
     if day_cap is not None and planned_duration_min > day_cap and decision != "rest":
         decision = "reduce" if day_cap > 0 else "rest"

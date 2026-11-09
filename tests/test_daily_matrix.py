@@ -51,9 +51,9 @@ def test_strength_is_not_a_hard_session():
     assert _decide(("strength", "tempo"), hrv_low=True) == "maintain"
 
 
-def test_reduced_strength_stays_strength_in_the_frame():
-    # 09/11: fuerza recortada por la carrera de ayer; el marco decía "Z3 Tempo" y el título del plan, y el LLM recetó
-    # 24' de tempo corriendo.
+def test_strength_is_done_in_full():
+    # 09/11, decisión del usuario: los recortes son para las sesiones fuera del gimnasio. 09/11: el marco decía además
+    # "Z3 Tempo" y el título del plan, y el LLM recetó 24' de tempo corriendo.
     plan = _plan("strength", "tempo")
     plan["sessions"][0]["structured_workout"].update({"title": "Fuerza base", "steps": [
         {"type": "warmup", "duration_min": 10, "intensityClass": "endurance"},
@@ -61,7 +61,9 @@ def test_reduced_strength_stays_strength_in_the_frame():
     ]})
     snapshot = {"dates": {"today": TODAY_ISO}, "load_fatigue": {"status": "ready", "flags": {"weekly_spike_alert": True}}}
     out = _compute_daily_plan_adjustment(snapshot, plan)
-    assert out["decision"] == "reduce" and out["planned_session"] == "Fuerza base"
-    assert "RPE 6" in out["resulting_session"] and "Z3" not in out["resulting_session"]
+    assert out["decision"] == "maintain" and out["planned_session"] == "Fuerza base"
+    assert "fuera del gimnasio" in out["reason"]
     frame = _build_today_session_frame(out, {})
     assert "fuerza, no de carrera" in frame and "Z3" not in frame and "lpm" not in frame
+    assert "35 min" in frame
+    assert _decide(("strength", "tempo"), hrv_low=True, bb_low=True) == "maintain"

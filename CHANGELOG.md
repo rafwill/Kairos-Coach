@@ -4,6 +4,9 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-09
 
+### Changed (la fuerza se hace completa; decisión del usuario)
+- Antes, «reducir» (Body Battery, sueño, carga de ayer, semana alta) recortaba también la fuerza un 25 %. Ahora, en una sesión de fuerza, «reducir» y «suave» pasan a «mantener» con el motivo «la fuerza se hace completa (los recortes son para las sesiones fuera del gimnasio)». El descanso obligatorio (sobrecarga, fatiga alta con señales) sí la quita y el límite de minutos del día la sigue recortando. Una lesión o molestia la adapta el LLM (regla nueva en `prompts/coaching_rules.md`, «Estado de hoy»).
+
 ### Fixed (arranque: la fuerza del día salía como un tempo de carrera)
 - Problema: el lunes 9/11 tocaba fuerza (40'); tras una carrera el domingo por encima de lo previsto, el motor diario bajó a «reducir» (bien), pero el marco G12 le daba al LLM como sesión el título del plan («Plan hacia la Media Maratón…») y como zonas «parte principal en Z3 Tempo (146–157 lpm)», porque la clase interna del bloque de fuerza es `tempo`. El LLM recetó 34' de carrera con 24' en Z3. Además copió el título de sección con su explicación entre paréntesis («✅ Qué hacer (sesión concreta con la estructura…)»).
 - Ahora: la decisión lleva el título de la sesión de hoy y su `session_type`; en fuerza, el resumen y el marco van por RPE («sesión de fuerza, no de carrera; intensidad por RPE»), sin zonas de FC, y el recorte dice «mismo RPE, menos series o ejercicios». `prompts/coaching/readiness.md` da los títulos exactos aparte de su explicación y pide que la sesión sea del mismo tipo que la prevista.

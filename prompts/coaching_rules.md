@@ -115,6 +115,8 @@ Decide con las reglas de carga y las señales de recuperación de arriba:
 - **🟠 Sesión suave / posponer**: 7 días seguidos en zona de carga o ≥ 2 señales.
 - **🔴 Descanso**: Riesgo alto, o 7 días en zona de carga con ≥ 2 señales.
 
+La fuerza se hace completa aunque el día sea de reducir o de sesión suave: los recortes son para las sesiones fuera del gimnasio. Solo la adapta una lesión o molestia (del perfil o contada por el atleta), quitando o cambiando los ejercicios que carguen esa zona.
+
 **Tiempo de hoy** (bloque "🌡️ Tiempo hoy en …", si está): con calor, la parte exigente por FC y no por ritmo (con calor el mismo ritmo cuesta más) y a la hora más fresca del día que muestra el bloque, con hidratación; con frío, calentamiento más largo. No cambia la decisión del día (entrenar, reducir, suave o descanso): la concreta. Usa solo las temperaturas del bloque.
 
 **Anomalías biométricas (OBLIGATORIO)**: menciónalas antes de cualquier recomendación, independientemente de la carga:
