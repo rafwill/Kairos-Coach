@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from agent.daily_engine import _compute_daily_plan_adjustment
+from agent.daily_engine import _build_today_session_frame, _compute_daily_plan_adjustment
 
 TODAY = date.today()
 TODAY_ISO = TODAY.isoformat()
@@ -49,3 +49,19 @@ def test_matrix(signals, hard, soft):
 
 def test_strength_is_not_a_hard_session():
     assert _decide(("strength", "tempo"), hrv_low=True) == "maintain"
+
+
+def test_reduced_strength_stays_strength_in_the_frame():
+    # 09/11: fuerza recortada por la carrera de ayer; el marco decía "Z3 Tempo" y el título del plan, y el LLM recetó
+    # 24' de tempo corriendo.
+    plan = _plan("strength", "tempo")
+    plan["sessions"][0]["structured_workout"].update({"title": "Fuerza base", "steps": [
+        {"type": "warmup", "duration_min": 10, "intensityClass": "endurance"},
+        {"type": "steady", "duration_min": 25, "intensityClass": "tempo", "target": {"metric": "rpe", "range": [6, 6]}},
+    ]})
+    snapshot = {"dates": {"today": TODAY_ISO}, "load_fatigue": {"status": "ready", "flags": {"weekly_spike_alert": True}}}
+    out = _compute_daily_plan_adjustment(snapshot, plan)
+    assert out["decision"] == "reduce" and out["planned_session"] == "Fuerza base"
+    assert "RPE 6" in out["resulting_session"] and "Z3" not in out["resulting_session"]
+    frame = _build_today_session_frame(out, {})
+    assert "fuerza, no de carrera" in frame and "Z3" not in frame and "lpm" not in frame

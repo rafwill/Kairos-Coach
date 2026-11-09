@@ -644,8 +644,13 @@ def _build_today_session_frame(daily_decision: dict | None, profile: dict | None
 
     resulting = str((daily_decision or {}).get("resulting_session") or "").strip()
     adjusted = (daily_decision or {}).get("adjusted_structured_workout")
+    strength = "strength" in str((daily_decision or {}).get("session_type") or "").lower()
     if decision == "rest":
         allowed = "ninguna: descanso; si te mueves, movilidad suave en Z1" + lpm(1)
+    elif strength:
+        # Fuerza por RPE, sin zonas de carrera (09/11: con "Z3 Tempo" el LLM cambió la fuerza por un tempo).
+        allowed = ("sesión de fuerza, no de carrera; intensidad por RPE"
+                   + (", suave (no más de RPE 4)" if decision == "easy" else ", la de la sesión prevista"))
     elif decision == "easy":
         allowed = f"Z1–Z2{lpm(1, 2)}, techo {top(2)}; nada de Z3 o superior"
     elif decision == "reduce" and not isinstance(adjusted, dict):
@@ -696,8 +701,13 @@ def _structured_workout_summary(session: dict) -> str:
         return ""
 
     stype = str(main_step.get("type") or "").strip().lower()
-    # Al usuario, la zona de Garmin ("Z2 Aeróbica"), no la clase interna ("endurance").
+    # Al usuario, la zona de Garmin ("Z2 Aeróbica"), no la clase interna ("endurance"); en fuerza, el RPE (09/11: su
+    # clase "tempo" salía como "Z3 Tempo" y el LLM recetó un tempo de carrera).
     intensity = _GARMIN_ZONE_NAMES[_zone_for_intensity_class(main_step.get("intensityClass") or "")]
+    if "strength" in str(session.get("session_type") or "").lower():
+        target = main_step.get("target") or {}
+        rng = list(target.get("range") or []) if target.get("metric") == "rpe" else []
+        intensity = (f"RPE {rng[0]}" if rng[0] == rng[-1] else f"RPE {rng[0]}-{rng[-1]}") if rng else "por RPE"
 
     if stype == "interval_block":
         reps = max(1, int(_safe_float(main_step.get("reps"), 1.0)))
@@ -737,6 +747,8 @@ def _build_adjusted_structured_session_text(planned_session: str, planned_row: d
     if decision == "easy":
         return f"{base} → versión suave: {summary}; todo en Z1-Z2, sin bloques por encima de Z2"
     if decision == "reduce":
+        if "strength" in str(planned_row.get("session_type") or "").lower():
+            return f"{base} → un 25 % menos: {summary}; mismo RPE, menos series o ejercicios"
         return f"{base} → un 25 % menos: {summary}; mismas zonas, menos repeticiones o minutos de bloque principal"
     return base
 
@@ -961,6 +973,9 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
 
     planned_session = _resolve_today_plan_session(plan) if has_plan else "sin plan activo"
     planned_row = _get_planned_session_for_date(plan, today_iso) if has_plan else None
+    if isinstance(planned_row, dict):
+        # El título de la sesión, no el del plan (09/11: el LLM recibía "Plan hacia la Media…" y no sabía que era fuerza).
+        planned_session = str((planned_row.get("structured_workout") or {}).get("title") or planned_session)
     completion = snapshot.get("today_completion") or {}
     if completion.get("all_done"):
         done_text = "; ".join(completion.get("names") or []) or "una actividad"
@@ -1169,6 +1184,7 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         "reason": reason,
         "adherence_adjustment": adherence_adjustment,
         "planned_session": planned_session,
+        "session_type": str((planned_row or {}).get("session_type") or ""),
         "resulting_session": resulting_session,
         "adjusted_structured_workout": adjusted_structured_workout,
         "adjustment_trace": adjustment_trace,

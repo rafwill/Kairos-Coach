@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-09
+
+### Fixed (arranque: la fuerza del día salía como un tempo de carrera)
+- Problema: el lunes 9/11 tocaba fuerza (40'); tras una carrera el domingo por encima de lo previsto, el motor diario bajó a «reducir» (bien), pero el marco G12 le daba al LLM como sesión el título del plan («Plan hacia la Media Maratón…») y como zonas «parte principal en Z3 Tempo (146–157 lpm)», porque la clase interna del bloque de fuerza es `tempo`. El LLM recetó 34' de carrera con 24' en Z3. Además copió el título de sección con su explicación entre paréntesis («✅ Qué hacer (sesión concreta con la estructura…)»).
+- Ahora: la decisión lleva el título de la sesión de hoy y su `session_type`; en fuerza, el resumen y el marco van por RPE («sesión de fuerza, no de carrera; intensidad por RPE»), sin zonas de FC, y el recorte dice «mismo RPE, menos series o ejercicios». `prompts/coaching/readiness.md` da los títulos exactos aparte de su explicación y pide que la sesión sea del mismo tipo que la prevista.
+- Lección: el marco que recibe el LLM se escribe en la lengua del deporte de la sesión; una clase interna (`tempo`) traducida a zona de carrera basta para cambiar de deporte.
+
 ## 2026-11-07
 
 ### Changed (planes: regenerativo de 40-45', VO2máx que vuelve y sesión clave a RP en media; decisiones del usuario)
