@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-09
 
+### Changed (entrenar más no recorta la sesión de hoy; decisión del usuario)
+- Antes el motor diario bajaba un escalón la sesión si ayer se hizo > 25 % más carga de la prevista o una sesión distinta, y recortaba con la semana por encima de su carga alta habitual o un spike (también contaban como señales para el descanso con fatiga alta). El 9/11 un rodaje del domingo de 85 TSS frente a 48 recortó la sesión del lunes con HRV, Body Battery y forma en orden.
+- Ahora recortan solo la HRV, el Body Battery al despertar, el sueño, la forma (estado de carga) y el atleta cuando dice en el chat que está muy cansado (regla para el LLM en `prompts/coaching_rules.md`). Las señales de estrés del motor son solo las del cuerpo. La subida por haber hecho menos de lo previsto se queda.
+
 ### Changed (la fuerza se hace completa; decisión del usuario)
 - Antes, «reducir» (Body Battery, sueño, carga de ayer, semana alta) recortaba también la fuerza un 25 %. Ahora, en una sesión de fuerza, «reducir» y «suave» pasan a «mantener» con el motivo «la fuerza se hace completa (los recortes son para las sesiones fuera del gimnasio)». El descanso obligatorio (sobrecarga, fatiga alta con señales) sí la quita y el límite de minutos del día la sigue recortando. Una lesión o molestia la adapta el LLM (regla nueva en `prompts/coaching_rules.md`, «Estado de hoy»).
 

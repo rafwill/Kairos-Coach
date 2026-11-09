@@ -40,7 +40,7 @@ def _decide(session, *, hrv_low=False, bb_low=False, sleep_bad=False, spike=Fals
     ({"hrv_low": True}, "easy", "maintain"),
     ({"hrv_low": True, "bb_low": True}, "easy", "reduce"),
     ({"hrv_low": True, "bb_low": True, "sleep_bad": True}, "rest", "reduce"),
-    ({"spike": True}, "reduce", "reduce"),
+    ({"spike": True}, "maintain", "maintain"),  # 09/11: entrenar más no recorta por sí solo
 ])
 def test_matrix(signals, hard, soft):
     assert _decide(HARD, **signals) == hard
@@ -59,7 +59,9 @@ def test_strength_is_done_in_full():
         {"type": "warmup", "duration_min": 10, "intensityClass": "endurance"},
         {"type": "steady", "duration_min": 25, "intensityClass": "tempo", "target": {"metric": "rpe", "range": [6, 6]}},
     ]})
-    snapshot = {"dates": {"today": TODAY_ISO}, "load_fatigue": {"status": "ready", "flags": {"weekly_spike_alert": True}}}
+    snapshot = {"dates": {"today": TODAY_ISO}, "load_fatigue": {"status": "ready"},
+                "sleep": {"today": {"date": TODAY_ISO, "bodyBatteryAtWake": 25}},
+                "hrv": {"today": {"date": TODAY_ISO, "lastNightAvg": 40, "weeklyAvg": 50}}}
     out = _compute_daily_plan_adjustment(snapshot, plan)
     assert out["decision"] == "maintain" and out["planned_session"] == "Fuerza base"
     assert "fuera del gimnasio" in out["reason"]

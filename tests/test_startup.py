@@ -230,7 +230,7 @@ class TestStartupProactive:
         assert out["decision"] == "maintain"
         assert out["rule"] == "ready"
 
-    def test_compute_daily_plan_adjustment_ready_with_weekly_spike_reduces(self):
+    def test_compute_daily_plan_adjustment_ready_with_weekly_spike_keeps_the_session(self):
         snapshot = {
             "dates": {"today": date.today().isoformat()},
             "load_fatigue": {
@@ -250,7 +250,7 @@ class TestStartupProactive:
 
         assert out is not None
         assert out["rule"] == "ready"
-        assert out["decision"] == "reduce"
+        assert out["decision"] == "maintain"  # 09/11, decisión del usuario: el spike solo no recorta
 
     def test_compute_plan_execution_feedback_returns_adherence_and_deviation(self):
         yday = (date.today() - timedelta(days=1)).isoformat()
@@ -302,7 +302,9 @@ class TestStartupProactive:
         assert int(summary.get("total_blocks") or 0) >= 1
         assert "time_deviation_pct" in summary
 
-    def test_compute_daily_plan_adjustment_degrades_on_high_positive_deviation(self):
+    def test_more_load_yesterday_does_not_lower_today(self):
+        # 09/11, decisión del usuario: el 8/11 un rodaje de 85 TSS frente a 48 recortó la sesión del lunes con todo en
+        # orden. Lo que se recorta lo deciden la HRV, el Body Battery, el sueño y la forma.
         snapshot = {
             "dates": {"today": date.today().isoformat()},
             "load_fatigue": {
@@ -354,13 +356,7 @@ class TestStartupProactive:
         }
         out = _compute_daily_plan_adjustment(snapshot, plan)
         assert out is not None
-        assert out["decision"] == "reduce"
-        assert out["adherence_adjustment"] == "down"
-        assert "bloque principal" in str(out.get("resulting_session") or "").lower() or "repeticiones" in str(out.get("resulting_session") or "").lower()
-        adjusted = out.get("adjusted_structured_workout") or {}
-        trace = out.get("adjustment_trace") or []
-        assert adjusted.get("schema") == "kairos-workout-v1"
-        assert isinstance(trace, list) and trace
+        assert out["decision"] == "maintain" and out["adherence_adjustment"] == "none"
 
     def _ready_snapshot(self, feedback):
         today = date.today().isoformat()
@@ -381,7 +377,7 @@ class TestStartupProactive:
         assert out["decision"] == "maintain" and out["adherence_adjustment"] == "none"
         other = {"adherence_score": 0.2, "load_deviation_pct": 0.1, "executed": {"activities": 1}}
         out = _compute_daily_plan_adjustment(self._ready_snapshot(other), {"sessions": []})
-        assert out["decision"] == "reduce" and "ayer hiciste una sesión distinta de la prevista" in out["reason"]
+        assert out["decision"] == "maintain"  # 09/11: una sesión distinta ayer tampoco baja la de hoy
 
     def test_days_before_the_plan_existed_are_not_judged(self):
         yday = (date.today() - timedelta(days=1)).isoformat()

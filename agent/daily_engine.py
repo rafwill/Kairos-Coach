@@ -1039,13 +1039,9 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         (hrv_ratio is not None and hrv_ratio < 0.90)
         or (hrv_status in {"low", "unbalanced", "poor"})
     )
-    high_weekly = (
-        _safe_float(weekly.get("high_tss"), 0.0) > 0
-        and weekly_tss >= _safe_float(weekly.get("high_tss"), 0.0)
-    )
-    weekly_spike_alert = bool((load_fatigue.get("flags") or {}).get("weekly_spike_alert"))
-
-    stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv) + int(high_weekly) + int(weekly_spike_alert)
+    # Solo señales del cuerpo (09/11, decisión del usuario): haber entrenado más estos días (semana alta, spike) no
+    # recorta nada por sí solo; la forma (TSB) ya lo recoge en el estado de carga.
+    stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv)
     # Sesión dura = la parte principal en Z3 o más (series, tempo, RP). Sin plan no se sabe: se trata como dura.
     hard_session = (not has_plan) or (
         isinstance(planned_row, dict)
@@ -1087,9 +1083,6 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         else:
             decision = "maintain"
             reason = "sesión suave: se mantiene" + (" (HRV baja: no pases de Z2)" if low_hrv else "") if (low_hrv or secondary) else "HRV y Body Battery en orden"
-        if (high_weekly or weekly_spike_alert) and decision == "maintain":
-            decision = "reduce"
-            reason = f"{reason}; semana por encima de su carga habitual: menos volumen"
         rule = "ready" if status == "ready" else "neutral"
 
     # Ajuste fase 3: planificado vs ejecutado (día N-1) modifica la decisión base.
@@ -1101,25 +1094,14 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     order = ["rest", "easy", "reduce", "maintain"]
     rank = {name: idx for idx, name in enumerate(order)}
 
-    def _downgrade(current: str) -> str:
-        return order[max(0, rank.get(current, 2) - 1)]
-
     def _upgrade(current: str) -> str:
         return order[min(len(order) - 1, rank.get(current, 2) + 1)]
 
-    executed_yday = int(((feedback.get("executed") or {}).get("activities")) or 0)
+    # Hacer ayer más o algo distinto de lo previsto no baja la sesión de hoy (09/11, decisión del usuario: el 8/11 un
+    # rodaje de 85 TSS frente a 48 recortó la del lunes con HRV, Body Battery y forma en orden); recortan la HRV, el
+    # Body Battery, el sueño, la forma o el propio atleta cuando dice que está muy cansado (el LLM, en el chat).
     if decision != "rest" and adherence_score >= 0.0:
-        # Se baja si ayer hizo más carga de la prevista o una actividad distinta; no por no entrenar (29/10: saltarse
-        # una sesión deja al atleta más fresco, y antes bajaba la de hoy igual que un exceso).
-        if load_dev > 0.25 or (adherence_score < 0.40 and executed_yday > 0):
-            new_decision = _downgrade(decision)
-            if new_decision != decision:
-                decision = new_decision
-                adherence_adjustment = "down"
-                why = ("ayer hiciste más carga de la prevista" if load_dev > 0.25
-                       else "ayer hiciste una sesión distinta de la prevista")
-                reason = f"{reason}; ajuste porque {why}"
-        elif (
+        if (
             load_dev < -0.30
             and adherence_score >= 0.75
             and stress_flags <= 1
