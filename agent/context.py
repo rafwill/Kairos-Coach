@@ -89,6 +89,11 @@ class ContextMixin:
         run_minutes: list[float] = []  # duración de cada salida de carrera o trail (09/11: la habitual, su mediana)
         terrain = {"road": [0.0, 0.0], "trail": [0.0, 0.0]}  # [km, m de desnivel positivo] de las 6 semanas
         walk_28 = vert_28 = 0.0
+        # Lo que progresa en un plan de carrera (09/11): correr y, en trail, la marcha; de las 4 semanas y de la semana
+        # pasada (lunes a domingo).
+        this_monday = today - timedelta(days=today.weekday())
+        last_week = ((this_monday - timedelta(days=7)).isoformat(), this_monday.isoformat())
+        run_28 = run_last = walk_last = 0.0
         for act in acts or []:
             d_iso = _extract_activity_date_iso(act) or ""
             minutes = _extract_activity_duration_minutes(act)
@@ -107,7 +112,13 @@ class ContextMixin:
                     except (TypeError, ValueError):
                         pass
             is_trail = _load_metrics._is_trail_activity(act_type)
-            if _is_running_non_trail_activity(act_type) or is_trail:
+            is_run = _is_running_non_trail_activity(act_type) or is_trail
+            if is_run and d_iso >= last_28_iso:
+                run_28 += minutes
+            if last_week[0] <= d_iso < last_week[1]:
+                run_last += minutes if is_run else 0.0
+                walk_last += minutes if is_walk else 0.0
+            if is_run:
                 longest = max(longest, minutes)
                 if minutes > 0:
                     run_minutes.append(minutes)
@@ -122,6 +133,10 @@ class ContextMixin:
             context["recent_weekly_minutes"] = round(minutes_28 / 4.0, 1)
         if walk_28 > 0:
             context["recent_weekly_walk_minutes"] = round(walk_28 / 4.0, 1)
+        if acts:
+            context["recent_weekly_run_minutes"] = round(run_28 / 4.0, 1)
+            context["last_week_run_minutes"] = round(run_last, 1)
+            context["last_week_walk_minutes"] = round(walk_last, 1)
         if vert_28 > 0:
             context["recent_weekly_vert_m"] = round(vert_28 / 4.0)
         if longest > 0:
