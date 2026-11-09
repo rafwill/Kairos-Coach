@@ -53,6 +53,8 @@ RECOVERY_MAX_MIN = 45.0  # rodaje de recuperación como mucho (06/11; Pfitzinger
 RECOVERY_MIN_MIN = 40.0
 VO2_MIN_WORK_MIN = 8.0  # minutos en Z5b/Z5c o FC5 para que una sesión cuente como VO2máx (los progresivos no)
 HALF_RP_KEY_KM = 12.0  # media maratón: km a RP de la sesión clave de la fase específica (07/11, decisión del usuario)
+QUALITY_WARMUP_MIN = 20.0  # hasta dónde se alarga el calentamiento de una sesión de calidad corta (09/11)
+QUALITY_COOLDOWN_MIN = 15.0  # y la vuelta a la calma
 _RECOVERY_TITLE = re.compile(r"recupera|regenera")  # título de un rodaje de recuperación (sin tildes)
 
 
@@ -125,6 +127,7 @@ class PlanFrame:
     weekly_hours: float = 8.0
     recent_weekly_minutes: float | None = None
     longest_recent_min: float | None = None
+    typical_session_min: float | None = None  # mediana de sus salidas de carrera de las últimas 6 semanas (09/11)
     load: dict = field(default_factory=dict)  # ctl, atl, tsb, status
     available_days: list = field(default_factory=lambda: list(range(1, 8)))
     max_minutes_per_day: dict = field(default_factory=dict)
@@ -269,6 +272,9 @@ def frame_text(f: PlanFrame) -> str:
         lines.append(f"- Volumen sostenido: {f.recent_weekly_minutes:.0f} min/semana (media de las últimas 4 semanas)")
     if f.longest_recent_min:
         lines.append(f"- Sesión de carrera o trail más larga de las últimas 6 semanas: {f.longest_recent_min:.0f} min")
+    if f.typical_session_min:
+        lines.append(f"- Duración habitual de sus salidas de carrera o trail: {f.typical_session_min:.0f} min (mediana de "
+                     "las últimas 6 semanas)")
     if f.trail:
         lines.append(f"- Desnivel positivo sostenido: {f.recent_weekly_vert_m or 0:.0f} m/semana (media de las últimas 4 "
                      "semanas, carrera y marcha)")
@@ -343,6 +349,12 @@ def rules_text(f: PlanFrame) -> str:
              f"- Un rodaje de recuperación dura entre {RECOVERY_MIN_MIN:.0f} y {RECOVERY_MAX_MIN:.0f} min, y menos que los "
              "demás rodajes de su semana (con \"auto\", Kairos lo deja en ese rango y reparte lo demás); si la semana no "
              "da para tanto, ese día es descanso. En la semana de la carrera, sin mínimo."]
+    if _floor_of(f):
+        lines.append(f"- En las semanas de carga (no en descarga, afinamiento ni la de la carrera), un rodaje o una sesión de "
+                     f"calidad dura al menos {_floor_of(f):.0f} min, lo habitual del atleta. A una sesión de calidad más "
+                     f"corta Kairos le alarga el calentamiento (hasta {QUALITY_WARMUP_MIN:.0f} min), la vuelta a la calma "
+                     f"(hasta {QUALITY_COOLDOWN_MIN:.0f}) y, si aún falta, el calentamiento en Z2; los rodajes con "
+                     "\"auto\" no bajan de ahí: si la semana no da, pon menos rodajes.")
     if specific_weeks_needed(f):
         lines.append(f"- La semana marcada «VO2máx obligatorio» lleva una sesión con al menos {VO2_MIN_WORK_MIN:.0f} min en "
                      "Z5b (series de 3-5 min o de 800-1200 m); la marcada «sesión clave», una sesión con esos km a RP "
@@ -872,6 +884,56 @@ def refresh_session(session: dict, f: PlanFrame) -> dict:
     return session
 
 
+def _floor_of(f: PlanFrame) -> float:
+    """Duración mínima de un rodaje o una sesión de calidad (09/11, decisión del usuario: «soy un atleta de larga
+    distancia; pocas veces entreno menos de 1 h»): la habitual del atleta, en múltiplos de 5. Vale para cualquiera: un
+    principiante con salidas de 35 min tiene ese mínimo, que ya cumple el resto de reglas."""
+    return float(int((f.typical_session_min or 0) // 5 * 5))
+
+
+def session_floor(n: int, planned: dict, f: PlanFrame, day: int) -> float:
+    """El mínimo de `_floor_of` en una semana de carga y un día concretos (con el tope de minutos de ese día)."""
+    floor = _floor_of(f)
+    if not floor or n == f.race_week or planned.get("deload") or planned.get("phase") in ("taper", "race"):
+        return 0.0
+    cap = f.max_minutes_per_day.get(day)
+    return min(floor, float(cap)) if cap is not None else floor
+
+
+def _lengthen_quality(n: int, sessions: list[dict], planned: dict, f: PlanFrame) -> None:
+    """Una sesión de calidad más corta que el mínimo se alarga por el calentamiento y la vuelta a la calma, y luego con
+    rodaje en el calentamiento (09/11, decisión del usuario: las cuestas del martes duraban 37 min; la parte principal
+    es la que decide el LLM según la fase)."""
+    for s in sessions:
+        if s["session_type"] != "running_quality" or _pe.event_id(s):
+            continue
+        wk = s["structured_workout"]
+        missing = session_floor(n, planned, f, int(s["day_index"])) - float(wk["summary"]["duration_min"])
+        if missing <= 0.5:
+            continue
+        steps = wk["steps"]
+        timed = [st for st in steps if not st.get("steps") and "distance_m" not in st]
+        warm = next((st for st in timed if st.get("type") == "warmup"), None)
+        cool = next((st for st in reversed(timed) if st.get("type") == "cooldown"), None)
+        if warm is None:
+            if f.paces:
+                warm = rp.step(f.paces, "warmup", "Z2", 1.0)
+            else:
+                warm = {"name": _STEP_NAMES["warmup"], "type": "warmup", "duration_min": 1.0, "reps": 1,
+                        "intensityClass": _HR_INTENSITY[2],
+                        "target": {"metric": "hr_zone", "zone": 2, "zone_to": 2, "intensityClass": _HR_INTENSITY[2]}}
+            steps.insert(0, warm)
+            missing -= 1.0
+        for st, upto in ((warm, QUALITY_WARMUP_MIN), (cool, QUALITY_COOLDOWN_MIN)):
+            if st is not None and missing > 0:
+                add = min(missing, max(0.0, upto - float(st["duration_min"])))
+                st["duration_min"] = round(float(st["duration_min"]) + add, 2)
+                missing -= add
+        if missing > 0:
+            warm["duration_min"] = round(float(warm["duration_min"]) + missing, 2)
+        refresh_session(s, f)
+
+
 def _auto_step(session: dict) -> dict | None:
     return next((s for s in session["structured_workout"].get("steps") or [] if s.get("auto")), None)
 
@@ -904,8 +966,12 @@ def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_m
         shares = [float(_auto_step(s)["auto"]) for s in easy]
         pool = target - fixed  # minutos de los tramos "auto" de los rodajes, repartidos según su "share" (05/11)
         longs = [float(s["structured_workout"]["summary"]["duration_min"]) for s in sessions if s["session_type"] == "long_run"]
-        # Un rodaje dura al menos 20 min y nunca tanto como la tirada larga de la semana (sin tirada: 90 min).
+        # Un rodaje dura al menos 20 min (en semana de carga, lo habitual del atleta, 09/11) y nunca tanto como la
+        # tirada larga de la semana (sin tirada: 90 min).
         high = (max(longs) if longs else 90.0) - 1
+
+        def low_of(s: dict) -> float:
+            return 20.0 if _is_recovery_run(s) else max(20.0, min(session_floor(n, planned, f, int(s["day_index"])), high))
         others = {id(s): float(s["structured_workout"]["summary"]["duration_min"]) - 1 for s in easy}
         # 06/11: un regenerativo con "auto" se queda en su tope (45 min) y lo que le sobra va a los demás rodajes; antes
         # salían regenerativos de 50-59 min (y 69 min en la semana de la carrera). 07/11: y en su mínimo (40 min), con
@@ -929,7 +995,7 @@ def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_m
                 left -= each_of[id(s)]
             free = [(s, sh) for s, sh in free if id(s) not in each_of]
         sizes = [(s, each_of[id(s)], each_of[id(s)] + others[id(s)]) for s in easy]
-        out_of_range = [(s, total) for s, each, total in sizes if each < 1 or not 20 <= total <= high
+        out_of_range = [(s, total) for s, each, total in sizes if each < 1 or not low_of(s) - 0.5 <= total <= high
                         or (_is_recovery_run(s) and total < rec_min - 0.5)]
         rec_total = max((total for s, _, total in sizes if _is_recovery_run(s)), default=0.0)
         too_short = [(s, total) for s, _, total in sizes if not _is_recovery_run(s) and rec_total and total <= rec_total]
@@ -948,13 +1014,16 @@ def _fill_auto(n: int, sessions: list[dict], planned: dict, f: PlanFrame, kept_m
                           f"{RECOVERY_MAX_MIN:.0f}), los demás rodajes durarían {detail}, y tienen que ser más largos que "
                           "él: la semana no da para tantos rodajes; pon descanso en uno de ellos o en el regenerativo.")
         elif out_of_range:
-            short = any(total < 20 or (_is_recovery_run(s) and total < rec_min - 0.5) for s, total in out_of_range)
+            short = any(total < low_of(s) - 0.5 or (_is_recovery_run(s) and total < rec_min - 0.5)
+                        for s, total in out_of_range)
+            low = max(low_of(s) for s in easy)
             fix = ("quita un rodaje, pon sus minutos o dale más \"share\" al corto" if short else
                    "añade un rodaje" + (" (o dobla: un segundo rodaje el mismo día)" if f.doubles else "")
                    + ", alarga otras sesiones o reparte mejor el \"share\"")
             detail = ", ".join(f"día {s['day_index']} {total:.0f} min" for s, total in out_of_range)
             errors.append(f"Semana {n}: para que la semana sume {target:.0f} min, los rodajes \"auto\" durarían {detail} "
-                          f"(cada uno entre 20 y {high:.0f} min, menos que la tirada larga); {fix}.")
+                          f"(cada uno entre {low:.0f} y {high:.0f} min, menos que la tirada larga"
+                          + (f"; {low:.0f}, lo habitual del atleta" if low > 20 else "") + f"); {fix}.")
         else:
             for s, each, _ in sizes:
                 _auto_step(s)["duration_min"] = float(round(each))
@@ -983,6 +1052,7 @@ def expand_week(week: dict, f: PlanFrame, planned: dict | None = None,
         slots[s["day_index"]] = slots.get(s["day_index"], 0) + 1
         s["structured_workout"]["slot"] = slots[s["day_index"]]
     if not errors:
+        _lengthen_quality(n, sessions, planned or {}, f)
         errors = _fill_auto(n, sessions, planned or {}, f, kept_minutes)
     return sessions, errors
 
@@ -1091,6 +1161,17 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
             errors.append(f"Semana {n}: el rodaje de recuperación del {rp._DAY_NAMES[s['day_index']].lower()} dura "
                           f"{minutes:.0f} min; una recuperación dura al menos {RECOVERY_MIN_MIN:.0f} min (si la semana no "
                           "da para tanto, ese día es descanso).")
+    # Duración mínima en semana de carga (09/11, decisión del usuario): lo habitual del atleta.
+    for s in sessions:
+        if s["session_type"] not in ("running_z2", "running_quality") or _is_recovery_run(s) or _pe.event_id(s) \
+                or int(s.get("day_index") or 0) <= past_days:
+            continue
+        floor = session_floor(n, planned, f, int(s["day_index"]))
+        minutes = float(s["structured_workout"]["summary"]["duration_min"])
+        if minutes < floor - 0.5:
+            errors.append(f"Semana {n}: el {rp._DAY_NAMES[s['day_index']].lower()} dura {minutes:.0f} min; en las semanas "
+                          f"de carga un rodaje o una sesión de calidad dura al menos {floor:.0f} min (lo habitual del "
+                          "atleta): alárgalo o pon descanso ese día.")
     # La semana de la carrera no: sus rodajes son todos cortos (activación de 15-20 min la víspera, 06/11).
     if recovery and easy and n != f.race_week:
         shortest = min(float(s["structured_workout"]["summary"]["duration_min"]) for s in easy)

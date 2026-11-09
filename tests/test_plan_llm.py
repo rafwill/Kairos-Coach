@@ -232,6 +232,40 @@ class TestAutoDurations:
             {"kind": "cooldown", "min": 5, "zone": "Z1"}]}, f, 1)
         assert any("mayor que 0" in e for e in errors)
 
+    def test_short_quality_is_lengthened_by_warmup_and_cooldown(self):
+        # 09/11 (decisión del usuario): cuestas de 37 min para un atleta que casi nunca sale menos de 1 h.
+        hills = {"day": 2, "type": "quality", "title": "Cuestas cortas", "rpe": "7", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "Z2"},
+            {"repeat": 6, "steps": [{"kind": "work", "sec": 45, "zone": "Z4"}, {"kind": "recovery", "sec": 75, "zone": "Z1"}]},
+            {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
+        f = _frame(typical_session_min=62.0)
+        week = {"week": 5, "days": [{"day": 1, "type": "rest"}, hills]}
+        sessions, _ = pb.expand_week(week, f, MACRO["weeks"][4])
+        steps = sessions[1]["structured_workout"]["steps"]
+        assert sessions[1]["duration_min"] == 60
+        assert steps[0]["duration_min"] == 33 and steps[-1]["duration_min"] == pb.QUALITY_COOLDOWN_MIN
+        assert steps[1]["reps"] == 6 and steps[1]["steps"][0]["duration_min"] == 0.75  # la parte principal, igual
+        # En descarga, sin mínimo; sin historial, tampoco.
+        sessions, _ = pb.expand_week({**week, "week": 4}, f, MACRO["weeks"][3])
+        assert sessions[1]["duration_min"] == 37
+        sessions, _ = pb.expand_week(week, _frame(), MACRO["weeks"][4])
+        assert sessions[1]["duration_min"] == 37
+
+    def test_easy_runs_last_at_least_the_usual_session(self):
+        f = _frame(typical_session_min=62.0)
+        w = MACRO["weeks"][4]  # 395 min, tirada 110
+        sessions, errors = pb.expand_week(self._auto_week(w), f, w)
+        assert errors == []
+        easy = [s["duration_min"] for s in sessions if s["session_type"] == "running_z2"]
+        assert easy and min(easy) >= 60 and pb.check_week(5, sessions, w, f) == []
+        _, errors = pb.expand_week(self._auto_week({**w, "minutes": 360}), f, {**w, "minutes": 360})
+        assert any("lo habitual del atleta" in e and "quita un rodaje" in e for e in errors)
+        # Con sus minutos puestos a mano, un rodaje corto en semana de carga vuelve al LLM.
+        week = self._auto_week(w)
+        week["days"][2] = {"day": 3, **_easy(45)}
+        sessions, _ = pb.expand_week(week, f, w)
+        assert any("al menos 60 min" in e for e in pb.check_week(5, sessions, w, f))
+
 
 class TestKeySessions:
     """07/11 (decisiones del usuario): VO2máx cada 2-3 semanas de carga y, en media, una sesión con 12 km a RP."""

@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-09
 
+### Changed (planes: rodajes y calidad con la duración habitual del atleta; decisión del usuario)
+- Problema: «soy un atleta de larga distancia; pocas veces entreno menos de 1 h» y el plan ponía cuestas de 37' y rodajes de 33-34'. Solo había mínimo para el regenerativo (40') y para un rodaje "auto" (20').
+- Ahora: `_build_plan_load_context` da `typical_session_min`, la mediana de sus salidas de carrera o trail de las últimas 6 semanas (el usuario: 60 min, 22 salidas). En semanas de carga (no en descarga, afinamiento ni la de la carrera), un rodaje o una sesión de calidad no baja de ahí, en múltiplos de 5 y con el tope de minutos del día (`session_floor`). La calidad corta la alarga el código (`_lengthen_quality`): calentamiento hasta 20', vuelta a la calma hasta 15' y, si aún falta, más calentamiento en Z2; la parte principal no se toca. Los rodajes "auto" no bajan del mínimo (si la semana no da, el fallo pide menos rodajes) y `check_week` lo comprueba en los demás. El LLM ve la cifra en «Carga real» y en las reglas. Vale para cualquier atleta: con salidas de 35', ese es su mínimo.
+
 ### Changed (entrenar más no recorta la sesión de hoy; decisión del usuario)
 - Antes el motor diario bajaba un escalón la sesión si ayer se hizo > 25 % más carga de la prevista o una sesión distinta, y recortaba con la semana por encima de su carga alta habitual o un spike (también contaban como señales para el descanso con fatiga alta). El 9/11 un rodaje del domingo de 85 TSS frente a 48 recortó la sesión del lunes con HRV, Body Battery y forma en orden.
 - Ahora recortan solo la HRV, el Body Battery al despertar, el sueño, la forma (estado de carga) y el atleta cuando dice en el chat que está muy cansado (regla para el LLM en `prompts/coaching_rules.md`). Las señales de estrés del motor son solo las del cuerpo. La subida por haber hecho menos de lo previsto se queda.

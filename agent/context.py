@@ -5,6 +5,7 @@ Contexto del LLM: prompt de sistema (perfil, estado de carga, umbrales, plan act
 
 import logging
 import json
+import statistics
 from datetime import date, timedelta
 from typing import Any
 
@@ -85,6 +86,7 @@ class ContextMixin:
         last_28_iso = (today - timedelta(days=28)).isoformat()
         minutes_28 = 0.0
         longest = 0.0
+        run_minutes: list[float] = []  # duración de cada salida de carrera o trail (09/11: la habitual, su mediana)
         terrain = {"road": [0.0, 0.0], "trail": [0.0, 0.0]}  # [km, m de desnivel positivo] de las 6 semanas
         walk_28 = vert_28 = 0.0
         for act in acts or []:
@@ -107,6 +109,8 @@ class ContextMixin:
             is_trail = _load_metrics._is_trail_activity(act_type)
             if _is_running_non_trail_activity(act_type) or is_trail:
                 longest = max(longest, minutes)
+                if minutes > 0:
+                    run_minutes.append(minutes)
                 # Orografía de sus rutas (30/10, pendiente 11 a): desnivel por km, asfalto y trail por separado.
                 group = terrain["trail" if is_trail else "road"]
                 group[0] += _load_metrics._extract_activity_distance_km(act) or 0.0
@@ -122,6 +126,8 @@ class ContextMixin:
             context["recent_weekly_vert_m"] = round(vert_28 / 4.0)
         if longest > 0:
             context["longest_recent_min"] = round(longest, 1)
+        if run_minutes:
+            context["typical_session_min"] = round(statistics.median(run_minutes), 1)
         by_group = {k: {"km": round(km, 1), "m_per_km": round(gain / km, 1)} for k, (km, gain) in terrain.items() if km > 0}
         if by_group:
             context["terrain"] = by_group

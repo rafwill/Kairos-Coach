@@ -104,6 +104,7 @@ class PlanLLMMixin:
             weekly_hours=min(24.0, max(3.0, _safe_float(goals.get("weekly_training_hours"), 8.0))),
             recent_weekly_minutes=recent,
             longest_recent_min=load_context.get("longest_recent_min"),
+            typical_session_min=load_context.get("typical_session_min"),
             load={k: load_context.get(k) for k in ("ctl", "atl", "tsb", "status") if load_context.get(k) is not None},
             available_days=list(constraints.get("available_days") or range(1, 8)),
             max_minutes_per_day={int(k): int(v) for k, v in (constraints.get("max_minutes_per_day") or {}).items()},
