@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-10
+
+### Changed (planes: la víspera y el día siguiente de una carrera, suaves; decisión del usuario)
+- Problema: al replanificar con la carrera de Navidad de Cercedilla (domingo 13/12, evento fijo moderado), la versión 15 puso una tirada larga de 115 min el sábado 12/12. El atleta había pedido «suave el día después de cada carrera» en el mensaje, pero el código no lo comprobaba y la víspera no la cubría.
+- Ahora (`_check_event_neighbours` en `check_week`, `plan_events.demanding_neighbour`): la víspera y el día siguiente de un evento fijo de intensidad moderada o fuerte no llevan calidad, tirada larga ni más de 3 min en Z3 o más (`EVENT_NEIGHBOUR_MAX_HARD_MIN`: unas rectas sí); valen descanso, un rodaje suave, la fuerza o bici o elíptica suave. Se comprueba también entre semanas (carrera en domingo → lunes de la siguiente) y no en los días ya pasados ni en los que tienen su propio evento. Vale al crear, replanificar y ajustar el plan; la regla va en las que ve el LLM si hay un evento así. Comprobado contra la versión 15: solo marca el 12/12.
+- Respuesta al guardar eventos: título en plural con varios («Eventos guardados») y, si todos son lejanos, sin repetirlos en la frase de replanificar.
+
 ## 2026-11-09
 
 ### Changed (planes: pocos días de descanso en semana de carga; decisión del usuario)
