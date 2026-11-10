@@ -27,6 +27,8 @@ SPORTS = {"running": "carrera", "trail": "trail", "cycling": "bici de carretera"
 INTENSITIES = {"easy": "suave", "moderate": "moderada", "hard": "fuerte"}
 RUNNING_SPORTS = {"running", "trail"}
 RUNNING_TYPES = {"running_z2", "long_run", "running_quality", "recovery", "race_run"}
+# Intensidades de un evento que piden la víspera y el día siguiente suaves (una carrera, 10/11, decisión del usuario).
+DEMANDING = {"moderate", "hard"}
 MAX_EVENT_MINUTES = 1440
 _MAX_TEXT = 120
 
@@ -245,7 +247,10 @@ def rules_lines(events: list[dict]) -> list[str]:
             "\"type\": \"long\". Un viaje sin entrenar es \"rest\"; con un máximo, el día no lo supera y solo usa el "
             "material que tiene.",
             "- Un evento fijo no cuenta en el máximo de sesiones de calidad ni en el 20 % de Z3 o más, y el volumen de "
-            "esa semana incluye sus minutos: reparte el resto de la semana alrededor."]
+            "esa semana incluye sus minutos: reparte el resto de la semana alrededor."] + (
+        ["- La víspera y el día siguiente de un evento fijo de intensidad moderada o fuerte (una carrera) no llevan "
+         "calidad, tirada larga ni tramos en Z3 o más (salvo unas rectas): descanso, un rodaje suave, la fuerza o "
+         "trabajo sin impacto."] if any(e["kind"] == "session" and e.get("intensity") in DEMANDING for e in events) else [])
 
 
 # ─── Comprobaciones ───────────────────────────────────────────────────────────
@@ -260,6 +265,19 @@ def _minutes(session: dict) -> float:
         return float(session.get("duration_min") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def demanding_neighbour(events: list[dict], day: date) -> tuple[dict, str] | None:
+    """El evento moderado o fuerte del que `day` es la víspera o el día siguiente: (evento, "la víspera" o "el día
+    siguiente"), o None."""
+    for e in events:
+        if e["kind"] != "session" or e.get("intensity") not in DEMANDING:
+            continue
+        if (day + timedelta(days=1)).isoformat() == e["start"]:
+            return e, "la víspera"
+        if (day - timedelta(days=1)).isoformat() == e["end"]:
+            return e, "el día siguiente"
+    return None
 
 
 def week_events(events: list[dict], monday: date, today: date) -> list[tuple[int, dict]]:

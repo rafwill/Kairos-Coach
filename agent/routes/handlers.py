@@ -263,7 +263,8 @@ class RoutesMixin:
         _save_user_profile(profile)
         self.__dict__.pop("_active_plan_cache", None)
         log.info("[PLAN] eventos guardados=%d quitados=%d", len(saved), len(gone))
-        lines = ["## 📅 Evento guardado" if saved else "## 📅 Evento quitado"]
+        noun = "Eventos" if len(saved or gone) > 1 else "Evento"
+        lines = [f"## 📅 {noun} {'guardado' if saved else 'quitado'}{'s' if len(saved or gone) > 1 else ''}"]
         lines += [f"- `{e['id']}` {_plan_events.describe(e)}" for e in saved]
         lines += [f"- Quitado: {_plan_events.describe(e)}" for e in gone]
         return "\n".join(lines) + await self._readapt_for_events(saved, gone)
@@ -289,8 +290,10 @@ class RoutesMixin:
             parts.append(await self._route_plan_revision(message, plan, sessions, await self._build_plan_load_context(),
                                                          requested=False))
         if far:
-            parts.append("Los eventos más lejanos (" + "; ".join(_plan_events.describe(e) for e in far) + ") los tendré en "
-                         "cuenta cuando replanifiques: dime «replanifica el plan» cuando quieras.")
+            # Si todos son lejanos, ya están en la lista de arriba: no se repiten (10/11).
+            what = (("Los tendré" if len(far) > 1 else "Lo tendré") if not near else
+                    "Los más lejanos (" + "; ".join(e["title"] for e in far) + ") los tendré")
+            parts.append(f"{what} en cuenta cuando replanifiques: dime «replanifica el plan» cuando quieras.")
         return "\n\n" + "\n\n".join(parts)
 
     async def _plan_request(self, user_message: str, force_new: bool = False):

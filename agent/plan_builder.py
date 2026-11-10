@@ -1134,6 +1134,33 @@ def session_key(s: dict) -> tuple[int, int, int]:
             int(((s.get("structured_workout") or {}).get("slot")) or 1))
 
 
+# Junto a un evento moderado o fuerte (10/11): sin calidad ni tirada; unas rectas (4-6 × 20 s) sí caben.
+_NOT_NEXT_TO_EVENT = {"running_quality", "long_run", "race_run"}
+EVENT_NEIGHBOUR_MAX_HARD_MIN = 3.0
+
+
+def _check_event_neighbours(n: int, by_day: dict[int, list[dict]], f: PlanFrame, past_days: int) -> list[str]:
+    """La víspera y el día siguiente de un evento fijo moderado o fuerte (una carrera; 10/11, decisión del usuario: el
+    plan puso una tirada de 115 min la víspera de la carrera de Cercedilla) solo llevan descanso, un rodaje suave, la
+    fuerza o trabajo sin impacto. Los días con su propio evento y los ya pasados no se comprueban."""
+    errors: list[str] = []
+    today = date.today()
+    for d, day in sorted(by_day.items()):
+        when = f.monday(n) + timedelta(days=d - 1)
+        if d <= past_days or when < today or any(_pe.event_id(s) for s in day):
+            continue
+        near = _pe.demanding_neighbour(f.events, when)
+        if not near or not any(s["session_type"] in _NOT_NEXT_TO_EVENT
+                               or hard_minutes(s) > EVENT_NEIGHBOUR_MAX_HARD_MIN for s in day):
+            continue
+        event, rel = near
+        errors.append(f"Semana {n}: el {rp._DAY_NAMES[d].lower()} {when.strftime('%d/%m')} es {rel} de «{event['title']}» "
+                      f"(intensidad {_pe.INTENSITIES[event['intensity']]}): ni calidad, ni tirada larga, ni tramos en Z3 o "
+                      f"más (salvo unas rectas); pon descanso, un rodaje suave (\"easy\" o \"recovery\") o "
+                      f"{_no_rest_substitute(f)}.")
+    return errors
+
+
 def hard_minutes(session: dict) -> float:
     """Minutos de una sesión en Z3 o más: zonas de ritmo Z3 a Z5c, RP o ritmo fijado igual o más rápido que Z3, FC3-FC5."""
     total = 0.0
@@ -1285,6 +1312,7 @@ def check_week(n: int, sessions: list[dict], planned: dict, f: PlanFrame, past_d
                           "3×4 km, 2×6 km o tramos a RP dentro de la tirada larga).")
     if f.events:
         errors += _pe.check_week(n, sessions, f.monday(n), f.events)
+        errors += _check_event_neighbours(n, by_day, f, past_days)
     # Horas disponibles (09/11): la fuerza y los otros deportes no cuentan en la progresión, pero ocupan su tiempo.
     everything = _all_minutes(sessions)
     goal = f.weekly_hours * 60 * 1.10
