@@ -105,15 +105,22 @@ def _db_read(table: str):
 
 
 def _db_write(*tables: str):
+    """Escritura: borra de la caché lo leído de sus tablas antes y después. Antes también (10/11): una escritura que
+    relee lo que acaba de escribir (`update_training_plan` → `get_training_plan`) recibía la fila de antes, y la
+    respuesta del replanificado enseñaba las fases y las descargas del plan anterior con las sesiones del nuevo."""
+    def drop():
+        if _read_cache:
+            for key in [k for k, (table, _) in _read_cache.items() if table in tables]:
+                del _read_cache[key]
+
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
+            drop()
             try:
                 return _timed(fn, args, kwargs)
             finally:
-                if _read_cache:
-                    for key in [k for k, (table, _) in _read_cache.items() if table in tables]:
-                        del _read_cache[key]
+                drop()
         return wrapper
     return decorator
 

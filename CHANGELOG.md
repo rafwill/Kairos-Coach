@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-10
 
+### Fixed (la respuesta del replanificado enseñaba las fases del plan anterior)
+- Problema: tras replanificar, la tabla de la respuesta traía las sesiones nuevas (tiempo, km, TSS) con las fases, las descargas y el enfoque del plan anterior (semanas 4 y 8 de descarga, de la versión 14, cuando la 15 las tiene en la 3 y la 6). Causa: la caché de lecturas de la pregunta (`storage.open_read_cache`) se borraba al terminar la escritura, y `update_training_plan` relee el plan dentro de ella (`get_training_plan`), así que recibía la fila de antes. Esa fila iba a la respuesta, a la copia del plan en el perfil (solo respaldo si Supabase no responde) y a la instantánea de `training_plan_version`. El plan guardado (`training_plan`, sus sesiones) estaba bien, y `/plan ver` lo enseñaba bien. Afectaba también a «ajusta el plan».
+- Ahora `_db_write` borra lo de sus tablas antes y después de escribir.
+
 ### Changed (planes: la víspera y el día siguiente de una carrera, suaves; decisión del usuario)
 - Problema: al replanificar con la carrera de Navidad de Cercedilla (domingo 13/12, evento fijo moderado), la versión 15 puso una tirada larga de 115 min el sábado 12/12. El atleta había pedido «suave el día después de cada carrera» en el mensaje, pero el código no lo comprobaba y la víspera no la cubría.
 - Ahora (`_check_event_neighbours` en `check_week`, `plan_events.demanding_neighbour`): la víspera y el día siguiente de un evento fijo de intensidad moderada o fuerte no llevan calidad, tirada larga ni más de 3 min en Z3 o más (`EVENT_NEIGHBOUR_MAX_HARD_MIN`: unas rectas sí); valen descanso, un rodaje suave, la fuerza o bici o elíptica suave. Se comprueba también entre semanas (carrera en domingo → lunes de la siguiente) y no en los días ya pasados ni en los que tienen su propio evento. Vale al crear, replanificar y ajustar el plan; la regla va en las que ve el LLM si hay un evento así. Comprobado contra la versión 15: solo marca el 12/12.

@@ -911,6 +911,28 @@ def test_a_write_drops_the_cached_reads_of_its_table_only(monkeypatch):
     assert [t for t, mode in fake.executes if mode == "select"] == ["user_profile", "athlete_knowledge", "user_profile"]
 
 
+def test_a_write_that_reads_back_what_it_wrote_sees_the_new_row():
+    # 10/11: update_training_plan relee el plan con get_training_plan; con la caché abierta recibía la fila de antes.
+    row = {"v": 1}
+
+    @storage._db_read("t")
+    def read():
+        return dict(row)
+
+    @storage._db_write("t")
+    def write(v):
+        row["v"] = v
+        return read()
+
+    storage.open_read_cache()
+    try:
+        assert read() == {"v": 1}
+        assert write(2) == {"v": 2}
+        assert read() == {"v": 2}
+    finally:
+        storage.close_read_cache()
+
+
 def test_without_an_open_cache_every_read_goes_to_supabase(monkeypatch):
     fake = _rows_db(monkeypatch, {"user_profile": [{"data": {"v": 1}}]})
     storage.open_read_cache()
