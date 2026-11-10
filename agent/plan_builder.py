@@ -912,13 +912,24 @@ def expand_day(day: dict, f: PlanFrame, week: int) -> tuple[dict | None, list[st
     return refresh_session(session, f), []
 
 
+MOUNTAIN_SPORTS = {"trail", "hiking"}
+
+
+def _event_sport(wk: dict, f: PlanFrame) -> str:
+    """Deporte del evento fijo al que responde la sesión, o ""."""
+    eid = str((wk.get("plan_day") or {}).get("event") or "")
+    return next((str(e.get("sport") or "") for e in f.events if eid and e.get("id") == eid), "")
+
+
 def refresh_session(session: dict, f: PlanFrame) -> dict:
     """Duración, km, TSS, objetivo principal y descripción de una sesión a partir de sus tramos."""
     wk = session["structured_workout"]
     if "secondary_label" in wk:  # sesión con tramos de ritmo o FC
         steps = wk["steps"]
-        # En trail, los tramos por FC no estiman km (30/10): con los ritmos de asfalto salían de más.
-        minutes, km, tss = workout_totals(steps, f, running=wk["sessionType"] != "cross_training" and not f.trail)
+        # En trail, los tramos por FC no estiman km (30/10): con los ritmos de asfalto salían de más. Tampoco un evento
+        # de montaña en un plan de asfalto (10/11: la salida a la sierra de 2 h salía con 24 km y rTSS de asfalto).
+        mountain = f.trail or _event_sport(wk, f) in MOUNTAIN_SPORTS
+        minutes, km, tss = workout_totals(steps, f, running=wk["sessionType"] != "cross_training" and not mountain)
         main = _main_target(steps)
         wk["summary"] = {"duration_min": minutes, "distance_km": km, "tss": tss,
                          "intensityClass": main.get("intensityClass") or "endurance"}

@@ -206,6 +206,15 @@ class TestCheckWeek:
         week2 = [pb.expand_day(d, f, 2)[0] for d in [_day(1, "quality", 60), *({"day": x, "type": "rest"} for x in range(2, 8))]]
         assert any("lunes" in e and "día siguiente" in e for e in pb.check_week(2, week2, {"minutes": 0}, f))
 
+    def test_a_mountain_event_in_a_road_plan_has_no_road_km_and_uses_hrtss(self):
+        # 10/11: la salida a la sierra (2 h, trail) salía con 24 km y el rTSS de asfalto en un plan de media maratón.
+        day = _day(6, "long", 120, event="e1")
+        road = pb.expand_day(day, _frame([_session_event(duration_min=120)]), 1)[0]["structured_workout"]["summary"]
+        trail = pb.expand_day(day, _frame([_session_event(duration_min=120, sport="trail")]), 1)[0]
+        summary = trail["structured_workout"]["summary"]
+        assert road["distance_km"] > 0 and summary["distance_km"] == 0
+        assert summary["tss"] == pytest.approx(2 * 40.8) and summary["tss"] < road["tss"]  # FC1-FC2 < 85 % del umbral TP
+
     def test_a_fixed_long_run_lasts_what_the_athlete_said_not_what_the_structure_says(self):
         # 06/11: al replanificar, la estructura daba 100 min de tirada y la salida a la sierra dura 120; el código pedía
         # "quita unos 20 min" a un evento fijo.

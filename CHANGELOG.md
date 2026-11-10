@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-10
 
+### Fixed (un evento de montaña en un plan de asfalto salía con km y rTSS de asfalto)
+- Problema: la salida a la sierra del 14/11 (evento fijo de trail, 2 h por FC) salía en el plan de Santa Pola con ~24 km y 129 TSS: sus tramos por FC se pasaban al ritmo de su zona de asfalto. En montaña el tiempo no da los km, y Kairos la medirá con el hrTSS de TP (`trail:tp_zones`). En los planes de trail ya no se estimaban km (30/10); en uno de asfalto, el evento no se reconocía.
+- Ahora (`refresh_session`, `_event_sport`): una sesión que responde a un evento de trail o marcha va sin km y con el hrTSS de TP (`TP_HRTSS_RATES`), como en un plan de trail (2 h en FC1-FC2: ~82 TSS). La progresión ya era por minutos, nunca por km.
+
 ### Fixed (la respuesta del replanificado enseñaba las fases del plan anterior)
 - Problema: tras replanificar, la tabla de la respuesta traía las sesiones nuevas (tiempo, km, TSS) con las fases, las descargas y el enfoque del plan anterior (semanas 4 y 8 de descarga, de la versión 14, cuando la 15 las tiene en la 3 y la 6). Causa: la caché de lecturas de la pregunta (`storage.open_read_cache`) se borraba al terminar la escritura, y `update_training_plan` relee el plan dentro de ella (`get_training_plan`), así que recibía la fila de antes. Esa fila iba a la respuesta, a la copia del plan en el perfil (solo respaldo si Supabase no responde) y a la instantánea de `training_plan_version`. El plan guardado (`training_plan`, sus sesiones) estaba bien, y `/plan ver` lo enseñaba bien. Afectaba también a «ajusta el plan».
 - Ahora `_db_write` borra lo de sus tablas antes y después de escribir.
