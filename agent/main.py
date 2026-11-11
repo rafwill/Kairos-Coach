@@ -1932,7 +1932,7 @@ async def main() -> None:
         # El resumen inicial empieza a la vez (8c, 28/10): pide a Garmin sus datos mientras se calcula la carga y
         # espera a que termine solo para leer la serie.
         skip_startup_status = str(os.environ.get("KAIROS_SKIP_STARTUP_STATUS", "")).strip().lower() in {"1", "true", "yes", "on"}
-        # Reentrada en menos de 1 h sin nada nuevo (31/10): se muestra el resumen guardado y no se consulta a Garmin
+        # Reentrada el mismo día sin nada nuevo (31/10; 11/11, todo el día): se muestra el resumen guardado y no se consulta a Garmin
         # para la carga, ni se rehace el snapshot ni el LLM. `/resumen` lo actualiza cuando el atleta quiera.
         cached_status = None if (skip_startup_status or is_new_user) else await agent.cached_startup_summary(profile_changes)
         load_task = None if cached_status else asyncio.ensure_future(

@@ -705,6 +705,56 @@ def test_startup_summary_roundtrip(monkeypatch):
     assert isinstance(row["generated_at"], str)
 
 
+def test_startup_summary_keeps_the_morning(monkeypatch):
+    fake_sb = _MemorySupabase()
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: fake_sb)
+    storage.save_startup_summary({"date": "2026-11-11"}, "## R", morning={"date": "2026-11-11", "hrv_today": {"h": 1}})
+    assert storage.get_startup_summary()["morning"] == {"date": "2026-11-11", "hrv_today": {"h": 1}}
+
+
+def test_startup_summary_without_the_morning_column_still_works(monkeypatch):
+    """11/11: hasta que se ejecute schema.sql, la columna morning no existe: se lee y se guarda sin ella."""
+    saved = []
+
+    class _Table:
+        def __init__(self):
+            self.cols = ""
+            self.row = None
+
+        def select(self, cols):
+            self.cols = cols
+            return self
+
+        def eq(self, *_a):
+            return self
+
+        def limit(self, *_a):
+            return self
+
+        def upsert(self, row):
+            self.row = dict(row)
+            return self
+
+        def execute(self):
+            if "morning" in self.cols or (self.row is not None and "morning" in self.row):
+                raise _MissingTableError({"message": "column startup_summary.morning does not exist", "code": "42703"})
+            if self.row is not None:
+                saved.append(self.row)
+                return type("R", (), {"data": [self.row]})()
+            return type("R", (), {"data": [{"generated_at": "t", "fingerprint": {}, "markdown": "x"}]})()
+
+    class _Sb:
+        def table(self, _name):
+            return _Table()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: _Sb())
+    assert storage.get_startup_summary()["markdown"] == "x"
+    storage.save_startup_summary({}, "## R", morning={"date": "d"})
+    assert saved and "morning" not in saved[0] and saved[0]["markdown"] == "## R"
+
+
 def test_startup_summary_without_the_table_is_ignored(monkeypatch):
     class _NoTable:
         def select(self, *_a, **_k):

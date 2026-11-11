@@ -57,7 +57,7 @@ Tests: un fichero por módulo o familia (`test_routes.py`, `test_routes_load.py`
 | `activity_tss` | Un TSS por actividad, calculado una vez: `tss`, `model`, anclajes usados y `native_load` (carga de Garmin, informativa). |
 | `load_metrics_daily` | Serie diaria TSS/ATL/CTL/TSB: fuente única de todas las pantallas, del contexto del LLM y del motor de planes (`_load_metrics_series` / `_load_metrics_view`; el estado de carga se deriva con `load_metrics.load_fatigue_from_series`). Sin serie no hay estado de carga: no se recalcula en vivo. |
 | `wellness_daily` | Body Battery y HRV por día, con `pulled_at` para no consultar Garmin de más. |
-| `startup_summary` | Último resumen del arranque con su huella (día, actividades de las últimas 48 h, sueño de hoy, plan activo, fórmula de TSS, cambios del perfil). Si se reentra en menos de 1 h con la misma huella, se muestra sin volver a consultar a Garmin ni al LLM, con la hora; `/resumen` lo rehace (31/10; `agent/startup_cache.py`). |
+| `startup_summary` | Último resumen del arranque con su huella (día, actividades de las últimas 48 h, sueño de hoy, plan activo, fórmula de TSS, cambios del perfil). Si se reentra el mismo día con la misma huella, se muestra sin volver a consultar a Garmin ni al LLM, con la hora; `/resumen` lo rehace (31/10; 11/11, todo el día; `agent/startup_cache.py`). `morning` (11/11): la HRV de la noche y los datos de ayer, para rehacerlo tras entrenar sin pedirlos otra vez. |
 
 Esquema completo en `supabase/schema.sql`: fichero único e idempotente (sirve para instalar desde cero y para poner al día un proyecto existente).
 
@@ -71,9 +71,11 @@ main.py → run_agent()
   ├─ a la vez: TrainerAgent.initialize() → _refresh_hr_zones_from_garmin()
   │            (get_heart_rate_zones; escribe en el perfil solo si las zonas cambian)
   │          · get_user_profile (comprueba el acceso a Garmin y da los datos personales)
-  ├─ (31/10) TrainerAgent.cached_startup_summary(): si `startup_summary` tiene menos de 60 min, pide a Garmin solo las
-  │            actividades y el sueño de hoy y compara la huella (día, actividades de 48 h, sueño, plan, fórmula, perfil);
-  │            si coincide, muestra el resumen guardado con su hora y salta lo que sigue (carga, snapshot y LLM)
+  ├─ (31/10) TrainerAgent.cached_startup_summary(): si `startup_summary` es de hoy (11/11; antes, 60 min), pide a
+  │            Garmin solo las actividades y el sueño de hoy y compara la huella (día, actividades de 48 h, sueño,
+  │            plan, fórmula, perfil); si coincide, muestra el resumen guardado con su hora y salta lo que sigue
+  │            (carga, snapshot y LLM). Si no, deja esas dos respuestas y, con el mismo sueño, la HRV de la noche y lo
+  │            de ayer (`morning`) en `_startup_reuse`, y el snapshot no los vuelve a pedir
   ├─ a la vez: TrainerAgent.compute_and_persist_load_metrics()
   │            incremental (normal) · incremental_refresh (actividad nueva) · full_recalc (usuario nuevo / cambio de fórmula)
   │          · TrainerAgent.build_startup_status_markdown(load_ready=…)

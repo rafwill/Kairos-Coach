@@ -87,7 +87,7 @@ Kairos pide el usuario, la primera vez pregunta su proveedor de IA y su clave, y
 | `/plan evento` · `/plan eventos` | Un viaje, unas vacaciones o una salida obligatoria (una salida en grupo): `/plan evento` pregunta qué es, qué día y, según el caso, deporte, duración e intensidad o los minutos que podrás entrenar y el material; también vale en el chat («el sábado 15 tengo una salida en grupo de 3 h»). El plan lo respeta y se readapta (esta semana o la siguiente, al momento; más lejos, al replanificar). `/plan eventos` los lista o quita uno (`quitar e1`) |
 | `/carga` · `/carga meses` | Carga semanal (8 semanas) o mensual (3 meses) |
 | `/proveedor` | Cambiar de proveedor de IA, modelos (planes y arranque; chat) o clave |
-| `/resumen` | Rehacer el resumen inicial con datos nuevos de Garmin (si reentras en menos de 1 h y no hay nada nuevo, Kairos muestra el guardado, con su hora, sin consultar a Garmin ni al LLM) |
+| `/resumen` | Rehacer el resumen inicial con datos nuevos de Garmin (si reentras el mismo día y no hay nada nuevo, Kairos muestra el guardado, con su hora, sin consultar a Garmin ni al LLM; si has entrenado, lo rehace sin volver a pedir los datos de la noche) |
 | `salir` | Salir de Kairos (la sesión queda guardada para la próxima vez) |
 
 Ejemplos: *"¿Cómo está mi forma física hoy?"*, *"¿Cuánto TSS hice la semana pasada?"*, *"Analiza mi última actividad de trail"*, *"¿Qué me toca mañana?"*, *"Ajusta el plan, tengo una molestia en el gemelo"*, *"Replanifica el plan, he estado una semana enfermo"*, *"Los martes no puedo entrenar"*.

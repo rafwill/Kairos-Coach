@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-11
 
+### Changed (resumen del arranque: todo el día, y tras entrenar sin volver a pedir los datos de la noche; decisión del usuario)
+- Problema: el resumen guardado solo se reutilizaba durante 1 h. Un atleta que entra a las 10, entrena y vuelve por la tarde hacía otra vez las 7 llamadas de bienestar a Garmin, aunque el sueño, la HRV de la noche y los datos de ayer eran los mismos de la mañana. La caché no lo evitaba ni sin límite de tiempo: la actividad nueva cambia la huella.
+- Nivel 1 (`startup_cache.is_today`): sin nada nuevo, el resumen vale todo el día. La nota dice la hora y que el Body Battery es el de esa hora.
+- Nivel 2 (`startup_cache.reusable_morning`, `_morning_data`, columna `startup_summary.morning`): si la huella cambia pero el sueño de hoy es el mismo, el resumen se rehace con el LLM (decisión del usuario), pero la HRV de la noche y el Body Battery, la HRV y el sueño de ayer salen de los guardados por la mañana. El Body Battery de hoy (su último registro baja con el día) y las actividades se piden siempre. Si el sueño cambió (el reloj sincronizó tarde o hubo siesta), o la mañana no traía la HRV, se pide todo. Las dos respuestas de la comprobación de la caché (actividades y sueño de hoy) ya no se piden dos veces, en ningún caso. `/resumen` lo pide todo.
+- Esquema: `alter table startup_summary add column if not exists morning` en `supabase/schema.sql`. Sin la columna, Kairos lee y guarda sin ella (lo avisa en el log): comprobado contra el Supabase real antes de aplicarla (`42703`).
+
 ### Changed (el tiempo de hoy: lluvia, niebla, nieve y viento; petición del usuario)
 - Problema: el bloque «🌡️ Tiempo hoy en …» solo daba temperaturas; un día de lluvia en Madrid (36,6 mm) salía igual que uno despejado.
 - Ahora (`agent/weather.py`): cada hora del bloque (7, 12 y 19 h) lleva su estado del cielo (códigos WMO de Open-Meteo, `WMO`), y una línea nueva da lo que trae la previsión entre las 6 y las 21 h (niebla, llovizna, lluvia, nieve, granizo, tormenta), la precipitación del día (y la nieve en cm), su probabilidad máxima y el viento máximo. Sin umbrales en el código; `prompts/coaching_rules.md` dice al LLM cómo concretar la sesión con lluvia, nieve, hielo, niebla o viento (no cambia la decisión del día).

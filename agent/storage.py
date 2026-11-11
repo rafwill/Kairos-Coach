@@ -234,6 +234,15 @@ def _require_supabase():
     return sb
 
 
+def _is_missing_column_error(exc: Exception, column: str) -> bool:
+    """Columna que aún no existe en Supabase (schema.sql sin aplicar): PGRST204 al escribir, 42703 al leer."""
+    payload = exc.args[0] if getattr(exc, "args", None) else None
+    code = str(payload.get("code") or "") if isinstance(payload, dict) else ""
+    message = str(payload.get("message") or "") if isinstance(payload, dict) else str(exc)
+    msg = message.lower()
+    return column.lower() in msg and (code in {"PGRST204", "42703"} or "column" in msg)
+
+
 def _is_missing_table_error(exc: Exception, table_name: str) -> bool:
     """Detecta errores de PostgREST por tabla ausente (schema cache/migration pendiente)."""
     code = ""
@@ -1353,14 +1362,22 @@ def upsert_wellness_daily(
 
 @_db_read("startup_summary")
 def get_startup_summary() -> dict | None:
-    """Último resumen del arranque (31/10): {generated_at, fingerprint, markdown}; None si no hay o falta la tabla."""
+    """Último resumen del arranque (31/10): {generated_at, fingerprint, markdown, morning}; None si no hay o falta la
+    tabla. Sin la columna `morning` (11/11, schema.sql sin aplicar), la fila sin ella."""
     sb = _supabase()
     uid = _require_active_user_id()
     if not sb:
         return None
     try:
-        res = sb.table("startup_summary").select("generated_at,fingerprint,markdown").eq(
-            "app_user_id", uid).limit(1).execute()
+        try:
+            res = sb.table("startup_summary").select("generated_at,fingerprint,markdown,morning").eq(
+                "app_user_id", uid).limit(1).execute()
+        except Exception as exc:
+            if not _is_missing_column_error(exc, "morning"):
+                raise
+            log.warning("[storage] startup_summary sin la columna morning (ejecuta supabase/schema.sql)")
+            res = sb.table("startup_summary").select("generated_at,fingerprint,markdown").eq(
+                "app_user_id", uid).limit(1).execute()
     except Exception as exc:
         if _is_missing_table_error(exc, "startup_summary"):
             log.warning("[storage] startup_summary no existe en Supabase (ejecuta supabase/schema.sql y rls.sql)")
@@ -1370,8 +1387,9 @@ def get_startup_summary() -> dict | None:
 
 
 @_db_write("startup_summary")
-def save_startup_summary(fingerprint: dict, markdown: str) -> None:
-    """Guarda (sustituye) el resumen del arranque con su huella; sin la tabla, no hace nada."""
+def save_startup_summary(fingerprint: dict, markdown: str, morning: dict | None = None) -> None:
+    """Guarda (sustituye) el resumen del arranque con su huella y los datos de la mañana; sin la tabla, no hace nada;
+    sin la columna `morning`, lo guarda sin ellos."""
     sb = _supabase()
     uid = _require_active_user_id()
     if not sb:
@@ -1381,9 +1399,17 @@ def save_startup_summary(fingerprint: dict, markdown: str) -> None:
         "generated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
         "fingerprint": fingerprint,
         "markdown": markdown,
+        "morning": morning or {},
     }
     try:
-        sb.table("startup_summary").upsert(row).execute()
+        try:
+            sb.table("startup_summary").upsert(row).execute()
+        except Exception as exc:
+            if not _is_missing_column_error(exc, "morning"):
+                raise
+            log.warning("[storage] startup_summary sin la columna morning (ejecuta supabase/schema.sql)")
+            row.pop("morning")
+            sb.table("startup_summary").upsert(row).execute()
     except Exception as exc:
         if _is_missing_table_error(exc, "startup_summary"):
             log.warning("[storage] startup_summary no existe en Supabase (ejecuta supabase/schema.sql y rls.sql)")
