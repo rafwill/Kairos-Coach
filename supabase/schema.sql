@@ -289,6 +289,10 @@ create table if not exists activity_tss (
     primary key (app_user_id, activity_id)
 );
 
+-- 11/11: segundos a cada ritmo (con pendiente) y a cada FC, del mismo detalle que el TSS, para saber cuánto de lo
+-- previsto se hizo (agent/intensity.py). Null en las actividades anteriores o sin detalle.
+alter table activity_tss add column if not exists intensity jsonb;
+
 create index if not exists idx_activity_tss_user_date
     on activity_tss (app_user_id, start_date desc);
 

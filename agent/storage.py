@@ -1223,6 +1223,8 @@ def upsert_activity_tss_rows(rows: list[dict]) -> None:
                         row.get("computed_at")
                         or datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
                     ),
+                    # 11/11: solo si viene; así un recálculo sin detalle no borra la que había.
+                    **({"intensity": row["intensity"]} if row.get("intensity") else {}),
                 }
             )
 
@@ -1230,12 +1232,36 @@ def upsert_activity_tss_rows(rows: list[dict]) -> None:
             return
 
         for i in range(0, len(payload_rows), 200):
-            sb.table("activity_tss").upsert(
-                payload_rows[i:i + 200], on_conflict="app_user_id,activity_id"
-            ).execute()
+            chunk = payload_rows[i:i + 200]
+            try:
+                sb.table("activity_tss").upsert(chunk, on_conflict="app_user_id,activity_id").execute()
+            except Exception as exc:
+                if not _is_missing_column_error(exc, "intensity"):
+                    raise
+                log.warning("[storage] activity_tss sin la columna intensity (ejecuta supabase/schema.sql)")
+                sb.table("activity_tss").upsert([{k: v for k, v in r.items() if k != "intensity"} for r in chunk],
+                                                on_conflict="app_user_id,activity_id").execute()
         log.info("upsert_activity_tss_rows: %d filas persistidas", len(payload_rows))
     except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.warning("upsert_activity_tss_rows: %s", exc)
+
+
+def get_activity_intensity(activity_ids: list[int]) -> dict[int, dict]:
+    """Lo hecho a cada ritmo y FC de esas actividades (`activity_tss.intensity`, 11/11): {id: distribución}. Las que
+    no la tienen (anteriores al 11/11 o sin detalle) no salen; sin la columna o sin sesión, {}."""
+    ids = sorted({int(i) for i in activity_ids or [] if i is not None})
+    sb = _supabase()
+    if not sb or not ids:
+        return {}
+    uid = _require_active_user_id()
+    try:
+        res = sb.table("activity_tss").select("activity_id,intensity").eq("app_user_id", uid).in_(
+            "activity_id", ids).execute()
+    except Exception as exc:
+        if _is_missing_column_error(exc, "intensity") or _is_missing_table_error(exc, "activity_tss"):
+            return {}
+        raise
+    return {int(r["activity_id"]): r["intensity"] for r in res.data or [] if r.get("intensity")}
 
 
 # ─── wellness_daily (Body Battery + HRV) ─────────────────────────────────────

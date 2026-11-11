@@ -755,6 +755,31 @@ def test_startup_summary_without_the_morning_column_still_works(monkeypatch):
     assert saved and "morning" not in saved[0] and saved[0]["markdown"] == "## R"
 
 
+def test_activity_intensity_without_the_column_is_empty(monkeypatch):
+    """11/11: sin la columna activity_tss.intensity (schema.sql sin aplicar) no hay porcentaje, pero nada falla."""
+    class _Table:
+        def select(self, *_a):
+            return self
+
+        def eq(self, *_a):
+            return self
+
+        def in_(self, *_a):
+            return self
+
+        def execute(self):
+            raise _MissingTableError({"message": "column activity_tss.intensity does not exist", "code": "42703"})
+
+    class _Sb:
+        def table(self, _name):
+            return _Table()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: _Sb())
+    assert storage.get_activity_intensity([1, 2]) == {}
+    assert storage.get_activity_intensity([]) == {}
+
+
 def test_startup_summary_without_the_table_is_ignored(monkeypatch):
     class _NoTable:
         def select(self, *_a, **_k):

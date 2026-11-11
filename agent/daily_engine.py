@@ -10,6 +10,7 @@ from datetime import date
 from typing import Any
 
 
+from agent import intensity as _intensity
 from agent import storage as _storage
 from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _estimate_session_tss,
@@ -703,6 +704,25 @@ def _estimate_planned_session_tss(session: dict) -> float:
     return round((duration_min / 60.0) * tss_hour, 1)
 
 
+def _day_completion(day_sessions: list[dict], executed: list[dict], profile: dict) -> dict | None:
+    """Cuánto de lo previsto se hizo (11/11, `agent/intensity.py`), con lo hecho a cada ritmo y FC que se guardó al
+    calcular el TSS. None si alguna actividad del día no lo tiene (anterior al 11/11, sin detalle o bici con
+    potencia): un porcentaje con media sesión sería falso. La fuerza no cuenta (va por RPE)."""
+    measured = [a for a in executed if not _is_strength_activity(a.get("type") or a.get("activityType") or "")]
+    if not measured:
+        return None
+    try:
+        dists = _storage.get_activity_intensity([_activity_id_int(a) for a in measured])
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+        log.debug("_day_completion: %s", exc)
+        return None
+    if len(dists) < len(measured):
+        return None
+    hr_zones, _ = _resolve_hr_zones(profile, "running")
+    return _intensity.completion(_intensity.planned_parts(day_sessions, hr_zones),
+                                 _intensity.merge(list(dists.values())))
+
+
 def _compute_plan_execution_feedback(
     plan: dict,
     activities_for_day: list[dict],
@@ -803,6 +823,8 @@ def _compute_plan_execution_feedback(
         ((actual_tss - planned_tss) / max(planned_tss, 1.0)),
         2,
     )
+    completion = _day_completion(day_sessions, executed, profile)
+
     # 11/11: ya no hay "ajuste sugerido" (con +25 % de TSS proponía reducir, contra la regla del 09/11) ni reparto por
     # bloques (repartía el tiempo total entre los bloques del plan, sin mirar las vueltas).
     structured_summary = _structured_workout_summary(planned)
@@ -824,6 +846,7 @@ def _compute_plan_execution_feedback(
         "adherence_score": adherence_score,
         "adherence_label": adherence_label,
         "load_deviation_pct": load_deviation_pct,
+        "completion": completion,
     }
 
 

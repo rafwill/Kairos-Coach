@@ -6,6 +6,7 @@ Resumen inicial del arranque (48 h de body battery, HRV, sueño, entrenamientos,
 import logging
 import re
 from datetime import date, datetime, timedelta
+from typing import Any
 
 
 from agent import load_metrics as _load_metrics
@@ -73,9 +74,41 @@ def _plan_vs_done_lines(feedback: dict, day: str) -> list[str]:
             dev = (done_tss - planned_tss) / planned_tss * 100.0
             hecha += (" (lo previsto)" if abs(dev) < 1.0 else
                       f" ({abs(dev):.0f} % {'más' if dev > 0 else 'menos'} de lo previsto)")
-    return [f"- {day.capitalize()} frente al plan: **{verdict}**",
-            f"  - Prevista: {prevista}",
-            f"  - Hecha: {hecha}"]
+    lines = [f"- {day.capitalize()} frente al plan: **{verdict}**",
+             f"  - Prevista: {prevista}",
+             f"  - Hecha: {hecha}"]
+    done_line = _completion_line(feedback.get("completion"))
+    if done_line:
+        lines.append(done_line)
+    return lines
+
+
+def _minutes(seconds: Any) -> str:
+    return f"{_safe_float(seconds, 0.0) / 60:.0f}'"
+
+
+def _completion_line(completion: Any) -> str:
+    """«Completado: 92 % · calidad 18' de 18' (en su zona o más rápido) · suave 34' de 37' en su zona (2' más rápido
+    y 1' más lento)» (11/11, `agent/intensity.py`); vacío sin datos."""
+    if not isinstance(completion, dict) or completion.get("pct") is None:
+        return ""
+    parts = [f"  - Completado: **{completion['pct']} %**"]
+    quality = completion.get("quality") or {}
+    easy = completion.get("easy") or {}
+    if _safe_float(quality.get("planned_s"), 0.0) > 0:
+        parts.append(f"calidad {_minutes(quality.get('done_s'))} de {_minutes(quality.get('planned_s'))}"
+                     " (en su zona o más rápido)")
+    if _safe_float(easy.get("planned_s"), 0.0) > 0:
+        text = f"suave {_minutes(easy.get('done_s'))} de {_minutes(easy.get('planned_s'))} en su zona"
+        by_hr = bool(completion.get("easy_by_hr"))
+        why = [f"{_minutes(completion.get(key))} {words}" for key, words in (
+            ("easy_above_s", "con la FC por encima" if by_hr else "más rápido"),
+            ("easy_below_s", "con la FC por debajo" if by_hr else "más lento"))
+            if _safe_float(completion.get(key), 0.0) >= 60]
+        if why:
+            text += f" ({' y '.join(why)})"
+        parts.append(text)
+    return " · ".join(parts)
 
 
 def _build_proactive_status_markdown(snapshot: dict) -> str:

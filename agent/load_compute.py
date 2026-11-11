@@ -14,6 +14,7 @@ from agent.mcp.client import (
 )
 from agent import storage as _storage
 from agent import load_metrics as _load_metrics
+from agent import intensity as _intensity
 from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _derive_walk_hike_threshold_speed_m_min_from_activities,
     _estimate_session_tss,
@@ -660,6 +661,12 @@ class LoadMixin:
                 _has_activity_power_data(act),
             )
 
+            # Lo hecho a cada ritmo y FC (11/11), del mismo detalle que el TSS: para comparar con lo previsto.
+            details_for_intensity = activity_details_raw or act.get("_activity_details_raw")
+            intensity = _intensity.distribution(
+                details_for_intensity, with_pace=_is_running_non_trail_activity(act_type)
+                or "trail" in str(act_type).lower()) if details_for_intensity else None
+
             if act_id is not None and d_iso:
                 activity_tss_rows.append(
                     {
@@ -682,6 +689,7 @@ class LoadMixin:
                         "threshold_pace_used": threshold_pace_for_activity,
                         "walk_threshold_used": act.get("_walk_hike_threshold_speed_m_min"),
                         "computed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+                        "intensity": intensity,
                     }
                 )
 
