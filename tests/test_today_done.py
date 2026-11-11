@@ -115,7 +115,7 @@ class TestMarkdown:
     def test_done_today_shows_today_comparison_done_session_tomorrow_and_rest(self):
         out = _build_proactive_status_markdown(self._payload())
         assert "Sesión de hoy (realizada)" in out and "Hecho hoy: Fartlek · 68 TSS" in out
-        assert "Plan vs ejecutado (hoy)" in out and "(ayer)" not in out
+        assert "Hoy frente al plan" in out and "Ayer frente al plan" not in out
         assert "## 🗓️ Mañana" in out and "Tirada larga" in out
         assert "descanso o movilidad suave: ya has entrenado hoy" in out
         assert "Tras la sesión de hoy: Forma de mañana (CTL − ATL) +7.8" in out
@@ -125,7 +125,7 @@ class TestMarkdown:
         payload = self._payload(done=False)
         payload["today_execution"] = {}
         out = _build_proactive_status_markdown(payload)
-        assert "Plan vs ejecutado (ayer)" in out and "Regla aplicada" in out
+        assert "Ayer frente al plan" in out and "Regla aplicada" in out
         assert "(realizada)" not in out and "Mañana" not in out
 
 

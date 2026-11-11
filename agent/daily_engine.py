@@ -485,76 +485,6 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
     return sw, trace
 
 
-def _compute_structured_block_feedback(planned_session: dict, actual_duration_min: float, actual_tss: float) -> dict:
-    """Compara planificado vs ejecutado por bloques del structured_workout."""
-    sw = (planned_session or {}).get("structured_workout") if isinstance(planned_session, dict) else None
-    if not isinstance(sw, dict):
-        return {}
-
-    steps = sw.get("steps")
-    if not isinstance(steps, list) or not steps:
-        return {}
-
-    blocks: list[dict] = []
-    remaining = max(0.0, float(actual_duration_min or 0.0))
-    actual_tss_per_hour = (float(actual_tss or 0.0) * 60.0 / max(1.0, actual_duration_min)) if actual_duration_min > 0 else 0.0
-
-    for idx, step in enumerate(steps, start=1):
-        if not isinstance(step, dict):
-            continue
-        planned_block_min = _structured_workout_duration_minutes({"steps": [step]})
-        if planned_block_min <= 0:
-            continue
-        completed_min = min(planned_block_min, remaining)
-        remaining = max(0.0, remaining - planned_block_min)
-        completion_pct = round(completed_min / max(1.0, planned_block_min), 2)
-        if completion_pct >= 0.95:
-            status = "completed"
-        elif completion_pct >= 0.25:
-            status = "partial"
-        else:
-            status = "missed"
-
-        ic = _extract_primary_intensity_class(step)
-        planned_tss_hour = _estimate_tss_hour_for_intensity_class(ic)
-        intensity_deviation = round(actual_tss_per_hour - planned_tss_hour, 1)
-
-        blocks.append(
-            {
-                "index": idx,
-                "name": str(step.get("name") or f"block_{idx}"),
-                "type": str(step.get("type") or "block"),
-                "planned_min": round(planned_block_min, 1),
-                "completed_min": round(completed_min, 1),
-                "completion_pct": completion_pct,
-                "status": status,
-                "planned_intensity_class": ic,
-                "intensity_deviation_tss_h": intensity_deviation,
-            }
-        )
-
-    if not blocks:
-        return {}
-
-    completed_blocks = sum(1 for b in blocks if b.get("status") == "completed")
-    partial_blocks = sum(1 for b in blocks if b.get("status") == "partial")
-    missed_blocks = sum(1 for b in blocks if b.get("status") == "missed")
-    total_planned = sum(float(b.get("planned_min") or 0.0) for b in blocks)
-    total_done = sum(float(b.get("completed_min") or 0.0) for b in blocks)
-    time_deviation_pct = round((total_done - total_planned) / max(1.0, total_planned), 2)
-
-    return {
-        "blocks": blocks,
-        "summary": {
-            "completed_blocks": completed_blocks,
-            "partial_blocks": partial_blocks,
-            "missed_blocks": missed_blocks,
-            "total_blocks": len(blocks),
-            "time_deviation_pct": time_deviation_pct,
-        },
-    }
-
-
 def _intensity_class_from_rpe(intensity_text: str) -> str:
     """Clase de intensidad del motor de planes a partir del texto "RPE x-y" de una sesión."""
     txt = str(intensity_text or "").lower()
@@ -873,15 +803,9 @@ def _compute_plan_execution_feedback(
         ((actual_tss - planned_tss) / max(planned_tss, 1.0)),
         2,
     )
-    if load_deviation_pct > 0.25:
-        next_adjustment = "reducir siguiente sesión"
-    elif load_deviation_pct < -0.25:
-        next_adjustment = "progresar ligeramente siguiente sesión"
-    else:
-        next_adjustment = "mantener siguiente sesión"
-
+    # 11/11: ya no hay "ajuste sugerido" (con +25 % de TSS proponía reducir, contra la regla del 09/11) ni reparto por
+    # bloques (repartía el tiempo total entre los bloques del plan, sin mirar las vueltas).
     structured_summary = _structured_workout_summary(planned)
-    block_feedback = _compute_structured_block_feedback(planned, actual_duration, actual_tss)
 
     return {
         "date": target_date_iso,
@@ -897,11 +821,9 @@ def _compute_plan_execution_feedback(
             "duration_min": actual_duration,
             "tss": actual_tss,
         },
-        "block_feedback": block_feedback,
         "adherence_score": adherence_score,
         "adherence_label": adherence_label,
         "load_deviation_pct": load_deviation_pct,
-        "next_session_adjustment": next_adjustment,
     }
 
 

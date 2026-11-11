@@ -32,6 +32,52 @@ SOURCE_RULES = "_Fuente: respuesta determinista (sin inferencias numéricas del 
 SOURCE_RULES_AND_COACH = "_Fuente: la decisión es del motor diario (reglas); «Tu entrenador» es el LLM sobre esos datos._"
 
 
+_DONE_LABELS = {"adherente": "cumplida", "parcial": "a medias", "baja": "no cumplida"}
+
+
+def _plan_vs_done_lines(feedback: dict, day: str) -> list[str]:
+    """Lo previsto frente a lo hecho (ayer, u hoy tras entrenar) en palabras (11/11, petición del usuario: antes
+    "adherencia 0.97 (adherente)", "Bloques: 3/3 completos", que solo repartía el tiempo total entre los bloques del
+    plan, y "Ajuste sugerido por adherencia", que con más TSS proponía reducir contra la regla del 09/11).
+    La puntuación sigue en el motor diario; aquí no se enseña el número."""
+    if not isinstance(feedback, dict) or feedback.get("adherence_score") is None:
+        return []
+    planned = feedback.get("planned") or {}
+    executed = feedback.get("executed") or {}
+    planned_tss = _safe_float(planned.get("tss_est"), 0.0)
+    planned_min = _safe_float(planned.get("duration_min"), 0.0)
+    done_tss = _safe_float(executed.get("tss"), 0.0)
+    done_min = _safe_float(executed.get("duration_min"), 0.0)
+    did_something = int(_safe_float(executed.get("activities"), 0.0)) > 0 or done_min > 0
+
+    if planned_tss <= 0.0 and planned_min <= 0.0:
+        verdict = "entrenaste en un día de descanso" if did_something else "descanso cumplido"
+        prevista = "descanso"
+    else:
+        verdict = _DONE_LABELS.get(str(feedback.get("adherence_label") or ""), "sin valorar")
+        main = str(planned.get("structured_summary") or "").strip().removeprefix("bloque principal:").strip()
+        parts = [f"{planned_min:.0f}'"] if planned_min > 0 else []
+        if main and not (planned_min > 0 and main.startswith(f"{planned_min:.0f}'")):
+            parts.append(f"parte principal {main}")
+        elif main:
+            parts = [main]
+        if planned_tss > 0:
+            parts.append(f"{planned_tss:.0f} TSS")
+        prevista = " · ".join(parts) or "sesión del plan"
+
+    if not did_something:
+        hecha = "nada"
+    else:
+        hecha = " · ".join(([f"{done_min:.0f}'"] if done_min > 0 else []) + [f"{done_tss:.0f} TSS"])
+        if planned_tss > 0:
+            dev = (done_tss - planned_tss) / planned_tss * 100.0
+            hecha += (" (lo previsto)" if abs(dev) < 1.0 else
+                      f" ({abs(dev):.0f} % {'más' if dev > 0 else 'menos'} de lo previsto)")
+    return [f"- {day.capitalize()} frente al plan: **{verdict}**",
+            f"  - Prevista: {prevista}",
+            f"  - Hecha: {hecha}"]
+
+
 def _build_proactive_status_markdown(snapshot: dict) -> str:
     """Genera un bloque Markdown con estado proactivo de últimas 48h."""
     unavailable_label = "No disponible en este momento"
@@ -201,36 +247,7 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
     else:
         lines.append("- Entrenamientos recientes: no se encontraron en las ultimas 48h")
 
-    if isinstance(plan_execution_feedback, dict) and plan_execution_feedback.get("adherence_score") is not None:
-        score = _safe_float(plan_execution_feedback.get("adherence_score"), 0.0)
-        label = str(plan_execution_feedback.get("adherence_label") or "n/d")
-        dev_pct = _safe_float(plan_execution_feedback.get("load_deviation_pct"), 0.0) * 100.0
-        next_adj = str(plan_execution_feedback.get("next_session_adjustment") or "").strip()
-        structured_summary = str(
-            ((plan_execution_feedback.get("planned") or {}).get("structured_summary") or "")
-        ).strip()
-        planned_tss = _safe_float((plan_execution_feedback.get("planned") or {}).get("tss_est"), 0.0)
-        done_tss = _safe_float((plan_execution_feedback.get("executed") or {}).get("tss"), 0.0)
-        if planned_tss <= 0.0:
-            # Con 0 previsto (descanso) un porcentaje no significa nada: se da la carga hecha.
-            load_text = f"carga: previsto 0 TSS (descanso) · hecho {done_tss:.0f} TSS"
-        else:
-            load_text = f"desviación de carga {dev_pct:+.0f}% ({done_tss:.0f} de {planned_tss:.0f} TSS)"
-        lines.append(f"- Plan vs ejecutado ({feedback_day}): adherencia {score:.2f} ({label}) · {load_text}")
-        if structured_summary:
-            lines.append(f"  - Plan de referencia: {structured_summary}")
-        block_summary = ((plan_execution_feedback.get("block_feedback") or {}).get("summary") or {})
-        if isinstance(block_summary, dict) and block_summary:
-            done = int(block_summary.get("completed_blocks") or 0)
-            partial = int(block_summary.get("partial_blocks") or 0)
-            missed = int(block_summary.get("missed_blocks") or 0)
-            total = int(block_summary.get("total_blocks") or max(1, done + partial + missed))
-            time_dev_pct = _safe_float(block_summary.get("time_deviation_pct"), 0.0) * 100.0
-            lines.append(
-                f"  - Bloques: {done}/{total} completos · parciales {partial} · omitidos {missed} · desviación tiempo {time_dev_pct:+.0f}%"
-            )
-        if next_adj:
-            lines.append(f"  - Ajuste sugerido por adherencia: {next_adj}")
+    lines.extend(_plan_vs_done_lines(plan_execution_feedback, feedback_day))
 
     decision_for_user = ""
     decision = str((daily_plan_decision or {}).get("decision") or "").strip().lower()

@@ -4,6 +4,10 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-11
 
+### Changed (lo previsto frente a lo hecho, en palabras; petición del usuario)
+- Problema: el arranque decía «Plan vs ejecutado (hoy): adherencia 0.97 (adherente) · desviación de carga +1% (76 de 75 TSS)», «Bloques: 3/3 completos · parciales 0 · omitidos 0 · desviación tiempo +0%» y «Ajuste sugerido por adherencia: mantener siguiente sesión». No se entendía, y dos líneas engañaban: los bloques no miraban las vueltas (repartían el tiempo total entre los bloques del plan, y la desviación de tiempo nunca podía ser positiva), y el ajuste, con un 25 % más de TSS, proponía reducir la siguiente sesión, contra la regla del 09/11 (el motor diario no lo usaba).
+- Ahora (`_plan_vs_done_lines`): «Hoy frente al plan: **cumplida**» (a medias, no cumplida; en un descanso, «descanso cumplido» o «entrenaste en un día de descanso»), «Prevista: 55' (Z2 Aeróbica) · 75 TSS» y «Hecha: 55' · 76 TSS (1 % más de lo previsto)». Fuera `_compute_structured_block_feedback` y `next_session_adjustment`. La puntuación de adherencia sigue en el motor diario, sin enseñarse.
+
 ### Changed (resumen del arranque: todo el día, y tras entrenar sin volver a pedir los datos de la noche; decisión del usuario)
 - Problema: el resumen guardado solo se reutilizaba durante 1 h. Un atleta que entra a las 10, entrena y vuelve por la tarde hacía otra vez las 7 llamadas de bienestar a Garmin, aunque el sueño, la HRV de la noche y los datos de ayer eran los mismos de la mañana. La caché no lo evitaba ni sin límite de tiempo: la actividad nueva cambia la huella.
 - Nivel 1 (`startup_cache.is_today`): sin nada nuevo, el resumen vale todo el día. La nota dice la hora y que el Body Battery es el de esa hora.

@@ -297,10 +297,7 @@ class TestStartupProactive:
         assert out["planned"]["duration_min"] == 60.0
         assert "load_deviation_pct" in out
         assert "bloque principal" in str(out["planned"].get("structured_summary") or "")
-        block_feedback = out.get("block_feedback") or {}
-        summary = block_feedback.get("summary") or {}
-        assert int(summary.get("total_blocks") or 0) >= 1
-        assert "time_deviation_pct" in summary
+        assert "block_feedback" not in out and "next_session_adjustment" not in out  # 11/11
 
     def test_more_load_yesterday_does_not_lower_today(self):
         # 09/11, decisión del usuario: el 8/11 un rodaje de 85 TSS frente a 48 recortó la sesión del lunes con todo en
@@ -388,24 +385,19 @@ class TestStartupProactive:
         plan["created_at"] = f"{yday}T07:00:00+00:00"
         assert _compute_plan_execution_feedback(plan, [], yday, profile={}) is not None
 
-    def test_build_proactive_status_markdown_shows_block_feedback_summary(self):
+    def test_plan_vs_done_in_plain_words(self):
+        """11/11, petición del usuario: «adherencia 0.97 (adherente) · desviación de carga +1%», «Bloques: 3/3» y
+        «Ajuste sugerido por adherencia» no se entendían."""
         payload = {
             "plan_assigned": True,
             "plan_recommendation": "Plan activo",
             "plan_execution_feedback": {
-                "adherence_score": 0.82,
+                "adherence_score": 0.97,
                 "adherence_label": "adherente",
-                "load_deviation_pct": -0.12,
-                "planned": {"structured_summary": "bloque principal: 5x3' + 2' rec (threshold)"},
-                "block_feedback": {
-                    "summary": {
-                        "completed_blocks": 2,
-                        "partial_blocks": 1,
-                        "missed_blocks": 0,
-                        "total_blocks": 3,
-                        "time_deviation_pct": -0.10,
-                    }
-                },
+                "load_deviation_pct": 0.01,
+                "planned": {"structured_summary": "bloque principal: 55' (Z2 Aeróbica)", "duration_min": 55.0,
+                            "tss_est": 75.0},
+                "executed": {"activities": 1, "duration_min": 56.0, "tss": 76.0},
             },
             "body_battery": {"summary": "sin datos"},
             "hrv": {"summary": "sin datos"},
@@ -413,8 +405,31 @@ class TestStartupProactive:
             "trainings": [],
         }
         out = _build_proactive_status_markdown(payload)
-        assert "Bloques:" in out
-        assert "2/3 completos" in out
+        assert "- Ayer frente al plan: **cumplida**" in out
+        assert "  - Prevista: 55' (Z2 Aeróbica) · 75 TSS" in out
+        assert "  - Hecha: 56' · 76 TSS (1 % más de lo previsto)" in out
+        assert "adherencia" not in out and "Bloques" not in out and "Ajuste sugerido" not in out
+
+    def test_plan_vs_done_with_warmup_missed_and_rest(self):
+        from agent.startup_status import _plan_vs_done_lines
+
+        quality = {"adherence_score": 0.5, "adherence_label": "parcial",
+                   "planned": {"structured_summary": "bloque principal: 6x3' + 2' rec (Z4 Subumbral)",
+                               "duration_min": 60.0, "tss_est": 70.0},
+                   "executed": {"activities": 1, "duration_min": 40.0, "tss": 42.0}}
+        assert _plan_vs_done_lines(quality, "hoy") == [
+            "- Hoy frente al plan: **a medias**",
+            "  - Prevista: 60' · parte principal 6x3' + 2' rec (Z4 Subumbral) · 70 TSS",
+            "  - Hecha: 40' · 42 TSS (40 % menos de lo previsto)"]
+        missed = {**quality, "adherence_score": 0.0, "adherence_label": "baja",
+                  "executed": {"activities": 0, "duration_min": 0.0, "tss": 0.0}}
+        assert _plan_vs_done_lines(missed, "ayer")[0] == "- Ayer frente al plan: **no cumplida**"
+        assert _plan_vs_done_lines(missed, "ayer")[2] == "  - Hecha: nada"
+        rest = {"adherence_score": 0.0, "adherence_label": "baja", "planned": {"tss_est": 0.0, "duration_min": 0.0},
+                "executed": {"activities": 1, "duration_min": 50.0, "tss": 84.6}}
+        assert _plan_vs_done_lines(rest, "ayer") == ["- Ayer frente al plan: **entrenaste en un día de descanso**",
+                                                     "  - Prevista: descanso", "  - Hecha: 50' · 85 TSS"]
+        assert _plan_vs_done_lines({}, "ayer") == []
 
     def test_plan_vs_executed_without_planned_tss_shows_absolute_load(self):
         payload = {
@@ -433,8 +448,8 @@ class TestStartupProactive:
             "trainings": [],
         }
         out = _build_proactive_status_markdown(payload)
-        assert "previsto 0 TSS (descanso) · hecho 85 TSS" in out
-        assert "8460" not in out
+        assert "Prevista: descanso" in out and "Hecha: 85 TSS" in out
+        assert "8460" not in out and "%" not in out.split("Hecha:")[1].split(chr(10))[0]
 
     def test_plan_vs_executed_with_planned_tss_shows_percentage_and_tss(self):
         payload = {
@@ -453,7 +468,7 @@ class TestStartupProactive:
             "trainings": [],
         }
         out = _build_proactive_status_markdown(payload)
-        assert "desviación de carga +50% (90 de 60 TSS)" in out
+        assert "Prevista: 60 TSS" in out and "Hecha: 90 TSS (50 % más de lo previsto)" in out
 
     def test_compute_daily_plan_adjustment_respects_unavailable_day(self):
         today_iso = date.today().isoformat()
