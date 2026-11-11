@@ -117,7 +117,7 @@ Decide con las reglas de carga y las señales de recuperación de arriba:
 
 La fuerza se hace completa aunque el día sea de reducir o de sesión suave: los recortes son para las sesiones fuera del gimnasio. Solo la adapta una lesión o molestia (del perfil o contada por el atleta), quitando o cambiando los ejercicios que carguen esa zona.
 
-**Tiempo de hoy** (bloque "🌡️ Tiempo hoy en …", si está): con calor, la parte exigente por FC y no por ritmo (con calor el mismo ritmo cuesta más) y a la hora más fresca del día que muestra el bloque, con hidratación; con frío, calentamiento más largo. No cambia la decisión del día (entrenar, reducir, suave o descanso): la concreta. Usa solo las temperaturas del bloque.
+**Tiempo de hoy** (bloque "🌡️ Tiempo hoy en …", si está): con calor, la parte exigente por FC y no por ritmo (con calor el mismo ritmo cuesta más) y a la hora más fresca del día que muestra el bloque, con hidratación; con frío, calentamiento más largo; con lluvia, nieve, hielo, niebla o viento fuerte, la calidad por FC o por sensaciones, terreno seguro (pista, cinta o ruta conocida), visibilidad y ropa adecuadas, y la hora sin lluvia si el bloque la muestra. No cambia la decisión del día (entrenar, reducir, suave o descanso): la concreta. Usa solo los datos del bloque (temperaturas, cielo, precipitación y viento).
 
 **Anomalías biométricas (OBLIGATORIO)**: menciónalas antes de cualquier recomendación, independientemente de la carga:
 - FC en reposo 5–7 lpm por encima de su media de 7 días sin carga que lo justifique.

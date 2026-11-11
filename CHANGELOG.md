@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-11
+
+### Changed (el tiempo de hoy: lluvia, niebla, nieve y viento; petición del usuario)
+- Problema: el bloque «🌡️ Tiempo hoy en …» solo daba temperaturas; un día de lluvia en Madrid (36,6 mm) salía igual que uno despejado.
+- Ahora (`agent/weather.py`): cada hora del bloque (7, 12 y 19 h) lleva su estado del cielo (códigos WMO de Open-Meteo, `WMO`), y una línea nueva da lo que trae la previsión entre las 6 y las 21 h (niebla, llovizna, lluvia, nieve, granizo, tormenta), la precipitación del día (y la nieve en cm), su probabilidad máxima y el viento máximo. Sin umbrales en el código; `prompts/coaching_rules.md` dice al LLM cómo concretar la sesión con lluvia, nieve, hielo, niebla o viento (no cambia la decisión del día).
+- Lección: el `weather_code` diario de Open-Meteo es el número WMO más alto del día, no lo más grave: en Madrid el 11/11 daba «chubascos débiles» (80) con 36,6 mm y lluvia hora a hora (63). Por eso el resumen sale de los códigos por hora.
+
 ## 2026-11-10
 
 ### Fixed (un evento de montaña en un plan de asfalto salía con km y rTSS de asfalto)
