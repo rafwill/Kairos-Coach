@@ -94,6 +94,7 @@ La lista está en `docs/proximos_pasos.md`. Recordatorio: si cambia la FC umbral
 - Maratón de Madrid 22663819817 (26/04, 3.4 h): Kairos 230.1 rTSS frente a TP 299.3 (−23 %), decidido dejarlo así. NGP/ritmo medio en TP 1.100 frente a 1.006 en las otras 96 sesiones: anomalía de TP en esa sesión.
 - Caminatas: no cuadran con TP por diseño (modelo intermedio).
 - Bici 07/08 (23889452312): el export de TP trae 93, metido a mano por estimación; su hrTSS de TP es 62 (Kairos 65.9). En una revalidación, usar 62 o excluirla.
+- rTSS con el reloj en pausa (12/11, decisión del usuario): al pasar el detalle a 1 Hz, la pausa se rellena con ritmos interpolados y cuenta como carrera. 49 de 114 carreras de asfalto (22/02–11/11) con pausa ≥ 30 s; 148 TSS de más en total, media 3, máximo 33.7 (27/08 24141099893: 122.6 frente a 88.9 sin la pausa, TP 98.1). Frente a TP (n=40) quitar las pausas baja el MAPE de 6.2 % a 5.3 %, pero acierta más solo en 21 de 40, y con pausas ≥ 5' pasa de ×1.055 a ×0.935: TP queda en medio. No se cambia (sería otra `TSS_FORMULA_VERSION` sin criterio claro); para corregirlo, fijar antes un criterio frente a TP en sesiones con pausas largas. El «Completado: N %» sí quita las pausas (`agent/intensity.py`).
 - Hiking con n bajo; short_reps_detector con cobertura parcial; 24027714450 sin detección (tramo corto sostenido embebido); RPE de fuerza 0/137; elíptica sin hr_max real.
 
 ## Historia
