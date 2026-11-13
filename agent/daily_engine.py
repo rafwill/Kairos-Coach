@@ -168,12 +168,17 @@ def _today_completion(plan: dict | None, today_iso: str, activities_today: list[
     rows = [i for i, r in enumerate(day_rows)  # posiciones en el día, las que pinta _today_session_lines
             if str(r.get("session_type") or "") != "rest" and _safe_float(r.get("duration_min"), 0.0) > 0]
     done: list[int] = []
+    extra: list[dict] = []
     for act in executed:
         strength = _is_strength_activity(act.get("activityTypeDTO") or act.get("activityType") or "")
         match = next((i for i in rows if i not in done
                       and (str(day_rows[i].get("session_type") or "") == "strength") == strength), None)
         if match is not None:
             done.append(match)
+        else:
+            extra.append({"name": str(act.get("name") or act.get("activityName") or "Actividad"),
+                          "activity_id": _activity_id_int(act),
+                          "minutes": round(_extract_activity_duration_minutes(act))})
     return {
         "planned": len(rows),
         "executed": len(executed),
@@ -181,7 +186,35 @@ def _today_completion(plan: dict | None, today_iso: str, activities_today: list[
         "done": sorted(done),
         "names": [str(a.get("name") or a.get("activityName") or "Actividad") for a in executed],
         "pending": [day_rows[i] for i in rows if i not in done],
+        # Lo hecho hoy que no cubre ninguna sesión del plan (13/11: la fuerza hecha en un día de bici se pintaba en
+        # «Entrenamientos recientes», pero la sesión de hoy, la decisión y el LLM la ignoraban).
+        "extra": extra,
     }
+
+
+def _attach_extra_tss(completion: dict | None, day_iso: str) -> None:
+    """Pone a lo hecho fuera del plan su TSS guardado en activity_tss (lo escribe el cálculo de carga)."""
+    extra = (completion or {}).get("extra") or []
+    if not extra:
+        return
+    stored = _load_stored_activity_tss(day_iso)
+    for item in extra:
+        tss = _safe_float((stored.get(item.get("activity_id")) or {}).get("tss"), 0.0)
+        if tss > 0:
+            item["tss"] = round(tss, 1)
+
+
+def _extra_done_text(completion: dict | None) -> str:
+    """Lo hecho hoy fuera del plan en una línea: «Fuerza. Core · 35' · 25 TSS; …». Vacío si no hay nada."""
+    parts = []
+    for item in (completion or {}).get("extra") or []:
+        bits = [str(item.get("name") or "Actividad")]
+        if int(item.get("minutes") or 0) > 0:
+            bits.append(f"{int(item['minutes'])}'")
+        if _safe_float(item.get("tss"), 0.0) > 0:
+            bits.append(f"{_safe_float(item.get('tss'), 0.0):.0f} TSS")
+        parts.append(" · ".join(bits))
+    return "; ".join(parts)
 
 
 def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | None:
@@ -602,13 +635,17 @@ def _build_today_session_frame(daily_decision: dict | None, profile: dict | None
     else:
         spans = [int(hi) for _, hi in re.findall(r"(\d+)\s*-\s*(\d+)\s*min", resulting)]
         duration = f"{max(spans)} min" if spans else "la de la sesión prevista"
-    return _render_prompt(
+    frame = _render_prompt(
         "coaching/session_frame",
         decision=_DECISION_LABELS[decision],
         sesion=resulting or "—",
         zonas=allowed,
         duracion=duration,
     )
+    extra = str((daily_decision or {}).get("done_extra") or "").strip()
+    if extra:
+        frame += "\n" + _render_prompt("coaching/done_extra", hecho=extra)
+    return frame
 
 
 def _structured_workout_summary(session: dict) -> str:
@@ -894,8 +931,18 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     """Motor determinista de ajuste diario del plan.
 
     Entrada: TSB, ATL, TSS semanal, sueño, HRV, body battery y sesión planificada.
-    Salida: maintain, reduce, easy o rest.
+    Salida: maintain, reduce, easy o rest. Con algo hecho hoy fuera del plan, `done_extra` lo dice (13/11) para la
+    pantalla y el marco del LLM; no cambia la decisión (09/11: haber entrenado más no recorta por sí solo).
     """
+    out = _daily_plan_adjustment(snapshot, plan)
+    extra = _extra_done_text(snapshot.get("today_completion"))
+    if isinstance(out, dict) and extra and out.get("rule") != "done_today":
+        out["done_extra"] = extra
+    return out
+
+
+def _daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | None:
+    """El motor de `_compute_daily_plan_adjustment`, sin lo hecho fuera del plan."""
     has_plan = isinstance(plan, dict)
     if not has_plan:
         plan = {}

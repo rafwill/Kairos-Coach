@@ -1,0 +1,1 @@
+- Ya hecho hoy, fuera del plan: {{hecho}}. Cuéntalo al hablar del día: es entrenamiento de hoy (no de ayer) y suma a la carga. La sesión del plan que falta sigue en pie con la decisión de arriba (haber entrenado más no la recorta por sí solo); di cómo encaja con lo ya hecho.

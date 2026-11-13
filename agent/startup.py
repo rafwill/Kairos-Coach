@@ -58,6 +58,7 @@ from agent.plans import _plan_field, _plan_start, _today_session_lines
 from agent.startup_status import SOURCE_RULES, SOURCE_RULES_AND_COACH
 from agent.daily_engine import (
     _build_startup_plan_recommendation,
+    _attach_extra_tss,
     _compute_daily_plan_adjustment,
     _missed_endurance_sessions,
     _compute_plan_execution_feedback,
@@ -604,6 +605,7 @@ class StartupMixin:
         if active_plan:
             today_acts = [a for a in activities_recent if _extract_activity_date_iso(a) == today_iso]
             today_completion = _today_completion(active_plan, today_iso, today_acts)
+            _attach_extra_tss(today_completion, today_iso)
             if today_completion and today_completion["all_done"]:
                 today_execution = _compute_plan_execution_feedback(
                     plan=active_plan, activities_for_day=today_acts, target_date_iso=today_iso,

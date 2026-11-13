@@ -319,6 +319,10 @@ def _build_proactive_status_markdown(snapshot: dict) -> str:
         if today_done:
             title += " (realizada)" if completion.get("planned") else " (hoy no tocaba entrenar)"
         lines.extend(["", title, *today_session])
+        done_extra = str(daily_plan_decision.get("done_extra") or "").strip() if isinstance(daily_plan_decision, dict) else ""
+        if done_extra and not today_done:
+            # 13/11: lo hecho que no cubre ninguna sesión del plan; la del plan sigue pendiente.
+            lines.append(f"- Hecho hoy, fuera del plan: {done_extra} (la sesión del plan sigue pendiente)")
         if today_done:
             done_tss = _safe_float(((snapshot.get("today_execution") or {}).get("executed") or {}).get("tss"), 0.0)
             lines.append("- Hecho hoy: " + " · ".join(completion.get("names") or ["actividad"])

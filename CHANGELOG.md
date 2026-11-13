@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-13
+
+### Fixed (lo hecho hoy fuera del plan; petición del usuario)
+- Problema: el 13/11 tocaba bici suave 50' y el atleta hizo fuerza («Complemento cadera y tobillos», 24.6 TSS). El arranque la pintaba en «Entrenamientos recientes», pero la sesión de hoy seguía igual, la recomendación era «la sesión del plan, tal cual» sin nombrarla y el LLM hablaba de «la fuerza de ayer». `_today_completion` (05/11) solo deja que una actividad cubra una sesión de su clase (fuerza o resistencia) y la que no cubre ninguna se descartaba en silencio.
+- Ahora: `_today_completion` devuelve esas actividades en `extra` (nombre, minutos) y `_attach_extra_tss` les pone su TSS de `activity_tss`. El motor diario las añade a la decisión (`done_extra`) sin cambiarla (09/11: haber entrenado más no recorta por sí solo); «Sesión de hoy» dice «Hecho hoy, fuera del plan: … (la sesión del plan sigue pendiente)» y el marco del LLM (`prompts/coaching/done_extra.md`) le pide contarlo como entrenamiento de hoy y decir cómo encaja la sesión que falta. Vale para el arranque, la ruta de estado del día y el bucle con tools (los tres usan el mismo motor).
+- Comprobado con el plan real y el TSS guardado de esa fuerza: decisión `maintain` igual que antes y el marco con «Ya hecho hoy, fuera del plan: Fuerza. Complemento cadera y tobillos · 25 TSS».
+- Lección: lo que una regla de emparejamiento no empareja tiene que salir en algún sitio; descartarlo sin decirlo deja al LLM con datos (la lista de actividades) que contradicen el marco.
+
 ## 2026-11-11
 
 ### Added (cuánto de lo previsto se hizo: «Completado: N %»; petición y decisiones del usuario)
