@@ -106,6 +106,7 @@ class ToolLoopMixin:
         # 144 s en una pregunta). Tras 2 timeouts en la misma respuesta no se llama más a Garmin.
         _MAX_TOOL_TIMEOUTS = 2
         tool_timeouts = 0
+        empty_retry_done = False
         iteration = 0
         while True:
             iteration += 1
@@ -370,6 +371,14 @@ class ToolLoopMixin:
                 messages.extend(await asyncio.gather(*(_run_tool_call(tc) for tc in message.tool_calls)))
 
                 # Continúa el loop para que el modelo procese los resultados
+                continue
+
+            # Respuesta vacía, sin texto ni tools (18/11: Gemini Flash Lite devolvió 0 tokens de salida y el atleta
+            # vio "No he podido generar contenido"): se repite la llamada una vez.
+            if not (message.content or "").strip() and not empty_retry_done:
+                empty_retry_done = True
+                log.warning("[LLM] iter=%d respuesta vacía (finish_reason=%s): se repite la llamada",
+                            iteration, response.choices[0].finish_reason)
                 continue
 
             # Respuesta final del agente

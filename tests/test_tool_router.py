@@ -137,7 +137,11 @@ class TestToolRouter:
         for q in ("¿Podria cambiar la tirada larga del domingo a mañana sabado?",
                   "¿Puedo pasar las series del martes al jueves?", "Mueve el rodaje de mañana al domingo",
                   "¿Puedo hacer la fuerza hoy en vez del lunes?", "Acorta el rodaje del martes",
-                  "Quita la sesión del miércoles", "intercambia la sesión del sábado y la del domingo"):
+                  "Quita la sesión del miércoles", "intercambia la sesión del sábado y la del domingo",
+                  # 18/11: ni "permutar" ni el plural "entrenamientos" se reconocían.
+                  "Seria posible permutar los entrenamientos del jueves y el viernes. De tal manera que mañana "
+                  "tenga el rodaje y el viernes Introducción al umbral?",
+                  "¿Puedo invertir las sesiones del martes y el jueves?"):
             assert router.route_key(q, [], profile) == "planning", q
         for q in ("¿Qué tirada larga hice el domingo?", "¿Qué pasa si mañana llueve en la tirada?",
                   "¿Cómo muevo los brazos en las series de mañana?", "¿Qué ritmo llevo en el tempo del jueves?",

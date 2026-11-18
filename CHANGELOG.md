@@ -2,6 +2,13 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-18
+
+### Fixed (permutar dos sesiones desde el chat; respuesta vacía del LLM)
+- Problema: «¿Sería posible permutar los entrenamientos del jueves y el viernes? De tal manera que mañana tenga el rodaje y el viernes Introducción al umbral» acabó en «No he podido generar contenido en esta respuesta». Dos fallos: `router._is_session_change_intent` no reconocía «permutar» ni el plural «entrenamientos» (solo «entrenamiento»), así que la pregunta fue al bucle con tools en vez de a la revisión del plan; y allí Gemini 3.5 Flash Lite devolvió 0 tokens de salida, que la CLI pintó como respuesta vacía sin reintentar.
+- Ahora: el verbo de cambio admite «permutar» e «invertir», y los sustantivos de sesión, su plural (tiradas, rodajes, sesiones, entrenos, entrenamientos…). El bucle con tools repite una vez la llamada si el LLM no devuelve ni texto ni tools (`[LLM] … respuesta vacía` en `agent.log`). Tests en `test_tool_router.py` (la frase del atleta) y `test_tool_loop.py`.
+- Lección: los detectores por palabras necesitan las formas en plural; una frase real que se escapa va al banco de tests.
+
 ## 2026-11-13
 
 ### Fixed (lo hecho hoy fuera del plan; petición del usuario)

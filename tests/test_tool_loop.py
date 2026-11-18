@@ -83,6 +83,37 @@ class TestImpossibleDateAndUnknownTool:
         tool_msg = agent.client.chat.completions.create.await_args_list[1].kwargs["messages"][-1]
         assert tool_msg["role"] == "tool" and "unknown_tool" in tool_msg["content"]
 
+    @pytest.mark.asyncio
+    async def test_empty_reply_is_retried_once(self, monkeypatch):
+        # 18/11: Gemini Flash Lite devolvió 0 tokens de salida y el atleta vio "No he podido generar contenido".
+        def _resp(content=None):
+            m = MagicMock()
+            m.content = content
+            m.tool_calls = None
+            r = MagicMock()
+            r.choices = [MagicMock(message=m, finish_reason="stop")]
+            r.usage = None
+            return r
+
+        agent = object.__new__(ta.TrainerAgent)
+        agent.user_profile = {}
+        agent.conversation_history = []
+        agent.tools_schema = [{"type": "function", "function": {"name": "get_activities"}}]
+        agent.mcp_session = MagicMock()
+        agent._build_messages = lambda _msg: [{"role": "user", "content": "x"}]
+        agent.model = "m"
+        agent.total_prompt_tokens = agent.total_completion_tokens = 0
+        agent.client = MagicMock()
+        agent.client.chat.completions.create = AsyncMock(side_effect=[
+            _resp(content=""), _resp(content="Entrenar con calor exige hidratarse bien."),
+        ])
+        patch_everywhere(monkeypatch, "_resolve_hr_zones", lambda profile, sport: ([], "n/d"))
+        with patch_all("_save_history_entries"):
+            out = await ta.TrainerAgent.chat(agent, "¿Qué opinas de entrenar con calor?")
+
+        assert agent.client.chat.completions.create.await_count == 2
+        assert "hidratarse" in out
+
 
 class TestToolTimeoutBreaker:
     @pytest.mark.asyncio
