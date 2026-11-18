@@ -58,6 +58,7 @@ from agent.plans import _plan_field, _plan_start, _today_session_lines
 from agent.startup_status import SOURCE_RULES, SOURCE_RULES_AND_COACH
 from agent.daily_engine import (
     _build_startup_plan_recommendation,
+    _attach_extra_tss,
     _compute_daily_plan_adjustment,
     _missed_endurance_sessions,
     _compute_plan_execution_feedback,
@@ -99,6 +100,20 @@ def _recent_training_ids(activities: list[dict]) -> list[str]:
     """Ids de las actividades de las últimas 48 h (hasta 5), como las lista el snapshot del arranque."""
     ids = [a.get("activityId") or a.get("id") for a in activities if _is_activity_in_last_48h(a)]
     return [str(i) for i in ids if i is not None][:5]
+
+
+def _morning_data(snapshot: dict, today_iso: str) -> dict:
+    """Lo de la mañana que no cambia en el día (11/11, `startup_cache.MORNING_KEYS`), para rehacer el resumen por la
+    tarde sin pedirlo otra vez. Solo lo que trae datos: una HRV o un día sin sincronizar se vuelve a pedir."""
+    yday = (date.fromisoformat(today_iso) - timedelta(days=1)).isoformat()
+    hrv, body, sleep = (snapshot.get(k) or {} for k in ("hrv", "body_battery", "sleep"))
+    found = {
+        "hrv_today": hrv.get("today") if _extract_hrv_snapshot(hrv.get("today"), today_iso) else None,
+        "hrv_yday": hrv.get("yesterday") if _extract_hrv_snapshot(hrv.get("yesterday"), yday) else None,
+        "body_yday": body.get("yesterday") if _extract_body_battery_snapshot(body.get("yesterday"), yday) else None,
+        "sleep_yday": sleep.get("yesterday") if _format_sleep_day(sleep.get("yesterday"), yday) != "sin datos" else None,
+    }
+    return {"date": today_iso, **{k: v for k, v in found.items() if v is not None}}
 
 
 def _plan_drift_lines(plan: dict, today: date | None = None, events: list[dict] | None = None) -> list[str]:
@@ -285,16 +300,20 @@ class StartupMixin:
         return weather
 
     async def collect_startup_snapshot_48h(self, prefetch_today: dict | None = None,
-                                           load_ready: "asyncio.Future | None" = None) -> dict:
+                                           load_ready: "asyncio.Future | None" = None,
+                                           reuse: dict | None = None) -> dict:
         """Recoge un snapshot operativo de 48h para briefing de arranque.
 
         load_ready: el cálculo de la carga del arranque, que corre a la vez (28/10, pendiente 8c). Las llamadas a
         Garmin no lo esperan; la lectura de la serie de carga, sí, para no leerla antes de que se guarde.
+        reuse (11/11): lo que no hay que volver a pedir a Garmin: lo que acaba de pedir la comprobación de la caché
+        (`sleep_today`, `activities`) y lo de la mañana que no cambia en el día (`startup_cache.MORNING_KEYS`).
         """
         today_iso = date.today().isoformat()
         yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
         two_days_ago_iso = (date.today() - timedelta(days=2)).isoformat()
         _pf = prefetch_today or {}
+        _reuse = {k: v for k, v in (reuse or {}).items() if v is not None}
         _t_snap = time.perf_counter()
         # El tiempo de hoy (Open-Meteo, 30/10) va a la vez que las llamadas a Garmin.
         weather_task = asyncio.create_task(self._today_weather())
@@ -358,6 +377,12 @@ class StartupMixin:
             ("hrv_yday" not in _pf)
             and _session_get(yesterday_iso, "hrv") is not None
         )
+        if "body_yday" in _reuse:
+            _session_set(yesterday_iso, "body", _reuse["body_yday"])
+            use_session_body_yday = True
+        if "hrv_yday" in _reuse:
+            _session_set(yesterday_iso, "hrv", _reuse["hrv_yday"])
+            use_session_hrv_yday = True
 
         body_today_task: Awaitable[Any]
         if "body_today" in _pf:
@@ -372,7 +397,9 @@ class StartupMixin:
         )
 
         hrv_today_task: Awaitable[Any]
-        if "hrv_today" in _pf:
+        if "hrv_today" in _reuse:
+            hrv_today_task = _return(_reuse["hrv_today"])
+        elif "hrv_today" in _pf:
             hrv_today_task = _cached_or_fetch("hrv_today", "get_hrv_data", {"date": today_iso})
         else:
             hrv_today_task = _tool_json("get_hrv_data", {"date": today_iso})
@@ -389,9 +416,11 @@ class StartupMixin:
                 body_yday_task,
                 hrv_today_task,
                 hrv_yday_task,
-                _tool_json("get_sleep_summary", {"date": today_iso}),
-                _tool_json("get_sleep_summary", {"date": yesterday_iso}),
-                _tool_json(
+                _return(_reuse["sleep_today"]) if "sleep_today" in _reuse
+                else _tool_json("get_sleep_summary", {"date": today_iso}),
+                _return(_reuse["sleep_yday"]) if "sleep_yday" in _reuse
+                else _tool_json("get_sleep_summary", {"date": yesterday_iso}),
+                _return(_reuse["activities"]) if "activities" in _reuse else _tool_json(
                     "get_activities_by_date",
                     {
                         "start_date": two_days_ago_iso,
@@ -402,6 +431,8 @@ class StartupMixin:
                 ),
             )
         )
+        if _reuse:
+            log.info("[SNAPSHOT] sin volver a pedir a Garmin: %s", ", ".join(sorted(_reuse)))
 
         # Política por sesión: si MCP trae dato válido, persistirlo y cachearlo en memoria.
         # Si falla MCP, no usar DB histórica para cálculos actuales (evita reutilizar datos viejos).
@@ -421,7 +452,8 @@ class StartupMixin:
 
         wellness_sources = {
             "body_today": "mcp" if body_today_from_mcp is not None else "mcp_unavailable",
-            "hrv_today": "mcp" if hrv_today_from_mcp is not None else "mcp_unavailable",
+            "hrv_today": ("morning" if "hrv_today" in _reuse else "mcp") if hrv_today_from_mcp is not None
+            else "mcp_unavailable",
             "body_yday": "session" if use_session_body_yday else "mcp",
             "hrv_yday": "session" if use_session_hrv_yday else "mcp",
         }
@@ -573,6 +605,7 @@ class StartupMixin:
         if active_plan:
             today_acts = [a for a in activities_recent if _extract_activity_date_iso(a) == today_iso]
             today_completion = _today_completion(active_plan, today_iso, today_acts)
+            _attach_extra_tss(today_completion, today_iso)
             if today_completion and today_completion["all_done"]:
                 today_execution = _compute_plan_execution_feedback(
                     plan=active_plan, activities_for_day=today_acts, target_date_iso=today_iso,
@@ -617,7 +650,9 @@ class StartupMixin:
         """Construye el mensaje proactivo mostrado al arrancar la sesion (load_ready: ver collect_startup_snapshot_48h)."""
         _t0 = time.perf_counter()
         log.info("[STARTUP] ▶ build_startup_status_markdown inicio")
-        snapshot = await self.collect_startup_snapshot_48h(load_ready=load_ready)
+        # Lo que dejó la comprobación de la caché (11/11); solo para este arranque: `/resumen` lo pide todo.
+        reuse, self._startup_reuse = getattr(self, "_startup_reuse", None), None
+        snapshot = await self.collect_startup_snapshot_48h(load_ready=load_ready, reuse=reuse)
         log.info("[STARTUP] ⏱ collect_snapshot=%.1fs", time.perf_counter() - _t0)
         snapshot["profile_changes"] = profile_changes or []
         active_plan = _get_active_training_plan(self.user_profile)
@@ -644,12 +679,15 @@ class StartupMixin:
         return md
 
     async def cached_startup_summary(self, profile_changes: list[str] | None = None) -> str | None:
-        """El resumen del arranque guardado, con su nota de cuándo es, si tiene menos de 1 h y nada ha cambiado
-        (31/10, petición del usuario); None si hay que rehacerlo. Solo hace 2 llamadas a Garmin (actividades y sueño
-        de hoy) y 1 a Supabase para el plan, y se salta el cálculo de carga, el snapshot y el LLM."""
+        """El resumen del arranque guardado, con su nota de cuándo es, si es de hoy y nada ha cambiado (31/10,
+        petición del usuario; 11/11, todo el día en vez de 1 h); None si hay que rehacerlo. Solo hace 2 llamadas a
+        Garmin (actividades y sueño de hoy) y 1 a Supabase para el plan, y se salta el cálculo de carga, el snapshot y
+        el LLM. Si hay que rehacerlo, deja en `_startup_reuse` esas 2 respuestas y, si el sueño de hoy es el mismo, lo
+        de la mañana que no cambia en el día (`startup_cache.reusable_morning`), para no pedirlo otra vez."""
+        self._startup_reuse = None
         try:
             row = _storage.get_startup_summary()
-            if not _startup_cache.is_recent(row):
+            if not _startup_cache.is_today(row):
                 return None
             today_iso = date.today().isoformat()
             acts_raw, sleep_today = await asyncio.gather(
@@ -665,8 +703,10 @@ class StartupMixin:
                 sleep=_format_sleep_day(sleep_today, today_iso), plan_row=_storage.get_active_training_plan(),
                 formula_version=TSS_FORMULA_VERSION, profile_changes=profile_changes)
             if not _startup_cache.matches(row, current):
+                self._startup_reuse = {**_startup_cache.reusable_morning(row, current),
+                                       "sleep_today": sleep_today, "activities": acts_raw}
                 return None
-            log.info("[STARTUP] resumen reutilizado (huella igual, menos de 1 h)")
+            log.info("[STARTUP] resumen reutilizado (huella igual, mismo día)")
             return _startup_cache.with_note(row)
         except Exception as exc:  # noqa: BLE001 — la caché es opcional: ante cualquier fallo se rehace el resumen
             log.warning("[STARTUP] caché del resumen no disponible: %s", exc)
@@ -687,7 +727,8 @@ class StartupMixin:
             _storage.save_startup_summary(_startup_cache.fingerprint(
                 today=today_iso, activity_ids=[t.get("activity_id") for t in snapshot.get("trainings") or []],
                 sleep=_format_sleep_day(sleep_today, today_iso), plan_row=_storage.get_active_training_plan(),
-                formula_version=TSS_FORMULA_VERSION, profile_changes=profile_changes), md)
+                formula_version=TSS_FORMULA_VERSION, profile_changes=profile_changes), md,
+                morning=_morning_data(snapshot, today_iso))
         except Exception as exc:  # noqa: BLE001 — la caché es opcional
             log.warning("[STARTUP] no se pudo guardar el resumen: %s", exc)
 

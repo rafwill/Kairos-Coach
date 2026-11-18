@@ -289,6 +289,10 @@ create table if not exists activity_tss (
     primary key (app_user_id, activity_id)
 );
 
+-- 11/11: segundos a cada ritmo (con pendiente) y a cada FC, del mismo detalle que el TSS, para saber cuánto de lo
+-- previsto se hizo (agent/intensity.py). Null en las actividades anteriores o sin detalle.
+alter table activity_tss add column if not exists intensity jsonb;
+
 create index if not exists idx_activity_tss_user_date
     on activity_tss (app_user_id, start_date desc);
 
@@ -315,7 +319,7 @@ create index if not exists idx_wellness_daily_user_date
     on wellness_daily (app_user_id, metric_date desc);
 
 -- ─── startup_summary (31/10) ────────────────────────────────────────────────
--- Último resumen del arranque: si se reentra en menos de 1 h y nada ha cambiado (actividades, sueño de hoy, plan,
+-- Último resumen del arranque: si se reentra el mismo día y nada ha cambiado (actividades, sueño de hoy, plan,
 -- fórmula de TSS), Kairos lo muestra sin volver a consultar a Garmin ni al LLM. `fingerprint` guarda esos datos.
 create table if not exists startup_summary (
     app_user_id  text        primary key references app_user(id) on delete cascade,
@@ -324,6 +328,9 @@ create table if not exists startup_summary (
     markdown     text        not null default '',
     updated_at   timestamptz not null default now()
 );
+-- 11/11: el resumen se reutiliza todo el día; si entrenó entre medias, se rehace con la HRV de la noche y los datos de
+-- ayer guardados por la mañana (`morning`), que no cambian en el día.
+alter table startup_summary add column if not exists morning jsonb not null default '{}';
 
 -- ─── Triggers updated_at ────────────────────────────────────────────────────
 drop trigger if exists trg_user_profile_updated_at on user_profile;

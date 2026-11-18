@@ -56,6 +56,11 @@ def _easy(minutes):
         {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
 
 
+def _run(w: dict) -> dict:
+    """La semana con sus minutos de carrera: la fuerza (40 min) va aparte desde el 09/11."""
+    return {**w, "minutes": w["minutes"] - 40}
+
+
 def _week_days(w: dict) -> list[dict]:
     if w["phase"] == "race":
         race = {"type": "race", "title": "10K de Navidad", "steps": [
@@ -63,7 +68,7 @@ def _week_days(w: dict) -> list[dict]:
             {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
         days = [{"type": "rest"}, _quality(), _easy(45), _easy(45), {"type": "rest"}, _easy(40), race]
     else:
-        easy = (w["minutes"] - 40 - 100 - w["long_min"]) / 2
+        easy = (w["minutes"] - 100 - w["long_min"]) / 2  # la fuerza no cuenta en los minutos (09/11)
         long = {"type": "long", "title": "Tirada larga", "steps": [
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": w["long_min"] - 15, "zone": "Z2"},
             {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
@@ -123,9 +128,48 @@ class TestStepsAreComputedByTheCode:
         assert any("no válida" in e for e in errors)
         _, errors = pb.expand_day({"day": 2, "type": "easy", "steps": [{"kind": "steady", "min": 30, "zone": "Z2"}]}, f, 1)
         assert any("warmup" in e for e in errors)
-        _, errors = pb.expand_day({"day": 2, "type": "easy", "steps": [{"kind": "warmup", "min": 30, "zone": "Z2"}]},
+        # Un calentamiento en Z2 pasa a FC2 (18/11); lo que no se puede sin ritmo umbral es la calidad por ritmo.
+        _, errors = pb.expand_day({"day": 2, "type": "quality", "steps": [{"kind": "warmup", "min": 30, "zone": "Z2"},
+                                  {"kind": "work", "min": 10, "zone": "Z4"}, {"kind": "cooldown", "min": 10, "zone": "Z1"}]},
                                   _frame(threshold_pace=None), 1)
         assert any("zonas de FC" in e for e in errors)
+
+    def test_easy_steps_go_by_hr_and_quality_by_pace(self):
+        # 18/11, petición del usuario: un solo objetivo por tramo. Lo suave fuera de las series, por FC; la calidad
+        # (y la recuperación dentro de las series), por ritmo.
+        f = _frame()
+        s, errors = pb.expand_day({"day": 2, "type": "quality", "title": "Umbral", "steps": [
+            {"kind": "warmup", "min": 20, "zone": "Z2"},
+            {"repeat": 2, "steps": [{"kind": "work", "min": 8, "zone": "Z4"}, {"kind": "recovery", "min": 3, "zone": "Z2"}]},
+            {"kind": "cooldown", "min": 10, "zone": "Z1"}]}, f, 1)
+        assert errors == []
+        steps = s["structured_workout"]["steps"]
+        assert steps[0]["target"] == {"metric": "hr_zone", "zone": 2, "zone_to": 2, "intensityClass": "endurance"}
+        assert steps[2]["target"]["metric"] == "hr_zone" and steps[2]["target"]["zone"] == 1
+        assert [c["target"]["metric"] for c in steps[1]["steps"]] == ["pace", "pace"]
+        # Por distancia, el tramo suave sigue por ritmo (un tramo por FC va por tiempo).
+        s, errors = pb.expand_day({"day": 3, "type": "easy", "title": "Rodaje", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "km": 8, "zone": "Z2"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}, f, 1)
+        assert errors == [] and s["structured_workout"]["steps"][1]["target"]["metric"] == "pace"
+
+    def test_planned_tss_of_an_hr_step_uses_the_athletes_own_pace(self):
+        # 18/11: a FC2 el atleta va a 5:25 y no a la Z2 de ritmo de Friel (4:34-5:10): el TSS previsto, con su ritmo.
+        day = {"day": 3, "type": "easy", "title": "Rodaje", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "FC1"}, {"kind": "steady", "min": 52, "zone": "FC2"},
+            {"kind": "cooldown", "min": 5, "zone": "FC1"}]}
+        # Los km, con su ritmo medio en la zona; el TSS, con el ritmo equivalente de su rTSS medido (más rápido: el NGP).
+        generic, _ = pb.expand_day(day, _frame(), 1)
+        own, _ = pb.expand_day(day, _frame(hr_zone_paces={2: 325}, hr_zone_tss_paces={2: 315}), 1)
+        g, o = generic["structured_workout"]["summary"], own["structured_workout"]["summary"]
+        assert o["tss"] < g["tss"] and o["distance_km"] < g["distance_km"]
+        thr, friel = _frame().threshold_pace, sum(_frame().paces.zone("Z2")) / 2
+        expected = 52 / 60 * 100 * ((thr / 315) ** 2 - (thr / friel) ** 2)  # solo cambia el tramo continuo en FC2
+        assert abs((o["tss"] - g["tss"]) - expected) < 0.5
+        assert abs((o["distance_km"] - g["distance_km"]) - 52 * 60 * (1 / 325 - 1 / friel)) < 0.2
+        # Sin ritmo equivalente, el TSS vuelve a la zona de Friel (la validación comparó así), aunque haya ritmo medio.
+        km_only, _ = pb.expand_day(day, _frame(hr_zone_paces={2: 325}), 1)
+        assert km_only["structured_workout"]["summary"]["tss"] == g["tss"]
 
 
 class TestAutoDurations:
@@ -144,17 +188,17 @@ class TestAutoDurations:
         return {"week": w["week"], "days": [{"day": i, **d} for i, d in enumerate(days, 1)]}
 
     def test_week_and_long_run_match_the_structure(self):
-        w = MACRO["weeks"][4]  # 395 min, tirada 110
+        w = _run(MACRO["weeks"][4])  # 395 min, tirada 110
         sessions, errors = pb.expand_week(self._auto_week(w), _frame(), w)
         assert errors == []
-        total = sum(s["structured_workout"]["summary"]["duration_min"] for s in sessions)
+        total = pb.progression_minutes(sessions, _frame())  # la fuerza, aparte (09/11)
         long = next(s for s in sessions if s["session_type"] == "long_run")["structured_workout"]
-        assert abs(total - 395) <= 1 and long["summary"]["duration_min"] == 110
+        assert abs(total - w["minutes"]) <= 1 and long["summary"]["duration_min"] == 110
         assert not any(st.get("auto") for s in sessions for st in s["structured_workout"].get("steps") or [])
         assert pb.check_week(5, sessions, w, _frame()) == []
 
     def test_impossible_fill_goes_back_to_the_llm(self):
-        w = {**MACRO["weeks"][4], "minutes": 900}
+        w = _run({**MACRO["weeks"][4], "minutes": 900})
         _, errors = pb.expand_week(self._auto_week(w), _frame(), w)
         assert any("los rodajes \"auto\" durarían" in e and "añade un" in e for e in errors)
         bad = self._auto_week(MACRO["weeks"][4])
@@ -164,7 +208,7 @@ class TestAutoDurations:
 
     def test_share_gives_each_run_its_part(self):
         # 05/11: sin "share", los rodajes "auto" de una semana salían todos iguales (tres de 47 min en la semana 2).
-        w = {**MACRO["weeks"][4], "minutes": 340}  # sin llegar al tope del regenerativo
+        w = _run({**MACRO["weeks"][4], "minutes": 360})  # el regenerativo, entre su mínimo y su tope (40-45 min)
         week = self._auto_week(w)
         week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.5, "zone": "Z1"},
@@ -174,12 +218,11 @@ class TestAutoDurations:
         steady = {s["day_index"]: s["structured_workout"]["steps"][1]["duration_min"] for s in sessions
                   if s["session_type"] in ("recovery", "running_z2")}
         assert abs(steady[3] - steady[6] / 2) <= 1
-        total = sum(s["structured_workout"]["summary"]["duration_min"] for s in sessions)
-        assert abs(total - w["minutes"]) <= 2
+        assert abs(pb.progression_minutes(sessions, _frame()) - w["minutes"]) <= 2
 
     def test_an_auto_recovery_run_stops_at_its_cap_and_the_rest_goes_to_the_other_runs(self):
         # 06/11: el reparto dejaba regenerativos de 50-59 min (69 en la semana de la carrera).
-        w = MACRO["weeks"][4]
+        w = _run(MACRO["weeks"][4])
         week = self._auto_week(w)
         week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.8, "zone": "Z1"},
@@ -188,12 +231,38 @@ class TestAutoDurations:
         assert errors == []
         minutes = {s["day_index"]: s["structured_workout"]["summary"]["duration_min"] for s in sessions}
         assert minutes[3] == pb.RECOVERY_MAX_MIN and minutes[6] > pb.RECOVERY_MAX_MIN
-        assert abs(sum(minutes.values()) - w["minutes"]) <= 2
+        assert abs(sum(minutes.values()) - 40 - w["minutes"]) <= 2  # la fuerza, aparte
         assert pb.check_week(5, sessions, w, _frame()) == []
         # Con sus minutos puestos a mano, más del tope vuelve al LLM.
         week["days"][2]["steps"][1] = {"kind": "steady", "min": 40, "zone": "Z1"}
         sessions, _ = pb.expand_week(week, _frame(), w)
         assert any("como mucho 45 min" in e for e in pb.check_week(5, sessions, w, _frame()))
+
+    def test_a_recovery_run_lasts_at_least_40_minutes(self):
+        # 07/11 (decisión del usuario): un regenerativo de 26' en un plan de media en 1:23 "es ridículo".
+        w = _run({**MACRO["weeks"][4], "minutes": 340})
+        week = self._auto_week(w)
+        week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.3, "zone": "Z1"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        sessions, errors = pb.expand_week(week, _frame(), w)
+        assert errors == []
+        minutes = {s["day_index"]: s["structured_workout"]["summary"]["duration_min"] for s in sessions}
+        assert minutes[3] == pb.RECOVERY_MIN_MIN and minutes[6] > pb.RECOVERY_MIN_MIN
+        assert pb.check_week(5, sessions, w, _frame()) == []
+        # Con sus minutos puestos a mano, menos del mínimo vuelve al LLM; en la semana de la carrera, no.
+        week["days"][2]["steps"][1] = {"kind": "steady", "min": 15, "zone": "Z1"}
+        sessions, _ = pb.expand_week(week, _frame(), w)
+        assert any("al menos 40 min" in e for e in pb.check_week(5, sessions, w, _frame()))
+        assert not any("al menos 40 min" in e for e in pb.check_week(5, sessions, w, _frame(weeks=5, race_date=START + timedelta(weeks=4, days=6))))
+        # Sin minutos para un regenerativo de 40 y rodajes más largos: descanso en uno, no "dale menos share".
+        w = _run({**MACRO["weeks"][4], "minutes": 320})
+        week = self._auto_week(w)
+        week["days"][2] = {**week["days"][2], "type": "recovery", "title": "Rodaje de recuperación", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0.3, "zone": "Z1"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        _, errors = pb.expand_week(week, _frame(), w)
+        assert any("no da para tantos rodajes" in e for e in errors)
 
     def test_share_is_checked(self):
         f = _frame()
@@ -205,6 +274,94 @@ class TestAutoDurations:
             {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": "auto", "share": 0, "zone": "Z2"},
             {"kind": "cooldown", "min": 5, "zone": "Z1"}]}, f, 1)
         assert any("mayor que 0" in e for e in errors)
+
+    def test_short_quality_is_lengthened_by_warmup_and_cooldown(self):
+        # 09/11 (decisión del usuario): cuestas de 37 min para un atleta que casi nunca sale menos de 1 h.
+        hills = {"day": 2, "type": "quality", "title": "Cuestas cortas", "rpe": "7", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "Z2"},
+            {"repeat": 6, "steps": [{"kind": "work", "sec": 45, "zone": "Z4"}, {"kind": "recovery", "sec": 75, "zone": "Z1"}]},
+            {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
+        f = _frame(typical_session_min=62.0)
+        week = {"week": 5, "days": [{"day": 1, "type": "rest"}, hills]}
+        sessions, _ = pb.expand_week(week, f, MACRO["weeks"][4])
+        steps = sessions[1]["structured_workout"]["steps"]
+        assert sessions[1]["duration_min"] == 60
+        assert steps[0]["duration_min"] == 33 and steps[-1]["duration_min"] == pb.QUALITY_COOLDOWN_MIN
+        assert steps[1]["reps"] == 6 and steps[1]["steps"][0]["duration_min"] == 0.75  # la parte principal, igual
+        # En descarga, sin mínimo; sin historial, tampoco.
+        sessions, _ = pb.expand_week({**week, "week": 4}, f, MACRO["weeks"][3])
+        assert sessions[1]["duration_min"] == 37
+        sessions, _ = pb.expand_week(week, _frame(), MACRO["weeks"][4])
+        assert sessions[1]["duration_min"] == 37
+
+    def test_easy_runs_last_at_least_the_usual_session(self):
+        f = _frame(typical_session_min=62.0)
+        w = _run(MACRO["weeks"][4])  # 395 min, tirada 110
+        sessions, errors = pb.expand_week(self._auto_week(w), f, w)
+        assert errors == []
+        easy = [s["duration_min"] for s in sessions if s["session_type"] == "running_z2"]
+        assert easy and min(easy) >= 60 and pb.check_week(5, sessions, w, f) == []
+        _, errors = pb.expand_week(self._auto_week({**w, "minutes": 320}), f, {**w, "minutes": 320})
+        assert any("lo habitual del atleta" in e and "quita un rodaje" in e for e in errors)
+        # Con sus minutos puestos a mano, un rodaje corto en semana de carga vuelve al LLM.
+        week = self._auto_week(w)
+        week["days"][2] = {"day": 3, **_easy(45)}
+        sessions, _ = pb.expand_week(week, f, w)
+        assert any("al menos 60 min" in e for e in pb.check_week(5, sessions, w, f))
+
+
+class TestKeySessions:
+    """07/11 (decisiones del usuario): VO2máx cada 2-3 semanas de carga y, en media, una sesión con 12 km a RP."""
+
+    PHASES = ["base", "base", "base", "build", "build", "build", "specific", "specific", "specific", "specific",
+              "taper", "race"]  # las del plan de Santa Pola replanificado el 07/11
+
+    def _half(self):
+        return _frame(weeks=12, race="Media de Santa Pola", race_date=START + timedelta(weeks=11, days=6),
+                      distance_km=21.0975, target_time="1:22:59", threshold_pace=240.0, race_pace=236.0)
+
+    def _weeks(self):
+        return [{"week": i, "phase": ph, "deload": i in (5, 9, 11), "minutes": 350, "long_min": 100}
+                for i, ph in enumerate(self.PHASES, 1)]
+
+    def test_which_weeks_carry_key_sessions(self):
+        keys = pb.key_sessions(self._weeks(), self._half())
+        # Construcción: las dos semanas de carga (4 y 6); específica: 7, 8 y 10, y el VO2 vuelve en la 10.
+        assert {n for n, k in keys.items() if k.get("vo2")} == {4, 6, 10}
+        assert {n: k["rp_key_km"] for n, k in keys.items() if k.get("rp_key_km")} == {10: pb.HALF_RP_KEY_KM}
+        assert pb.key_sessions(self._weeks(), _frame(weeks=12, trail=True, race_pace=None)) == {}
+        assert "VO2máx obligatorio" in pb.macro_text({"weeks": pb.with_key_sessions(self._weeks(), self._half())})
+        # Un 10K no tiene sesión de 12 km a RP.
+        assert not any(k.get("rp_key_km") for k in pb.key_sessions(self._weeks(), _frame(weeks=12)).values())
+
+    def _session(self, f, steps, kind="quality"):
+        s, errs = pb.expand_day({"day": 2, "type": kind, "title": "Calidad", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "Z2"}, *steps, {"kind": "cooldown", "min": 10, "zone": "Z1"}]}, f, 10)
+        assert errs == []
+        return s
+
+    def test_vo2_and_race_pace_are_measured_from_the_steps(self):
+        f = self._half()
+        vo2 = self._session(f, [{"repeat": 5, "steps": [{"kind": "work", "min": 3, "zone": "Z5b"},
+                                                         {"kind": "recovery", "min": 2, "zone": "Z1"}]}])
+        strides = self._session(f, [{"repeat": 4, "steps": [{"kind": "work", "sec": 20, "zone": "Z5c"},
+                                                             {"kind": "recovery", "min": 1, "zone": "Z1"}]}])
+        assert pb.vo2_minutes(vo2) == 15 and pb.vo2_minutes(strides) < pb.VO2_MIN_WORK_MIN
+        rp3x4 = self._session(f, [{"repeat": 3, "steps": [{"kind": "work", "km": 4, "zone": "RP"},
+                                                           {"kind": "recovery", "min": 3, "zone": "Z1"}]}])
+        rp3x2 = self._session(f, [{"repeat": 3, "steps": [{"kind": "work", "km": 2, "zone": "RP"},
+                                                           {"kind": "recovery", "min": 3, "zone": "Z1"}]}])
+        assert abs(pb.race_pace_km(rp3x4, f) - 12) < 0.1 and abs(pb.race_pace_km(rp3x2, f) - 6) < 0.1
+        def week(*sessions):
+            days = [dict(s, day_index=d) for d, s in zip((2, 4), sessions)]
+            rest = [pb.expand_day({"day": d, "type": "rest"}, f, 10)[0] for d in range(1, 8) if d not in (2, 4)[:len(days)]]
+            return days + rest
+
+        planned = {"week": 10, "phase": "specific", "vo2": True, "rp_key_km": 12.0}
+        errors = pb.check_week(10, week(rp3x2), planned, f)
+        assert any("le toca VO2máx" in e for e in errors) and any("al menos 12 km a RP" in e for e in errors)
+        errors = pb.check_week(10, week(rp3x4, vo2), planned, f)
+        assert not any("VO2máx" in e or "km a RP" in e for e in errors)
 
 
 class TestRecoveryRuns:
@@ -311,6 +468,10 @@ class _FakeLLM:
                 # Semana 2 con 380 min: dentro del ±12 % de su estructura (345), pero +19 % sobre lo que suma la 1 (320).
                 data = json.loads(json.dumps(data))
                 data["weeks"][1]["days"][2] = {"day": 3, **_easy(52.5 + 35)}
+            past = re.search(r"escribe solo los días (\d) a 7", prompt)
+            if 1 in weeks and past:  # replanificar a mitad de semana (09/11): solo los días que quedan
+                data = json.loads(json.dumps(data))
+                data["weeks"][0]["days"] = [d for d in data["weeks"][0]["days"] if d["day"] >= int(past.group(1))]
             if 1 in weeks and len(messages) == 2:
                 self.week1_conversations += 1
             if 1 in weeks and (self.always_bad or (self.bad_first and len(messages) == 2)
@@ -353,6 +514,12 @@ class TestTheLLMBuildsThePlan:
         assert _validate_structured_plan(plan, sessions, {"goals": {"weekly_training_hours": 8}}) == []
         md = _plan_detail_markdown(plan, sessions, {}, weeks=[1])
         assert "| Enfoque |" in md and "Fartlek 5×(3'/2')" in md
+        # 07/11: una semana sin calidad (p. ej. la de un evento fijo) y calidades con el mismo principio en las notas
+        # no tumban un plan del LLM que ya pasó las reglas de plan_builder.
+        no_quality = [dict(s, session_type="running_z2") if s["week_index"] == 1 and s["session_type"] == "running_quality"
+                      else dict(s, notes="Calentamiento 15' Z1 · " + "x" * 80) if s["session_type"] == "running_quality"
+                      else s for s in sessions]
+        assert _validate_structured_plan(plan, no_quality, {"goals": {"weekly_training_hours": 8}}) == []
 
     @pytest.mark.asyncio
     async def test_progression_is_checked_on_what_the_days_really_add_up_to(self, monkeypatch):
@@ -361,9 +528,26 @@ class TestTheLLMBuildsThePlan:
         plan, sessions, errors = await _Agent(llm)._build_plan_with_llm("Crea un plan", {})
         assert errors == [] and plan is not None
         fixes = [m[-1]["content"] for m in llm.calls if len(m) > 2]
-        assert len(fixes) == 1 and "Semana 2: 380 min suben más de un 10 %" in fixes[0] and "suma real" in fixes[0]
+        assert len(fixes) == 1 and "min de carrera suben más de un 10 %" in fixes[0] and "suma real" in fixes[0]
         totals = plan["plan_data"]["week_minutes"]
         assert totals[1] <= totals[0] * 1.10
+
+    @pytest.mark.asyncio
+    async def test_midweek_replan_keeps_the_past_days_and_writes_the_rest(self, monkeypatch):
+        # 09/11 (decisión del usuario): replanificar rehace desde mañana; los días hasta hoy se quedan y cuentan.
+        monkeypatch.setattr("agent.plan_llm._add_ia_tokens", lambda n: None)
+        old, _ = pb.expand_week({"week": 1, "days": _week_days(MACRO["weeks"][0])}, _frame())
+        kept = [dict(s, structured_workout=dict(s["structured_workout"], title="Hecho " + str(s["day_index"])))
+                for s in old if s["day_index"] <= 3]
+        llm = _FakeLLM()
+        plan, sessions, errors = await _Agent(llm)._build_plan_with_llm("Replanifica", {}, kept=kept, past_days=3)
+        assert errors == [] and plan is not None
+        week1 = sorted((s for s in sessions if s["week_index"] == 1), key=pb.session_key)
+        assert [s["day_index"] for s in week1] == list(range(1, 8))
+        assert [s["structured_workout"]["title"] for s in week1[:3]] == ["Hecho 1", "Hecho 2", "Hecho 3"]
+        prompts = [m[1]["content"] for m in llm.calls]
+        assert any("## Semana 1 en curso" in p and "Martes: Hecho 2" in p for p in prompts)
+        assert any("escribe solo los días 4 a 7" in p for p in prompts)
 
     @pytest.mark.asyncio
     async def test_a_batch_that_never_complies_starts_over_once(self, monkeypatch):
@@ -398,7 +582,7 @@ class TestTheLLMRevisesThePlan:
         llm = _FakeLLM(revisions=[too_late, good])
         agent = _Agent(llm)
         plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
-        new, reply, errors, _ = await agent._revise_plan_with_llm("Me molesta el gemelo", plan, sessions, {})
+        new, reply, errors, _, _ = await agent._revise_plan_with_llm("Me molesta el gemelo", plan, sessions, {})
         assert errors == [] and "gemelo" in reply
         assert any("solo puedes cambiar las semanas [1, 2]" in m[-1]["content"] for m in llm.calls)
         # 06/11: cada día que puede cambiar lleva su fecha; "mañana sábado" se confundía con el de la semana siguiente.
@@ -433,7 +617,7 @@ class TestTheLLMRevisesThePlan:
             {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
         agent = _Agent(_FakeLLM(revisions=[{"reply": "x", "weeks": [{"week": 2, "days": [swap]}]}]))
         plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
-        new, _, errors, _ = await agent._revise_plan_with_llm("El atleta ha fijado…", plan, sessions, {}, requested=False)
+        new, _, errors, _, _ = await agent._revise_plan_with_llm("El atleta ha fijado…", plan, sessions, {}, requested=False)
         assert errors == [] and not any(s["structured_workout"].get("requested") for s in new)
 
     @pytest.mark.asyncio
@@ -448,8 +632,36 @@ class TestTheLLMRevisesThePlan:
         big = {"reply": "más", "weeks": [{"week": 2, "days": [{"day": 5, **_easy(120)}]}]}
         agent = _Agent(_FakeLLM(revisions=[big] * 4))  # una por intento
         plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
-        new, _, errors, _ = await agent._revise_plan_with_llm("Quiero más", plan, sessions, {})
+        new, _, errors, _, _ = await agent._revise_plan_with_llm("Quiero más", plan, sessions, {})
         assert new is None and any("como mucho" in e for e in errors)
+
+    @pytest.mark.asyncio
+    async def test_a_change_the_coach_advises_against_is_not_applied_unless_the_athlete_insists(self, monkeypatch):
+        # 18/11, petición del usuario: un cambio concreto se valora antes de hacerlo; si no encaja, se explica.
+        monkeypatch.setattr("agent.plan_llm._add_ia_tokens", lambda n: None)
+
+        async def no_activities(*a, **k):
+            return []
+
+        monkeypatch.setattr("agent.plan_llm._fetch_activities_for_load_calc", no_activities)
+        monkeypatch.setattr("agent.plan_llm._storage.get_activity_tss_map", lambda start: {})
+        swap = {"day": 2, "type": "easy", "title": "Rodaje suave", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": 35, "zone": "Z2"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        no = {"verdict": "no", "reply": "Las series quedarían la víspera de la tirada larga.",
+              "weeks": [{"week": 9, "days": [swap]}]}  # días inválidos: con "no" no se comprueban ni se guardan
+        ok = {"verdict": "ok", "reply": "Hecho.", "weeks": [{"week": 2, "days": [swap]}]}
+        llm = _FakeLLM(revisions=[no, ok])
+        agent = _Agent(llm)
+        plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
+        new, reply, errors, _, rejected = await agent._revise_plan_with_llm("Pasa las series al sábado", plan, sessions, {})
+        assert new is None and errors == [] and rejected and "víspera" in reply
+        asked = llm.calls[-1][-1]["content"]
+        assert "valora si es buena idea" in asked and '"verdict"' in asked
+        new, _, errors, _, rejected = await agent._revise_plan_with_llm("Pasa las series al sábado", plan, sessions, {},
+                                                                        insist=True)
+        assert errors == [] and not rejected and new is not None
+        assert any("lo quiere igualmente" in m[-1]["content"] for m in llm.calls)
 
 
 class TestCoachPreferences:
@@ -470,7 +682,7 @@ class TestCoachPreferences:
             {"kind": "warmup", "min": 15, "zone": "Z2"}, {"kind": "work", "min": 80, "zone": "Z4"},
             {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
         errors = self._week(lambda d: d.__setitem__(3, {"day": 4, **hard}))
-        assert any("en Z3 o más (RP incluido: martes 15, jueves 80); como mucho el 20 %" in e and "jueves: 80 → 67 min" in e for e in errors), errors
+        assert any("en Z3 o más (RP incluido: martes 15, jueves 80); como mucho el 20 %" in e and "jueves: 80 → 75 min" in e for e in errors), errors
 
     def test_doubles_only_if_the_athlete_doubles_and_never_on_a_rest_day(self):
         gym = {"day": 3, "type": "strength", "title": "Gimnasio", "minutes": 40}
@@ -580,9 +792,64 @@ class TestRecoveryIsShorter:
         # 06/11: en una revisión, una recuperación ya pasada no la puede cambiar nadie y no cuenta.
         assert not any("recuperación" in e for e in pb.check_week(3, sessions, w, _frame(), past_days=6))
         assert any("la recuperación es más corta" in e for e in pb.check_week(3, sessions, w, _frame(), past_days=5))
-        days[5]["steps"][1]["min"] = minutes - 35
+        days[5]["steps"][1]["min"] = 25  # 40 min: el mínimo del regenerativo, más corto que los rodajes
         sessions, _ = pb.expand_week({"week": 3, "days": days}, _frame(), w)
         assert not any("recuperación" in e for e in pb.check_week(3, sessions, w, _frame()))
+
+
+class TestWhatCountsForProgression:
+    """09/11 (decisión del usuario): en carrera progresa correr; la fuerza y los otros deportes van aparte; en trail,
+    la marcha del plan también cuenta."""
+
+    def _sessions(self, f):
+        days = [{"day": 1, "type": "strength", "title": "Fuerza", "minutes": 40},
+                {"day": 2, "type": "cross", "sport": "cycling", "title": "Bici", "steps": [
+                    {"kind": "warmup", "min": 10, "zone": "FC1"}, {"kind": "steady", "min": 40, "zone": "FC2"},
+                    {"kind": "cooldown", "min": 10, "zone": "FC1"}]},
+                {"day": 3, "type": "cross", "sport": "hiking", "title": "Marcha con bastones y mochila", "steps": [
+                    {"kind": "warmup", "min": 10, "zone": "FC1"}, {"kind": "steady", "min": 40, "zone": "FC3"},
+                    {"kind": "cooldown", "min": 10, "zone": "FC1"}]},
+                {"day": 4, **_easy(50)}]
+        sessions, errors = pb.expand_week({"week": 1, "days": days}, f)
+        assert errors == []
+        return sessions
+
+    def test_road_counts_only_running(self):
+        f = _frame()
+        assert pb.progression_minutes(self._sessions(f), f) == 50
+
+    def test_trail_counts_running_and_the_planned_hike(self):
+        f = _frame(trail=True, race_pace=None)
+        assert pb.progression_minutes(self._sessions(f), f) == 110
+
+    def test_everything_still_fits_in_the_available_hours(self):
+        f = _frame(weekly_hours=3.0)  # 180 min + 10 %
+        rest = [pb.expand_day({"day": d, "type": "rest"}, f, 1)[0] for d in (5, 6, 7)]
+        errors = pb.check_week(1, self._sessions(f) + rest, {"minutes": 50}, f)
+        assert any("fuerza y otros deportes incluidos, suman 210 min" in e for e in errors)
+
+
+class TestRestDays:
+    """09/11 (decisión del usuario): en semana de carga, como mucho 1 descanso si sus minutos piden 5 o más sesiones de
+    la duración habitual (si no, 2); el día que sobra lleva bici, elíptica o la fuerza."""
+
+    def _errors(self, w, rest_days, **kw):
+        f = _frame(typical_session_min=60.0, **kw)
+        days = [d if d["day"] not in rest_days else {"day": d["day"], "type": "rest"} for d in _week_days(w)]
+        sessions, _ = pb.expand_week({"week": w["week"], "days": days}, f, w)
+        return [e for e in pb.check_week(w["week"], sessions, w, f) if "días de descanso" in e]
+
+    def test_a_high_volume_load_week_has_one_rest_day(self):
+        w = MACRO["weeks"][4]  # 395 min de carrera: 7 sesiones de 60
+        assert self._errors(w, {5}) == []
+        errors = self._errors(w, {3, 5})
+        assert errors and "como mucho 1" in errors[0] and "bici o elíptica suave" in errors[0]
+        assert "la fuerza, no descanso" in self._errors(w, {3, 5}, cross_sports=[])[0]
+
+    def test_low_volume_deload_and_unavailable_days_allow_more(self):
+        assert self._errors({**MACRO["weeks"][4], "minutes": 260}, {3, 5}) == []  # 4 sesiones de 60: hasta 2
+        assert self._errors(MACRO["weeks"][3], {3, 5}) == []  # descarga
+        assert self._errors(MACRO["weeks"][4], {3, 5}, available_days=[1, 2, 4, 6, 7]) == []  # no puede miércoles y viernes
 
 
 class TestNoRoomForRuns:
@@ -650,3 +917,47 @@ class TestHalfMarathonPlanning:
         assert pb.progression_notice(minutes, phases, [5, 9], 3) == ""  # +7 %
         assert pb.progression_notice(minutes, phases, [5, 9], 4) == ""  # la 5 es descarga
         assert pb.progression_notice(minutes, phases, [5, 9], 0) == ""
+
+
+def test_a_saved_session_with_easy_steps_by_pace_is_retargeted_to_hr():
+    # 18/11: una sesión guardada antes con lo suave por ritmo pasa a FC y se recalcula con el ritmo del atleta; las
+    # series no cambian, los minutos tampoco, y la sesión de entrada queda intacta.
+    f = _frame()
+    old = {"type": "quality", "title": "Umbral", "steps": [
+        {"kind": "warmup", "min": 20, "zone": "Z2"},
+        {"repeat": 2, "steps": [{"kind": "work", "min": 8, "zone": "Z4"}, {"kind": "recovery", "min": 3, "zone": "Z2"}]},
+        {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
+    saved, _ = pb.expand_day(old, pb.PlanFrame(**{**f.__dict__, "hr_zones": []}), 1)  # como antes: todo por ritmo
+    assert saved["structured_workout"]["steps"][0]["target"]["metric"] == "pace"
+    new = pb.easy_steps_by_hr(saved, pb.PlanFrame(**{**f.__dict__, "hr_zone_tss_paces": {1: 330, 2: 320}}))
+    steps = new["structured_workout"]["steps"]
+    assert [steps[0]["target"]["metric"], steps[2]["target"]["metric"]] == ["hr_zone", "hr_zone"]
+    assert [c["target"]["metric"] for c in steps[1]["steps"]] == ["pace", "pace"]
+    assert new["structured_workout"]["summary"]["duration_min"] == saved["structured_workout"]["summary"]["duration_min"]
+    assert new["structured_workout"]["summary"]["tss"] != saved["structured_workout"]["summary"]["tss"]
+    assert saved["structured_workout"]["steps"][0]["target"]["metric"] == "pace"
+
+
+def test_a_saved_session_takes_the_new_threshold_without_changing_its_structure():
+    # 18/11, petición del usuario: tras un test, los ritmos por zona se recalculan con el umbral nuevo; el RP y un ritmo
+    # concreto no dependen del umbral; un tramo por distancia cambia su duración; la sesión de entrada no cambia.
+    day = {"type": "quality", "title": "Umbral y RP", "steps": [
+        {"kind": "warmup", "min": 15, "zone": "FC2"},
+        {"repeat": 2, "steps": [{"kind": "work", "min": 8, "zone": "Z4"}, {"kind": "recovery", "min": 3, "zone": "Z2"}]},
+        {"kind": "work", "m": 2000, "zone": "Z5b"}, {"kind": "work", "min": 10, "zone": "RP"},
+        {"kind": "work", "min": 4, "pace": "4:00"}, {"kind": "cooldown", "min": 10, "zone": "FC1"}]}
+    saved, errors = pb.expand_day(day, _frame(threshold_pace=250.0), 1)
+    assert errors == []
+    faster = _frame(threshold_pace=240.0)
+    new = pb.retarget_session(saved, faster)
+    old_steps, new_steps = saved["structured_workout"]["steps"], new["structured_workout"]["steps"]
+    assert new_steps[1]["steps"][0]["target"]["range"] == list(faster.paces.zone("Z4"))
+    assert new_steps[1]["steps"][0]["target"]["range"] != old_steps[1]["steps"][0]["target"]["range"]
+    assert new_steps[2]["duration_min"] < old_steps[2]["duration_min"]  # 2000 m más rápidos
+    assert new_steps[3]["target"]["range"] == old_steps[3]["target"]["range"]  # RP
+    assert new_steps[4]["target"]["range"] == old_steps[4]["target"]["range"]  # "pace": "4:00"
+    assert new["structured_workout"]["threshold_pace"] == 240.0
+    assert new["structured_workout"]["summary"]["tss"] != saved["structured_workout"]["summary"]["tss"]
+    assert saved["structured_workout"]["steps"][1]["steps"][0]["target"]["range"] == old_steps[1]["steps"][0]["target"]["range"]
+    # Con el mismo umbral no cambia nada.
+    assert pb.retarget_session(saved, _frame(threshold_pace=250.0))["structured_workout"] == saved["structured_workout"]

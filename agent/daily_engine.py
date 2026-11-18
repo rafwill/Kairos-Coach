@@ -10,6 +10,7 @@ from datetime import date
 from typing import Any
 
 
+from agent import intensity as _intensity
 from agent import storage as _storage
 from agent.load_metrics import (  # una sola copia: la de load_metrics (27/10)
     _estimate_session_tss,
@@ -167,12 +168,17 @@ def _today_completion(plan: dict | None, today_iso: str, activities_today: list[
     rows = [i for i, r in enumerate(day_rows)  # posiciones en el día, las que pinta _today_session_lines
             if str(r.get("session_type") or "") != "rest" and _safe_float(r.get("duration_min"), 0.0) > 0]
     done: list[int] = []
+    extra: list[dict] = []
     for act in executed:
         strength = _is_strength_activity(act.get("activityTypeDTO") or act.get("activityType") or "")
         match = next((i for i in rows if i not in done
                       and (str(day_rows[i].get("session_type") or "") == "strength") == strength), None)
         if match is not None:
             done.append(match)
+        else:
+            extra.append({"name": str(act.get("name") or act.get("activityName") or "Actividad"),
+                          "activity_id": _activity_id_int(act),
+                          "minutes": round(_extract_activity_duration_minutes(act))})
     return {
         "planned": len(rows),
         "executed": len(executed),
@@ -180,7 +186,35 @@ def _today_completion(plan: dict | None, today_iso: str, activities_today: list[
         "done": sorted(done),
         "names": [str(a.get("name") or a.get("activityName") or "Actividad") for a in executed],
         "pending": [day_rows[i] for i in rows if i not in done],
+        # Lo hecho hoy que no cubre ninguna sesión del plan (13/11: la fuerza hecha en un día de bici se pintaba en
+        # «Entrenamientos recientes», pero la sesión de hoy, la decisión y el LLM la ignoraban).
+        "extra": extra,
     }
+
+
+def _attach_extra_tss(completion: dict | None, day_iso: str) -> None:
+    """Pone a lo hecho fuera del plan su TSS guardado en activity_tss (lo escribe el cálculo de carga)."""
+    extra = (completion or {}).get("extra") or []
+    if not extra:
+        return
+    stored = _load_stored_activity_tss(day_iso)
+    for item in extra:
+        tss = _safe_float((stored.get(item.get("activity_id")) or {}).get("tss"), 0.0)
+        if tss > 0:
+            item["tss"] = round(tss, 1)
+
+
+def _extra_done_text(completion: dict | None) -> str:
+    """Lo hecho hoy fuera del plan en una línea: «Fuerza. Core · 35' · 25 TSS; …». Vacío si no hay nada."""
+    parts = []
+    for item in (completion or {}).get("extra") or []:
+        bits = [str(item.get("name") or "Actividad")]
+        if int(item.get("minutes") or 0) > 0:
+            bits.append(f"{int(item['minutes'])}'")
+        if _safe_float(item.get("tss"), 0.0) > 0:
+            bits.append(f"{_safe_float(item.get('tss'), 0.0):.0f} TSS")
+        parts.append(" · ".join(bits))
+    return "; ".join(parts)
 
 
 def _get_planned_session_for_date(plan: dict, target_date_iso: str) -> dict | None:
@@ -485,76 +519,6 @@ def _apply_structured_workout_adjustment(session: dict | None, decision: str) ->
     return sw, trace
 
 
-def _compute_structured_block_feedback(planned_session: dict, actual_duration_min: float, actual_tss: float) -> dict:
-    """Compara planificado vs ejecutado por bloques del structured_workout."""
-    sw = (planned_session or {}).get("structured_workout") if isinstance(planned_session, dict) else None
-    if not isinstance(sw, dict):
-        return {}
-
-    steps = sw.get("steps")
-    if not isinstance(steps, list) or not steps:
-        return {}
-
-    blocks: list[dict] = []
-    remaining = max(0.0, float(actual_duration_min or 0.0))
-    actual_tss_per_hour = (float(actual_tss or 0.0) * 60.0 / max(1.0, actual_duration_min)) if actual_duration_min > 0 else 0.0
-
-    for idx, step in enumerate(steps, start=1):
-        if not isinstance(step, dict):
-            continue
-        planned_block_min = _structured_workout_duration_minutes({"steps": [step]})
-        if planned_block_min <= 0:
-            continue
-        completed_min = min(planned_block_min, remaining)
-        remaining = max(0.0, remaining - planned_block_min)
-        completion_pct = round(completed_min / max(1.0, planned_block_min), 2)
-        if completion_pct >= 0.95:
-            status = "completed"
-        elif completion_pct >= 0.25:
-            status = "partial"
-        else:
-            status = "missed"
-
-        ic = _extract_primary_intensity_class(step)
-        planned_tss_hour = _estimate_tss_hour_for_intensity_class(ic)
-        intensity_deviation = round(actual_tss_per_hour - planned_tss_hour, 1)
-
-        blocks.append(
-            {
-                "index": idx,
-                "name": str(step.get("name") or f"block_{idx}"),
-                "type": str(step.get("type") or "block"),
-                "planned_min": round(planned_block_min, 1),
-                "completed_min": round(completed_min, 1),
-                "completion_pct": completion_pct,
-                "status": status,
-                "planned_intensity_class": ic,
-                "intensity_deviation_tss_h": intensity_deviation,
-            }
-        )
-
-    if not blocks:
-        return {}
-
-    completed_blocks = sum(1 for b in blocks if b.get("status") == "completed")
-    partial_blocks = sum(1 for b in blocks if b.get("status") == "partial")
-    missed_blocks = sum(1 for b in blocks if b.get("status") == "missed")
-    total_planned = sum(float(b.get("planned_min") or 0.0) for b in blocks)
-    total_done = sum(float(b.get("completed_min") or 0.0) for b in blocks)
-    time_deviation_pct = round((total_done - total_planned) / max(1.0, total_planned), 2)
-
-    return {
-        "blocks": blocks,
-        "summary": {
-            "completed_blocks": completed_blocks,
-            "partial_blocks": partial_blocks,
-            "missed_blocks": missed_blocks,
-            "total_blocks": len(blocks),
-            "time_deviation_pct": time_deviation_pct,
-        },
-    }
-
-
 def _intensity_class_from_rpe(intensity_text: str) -> str:
     """Clase de intensidad del motor de planes a partir del texto "RPE x-y" de una sesión."""
     txt = str(intensity_text or "").lower()
@@ -644,8 +608,13 @@ def _build_today_session_frame(daily_decision: dict | None, profile: dict | None
 
     resulting = str((daily_decision or {}).get("resulting_session") or "").strip()
     adjusted = (daily_decision or {}).get("adjusted_structured_workout")
+    strength = "strength" in str((daily_decision or {}).get("session_type") or "").lower()
     if decision == "rest":
         allowed = "ninguna: descanso; si te mueves, movilidad suave en Z1" + lpm(1)
+    elif strength:
+        # Fuerza por RPE, sin zonas de carrera (09/11: con "Z3 Tempo" el LLM cambió la fuerza por un tempo).
+        allowed = ("sesión de fuerza, no de carrera; intensidad por RPE"
+                   + (", suave (no más de RPE 4)" if decision == "easy" else ", la de la sesión prevista"))
     elif decision == "easy":
         allowed = f"Z1–Z2{lpm(1, 2)}, techo {top(2)}; nada de Z3 o superior"
     elif decision == "reduce" and not isinstance(adjusted, dict):
@@ -666,13 +635,17 @@ def _build_today_session_frame(daily_decision: dict | None, profile: dict | None
     else:
         spans = [int(hi) for _, hi in re.findall(r"(\d+)\s*-\s*(\d+)\s*min", resulting)]
         duration = f"{max(spans)} min" if spans else "la de la sesión prevista"
-    return _render_prompt(
+    frame = _render_prompt(
         "coaching/session_frame",
         decision=_DECISION_LABELS[decision],
         sesion=resulting or "—",
         zonas=allowed,
         duracion=duration,
     )
+    extra = str((daily_decision or {}).get("done_extra") or "").strip()
+    if extra:
+        frame += "\n" + _render_prompt("coaching/done_extra", hecho=extra)
+    return frame
 
 
 def _structured_workout_summary(session: dict) -> str:
@@ -696,8 +669,13 @@ def _structured_workout_summary(session: dict) -> str:
         return ""
 
     stype = str(main_step.get("type") or "").strip().lower()
-    # Al usuario, la zona de Garmin ("Z2 Aeróbica"), no la clase interna ("endurance").
+    # Al usuario, la zona de Garmin ("Z2 Aeróbica"), no la clase interna ("endurance"); en fuerza, el RPE (09/11: su
+    # clase "tempo" salía como "Z3 Tempo" y el LLM recetó un tempo de carrera).
     intensity = _GARMIN_ZONE_NAMES[_zone_for_intensity_class(main_step.get("intensityClass") or "")]
+    if "strength" in str(session.get("session_type") or "").lower():
+        target = main_step.get("target") or {}
+        rng = list(target.get("range") or []) if target.get("metric") == "rpe" else []
+        intensity = (f"RPE {rng[0]}" if rng[0] == rng[-1] else f"RPE {rng[0]}-{rng[-1]}") if rng else "por RPE"
 
     if stype == "interval_block":
         reps = max(1, int(_safe_float(main_step.get("reps"), 1.0)))
@@ -737,6 +715,8 @@ def _build_adjusted_structured_session_text(planned_session: str, planned_row: d
     if decision == "easy":
         return f"{base} → versión suave: {summary}; todo en Z1-Z2, sin bloques por encima de Z2"
     if decision == "reduce":
+        if "strength" in str(planned_row.get("session_type") or "").lower():
+            return f"{base} → un 25 % menos: {summary}; mismo RPE, menos series o ejercicios"
         return f"{base} → un 25 % menos: {summary}; mismas zonas, menos repeticiones o minutos de bloque principal"
     return base
 
@@ -759,6 +739,25 @@ def _estimate_planned_session_tss(session: dict) -> float:
     # Aproximación conservadora: TSS/h ~ RPE*10 (RPE 5 => 50 TSS/h).
     tss_hour = max(30.0, min(95.0, rpe_mid * 10.0))
     return round((duration_min / 60.0) * tss_hour, 1)
+
+
+def _day_completion(day_sessions: list[dict], executed: list[dict], profile: dict) -> dict | None:
+    """Cuánto de lo previsto se hizo (11/11, `agent/intensity.py`), con lo hecho a cada ritmo y FC que se guardó al
+    calcular el TSS. None si alguna actividad del día no lo tiene (anterior al 11/11, sin detalle o bici con
+    potencia): un porcentaje con media sesión sería falso. La fuerza no cuenta (va por RPE)."""
+    measured = [a for a in executed if not _is_strength_activity(a.get("type") or a.get("activityType") or "")]
+    if not measured:
+        return None
+    try:
+        dists = _storage.get_activity_intensity([_activity_id_int(a) for a in measured])
+    except (RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+        log.debug("_day_completion: %s", exc)
+        return None
+    if len(dists) < len(measured):
+        return None
+    hr_zones, _ = _resolve_hr_zones(profile, "running")
+    return _intensity.completion(_intensity.planned_parts(day_sessions, hr_zones),
+                                 _intensity.merge(list(dists.values())))
 
 
 def _compute_plan_execution_feedback(
@@ -861,15 +860,11 @@ def _compute_plan_execution_feedback(
         ((actual_tss - planned_tss) / max(planned_tss, 1.0)),
         2,
     )
-    if load_deviation_pct > 0.25:
-        next_adjustment = "reducir siguiente sesión"
-    elif load_deviation_pct < -0.25:
-        next_adjustment = "progresar ligeramente siguiente sesión"
-    else:
-        next_adjustment = "mantener siguiente sesión"
+    completion = _day_completion(day_sessions, executed, profile)
 
+    # 11/11: ya no hay "ajuste sugerido" (con +25 % de TSS proponía reducir, contra la regla del 09/11) ni reparto por
+    # bloques (repartía el tiempo total entre los bloques del plan, sin mirar las vueltas).
     structured_summary = _structured_workout_summary(planned)
-    block_feedback = _compute_structured_block_feedback(planned, actual_duration, actual_tss)
 
     return {
         "date": target_date_iso,
@@ -885,11 +880,10 @@ def _compute_plan_execution_feedback(
             "duration_min": actual_duration,
             "tss": actual_tss,
         },
-        "block_feedback": block_feedback,
         "adherence_score": adherence_score,
         "adherence_label": adherence_label,
         "load_deviation_pct": load_deviation_pct,
-        "next_session_adjustment": next_adjustment,
+        "completion": completion,
     }
 
 
@@ -937,8 +931,18 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     """Motor determinista de ajuste diario del plan.
 
     Entrada: TSB, ATL, TSS semanal, sueño, HRV, body battery y sesión planificada.
-    Salida: maintain, reduce, easy o rest.
+    Salida: maintain, reduce, easy o rest. Con algo hecho hoy fuera del plan, `done_extra` lo dice (13/11) para la
+    pantalla y el marco del LLM; no cambia la decisión (09/11: haber entrenado más no recorta por sí solo).
     """
+    out = _daily_plan_adjustment(snapshot, plan)
+    extra = _extra_done_text(snapshot.get("today_completion"))
+    if isinstance(out, dict) and extra and out.get("rule") != "done_today":
+        out["done_extra"] = extra
+    return out
+
+
+def _daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | None:
+    """El motor de `_compute_daily_plan_adjustment`, sin lo hecho fuera del plan."""
     has_plan = isinstance(plan, dict)
     if not has_plan:
         plan = {}
@@ -961,6 +965,9 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
 
     planned_session = _resolve_today_plan_session(plan) if has_plan else "sin plan activo"
     planned_row = _get_planned_session_for_date(plan, today_iso) if has_plan else None
+    if isinstance(planned_row, dict):
+        # El título de la sesión, no el del plan (09/11: el LLM recibía "Plan hacia la Media…" y no sabía que era fuerza).
+        planned_session = str((planned_row.get("structured_workout") or {}).get("title") or planned_session)
     completion = snapshot.get("today_completion") or {}
     if completion.get("all_done"):
         done_text = "; ".join(completion.get("names") or []) or "una actividad"
@@ -1024,13 +1031,9 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         (hrv_ratio is not None and hrv_ratio < 0.90)
         or (hrv_status in {"low", "unbalanced", "poor"})
     )
-    high_weekly = (
-        _safe_float(weekly.get("high_tss"), 0.0) > 0
-        and weekly_tss >= _safe_float(weekly.get("high_tss"), 0.0)
-    )
-    weekly_spike_alert = bool((load_fatigue.get("flags") or {}).get("weekly_spike_alert"))
-
-    stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv) + int(high_weekly) + int(weekly_spike_alert)
+    # Solo señales del cuerpo (09/11, decisión del usuario): haber entrenado más estos días (semana alta, spike) no
+    # recorta nada por sí solo; la forma (TSB) ya lo recoge en el estado de carga.
+    stress_flags = int(low_bb) + int(poor_sleep) + int(low_hrv)
     # Sesión dura = la parte principal en Z3 o más (series, tempo, RP). Sin plan no se sabe: se trata como dura.
     hard_session = (not has_plan) or (
         isinstance(planned_row, dict)
@@ -1072,9 +1075,6 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         else:
             decision = "maintain"
             reason = "sesión suave: se mantiene" + (" (HRV baja: no pases de Z2)" if low_hrv else "") if (low_hrv or secondary) else "HRV y Body Battery en orden"
-        if (high_weekly or weekly_spike_alert) and decision == "maintain":
-            decision = "reduce"
-            reason = f"{reason}; semana por encima de su carga habitual: menos volumen"
         rule = "ready" if status == "ready" else "neutral"
 
     # Ajuste fase 3: planificado vs ejecutado (día N-1) modifica la decisión base.
@@ -1086,25 +1086,14 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
     order = ["rest", "easy", "reduce", "maintain"]
     rank = {name: idx for idx, name in enumerate(order)}
 
-    def _downgrade(current: str) -> str:
-        return order[max(0, rank.get(current, 2) - 1)]
-
     def _upgrade(current: str) -> str:
         return order[min(len(order) - 1, rank.get(current, 2) + 1)]
 
-    executed_yday = int(((feedback.get("executed") or {}).get("activities")) or 0)
+    # Hacer ayer más o algo distinto de lo previsto no baja la sesión de hoy (09/11, decisión del usuario: el 8/11 un
+    # rodaje de 85 TSS frente a 48 recortó la del lunes con HRV, Body Battery y forma en orden); recortan la HRV, el
+    # Body Battery, el sueño, la forma o el propio atleta cuando dice que está muy cansado (el LLM, en el chat).
     if decision != "rest" and adherence_score >= 0.0:
-        # Se baja si ayer hizo más carga de la prevista o una actividad distinta; no por no entrenar (29/10: saltarse
-        # una sesión deja al atleta más fresco, y antes bajaba la de hoy igual que un exceso).
-        if load_dev > 0.25 or (adherence_score < 0.40 and executed_yday > 0):
-            new_decision = _downgrade(decision)
-            if new_decision != decision:
-                decision = new_decision
-                adherence_adjustment = "down"
-                why = ("ayer hiciste más carga de la prevista" if load_dev > 0.25
-                       else "ayer hiciste una sesión distinta de la prevista")
-                reason = f"{reason}; ajuste porque {why}"
-        elif (
+        if (
             load_dev < -0.30
             and adherence_score >= 0.75
             and stress_flags <= 1
@@ -1115,6 +1104,12 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
                 decision = new_decision
                 adherence_adjustment = "up"
                 reason = f"{reason}; ajuste por infra-carga adherente en dia previo"
+
+    # La fuerza se hace completa (09/11, decisión del usuario): reducir o suavizar es para las sesiones fuera del
+    # gimnasio; solo el descanso obligatorio la quita, y una lesión la adapta el LLM (reglas de lesiones).
+    if decision in {"reduce", "easy"} and "strength" in str((planned_row or {}).get("session_type") or "").lower():
+        decision = "maintain"
+        reason = f"{reason}; la fuerza se hace completa (los recortes son para las sesiones fuera del gimnasio)"
 
     day_cap = max_minutes_per_day.get(today_idx)
     if day_cap is not None and planned_duration_min > day_cap and decision != "rest":
@@ -1169,6 +1164,7 @@ def _compute_daily_plan_adjustment(snapshot: dict, plan: dict | None) -> dict | 
         "reason": reason,
         "adherence_adjustment": adherence_adjustment,
         "planned_session": planned_session,
+        "session_type": str((planned_row or {}).get("session_type") or ""),
         "resulting_session": resulting_session,
         "adjusted_structured_workout": adjusted_structured_workout,
         "adjustment_trace": adjustment_trace,

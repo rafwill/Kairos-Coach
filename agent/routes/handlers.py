@@ -78,7 +78,9 @@ from agent.startup_status import (
     _build_proactive_status_markdown,
 )
 from agent.router import (
+    PLAN_CHANGE_INSIST_MARK,
     _detect_personal_records_sport_intent,
+    _is_plan_change_insist,
     _planned_days,
 )
 from agent.routes.day_data import (
@@ -91,6 +93,15 @@ log = logging.getLogger(__name__)
 # Rutas que se comprueban antes que la de conteo de actividades: con ellas, una pregunta que además pida contar
 # actividades sigue en su ruta (el orden de las comprobaciones de antes de la tabla).
 FIRST_ROUTES = frozenset({'config_options', 'plan_status', 'goal_status', 'week_tss', 'week_activities', 'load_trend', 'hr_threshold', 'running_threshold', 'today_load_status', 'period_activities', 'sleep_night', 'sleep_trend', 'activity_details', 'recent_tss_by_sport'})
+
+
+def _insisted_proposal(history: list[dict]) -> str:
+    """La propuesta de cambio que Kairos desaconsejó: el mensaje del atleta anterior a esa respuesta."""
+    for i in range(len(history) - 1, -1, -1):
+        m = history[i]
+        if m.get("role") == "assistant" and PLAN_CHANGE_INSIST_MARK in str(m.get("content") or "").lower():
+            return next((str(u.get("content") or "") for u in reversed(history[:i]) if u.get("role") == "user"), "")
+    return ""
 
 
 class RoutesMixin:
@@ -263,7 +274,8 @@ class RoutesMixin:
         _save_user_profile(profile)
         self.__dict__.pop("_active_plan_cache", None)
         log.info("[PLAN] eventos guardados=%d quitados=%d", len(saved), len(gone))
-        lines = ["## 📅 Evento guardado" if saved else "## 📅 Evento quitado"]
+        noun = "Eventos" if len(saved or gone) > 1 else "Evento"
+        lines = [f"## 📅 {noun} {'guardado' if saved else 'quitado'}{'s' if len(saved or gone) > 1 else ''}"]
         lines += [f"- `{e['id']}` {_plan_events.describe(e)}" for e in saved]
         lines += [f"- Quitado: {_plan_events.describe(e)}" for e in gone]
         return "\n".join(lines) + await self._readapt_for_events(saved, gone)
@@ -289,8 +301,10 @@ class RoutesMixin:
             parts.append(await self._route_plan_revision(message, plan, sessions, await self._build_plan_load_context(),
                                                          requested=False))
         if far:
-            parts.append("Los eventos más lejanos (" + "; ".join(_plan_events.describe(e) for e in far) + ") los tendré en "
-                         "cuenta cuando replanifiques: dime «replanifica el plan» cuando quieras.")
+            # Si todos son lejanos, ya están en la lista de arriba: no se repiten (10/11).
+            what = (("Los tendré" if len(far) > 1 else "Lo tendré") if not near else
+                    "Los más lejanos (" + "; ".join(e["title"] for e in far) + ") los tendré")
+            parts.append(f"{what} en cuenta cuando replanifiques: dime «replanifica el plan» cuando quieras.")
         return "\n\n" + "\n\n".join(parts)
 
     async def _plan_request(self, user_message: str, force_new: bool = False):
@@ -318,6 +332,13 @@ class RoutesMixin:
                     (previous_plan.get("plan_data") or {}).get("author") == "llm":
                 if _wants_replan_intent(user_message):
                     return await self._route_plan_rebuild(user_message, previous_plan, previous_sessions, load_context)
+                history = list(getattr(self, "conversation_history", None) or [])
+                if _is_plan_change_insist(user_message, history):
+                    # El atleta quiere el cambio que Kairos le desaconsejó: se revisa con su propuesta original.
+                    original = _insisted_proposal(history)
+                    if original:
+                        return await self._route_plan_revision(original, previous_plan, previous_sessions,
+                                                               load_context, insist=True)
                 return await self._route_plan_revision(user_message, previous_plan, previous_sessions, load_context)
             if wants_new or not (previous_plan and previous_plan.get("id")):
                 # El plan lo construye el LLM del atleta (28/10); el código lo comprueba y calcula ritmos, km y TSS.
@@ -408,18 +429,23 @@ class RoutesMixin:
             return assistant_reply, "planning_fallback"
     async def _route_plan_rebuild(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict) -> str:
         """«Replanifica el plan» (30/10, pendiente 11 d2; criterios en docs/proximos_pasos.md): el LLM rehace la
-        estructura y los días desde el lunes que viene hasta la carrera, con las reglas de `/plan crear` y la
-        progresión desde lo que el atleta sostiene de verdad. Esta semana se queda como estaba (para cambiarla, "ajusta
-        el plan"); un lunes, se rehace desde hoy. Si el LLM no consigue un plan válido, no cambia nada."""
+        estructura y los días hasta la carrera, con las reglas de `/plan crear` y la progresión desde lo que el atleta
+        sostiene de verdad. Desde mañana (09/11, decisión del usuario: antes la semana en curso se quedaba entera, y una
+        semana floja se arrastraba): los días hasta hoy se conservan y el resto de la semana se rehace con ellos. Un
+        lunes, desde hoy; un domingo, desde el lunes que viene. Si el LLM no consigue un plan válido, no cambia nada."""
         today = date.today()
         this_monday = today - timedelta(days=today.weekday())
         old_start = _plan_start(plan) or this_monday
         current = (this_monday - old_start).days // 7 + 1
-        keep_week = today.weekday() > 0 and current >= 1
+        keep_week = today.weekday() == 6 and current >= 1  # domingo: no queda nada de la semana que rehacer
+        past_days = today.isoweekday() if 0 < today.weekday() < 6 and current >= 1 else 0
         from_monday = this_monday + timedelta(weeks=1) if keep_week else max(this_monday, old_start)
+        kept = [s for s in sessions if int(s.get("week_index") or 0) == current
+                and int(s.get("day_index") or 0) <= past_days] if past_days else []
         # Días que el atleta cambió en una revisión y no son eventos guardados (05/11: la salida a la sierra del 14/11 se
         # perdió al replanificar): el LLM los recibe y la respuesta los lista para guardarlos como evento.
-        asked = _plan_builder.requested_days(sessions, old_start, from_monday)
+        first_new = today + timedelta(days=1) if past_days else from_monday
+        asked = _plan_builder.requested_days(sessions, old_start, first_new)
         if asked:
             user_message = (user_message + "\n\nEn una revisión anterior el atleta pidió estos cambios; consérvalos si "
                             "siguen teniendo sentido:\n" + "\n".join(f"- {d}: {t} (pidió: «{r}»)"
@@ -431,7 +457,8 @@ class RoutesMixin:
                     "«ajusta el plan» y lo que necesitas.")
         try:
             new_plan, new_sessions, errors = await self._build_plan_with_llm(user_message, load_context, plan=plan,
-                                                                             from_monday=from_monday)
+                                                                             from_monday=from_monday, kept=kept,
+                                                                             past_days=past_days)
         except LLMAuthError:
             raise
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
@@ -460,7 +487,8 @@ class RoutesMixin:
         self.user_profile["training_plan"] = persisted_plan
         _save_user_profile(self.user_profile)
         self.__dict__.pop("_active_plan_cache", None)  # el bloque "Plan activo" se recarga
-        kept = "Esta semana sigue como estaba; " if keep_week else ""
+        kept_text = ("Esta semana sigue como estaba; " if keep_week else
+                     f"Los días hasta hoy ({today.strftime('%d/%m')}) siguen como estaban; " if past_days else "")
         events = ("- Eventos fijos respetados: " + ("; ".join(_plan_events.describe(e) for e in f.events) if f.events
                                                    else "ninguno guardado") + ".\n")
         if asked:
@@ -468,18 +496,21 @@ class RoutesMixin:
                        "nuevo los tenga y, si alguno es obligatorio, cuéntamelo como evento («el sábado 14 tengo una "
                        "salida…») para que se respete siempre:\n"
                        + "\n".join(f"  - {d}: {t} («{r}»)" for d, t, r in asked) + "\n")
-        return (f"## 🔄 Plan replanificado desde el {from_monday.strftime('%d/%m/%Y')}\n"
-                f"{kept}la carrera sigue el {f.race_date.strftime('%d/%m/%Y')}. La progresión parte de lo que has "
-                f"sostenido las últimas 4 semanas. Guardado como una versión nueva del plan.\n{events}\n"
+        return (f"## 🔄 Plan replanificado desde el {first_new.strftime('%d/%m/%Y')}\n"
+                f"{kept_text}la carrera sigue el {f.race_date.strftime('%d/%m/%Y')}. La progresión parte de tus minutos "
+                f"{f.progression_label} (la mayor entre la media de las últimas 4 semanas y la semana pasada; la fuerza "
+                f"y los otros deportes, aparte). Guardado como una versión nueva del plan.\n{events}\n"
                 + _plan_detail_markdown(persisted_plan, new_sessions, self.user_profile))
 
     async def _route_plan_revision(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict,
-                                  requested: bool = True) -> str:
+                                  requested: bool = True, insist: bool = False) -> str:
         """Revisión del plan del LLM con lo que cuenta el atleta (28/10): cambia días desde hoy hasta el final de la
-        semana siguiente, el código los comprueba y se guarda una versión nueva. Si no pasa las reglas, no se toca."""
+        semana siguiente, el código los comprueba y se guarda una versión nueva. Si no pasa las reglas, no se toca.
+        Un cambio concreto que el LLM desaconseja (18/11) no se guarda: se explica y se ofrece hacerlo igualmente."""
+        rejected = False
         try:
-            new_sessions, reply, errors, messages = await self._revise_plan_with_llm(
-                user_message, plan, sessions, load_context, requested=requested)
+            new_sessions, reply, errors, messages, rejected = await self._revise_plan_with_llm(
+                user_message, plan, sessions, load_context, requested=requested, insist=insist)
         except LLMAuthError:
             raise
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
@@ -490,6 +521,9 @@ class RoutesMixin:
                     + "\n\nEl plan sigue como estaba.")
         if reply:
             reply = await self._apply_output_sensors(reply, messages, "plan_revision")
+        if rejected:
+            return ("## 🤔 No te recomiendo ese cambio\n\n" + (reply or "No encaja con la lógica de la semana.")
+                    + f"\n\nEl plan sigue como estaba. Si aun así lo quieres, dime «{PLAN_CHANGE_INSIST_MARK}» y lo cambio.")
         if new_sessions is None:
             return reply or "No hace falta cambiar el plan."
         old = {_plan_builder.session_key(s): (s.get("structured_workout") or {}).get("plan_day") for s in sessions}
@@ -526,6 +560,96 @@ class RoutesMixin:
         return (reply + "\n\n" if reply else "") + "## 🗓️ Cambios en el plan\n" + "\n".join(lines) + \
             ("\n\n" + notice if notice else "") + \
             "\n\nGuardado como una versión nueva del plan (`/plan ver` para verlo entero)."
+
+    async def _threshold_refresh_preview(self) -> dict | None:
+        """Plan activo puesto al día con el ritmo umbral vigente (18/11, petición del usuario), SIN escribir: las
+        sesiones desde hoy, sin eventos fijos, recalculadas con `plan_builder.retarget_session`. Devuelve el plan, las
+        sesiones nuevas, el umbral de antes y el nuevo, cuántas cambian, el TSS y los km por semana (antes y después) y
+        ejemplos de ritmos; None si no hay plan del LLM activo, falta el umbral o no cambia nada."""
+        try:
+            plan = _normalize_storage_plan_row(_storage.get_active_training_plan())
+        except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+            return None
+        if not plan or not plan.get("id") or (plan.get("plan_data") or {}).get("author") != "llm":
+            return None
+        sessions = _storage.list_training_plan_sessions(str(plan["id"]))
+        f = self._plan_frame(await self._build_plan_load_context(), "", plan=plan)
+        if not f.threshold_pace:
+            return None
+        today = date.today()
+        new_sessions, changed, weeks, examples = [], 0, {}, []
+        for s in sorted(sessions, key=_plan_builder.session_key):
+            day = f.start + timedelta(weeks=int(s["week_index"]) - 1, days=int(s["day_index"]) - 1)
+            new = s
+            if day >= today and not _plan_events.event_id(s):
+                cand = _plan_builder.retarget_session(s, f)
+                if cand.get("structured_workout") != s.get("structured_workout"):
+                    new = cand
+            if new is not s:
+                old_sum = (s.get("structured_workout") or {}).get("summary") or {}
+                new_sum = (new.get("structured_workout") or {}).get("summary") or {}
+                if old_sum != new_sum or new["structured_workout"].get("steps") != s["structured_workout"].get("steps"):
+                    changed += 1
+                    weeks[int(s["week_index"])] = None
+                    if len(examples) < 3 and s.get("session_type") == "running_quality":
+                        examples.append((day, s, new))
+            new_sessions.append(new)
+        if not changed:
+            return None
+
+        def week_sum(rows: list[dict], w: int, key: str) -> float:
+            return sum(float(((r.get("structured_workout") or {}).get("summary") or {}).get(key) or 0)
+                       for r in rows if int(r.get("week_index") or 0) == w)
+
+        # La semana entera (también lo ya hecho y lo que no cambia), antes y después.
+        weeks = {w: [week_sum(sessions, w, "tss"), week_sum(new_sessions, w, "tss"),
+                     week_sum(sessions, w, "distance_km"), week_sum(new_sessions, w, "distance_km")] for w in weeks}
+        raw_old = (plan.get("plan_data") or {}).get("threshold_pace_sec_per_km")
+        old_threshold = float(raw_old) if raw_old not in (None, "") else None
+        return {"plan": plan, "sessions": new_sessions, "old_threshold": old_threshold,
+                "new_threshold": f.threshold_pace, "changed": changed, "weeks": weeks, "examples": examples,
+                "hr_zones": f.hr_zones}
+
+    def _threshold_refresh_markdown(self, preview: dict) -> str:
+        """Lo que cambiaría en el plan con el umbral nuevo: TSS y km por semana y unas sesiones de calidad de ejemplo."""
+        fmt = _run_plan.fmt_pace
+        old = preview.get("old_threshold")
+        lines = ["## 🔄 Tu plan con el umbral nuevo",
+                 f"Ritmo umbral {fmt(old) + ' → ' if old else ''}{fmt(preview['new_threshold'])}/km. "
+                 f"Cambian {preview['changed']} sesiones desde hoy (los minutos, los días y los eventos fijos no).", "",
+                 "| Semana | TSS previsto | km |", "|---|---|---|"]
+        for w, (t0, t1, k0, k1) in sorted(preview["weeks"].items()):
+            lines.append(f"| {w} | {t0:.0f} → {t1:.0f} | {k0:.1f} → {k1:.1f} |")
+        for day, before, after in preview["examples"]:
+            b = _run_plan.session_lines(before, day, preview.get("hr_zones"))
+            a = _run_plan.session_lines(after, day, preview.get("hr_zones"))
+            lines += ["", f"**{a[0]}**", "Antes:"] + [f"- {x.strip()}" for x in b[1:]] + ["Ahora:"] + \
+                     [f"- {x.strip()}" for x in a[1:]]
+        return "\n".join(lines)
+
+    def _apply_threshold_refresh(self, preview: dict) -> dict:
+        """Guarda como versión nueva del plan las sesiones de la prueba (`_threshold_refresh_preview`) y el umbral nuevo
+        en su plan_data (cabecera de `/plan ver`); los minutos por semana se recalculan por si cambió un tramo por
+        distancia."""
+        plan = preview["plan"]
+        sessions = preview["sessions"]
+        pd = dict(plan.get("plan_data") or {})
+        weeks = int(plan.get("duration_weeks") or 0)
+        pd["threshold_pace_sec_per_km"] = round(float(preview["new_threshold"]), 1)
+        pd["week_minutes"] = [round(sum(float(s.get("duration_min") or 0) for s in sessions
+                                        if int(s.get("week_index") or 0) == w), 1) for w in range(1, weeks + 1)]
+        persisted = _storage.update_training_plan(
+            str(plan["id"]),
+            {k: plan.get(k) for k in ("title", "description", "objective", "difficulty", "duration_weeks")}
+            | {"status": "active", "source": "agent_llm_plan", "plan_data": pd},
+            sessions=sessions,
+            change_reason="threshold_refresh",
+        )
+        persisted_plan = _normalize_storage_plan_row(persisted) or {**plan, "plan_data": pd}
+        self.user_profile["training_plan"] = persisted_plan
+        _save_user_profile(self.user_profile)
+        self.__dict__.pop("_active_plan_cache", None)  # el bloque "Plan activo" se recarga
+        return persisted_plan
 
     async def _route_planned_sessions(self, user_message: str) -> str:
         """"¿Qué me toca mañana / el resto de la semana / el sábado?": las sesiones del plan activo para esos días,

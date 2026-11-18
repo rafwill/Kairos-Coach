@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from agent.daily_engine import _compute_daily_plan_adjustment
+from agent.daily_engine import _build_today_session_frame, _compute_daily_plan_adjustment
 
 TODAY = date.today()
 TODAY_ISO = TODAY.isoformat()
@@ -40,7 +40,7 @@ def _decide(session, *, hrv_low=False, bb_low=False, sleep_bad=False, spike=Fals
     ({"hrv_low": True}, "easy", "maintain"),
     ({"hrv_low": True, "bb_low": True}, "easy", "reduce"),
     ({"hrv_low": True, "bb_low": True, "sleep_bad": True}, "rest", "reduce"),
-    ({"spike": True}, "reduce", "reduce"),
+    ({"spike": True}, "maintain", "maintain"),  # 09/11: entrenar más no recorta por sí solo
 ])
 def test_matrix(signals, hard, soft):
     assert _decide(HARD, **signals) == hard
@@ -49,3 +49,23 @@ def test_matrix(signals, hard, soft):
 
 def test_strength_is_not_a_hard_session():
     assert _decide(("strength", "tempo"), hrv_low=True) == "maintain"
+
+
+def test_strength_is_done_in_full():
+    # 09/11, decisión del usuario: los recortes son para las sesiones fuera del gimnasio. 09/11: el marco decía además
+    # "Z3 Tempo" y el título del plan, y el LLM recetó 24' de tempo corriendo.
+    plan = _plan("strength", "tempo")
+    plan["sessions"][0]["structured_workout"].update({"title": "Fuerza base", "steps": [
+        {"type": "warmup", "duration_min": 10, "intensityClass": "endurance"},
+        {"type": "steady", "duration_min": 25, "intensityClass": "tempo", "target": {"metric": "rpe", "range": [6, 6]}},
+    ]})
+    snapshot = {"dates": {"today": TODAY_ISO}, "load_fatigue": {"status": "ready"},
+                "sleep": {"today": {"date": TODAY_ISO, "bodyBatteryAtWake": 25}},
+                "hrv": {"today": {"date": TODAY_ISO, "lastNightAvg": 40, "weeklyAvg": 50}}}
+    out = _compute_daily_plan_adjustment(snapshot, plan)
+    assert out["decision"] == "maintain" and out["planned_session"] == "Fuerza base"
+    assert "fuera del gimnasio" in out["reason"]
+    frame = _build_today_session_frame(out, {})
+    assert "fuerza, no de carrera" in frame and "Z3" not in frame and "lpm" not in frame
+    assert "35 min" in frame
+    assert _decide(("strength", "tempo"), hrv_low=True, bb_low=True) == "maintain"

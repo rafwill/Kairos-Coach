@@ -705,6 +705,81 @@ def test_startup_summary_roundtrip(monkeypatch):
     assert isinstance(row["generated_at"], str)
 
 
+def test_startup_summary_keeps_the_morning(monkeypatch):
+    fake_sb = _MemorySupabase()
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: fake_sb)
+    storage.save_startup_summary({"date": "2026-11-11"}, "## R", morning={"date": "2026-11-11", "hrv_today": {"h": 1}})
+    assert storage.get_startup_summary()["morning"] == {"date": "2026-11-11", "hrv_today": {"h": 1}}
+
+
+def test_startup_summary_without_the_morning_column_still_works(monkeypatch):
+    """11/11: hasta que se ejecute schema.sql, la columna morning no existe: se lee y se guarda sin ella."""
+    saved = []
+
+    class _Table:
+        def __init__(self):
+            self.cols = ""
+            self.row = None
+
+        def select(self, cols):
+            self.cols = cols
+            return self
+
+        def eq(self, *_a):
+            return self
+
+        def limit(self, *_a):
+            return self
+
+        def upsert(self, row):
+            self.row = dict(row)
+            return self
+
+        def execute(self):
+            if "morning" in self.cols or (self.row is not None and "morning" in self.row):
+                raise _MissingTableError({"message": "column startup_summary.morning does not exist", "code": "42703"})
+            if self.row is not None:
+                saved.append(self.row)
+                return type("R", (), {"data": [self.row]})()
+            return type("R", (), {"data": [{"generated_at": "t", "fingerprint": {}, "markdown": "x"}]})()
+
+    class _Sb:
+        def table(self, _name):
+            return _Table()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: _Sb())
+    assert storage.get_startup_summary()["markdown"] == "x"
+    storage.save_startup_summary({}, "## R", morning={"date": "d"})
+    assert saved and "morning" not in saved[0] and saved[0]["markdown"] == "## R"
+
+
+def test_activity_intensity_without_the_column_is_empty(monkeypatch):
+    """11/11: sin la columna activity_tss.intensity (schema.sql sin aplicar) no hay porcentaje, pero nada falla."""
+    class _Table:
+        def select(self, *_a):
+            return self
+
+        def eq(self, *_a):
+            return self
+
+        def in_(self, *_a):
+            return self
+
+        def execute(self):
+            raise _MissingTableError({"message": "column activity_tss.intensity does not exist", "code": "42703"})
+
+    class _Sb:
+        def table(self, _name):
+            return _Table()
+
+    monkeypatch.setattr(storage, "_require_active_user_id", lambda: "user-1")
+    monkeypatch.setattr(storage, "_supabase", lambda: _Sb())
+    assert storage.get_activity_intensity([1, 2]) == {}
+    assert storage.get_activity_intensity([]) == {}
+
+
 def test_startup_summary_without_the_table_is_ignored(monkeypatch):
     class _NoTable:
         def select(self, *_a, **_k):
@@ -909,6 +984,28 @@ def test_a_write_drops_the_cached_reads_of_its_table_only(monkeypatch):
     finally:
         storage.close_read_cache()
     assert [t for t, mode in fake.executes if mode == "select"] == ["user_profile", "athlete_knowledge", "user_profile"]
+
+
+def test_a_write_that_reads_back_what_it_wrote_sees_the_new_row():
+    # 10/11: update_training_plan relee el plan con get_training_plan; con la caché abierta recibía la fila de antes.
+    row = {"v": 1}
+
+    @storage._db_read("t")
+    def read():
+        return dict(row)
+
+    @storage._db_write("t")
+    def write(v):
+        row["v"] = v
+        return read()
+
+    storage.open_read_cache()
+    try:
+        assert read() == {"v": 1}
+        assert write(2) == {"v": 2}
+        assert read() == {"v": 2}
+    finally:
+        storage.close_read_cache()
 
 
 def test_without_an_open_cache_every_read_goes_to_supabase(monkeypatch):

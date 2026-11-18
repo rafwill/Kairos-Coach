@@ -179,6 +179,42 @@ class TestCheckWeek:
                                                                       {"minutes": 0}, _frame(max_quality=1)))
 
 
+    def test_the_eve_and_the_day_after_a_race_are_easy(self):
+        # 10/11: al replanificar, el plan puso una tirada de 115 min la víspera de la carrera de Cercedilla.
+        f = _frame([_session_event(intensity="moderate", duration_min=75, title="Carrera")])
+        race = _day(6, "long", 75, event="e1")
+
+        def near(frame, *days):
+            return [e for e in _event_errors(frame, race, *days) if "víspera" in e or "día siguiente" in e]
+
+        assert any("es la víspera de «Carrera»" in e and "bici o elíptica" in e for e in near(f, _day(5, "long", 115)))
+        assert any("es el día siguiente de «Carrera»" in e for e in near(f, _day(7, "quality", 60)))
+        assert near(f, _day(5, "easy", 45), _day(7, "easy", 40), _day(4, "long", 115)) == []
+        def easy(work_min, zone):
+            return {"day": 5, "type": "easy", "steps": [{"kind": "warmup", "min": 10, "zone": "FC1"},
+                                                        {"kind": "steady", "min": 30, "zone": "FC2"},
+                                                        {"kind": "work", "min": work_min, "zone": zone},
+                                                        {"kind": "cooldown", "min": 5, "zone": "FC1"}]}
+        assert near(f, easy(2, "FC5")) == []  # unas rectas sí
+        tempo = easy(15, "FC4")
+        assert near(f, tempo)
+        assert near(_frame([_session_event(duration_min=75)]), _day(5, "long", 115)) == []  # salida suave: sin regla
+
+    def test_the_day_after_a_sunday_race_is_checked_in_the_next_week(self):
+        sunday = START + timedelta(days=6)
+        f = _frame([_session_event(intensity="hard", duration_min=60, start=sunday.isoformat(), end=sunday.isoformat())])
+        week2 = [pb.expand_day(d, f, 2)[0] for d in [_day(1, "quality", 60), *({"day": x, "type": "rest"} for x in range(2, 8))]]
+        assert any("lunes" in e and "día siguiente" in e for e in pb.check_week(2, week2, {"minutes": 0}, f))
+
+    def test_a_mountain_event_in_a_road_plan_has_no_road_km_and_uses_hrtss(self):
+        # 10/11: la salida a la sierra (2 h, trail) salía con 24 km y el rTSS de asfalto en un plan de media maratón.
+        day = _day(6, "long", 120, event="e1")
+        road = pb.expand_day(day, _frame([_session_event(duration_min=120)]), 1)[0]["structured_workout"]["summary"]
+        trail = pb.expand_day(day, _frame([_session_event(duration_min=120, sport="trail")]), 1)[0]
+        summary = trail["structured_workout"]["summary"]
+        assert road["distance_km"] > 0 and summary["distance_km"] == 0
+        assert summary["tss"] == pytest.approx(2 * 40.8) and summary["tss"] < road["tss"]  # FC1-FC2 < 85 % del umbral TP
+
     def test_a_fixed_long_run_lasts_what_the_athlete_said_not_what_the_structure_says(self):
         # 06/11: al replanificar, la estructura daba 100 min de tirada y la salida a la sierra dura 120; el código pedía
         # "quita unos 20 min" a un evento fijo.
@@ -319,6 +355,15 @@ async def test_a_far_event_is_saved_and_offers_to_replan_without_spending_reques
     out, _ = await _apply(agent, [_raw(far)])
     assert "replanifica el plan" in out and not agent._route_plan_revision.called
     assert len(pe.load(agent.user_profile)) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_far_events_are_listed_once_with_a_plural_title():
+    # 10/11: «Evento guardado» con dos eventos, y los dos repetidos enteros en la frase de los más lejanos.
+    agent = _agent()
+    out, _ = await _apply(agent, [_raw(TODAY + timedelta(days=30)), _raw(TODAY + timedelta(days=36), title="10k")])
+    assert out.startswith("## 📅 Eventos guardados") and out.count("Salida en grupo") == 1
+    assert "Los tendré en cuenta cuando replanifiques" in out
 
 
 @pytest.mark.asyncio

@@ -105,15 +105,22 @@ def _db_read(table: str):
 
 
 def _db_write(*tables: str):
+    """Escritura: borra de la caché lo leído de sus tablas antes y después. Antes también (10/11): una escritura que
+    relee lo que acaba de escribir (`update_training_plan` → `get_training_plan`) recibía la fila de antes, y la
+    respuesta del replanificado enseñaba las fases y las descargas del plan anterior con las sesiones del nuevo."""
+    def drop():
+        if _read_cache:
+            for key in [k for k, (table, _) in _read_cache.items() if table in tables]:
+                del _read_cache[key]
+
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
+            drop()
             try:
                 return _timed(fn, args, kwargs)
             finally:
-                if _read_cache:
-                    for key in [k for k, (table, _) in _read_cache.items() if table in tables]:
-                        del _read_cache[key]
+                drop()
         return wrapper
     return decorator
 
@@ -225,6 +232,15 @@ def _require_supabase():
     if not sb:
         raise RuntimeError("Supabase no está configurado o no es accesible")
     return sb
+
+
+def _is_missing_column_error(exc: Exception, column: str) -> bool:
+    """Columna que aún no existe en Supabase (schema.sql sin aplicar): PGRST204 al escribir, 42703 al leer."""
+    payload = exc.args[0] if getattr(exc, "args", None) else None
+    code = str(payload.get("code") or "") if isinstance(payload, dict) else ""
+    message = str(payload.get("message") or "") if isinstance(payload, dict) else str(exc)
+    msg = message.lower()
+    return column.lower() in msg and (code in {"PGRST204", "42703"} or "column" in msg)
 
 
 def _is_missing_table_error(exc: Exception, table_name: str) -> bool:
@@ -1122,7 +1138,7 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
     try:
         resp = (
             sb.table("activity_tss")
-            .select("activity_id, start_date, sport, tss, method, model, native_load")
+            .select("activity_id, start_date, sport, tss, method, model, native_load, threshold_pace_used")
             .eq("app_user_id", uid)
             .gte("start_date", start_date)
             .execute()
@@ -1136,6 +1152,9 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
                 "method": str(r.get("method") or "unknown"),
                 "model": str(r.get("model") or "unknown"),
                 "native_load": float(r["native_load"]) if r.get("native_load") is not None else None,
+                # ritmo umbral con el que se calculó su rTSS (18/11: ritmo equivalente por zona de FC del plan)
+                "threshold_pace_used": (float(r["threshold_pace_used"])
+                                        if r.get("threshold_pace_used") is not None else None),
             }
             for r in (resp.data or [])
             if r.get("activity_id") is not None
@@ -1207,6 +1226,8 @@ def upsert_activity_tss_rows(rows: list[dict]) -> None:
                         row.get("computed_at")
                         or datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
                     ),
+                    # 11/11: solo si viene; así un recálculo sin detalle no borra la que había.
+                    **({"intensity": row["intensity"]} if row.get("intensity") else {}),
                 }
             )
 
@@ -1214,12 +1235,36 @@ def upsert_activity_tss_rows(rows: list[dict]) -> None:
             return
 
         for i in range(0, len(payload_rows), 200):
-            sb.table("activity_tss").upsert(
-                payload_rows[i:i + 200], on_conflict="app_user_id,activity_id"
-            ).execute()
+            chunk = payload_rows[i:i + 200]
+            try:
+                sb.table("activity_tss").upsert(chunk, on_conflict="app_user_id,activity_id").execute()
+            except Exception as exc:
+                if not _is_missing_column_error(exc, "intensity"):
+                    raise
+                log.warning("[storage] activity_tss sin la columna intensity (ejecuta supabase/schema.sql)")
+                sb.table("activity_tss").upsert([{k: v for k, v in r.items() if k != "intensity"} for r in chunk],
+                                                on_conflict="app_user_id,activity_id").execute()
         log.info("upsert_activity_tss_rows: %d filas persistidas", len(payload_rows))
     except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         log.warning("upsert_activity_tss_rows: %s", exc)
+
+
+def get_activity_intensity(activity_ids: list[int]) -> dict[int, dict]:
+    """Lo hecho a cada ritmo y FC de esas actividades (`activity_tss.intensity`, 11/11): {id: distribución}. Las que
+    no la tienen (anteriores al 11/11 o sin detalle) no salen; sin la columna o sin sesión, {}."""
+    ids = sorted({int(i) for i in activity_ids or [] if i is not None})
+    sb = _supabase()
+    if not sb or not ids:
+        return {}
+    uid = _require_active_user_id()
+    try:
+        res = sb.table("activity_tss").select("activity_id,intensity").eq("app_user_id", uid).in_(
+            "activity_id", ids).execute()
+    except Exception as exc:
+        if _is_missing_column_error(exc, "intensity") or _is_missing_table_error(exc, "activity_tss"):
+            return {}
+        raise
+    return {int(r["activity_id"]): r["intensity"] for r in res.data or [] if r.get("intensity")}
 
 
 # ─── wellness_daily (Body Battery + HRV) ─────────────────────────────────────
@@ -1346,14 +1391,22 @@ def upsert_wellness_daily(
 
 @_db_read("startup_summary")
 def get_startup_summary() -> dict | None:
-    """Último resumen del arranque (31/10): {generated_at, fingerprint, markdown}; None si no hay o falta la tabla."""
+    """Último resumen del arranque (31/10): {generated_at, fingerprint, markdown, morning}; None si no hay o falta la
+    tabla. Sin la columna `morning` (11/11, schema.sql sin aplicar), la fila sin ella."""
     sb = _supabase()
     uid = _require_active_user_id()
     if not sb:
         return None
     try:
-        res = sb.table("startup_summary").select("generated_at,fingerprint,markdown").eq(
-            "app_user_id", uid).limit(1).execute()
+        try:
+            res = sb.table("startup_summary").select("generated_at,fingerprint,markdown,morning").eq(
+                "app_user_id", uid).limit(1).execute()
+        except Exception as exc:
+            if not _is_missing_column_error(exc, "morning"):
+                raise
+            log.warning("[storage] startup_summary sin la columna morning (ejecuta supabase/schema.sql)")
+            res = sb.table("startup_summary").select("generated_at,fingerprint,markdown").eq(
+                "app_user_id", uid).limit(1).execute()
     except Exception as exc:
         if _is_missing_table_error(exc, "startup_summary"):
             log.warning("[storage] startup_summary no existe en Supabase (ejecuta supabase/schema.sql y rls.sql)")
@@ -1363,8 +1416,9 @@ def get_startup_summary() -> dict | None:
 
 
 @_db_write("startup_summary")
-def save_startup_summary(fingerprint: dict, markdown: str) -> None:
-    """Guarda (sustituye) el resumen del arranque con su huella; sin la tabla, no hace nada."""
+def save_startup_summary(fingerprint: dict, markdown: str, morning: dict | None = None) -> None:
+    """Guarda (sustituye) el resumen del arranque con su huella y los datos de la mañana; sin la tabla, no hace nada;
+    sin la columna `morning`, lo guarda sin ellos."""
     sb = _supabase()
     uid = _require_active_user_id()
     if not sb:
@@ -1374,9 +1428,17 @@ def save_startup_summary(fingerprint: dict, markdown: str) -> None:
         "generated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
         "fingerprint": fingerprint,
         "markdown": markdown,
+        "morning": morning or {},
     }
     try:
-        sb.table("startup_summary").upsert(row).execute()
+        try:
+            sb.table("startup_summary").upsert(row).execute()
+        except Exception as exc:
+            if not _is_missing_column_error(exc, "morning"):
+                raise
+            log.warning("[storage] startup_summary sin la columna morning (ejecuta supabase/schema.sql)")
+            row.pop("morning")
+            sb.table("startup_summary").upsert(row).execute()
     except Exception as exc:
         if _is_missing_table_error(exc, "startup_summary"):
             log.warning("[storage] startup_summary no existe en Supabase (ejecuta supabase/schema.sql y rls.sql)")

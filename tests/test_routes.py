@@ -217,6 +217,34 @@ class TestPlanStatusChatRoute:
         update.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_a_change_advised_against_is_explained_and_applied_only_when_the_athlete_insists(self):
+        # 18/11, petición del usuario: Kairos valora el cambio; si no lo recomienda, no toca el plan y ofrece hacerlo.
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"goals": {"target_race": "Media"}, "health": {}}
+        agent._apply_output_sensors = AsyncMock(side_effect=lambda text, *a, **k: text)
+        agent._revise_plan_with_llm = AsyncMock(
+            return_value=(None, "Las series quedarían la víspera de la tirada.", [], [], True))
+        with patch("agent.trainer_agent._storage.update_training_plan") as update:
+            out = await TrainerAgent._route_plan_revision(agent, "Pasa las series al sábado", {"id": "p1"}, [], {})
+        assert "No te recomiendo" in out and "víspera" in out and "«hazlo igualmente»" in out
+        update.assert_not_called()
+
+        agent.conversation_history = [{"role": "user", "content": "Pasa las series al sábado"},
+                                      {"role": "assistant", "content": out}]
+        agent._build_plan_load_context = AsyncMock(return_value={})
+        agent._route_plan_revision = AsyncMock(return_value="revisado")
+        row = {"id": "p1", "title": "Plan", "status": "active", "source": "agent_llm_plan",
+               "plan_data": {"author": "llm", "start_date": "2026-10-26"}}
+        assert _router.ToolRouter().route_key("Hazlo igualmente", agent.conversation_history, agent.user_profile) == "planning"
+        with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=row), \
+             patch("agent.trainer_agent._storage.list_training_plan_sessions", return_value=[{"week_index": 1}]):
+            assert await TrainerAgent._route_planning(agent, "Hazlo igualmente") == "revisado"
+        call = agent._route_plan_revision.await_args
+        assert call.args[0] == "Pasa las series al sábado" and call.kwargs["insist"] is True
+
+    @pytest.mark.asyncio
     async def test_chat_planning_updates_existing_plan_and_reports_changes(self):
         from agent.trainer_agent import (
             TrainerAgent,
@@ -1468,3 +1496,76 @@ class TestPlannedSessionsRoute:
         with patch_all("_get_active_training_plan", return_value=None):
             out = await TrainerAgent._route_planned_sessions(agent, "¿qué me toca mañana?")
         assert "/plan crear" in out
+
+
+class TestThresholdRefresh:
+    """18/11, petición del usuario: con un umbral nuevo, el plan activo se pone al día sin LLM; primero la prueba (lo
+    que cambia) y solo con confirmación se guarda."""
+
+    def _setup(self):
+        from datetime import date as _date
+
+        import agent.plan_builder as pb
+        from agent.trainer_agent import TrainerAgent
+
+        zones = [("Z1", 115, 134), ("Z2", 135, 145), ("Z3", 146, 157), ("Z4", 158, 168), ("Z5", 169, 179)]
+        monday = _date.today() - timedelta(days=_date.today().weekday())
+
+        def frame(thr):
+            return pb.PlanFrame(start=monday, weeks=2, race="10K", race_date=monday + timedelta(days=13), distance_km=10.0,
+                                target_time="40:00", threshold_pace=thr, race_pace=240.0, hr_zones=zones,
+                                hr_threshold_tp=169.0)
+
+        quality = {"day": 7, "type": "quality", "title": "Umbral 2×8'", "steps": [
+            {"kind": "warmup", "min": 15, "zone": "FC2"},
+            {"repeat": 2, "steps": [{"kind": "work", "min": 8, "zone": "Z4"}, {"kind": "recovery", "min": 3, "zone": "Z2"}]},
+            {"kind": "cooldown", "min": 10, "zone": "FC1"}]}
+        sessions = [pb.expand_day(quality, frame(250.0), w)[0] for w in (1, 2)]
+        event = pb.expand_day({**quality, "event": "e1", "day": 6}, frame(250.0), 2)[0]
+        sessions.append(event)
+        row = {"id": "p1", "title": "Plan", "status": "active", "duration_weeks": 2,
+               "plan_data": {"author": "llm", "start_date": monday.isoformat(), "threshold_pace_sec_per_km": 250.0}}
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"goals": {"target_race": "10K"}}
+        agent._build_plan_load_context = AsyncMock(return_value={})
+        agent._plan_frame = lambda *a, **k: frame(240.0)
+        return agent, row, sessions
+
+    @pytest.mark.asyncio
+    async def test_preview_then_apply_only_future_non_event_sessions(self):
+        from agent.trainer_agent import TrainerAgent
+
+        agent, row, sessions = self._setup()
+        with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=row), \
+             patch("agent.trainer_agent._storage.list_training_plan_sessions", return_value=sessions), \
+             patch("agent.trainer_agent._storage.update_training_plan", return_value=row) as update, \
+             patch_all("_save_user_profile"):
+            preview = await TrainerAgent._threshold_refresh_preview(agent)
+            update.assert_not_called()  # la prueba no escribe
+            assert preview["changed"] == 2 and preview["old_threshold"] == 250.0 and preview["new_threshold"] == 240.0
+            md = TrainerAgent._threshold_refresh_markdown(agent, preview)
+            assert "4:10 → 4:00/km" in md and "Cambian 2 sesiones" in md and "Antes:" in md and "Ahora:" in md
+            TrainerAgent._apply_threshold_refresh(agent, preview)
+        saved = update.call_args.kwargs["sessions"]
+        assert update.call_args.kwargs["change_reason"] == "threshold_refresh"
+        assert update.call_args.args[1]["plan_data"]["threshold_pace_sec_per_km"] == 240.0
+        event = next(s for s in saved if s["structured_workout"]["plan_day"].get("event"))
+        assert event is sessions[2]  # el evento fijo no se toca
+        assert all(s["structured_workout"]["threshold_pace"] == 240.0 for s in saved if s is not sessions[2])
+
+    @pytest.mark.asyncio
+    async def test_cli_asks_before_saving(self, monkeypatch):
+        import agent.main as m
+
+        agent = MagicMock()
+        agent._threshold_refresh_preview = AsyncMock(return_value={"x": 1})
+        agent._threshold_refresh_markdown = MagicMock(return_value="## 🔄 Tu plan con el umbral nuevo")
+        monkeypatch.setattr(m.Confirm, "ask", lambda *a, **k: False)
+        await m._threshold_refresh_cli(agent)
+        agent._apply_threshold_refresh.assert_not_called()
+        monkeypatch.setattr(m.Confirm, "ask", lambda *a, **k: True)
+        await m._threshold_refresh_cli(agent)
+        agent._apply_threshold_refresh.assert_called_once_with({"x": 1})
+        agent._threshold_refresh_preview = AsyncMock(return_value=None)
+        await m._threshold_refresh_cli(agent)
+        assert agent._apply_threshold_refresh.call_count == 1

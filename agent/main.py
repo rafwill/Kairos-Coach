@@ -133,6 +133,7 @@ from agent.storage import (
     update_user_credentials,
 )
 from agent.routes.load import _build_load_trend_table
+from agent.hr_profile import _resolve_running_threshold_pace_for_date
 from agent.daily_engine import _session_intensity_label, _session_type_label
 from agent.plans import _DAY_LETTERS, _format_days, _is_block_plan, _parse_day_limits, _parse_day_list, _plan_detail_markdown
 from agent.data_access import _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile
@@ -933,7 +934,7 @@ def _show_plan_help() -> None:
     console.print(Panel.fit(
         "[bold]Comandos de planificación:[/]\n\n"
         "  [bold cyan]/plan listar[/bold cyan]          Lista planes (nº e id corto) y marca el activo\n"
-        "  [bold cyan]/plan ver <nº o id>[/bold cyan]     Muestra el plan y sus sesiones (ej.: /plan ver 1)\n"
+        "  [bold cyan]/plan ver <nº o id>[/bold cyan]     Muestra el plan y sus sesiones (ej.: /plan ver 1; con un solo plan, /plan ver)\n"
         "  [bold cyan]/plan activar <nº o id>[/bold cyan] Activa un plan y desactiva el anterior\n"
         "  [bold cyan]/plan crear[/bold cyan]           Tu LLM construye el plan (Kairos lo comprueba) y lo activa\n"
         "  [bold cyan]/plan evento[/bold cyan]          Un viaje o una salida obligatoria: el plan se readapta\n"
@@ -978,6 +979,16 @@ def _show_training_plans() -> None:
 
 
 def _show_training_plan(plan_ref: str) -> None:
+    # Con un solo plan (18/11, petición del usuario): "/plan ver" (o "/plan ver semana 5", "/plan ver todo") lo muestra
+    # sin pedir su nº ni su id.
+    first = (plan_ref or "").split()[:1]
+    if not first or first[0] in {"semana", "todo"}:
+        try:
+            plans = list_training_plans(include_archived=False)
+        except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+            plans = []
+        if len(plans) == 1 and plans[0].get("id"):
+            plan_ref = f"{plans[0]['id']} {plan_ref or ''}".strip()
     if not plan_ref:
         console.print("[yellow]Uso: /plan ver <nº o id> [semana <n> | todo] (el nº y el id corto salen en /plan listar)[/]")
         return
@@ -1230,6 +1241,33 @@ async def _create_training_plan_cli(agent: TrainerAgent) -> None:
         result = await agent._route_planning(message, force_new=True)
     reply = result[0] if isinstance(result, tuple) else result
     console.print(Markdown(str(reply or "")))
+
+
+async def _threshold_refresh_cli(agent: TrainerAgent) -> None:
+    """Tras `/perfil umbral <mm:ss>` (18/11, petición del usuario): el plan activo puesto al día con el umbral nuevo,
+    sin LLM y sin cambiar su estructura. Enseña lo que cambia y solo lo guarda si el atleta lo confirma."""
+    try:
+        with console.status("[dim]Recalculando tu plan con el umbral nuevo…[/]"):
+            preview = await agent._threshold_refresh_preview()
+    except Exception:  # noqa: BLE001 — el umbral ya está guardado; un fallo aquí no debe cerrar la sesión
+        log.exception("No se pudo recalcular el plan con el umbral nuevo")
+        console.print("[yellow]El umbral está guardado, pero no pude recalcular el plan ahora. "
+                      "Vuelve a escribir /perfil umbral más tarde o di «replanifica el plan».[/]")
+        return
+    if not preview:
+        console.print("[dim]Tu plan activo no tiene sesiones que cambien con el umbral nuevo.[/]")
+        return
+    console.print(Markdown(agent._threshold_refresh_markdown(preview)))
+    if not Confirm.ask("¿Actualizo el plan con el umbral nuevo?", default=True):
+        console.print("[dim]El plan sigue como estaba (los planes que crees o ajustes ya usarán el umbral nuevo).[/]")
+        return
+    try:
+        agent._apply_threshold_refresh(preview)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("No se pudo guardar el plan con el umbral nuevo")
+        console.print(f"[red]✗[/] No se pudo guardar el plan: {exc}")
+        return
+    console.print("[green]✓[/] Plan actualizado con el umbral nuevo (versión nueva; /plan ver para verlo).")
 
 
 async def _add_plan_event_cli(agent: TrainerAgent) -> None:
@@ -1932,7 +1970,7 @@ async def main() -> None:
         # El resumen inicial empieza a la vez (8c, 28/10): pide a Garmin sus datos mientras se calcula la carga y
         # espera a que termine solo para leer la serie.
         skip_startup_status = str(os.environ.get("KAIROS_SKIP_STARTUP_STATUS", "")).strip().lower() in {"1", "true", "yes", "on"}
-        # Reentrada en menos de 1 h sin nada nuevo (31/10): se muestra el resumen guardado y no se consulta a Garmin
+        # Reentrada el mismo día sin nada nuevo (31/10; 11/11, todo el día): se muestra el resumen guardado y no se consulta a Garmin
         # para la carga, ni se rehace el snapshot ni el LLM. `/resumen` lo actualiza cuando el atleta quiera.
         cached_status = None if (skip_startup_status or is_new_user) else await agent.cached_startup_summary(profile_changes)
         load_task = None if cached_status else asyncio.ensure_future(
@@ -2044,6 +2082,15 @@ async def main() -> None:
                 continue
             if plan_action == "events":
                 _plan_events_cli(agent, plan_arg)
+                continue
+
+            if cmd.startswith("/perfil umbral") and not cmd.startswith("/perfil umbral fc"):
+                # El umbral nuevo y, si cambia, el plan activo puesto al día (18/11).
+                before = _resolve_running_threshold_pace_for_date(agent.user_profile or {}, date.today().isoformat())
+                _handle_cli_command(user_input, agent)
+                after = _resolve_running_threshold_pace_for_date(agent.user_profile or {}, date.today().isoformat())
+                if after and after != before:
+                    await _threshold_refresh_cli(agent)
                 continue
 
             if _handle_cli_command(user_input, agent):

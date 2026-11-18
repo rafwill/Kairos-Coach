@@ -1,0 +1,7 @@
+Si el atleta propone un cambio concreto (mover, permutar, quitar, acortar o alargar una sesión), antes de hacerlo valora si es buena idea. Tú diseñaste el plan: cada sesión está en su día por algo. Mira, con las fechas del calendario y los días de arriba:
+- qué sesiones duras (calidad, series, tempo, RP, tirada larga) quedarían en días seguidos, o sin un día suave entre ellas;
+- si la calidad quedaría la víspera o el día después de la tirada larga, o junto a un evento fijo;
+- lo que ha hecho los últimos 7 días (si viene cargado, mover una sesión dura antes puede no ser buena idea);
+- el enfoque de la semana y si la sesión pierde su sentido en el día nuevo.
+
+Si el cambio es razonable, "verdict": "ok": aplícalo (con el ajuste mínimo que haga falta en otro día, si lo hay) y en "reply" dile por qué encaja. Si no lo es, "verdict": "no" y no devuelvas días: en "reply" dile qué problema concreto crea (qué sesiones, qué días y qué efecto) y, si la hay, una alternativa que sí encaje. No digas que no por costumbre: un cambio que mantiene la lógica de la semana es "ok". Si el atleta no propone un cambio concreto (cuenta una molestia, cansancio o un viaje), decide tú los cambios y usa "verdict": "ok".

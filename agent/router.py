@@ -37,7 +37,8 @@ class ToolRouter:
             return "config_options"
         if _is_plan_event_intent(user_message, history):
             return "plan_event"
-        if _is_session_change_intent(user_message) and _has_goal_in_profile(profile):
+        if ((_is_session_change_intent(user_message) or _is_plan_change_insist(user_message, history))
+                and _has_goal_in_profile(profile)):
             return "planning"
         if _is_plan_status_intent(user_message):
             return "plan_status"
@@ -117,19 +118,42 @@ def _is_plan_event_intent(user_message: str, history: list[dict] | None = None) 
 
 
 # Mover o cambiar una sesión del plan sin decir "plan" (06/11: "¿Podría cambiar la tirada larga del domingo a mañana
-# sábado?" fue al chat libre, que no cambió nada y lo confundió con la salida a la sierra del 14).
+# sábado?" fue al chat libre, que no cambió nada y lo confundió con la salida a la sierra del 14). 18/11: "permutar
+# los entrenamientos del jueves y el viernes" tampoco llegaba (ni "permutar" ni el plural): sustantivos en plural.
 _SESSION_CHANGE_VERB = re.compile(
-    r"\b(cambi\w*|intercambi\w*|acort\w*|alarg\w*|quit\w*|en vez del?|en lugar del?)\b")
+    r"\b(cambi\w*|intercambi\w*|permut\w*|invert\w*|acort\w*|alarg\w*|quit\w*|en vez del?|en lugar del?)\b")
 # Mover, pasar, adelantar o retrasar solo con destino ("al jueves", "a mañana"): "¿qué pasa si…?" no es un cambio.
 _SESSION_MOVE = re.compile(
     r"\b(mov\w*|muev\w*|pas\w*|adelant\w*|retras\w*)\b.*\b(al|a|para el|para)\s+(?:el\s+)?(lunes|martes|mi[eé]rcoles|"
     r"jueves|viernes|s[aá]bado|domingo|ma[ñn]ana|hoy|pasado ma[ñn]ana|otro d[ií]a|d[ií]a\s+\d{1,2})\b")
 _SESSION_NOUN = re.compile(
-    r"\b(tirada|rodaje|series|fartlek|tempo|cuestas|intervalos|sesi[oó]n|entreno|entrenamiento|fuerza|descanso|"
-    r"calidad|trote)\b")
+    r"\b(tiradas?|rodajes?|series|fartlek|tempos?|cuestas|intervalos|sesi[oó]n|sesiones|entrenos?|entrenamientos?|"
+    r"fuerza|descansos?|calidad|trotes?)\b")
 _SESSION_DAY_CUE = re.compile(r"\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|ma[ñn]ana|hoy|"
                               r"fin de semana|(?:el|del|al|d[ií]a)\s+\d{1,2})\b")
 _SESSION_PAST = re.compile(r"\b(hice|hiciste|entren[eé]|corr[ií]|cambi[eé]|mov[ií]|pas[eé])\b")
+
+
+# Cambio desaconsejado (18/11, petición del usuario): Kairos explica por qué no lo recomienda y termina con esta frase;
+# si el atleta responde que lo quiere igualmente, la revisión lo hace.
+PLAN_CHANGE_INSIST_MARK = "hazlo igualmente"
+_INSIST_STRONG = re.compile(r"\b(igualmente|de todas (formas|maneras)|de todos modos|a[uú]n as[ií]|lo quiero)\b")
+_INSIST_DECLINE = re.compile(r"\b(no|mejor no|d[eé]jalo|olv[ií]dalo|como est[aá]|tienes raz[oó]n)\b")
+_INSIST_WEAK = re.compile(r"\b(s[ií]|vale|ok|hazlo|c[aá]mbialo|adelante|dale|venga|cambialo)\b")
+
+
+def _is_plan_change_insist(user_message: str, history: list[dict] | None = None) -> bool:
+    """El atleta quiere el cambio que Kairos le acaba de desaconsejar ("hazlo igualmente", "sí, cámbialo")."""
+    text = (user_message or "").strip().lower()
+    if not text or text.startswith("/") or len(text) > 200:
+        return False
+    last_assistant = next((str(m.get("content") or "").lower() for m in reversed((history or [])[-4:])
+                           if m.get("role") == "assistant"), "")
+    if PLAN_CHANGE_INSIST_MARK not in last_assistant:
+        return False
+    if _INSIST_STRONG.search(text):
+        return True
+    return not _INSIST_DECLINE.search(text) and bool(_INSIST_WEAK.search(text))
 
 
 def _is_session_change_intent(user_message: str) -> bool:

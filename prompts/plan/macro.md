@@ -2,7 +2,7 @@ Datos del atleta:
 
 {{datos}}
 
-Diseña la estructura del plan: una entrada por semana, de la 1 a la {{semanas}}, con su fase, si es de descarga, los minutos totales de la semana (todas las sesiones, fuerza incluida), los minutos de la tirada larga y el enfoque de la semana (las sesiones clave en pocas palabras).
+Diseña la estructura del plan: una entrada por semana, de la 1 a la {{semanas}}, con su fase, si es de descarga, los minutos de la semana {{volumen}} (la fuerza y los otros deportes van aparte y no cuentan en ellos), los minutos de la tirada larga y el enfoque de la semana (las sesiones clave en pocas palabras).
 
 Formato (JSON):
 {"title": "Plan hacia …", "rationale": "por qué esta estructura, en 2-4 frases", "weeks": [

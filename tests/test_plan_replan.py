@@ -90,29 +90,45 @@ async def _rebuild(agent, today: date, build):
 
 
 @pytest.mark.asyncio
-async def test_rebuild_from_next_monday_keeps_this_week_and_saves_a_new_version():
+async def test_midweek_it_keeps_the_days_until_today_and_rebuilds_the_rest_of_the_week():
+    # 09/11 (decisión del usuario): antes la semana en curso se quedaba entera y una semana floja (290 min) se arrastraba.
     agent = _agent()
-    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None: _new_plan(12, from_monday) + ([],))
-    out, update = await _rebuild(agent, date(2026, 11, 4), build)
+    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None, kept=None, past_days=0:
+                      _new_plan(12, from_monday) + ([],))
+    out, update = await _rebuild(agent, date(2026, 11, 4), build)  # miércoles de la semana 2 del plan
     kwargs = build.await_args.kwargs
-    assert kwargs["from_monday"] == date(2026, 11, 9) and kwargs["plan"]["plan_data"]["target_race_date"] == RACE.isoformat()
+    assert kwargs["from_monday"] == date(2026, 11, 2) and kwargs["past_days"] == 3
+    assert [(s["day_index"], s["session_type"]) for s in kwargs["kept"]] == [(2, "running_quality")]
+    assert kwargs["plan"]["plan_data"]["target_race_date"] == RACE.isoformat()
     assert "he estado enfermo" in build.await_args.args[0]  # lo que cuenta el atleta llega al LLM
     plan_id, patch_ = update.call_args.args[:2]
     assert plan_id == "p1" and update.call_args.kwargs["change_reason"] == "llm_replan"
-    assert patch_["duration_weeks"] == 13 and patch_["source"] == "agent_llm_plan" and patch_["status"] == "active"
+    assert patch_["duration_weeks"] == 12 and patch_["source"] == "agent_llm_plan" and patch_["status"] == "active"
     pd = patch_["plan_data"]
     assert pd["start_date"] == "2026-11-02" and pd["revised_on"] == "2026-11-04" and pd["author"] == "llm"
+    assert "Plan replanificado desde el 05/11/2026" in out and "Los días hasta hoy (04/11) siguen como estaban" in out
+    assert "24/01/2027" in out and "de carrera" in out
+
+
+@pytest.mark.asyncio
+async def test_on_a_sunday_the_week_stays_and_it_rebuilds_from_next_monday():
+    agent = _agent()
+    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None, kept=None, past_days=0:
+                      _new_plan(12, from_monday) + ([],))
+    out, update = await _rebuild(agent, date(2026, 11, 8), build)
+    kwargs = build.await_args.kwargs
+    assert kwargs["from_monday"] == date(2026, 11, 9) and kwargs["past_days"] == 0 and kwargs["kept"] == []
+    patch_ = update.call_args.args[1]
+    assert patch_["duration_weeks"] == 13 and patch_["plan_data"]["start_date"] == "2026-11-02"
     sessions = update.call_args.kwargs["sessions"]
     assert [s["session_type"] for s in sessions if s["week_index"] == 1] == ["running_quality", "long_run"]
-    assert max(s["week_index"] for s in sessions) == 13
     assert "Plan replanificado desde el 09/11/2026" in out and "Esta semana sigue como estaba" in out
-    assert "24/01/2027" in out
 
 
 @pytest.mark.asyncio
 async def test_on_a_monday_it_rebuilds_from_today_without_keeping_the_week():
     agent = _agent()
-    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None: _new_plan(12, from_monday) + ([],))
+    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None, kept=None, past_days=0: _new_plan(12, from_monday) + ([],))
     out, update = await _rebuild(agent, date(2026, 11, 2), build)
     assert build.await_args.kwargs["from_monday"] == date(2026, 11, 2)
     patch_ = update.call_args.args[1]
@@ -132,7 +148,7 @@ async def test_when_the_llm_fails_nothing_changes():
 async def test_without_a_whole_week_before_the_race_nothing_is_rebuilt():
     agent = _agent()
     build = AsyncMock()
-    out, update = await _rebuild(agent, date(2027, 1, 13), build)  # miércoles: desde el lunes 18 solo queda la de la carrera
+    out, update = await _rebuild(agent, date(2027, 1, 20), build)  # miércoles de la semana de la carrera
     build.assert_not_awaited()
     update.assert_not_called()
     assert "ajusta el plan" in out
@@ -162,6 +178,24 @@ def test_the_frame_starts_on_the_given_monday_with_the_plan_race():
     assert f.start == date(2026, 11, 9) and f.race_date == RACE and f.race_week == 11 and f.weeks == 11
 
 
+@pytest.mark.parametrize("ctx, expected", [
+    # La mayor entre la media de 4 semanas y la semana pasada, solo con lo que corre (09/11, decisiones del usuario).
+    ({"recent_weekly_run_minutes": 240.0, "last_week_run_minutes": 270.0, "recent_weekly_minutes": 300.0}, 270.0),
+    ({"recent_weekly_run_minutes": 240.0, "last_week_run_minutes": 200.0}, 240.0),
+    # Con la forma en Riesgo alto o fatiga alta, la media.
+    ({"recent_weekly_run_minutes": 240.0, "last_week_run_minutes": 270.0, "status": "overload"}, 240.0),
+    # La marcha no cuenta en asfalto; un contexto sin desglose usa el total de antes.
+    ({"recent_weekly_run_minutes": 240.0, "recent_weekly_walk_minutes": 90.0}, 240.0),
+    ({"recent_weekly_minutes": 300.0}, 300.0),
+])
+def test_progression_base(ctx, expected):
+    agent = _agent()
+    with patch("agent.plan_llm.date", _FakeDate):
+        _FakeDate.today_value = date(2026, 11, 4)
+        f = agent._plan_frame(ctx, "", plan=_plan(), from_monday=date(2026, 11, 2))
+    assert f.recent_weekly_minutes == expected
+
+
 @pytest.mark.asyncio
 async def test_days_changed_in_a_revision_reach_the_llm_and_are_listed():
     # 05/11: la salida a la sierra del sábado 14/11 entró por una revisión, no como evento, y se perdió al replanificar.
@@ -169,7 +203,7 @@ async def test_days_changed_in_a_revision_reach_the_llm_and_are_listed():
     sierra["structured_workout"].update({"title": "Tirada larga por la sierra",
                                          "requested": "El sabado dia 14 tengo una salida a la sierra programada"})
     agent = _agent()
-    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None: _new_plan(12, from_monday) + ([],))
+    build = AsyncMock(side_effect=lambda msg, ctx, plan=None, from_monday=None, kept=None, past_days=0: _new_plan(12, from_monday) + ([],))
     _FakeDate.today_value = date(2026, 11, 4)
     agent._build_plan_with_llm = build
     with patch("agent.routes.handlers.date", _FakeDate), patch("agent.plan_llm.date", _FakeDate), \

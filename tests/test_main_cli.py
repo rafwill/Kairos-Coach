@@ -277,8 +277,22 @@ class TestPlanScreens:
         assert "Error listando planes" in text and "No hay planes" in text
         assert "Hacia la ultra" in text and "8 sem" in text and "✓" in text
 
+    def test_view_without_ref_shows_the_only_plan(self, out):
+        # 18/11, petición del usuario: con un solo plan, "/plan ver" lo enseña sin pedir su nº ni su id.
+        with patch.object(m, "list_training_plans", return_value=[{"id": "p1"}]), \
+             patch.object(m, "get_training_plan", return_value=None) as get:
+            m._show_training_plan("")
+            m._show_training_plan("semana 5")
+        assert [c.args[0] for c in get.call_args_list] == ["p1", "p1"]
+        with patch.object(m, "list_training_plans", return_value=[{"id": "p1"}, {"id": "p2"}]), \
+             patch.object(m, "get_training_plan") as get:
+            m._show_training_plan("")
+        get.assert_not_called()
+        assert "Uso: /plan ver" in out()
+
     def test_view_plan_paths(self, out):
-        m._show_training_plan("")
+        with patch.object(m, "list_training_plans", return_value=[]):
+            m._show_training_plan("")
         with patch.object(m, "get_training_plan", side_effect=OSError("x")):
             m._show_training_plan("p1")
         with patch.object(m, "get_training_plan", return_value=None):

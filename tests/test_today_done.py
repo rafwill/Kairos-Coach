@@ -48,6 +48,16 @@ class TestTodayCompletion:
         out = _today_completion(_plan(("running_z2", 65, "Rodaje")), TODAY_ISO, _acts("Fuerza", type_key="strength_training"))
         assert not out["all_done"] and out["done"] == [] and len(out["pending"]) == 1
 
+    def test_activity_without_its_session_is_extra(self):
+        # 13/11: bici prevista y fuerza hecha; la fuerza no cubre la bici y quedaba sin decir en ninguna parte.
+        acts = [{"activityId": 7, "name": "Fuerza. Core", "activityType": {"typeKey": "strength_training"},
+                 "duration": 35 * 60}]
+        out = _today_completion(_plan(("cross_training", 50, "Bici suave")), TODAY_ISO, acts)
+        assert not out["all_done"] and len(out["pending"]) == 1
+        assert out["extra"] == [{"name": "Fuerza. Core", "activity_id": 7, "minutes": 35}]
+        covered = _today_completion(_plan(("running_z2", 65, "Rodaje")), TODAY_ISO, _acts("Fartlek"))
+        assert covered["extra"] == []
+
     def test_training_on_a_rest_day_closes_the_day(self):
         out = _today_completion(_plan(("rest", 0, "Descanso")), TODAY_ISO, _acts("Bici"))
         assert out["all_done"] and out["planned"] == 0
@@ -62,6 +72,23 @@ class TestDecision:
         out = _compute_daily_plan_adjustment(self._snapshot(_today_completion(plan, TODAY_ISO, _acts("Fartlek"))), plan)
         assert out["rule"] == "done_today" and out["decision"] == "rest"
         assert "ya realizada (Fartlek)" in out["resulting_session"] and "20-30 min" in out["resulting_session"]
+
+    def test_extra_activity_is_told_without_changing_the_decision(self, monkeypatch):
+        from agent.daily_engine import _attach_extra_tss, _build_today_session_frame
+        from tests.agent_patch import patch_everywhere
+        patch_everywhere(monkeypatch, "_load_stored_activity_tss", lambda _iso: {7: {"tss": 24.58}})
+        plan = _plan(("cross_training", 50, "Bici suave"))
+        acts = [{"activityId": 7, "name": "Fuerza. Core", "activityType": {"typeKey": "strength_training"},
+                 "duration": 35 * 60}]
+        completion = _today_completion(plan, TODAY_ISO, acts)
+        _attach_extra_tss(completion, TODAY_ISO)
+        without = _compute_daily_plan_adjustment(self._snapshot(None), plan)
+        out = _compute_daily_plan_adjustment(self._snapshot(completion), plan)
+        assert out["done_extra"] == "Fuerza. Core · 35' · 25 TSS"
+        assert {k: v for k, v in out.items() if k != "done_extra"} == without
+        frame = _build_today_session_frame(out, {})
+        assert "Ya hecho hoy, fuera del plan: Fuerza. Core · 35' · 25 TSS" in frame
+        assert "fuera del plan" not in _build_today_session_frame(without, {})
 
     def test_double_day_decides_about_the_pending_session(self):
         plan = _plan(("running_z2", 40, "Rodaje"), ("strength", 40, "Fuerza"))
@@ -115,17 +142,26 @@ class TestMarkdown:
     def test_done_today_shows_today_comparison_done_session_tomorrow_and_rest(self):
         out = _build_proactive_status_markdown(self._payload())
         assert "Sesión de hoy (realizada)" in out and "Hecho hoy: Fartlek · 68 TSS" in out
-        assert "Plan vs ejecutado (hoy)" in out and "(ayer)" not in out
+        assert "Hoy frente al plan" in out and "Ayer frente al plan" not in out
         assert "## 🗓️ Mañana" in out and "Tirada larga" in out
         assert "descanso o movilidad suave: ya has entrenado hoy" in out
         assert "Tras la sesión de hoy: Forma de mañana (CTL − ATL) +7.8" in out
         assert "antes de entrenar" in out and "Regla aplicada" not in out
 
+    def test_extra_activity_shows_under_todays_session(self):
+        payload = self._payload(done=False)
+        payload["today_execution"] = {}
+        payload["today_session_lines"] = ["- **Viernes — Bici suave**"]
+        payload["daily_plan_decision"] = {"decision": "maintain", "rule": "x", "reason": "HRV en orden",
+                                          "done_extra": "Fuerza. Core · 35' · 25 TSS"}
+        out = _build_proactive_status_markdown(payload)
+        assert "- Hecho hoy, fuera del plan: Fuerza. Core · 35' · 25 TSS (la sesión del plan sigue pendiente)" in out
+
     def test_not_done_keeps_yesterday_comparison_and_the_morning_rule(self):
         payload = self._payload(done=False)
         payload["today_execution"] = {}
         out = _build_proactive_status_markdown(payload)
-        assert "Plan vs ejecutado (ayer)" in out and "Regla aplicada" in out
+        assert "Ayer frente al plan" in out and "Regla aplicada" in out
         assert "(realizada)" not in out and "Mañana" not in out
 
 

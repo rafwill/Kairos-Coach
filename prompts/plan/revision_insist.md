@@ -1,0 +1,1 @@
+Ya le explicaste al atleta por qué no recomendabas este cambio y te ha dicho que lo quiere igualmente: es su decisión. Hazlo ("verdict": "ok"), con el ajuste mínimo en otro día que reduzca el problema que le dijiste, si lo hay, y en "reply" recuérdale en una frase qué vigilar.

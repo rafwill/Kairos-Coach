@@ -38,9 +38,50 @@ def _run(handler, location="Elche", coords=None):
 
 def test_parse_forecast_takes_today_and_three_hours():
     out = w.parse_forecast(FORECAST, TODAY)
-    assert out == {"min": 12.1, "max": 24.3, "feels_max": 25.8, "hours": {7: 15.5, 12: 18.0, 19: 21.5}}
+    assert out == {"min": 12.1, "max": 24.3, "feels_max": 25.8, "hours": {7: 15.5, 12: 18.0, 19: 21.5},
+                   "sky_hours": {}}
     assert w.parse_forecast({**FORECAST, "daily": {**FORECAST["daily"], "time": ["2026-10-29"]}}, TODAY) is None
     assert w.parse_forecast({"daily": {"time": ["2026-10-30"]}}, TODAY) is None
+
+
+RAINY = {
+    "daily": {**FORECAST["daily"], "weather_code": [80], "precipitation_sum": [4.2], "snowfall_sum": [0.0],
+              "precipitation_probability_max": [85], "wind_speed_10m_max": [22.4]},
+    "hourly": {**FORECAST["hourly"], "weather_code": [45 if h < 10 else 61 if h < 16 else 3 for h in range(24)]},
+}
+
+
+def test_rain_fog_and_wind_in_the_block():
+    """11/11, petición del usuario: además de las temperaturas, lluvia, niebla, nieve… y viento."""
+    out = w.parse_forecast(RAINY, TODAY)
+    assert out["sky"] == ["niebla", "lluvia débil"] and out["precip_mm"] == 4.2 and out["precip_prob"] == 85.0
+    assert out["sky_hours"] == {7: "niebla", 12: "lluvia débil", 19: "cubierto"}
+    lines = w.markdown({**out, "place": "Madrid"})
+    assert lines[2] == ("- 12–24 ºC (sensación térmica máxima 26 ºC) · 7:00 16 ºC, niebla · 12:00 18 ºC, lluvia débil"
+                        " · 19:00 22 ºC, cubierto")
+    assert lines[3] == ("- Entre 6:00 y 21:00: niebla, lluvia débil · precipitación 4,2 mm, probabilidad máxima 85 %"
+                        " · viento máximo 22 km/h")
+    # el código diario (80, «chubascos débiles») no manda: es el número WMO más alto, no lo más grave
+    snowy = w.parse_forecast({"daily": {**RAINY["daily"], "snowfall_sum": [3.5]},
+                              "hourly": {**RAINY["hourly"], "weather_code": [0] * 6 + [73] * 18}}, TODAY)
+    line = w.markdown({**snowy, "place": "Navacerrada"})[3]
+    assert line.startswith("- Entre 6:00 y 21:00: nieve ·") and "(nieve 3,5 cm)" in line
+    night_fog = {**RAINY["hourly"], "weather_code": [45] * 5 + [1] * 17 + [45] * 2}  # niebla solo de madrugada
+    assert w.parse_forecast({**RAINY, "hourly": night_fog}, TODAY).get("sky") is None
+    unknown = {**RAINY["hourly"], "weather_code": [999] * 24}
+    assert w.parse_forecast({**RAINY, "hourly": unknown}, TODAY).get("sky") is None
+
+
+def test_the_forecast_asks_for_sky_rain_and_wind():
+    def handler(request):
+        if "geocoding" in request.url.host:
+            return httpx.Response(200, json=GEO)
+        assert "weather_code" in request.url.params["hourly"]
+        assert "precipitation_sum" in request.url.params["daily"]
+        return httpx.Response(200, json=RAINY)
+
+    weather, _ = _run(handler)
+    assert weather["sky"] == ["niebla", "lluvia débil"]
 
 
 def test_first_time_geocodes_and_returns_the_coords_to_save():
