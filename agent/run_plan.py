@@ -34,6 +34,10 @@ ZONE_ORDER = ["Z1", "Z2", "Z3", "Z4", "Z5a", "Z5b", "Z5c"]
 RACE_DISTANCES_KM = {"5K": 5.0, "10K": 10.0, "Media maratón": 21.0975, "Maratón": 42.195}
 # Sin tiempo objetivo: ritmo de carrera aproximado respecto al umbral (5K más rápido, maratón más lento).
 _RACE_PACE_FROM_THRESHOLD = {5.0: 0.95, 10.0: 0.99, 21.0975: 1.02, 42.195: 1.07}
+# Un solo objetivo por tramo (18/11, petición del usuario): lo suave fuera de las series (calentamiento, rodaje continuo,
+# vuelta a la calma en Z1/Z2) va por FC; la calidad, por ritmo. Los planes guardados antes con esos tramos por ritmo se
+# muestran y se miden por su zona de FC (`easy_hr_zone`).
+EASY_HR_KINDS = ("warmup", "steady", "cooldown")
 _DAY_NAMES = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves", 5: "Viernes", 6: "Sábado", 7: "Domingo"}
 
 
@@ -151,23 +155,34 @@ def workout_totals(steps: list[dict], threshold: float) -> tuple[float, float, f
     return round(minutes, 1), round(km, 1), round(tss, 1)
 
 
-def _step_text(s: dict, hr_zones: list | None) -> str:
+def easy_hr_zone(s: dict) -> int | None:
+    """Zona de FC (1 o 2) de un tramo suave guardado por ritmo (Z1/Z2, por tiempo, sin ritmo fijado), que se muestra y
+    se mide por FC (18/11); None si no lo es. Solo para tramos de fuera de las series."""
+    target = s.get("target") or {}
+    if (target.get("metric") == "pace" and target.get("pace_zone") in ("Z1", "Z2") and not target.get("pace_fixed")
+            and s.get("type") in EASY_HR_KINDS and not s.get("distance_m")):
+        return int(target["pace_zone"][1])
+    return None
+
+
+def _step_text(s: dict, hr_zones: list | None, top: bool = False) -> str:
+    """Un tramo con su único objetivo (18/11): la FC de Garmin si va por FC; el ritmo, sin FC, si va por ritmo."""
     target = s.get("target") or {}
     rng = target.get("range")
     amount = f"{int(s['distance_m'])} m" if s.get("distance_m") else _fmt_minutes(float(s.get("duration_min") or 0))
     zone = target.get("pace_zone")
     zone_label = "ritmo de carrera" if zone == "RP" else zone
-    hr = ""
     hz = int(target.get("zone") or 0)
-    if hr_zones and 1 <= hz <= len(hr_zones):
-        _, lo, hi = hr_zones[hz - 1]
-        hr = f" · FC Z{hz} {lo}–{hi}"
-    if target.get("metric") == "hr_zone":  # plan del LLM por FC (trail, bici): la zona de Garmin es el objetivo
-        text = f"{amount} @ FC Z{hz}" + (f" {hr_zones[hz - 1][1]}–{hr_zones[hz - 1][2]} lpm" if hr else "")
+    as_hr = easy_hr_zone(s) if top and hr_zones else None
+    if as_hr:
+        hz = as_hr
+    if target.get("metric") == "hr_zone" or as_hr:  # la zona de FC de Garmin es el objetivo
+        known = hr_zones and 1 <= hz <= len(hr_zones)
+        text = f"{amount} @ FC Z{hz}" + (f" {hr_zones[hz - 1][1]}–{hr_zones[hz - 1][2]} lpm" if known else "")
     elif rng and target.get("metric") == "pace" and target.get("pace_fixed"):  # ritmo fijado por el entrenador
-        text = f"{amount} @ {fmt_pace(sum(rng) / 2)}/km ({zone}{hr})"
+        text = f"{amount} @ {fmt_pace(sum(rng) / 2)}/km ({zone})"
     elif rng and target.get("metric") == "pace":
-        text = f"{amount} @ {fmt_pace(rng[0])}–{fmt_pace(rng[1])}/km ({zone_label}{hr})"
+        text = f"{amount} @ {fmt_pace(rng[0])}–{fmt_pace(rng[1])}/km ({zone_label})"
     else:
         text = amount
     if s.get("note"):
@@ -192,7 +207,8 @@ def describe_steps(steps: list[dict], hr_zones: list | None = None) -> list[str]
             lines.append(f"{s.get('name') or 'Series'}: {int(s.get('reps') or 1)} × [{inner}]")
         else:
             label = s.get("name") or ""
-            lines.append(f"{label}: {_step_text(s, hr_zones)}" if label else _step_text(s, hr_zones))
+            text = _step_text(s, hr_zones, top=True)
+            lines.append(f"{label}: {text}" if label else text)
     return lines
 
 

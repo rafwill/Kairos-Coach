@@ -37,7 +37,8 @@ class ToolRouter:
             return "config_options"
         if _is_plan_event_intent(user_message, history):
             return "plan_event"
-        if _is_session_change_intent(user_message) and _has_goal_in_profile(profile):
+        if ((_is_session_change_intent(user_message) or _is_plan_change_insist(user_message, history))
+                and _has_goal_in_profile(profile)):
             return "planning"
         if _is_plan_status_intent(user_message):
             return "plan_status"
@@ -131,6 +132,28 @@ _SESSION_NOUN = re.compile(
 _SESSION_DAY_CUE = re.compile(r"\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|ma[ñn]ana|hoy|"
                               r"fin de semana|(?:el|del|al|d[ií]a)\s+\d{1,2})\b")
 _SESSION_PAST = re.compile(r"\b(hice|hiciste|entren[eé]|corr[ií]|cambi[eé]|mov[ií]|pas[eé])\b")
+
+
+# Cambio desaconsejado (18/11, petición del usuario): Kairos explica por qué no lo recomienda y termina con esta frase;
+# si el atleta responde que lo quiere igualmente, la revisión lo hace.
+PLAN_CHANGE_INSIST_MARK = "hazlo igualmente"
+_INSIST_STRONG = re.compile(r"\b(igualmente|de todas (formas|maneras)|de todos modos|a[uú]n as[ií]|lo quiero)\b")
+_INSIST_DECLINE = re.compile(r"\b(no|mejor no|d[eé]jalo|olv[ií]dalo|como est[aá]|tienes raz[oó]n)\b")
+_INSIST_WEAK = re.compile(r"\b(s[ií]|vale|ok|hazlo|c[aá]mbialo|adelante|dale|venga|cambialo)\b")
+
+
+def _is_plan_change_insist(user_message: str, history: list[dict] | None = None) -> bool:
+    """El atleta quiere el cambio que Kairos le acaba de desaconsejar ("hazlo igualmente", "sí, cámbialo")."""
+    text = (user_message or "").strip().lower()
+    if not text or text.startswith("/") or len(text) > 200:
+        return False
+    last_assistant = next((str(m.get("content") or "").lower() for m in reversed((history or [])[-4:])
+                           if m.get("role") == "assistant"), "")
+    if PLAN_CHANGE_INSIST_MARK not in last_assistant:
+        return False
+    if _INSIST_STRONG.search(text):
+        return True
+    return not _INSIST_DECLINE.search(text) and bool(_INSIST_WEAK.search(text))
 
 
 def _is_session_change_intent(user_message: str) -> bool:

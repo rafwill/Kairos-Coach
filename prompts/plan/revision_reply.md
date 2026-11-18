@@ -2,4 +2,4 @@ Kairos ha comprobado tu cambio y estos son los días que quedan guardados en el 
 
 {{cambios}}
 
-Escribe lo que le dices al atleta: qué cambia y por qué, en 2-5 frases. Describe solo estos días, con sus duraciones y zonas tal como están arriba; no menciones días pasados ni cambios que no estén en la lista. Responde solo con el texto, sin JSON.
+Escribe lo que le dices al atleta: qué cambia y por qué (si te propuso el cambio, por qué encaja en el plan o qué vigilar), en 2-5 frases. Describe solo estos días, con sus duraciones y zonas tal como están arriba; no menciones días pasados ni cambios que no estén en la lista. Responde solo con el texto, sin JSON.

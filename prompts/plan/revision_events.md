@@ -1,0 +1,1 @@
+Los eventos fijos son obligatorios: no valores si conviene, readapta los días para cumplirlos ("verdict": "ok").

@@ -24,6 +24,7 @@ from __future__ import annotations
 import bisect
 from typing import Any
 
+from agent.run_plan import easy_hr_zone
 from agent.running_tss import (
     calcular_pendiente_por_muestra,
     detectar_tramos_pausados,
@@ -119,14 +120,15 @@ def merge(dists: list[dict]) -> dict | None:
     return out
 
 
-def _leaves(steps: list, times: int = 1):
+def _leaves(steps: list, times: int = 1, top: bool = True):
+    """(tramo, veces, fuera de las series)."""
     for s in steps or []:
         if not isinstance(s, dict):
             continue
         if s.get("steps"):
-            yield from _leaves(s["steps"], times * int(s.get("reps") or 1))
+            yield from _leaves(s["steps"], times * int(s.get("reps") or 1), top=False)
         else:
-            yield s, times * int(s.get("reps") or 1)
+            yield s, times * int(s.get("reps") or 1), top
 
 
 def planned_parts(sessions: list[dict], hr_zones: list[tuple[str, int, int]]) -> list[dict]:
@@ -135,11 +137,15 @@ def planned_parts(sessions: list[dict], hr_zones: list[tuple[str, int, int]]) ->
     parts = []
     for session in sessions or []:
         sw = (session or {}).get("structured_workout") or {}
-        for step, times in _leaves(sw.get("steps") or []):
+        for step, times, top in _leaves(sw.get("steps") or []):
             seconds = float(step.get("duration_min") or 0) * 60 * times
             target = step.get("target") or {}
             if seconds <= 0:
                 continue
+            # Lo suave de un plan guardado por ritmo se mide por su FC, como se muestra (18/11).
+            as_hr = easy_hr_zone(step) if top and hr_zones else None
+            if as_hr:
+                target = {"metric": "hr_zone", "zone": as_hr, "zone_to": as_hr}
             if target.get("metric") == "pace" and len(target.get("range") or []) == 2:
                 fast, slow = sorted(float(x) for x in target["range"])
                 parts.append({"metric": "pace", "lo": fast, "hi": slow, "planned_s": seconds,

@@ -60,6 +60,43 @@ from agent.coaching import (
 log = logging.getLogger(__name__)
 
 
+HR_PACE_MIN_RUNS = 3  # salidas con la FC media en una zona para fiarse de su ritmo (fijado antes de ver datos, 18/11)
+HR_PACE_MIN_MINUTES = 20.0  # las más cortas (activación, calentamientos sueltos) no cuentan
+HR_PACE_EASY_SHARE = 0.80  # salida suave: al menos el 80 % del tiempo en Z1-Z2 (la regla 80/20 de intensidad)
+
+
+def hr_zone_paces(acts: list[dict], zones: list) -> dict[int, float]:
+    """Ritmo (s/km) al que el atleta corre en cada zona de FC de Garmin (18/11, petición del usuario): mediana del ritmo
+    en movimiento de sus salidas de asfalto (el trail no: la pendiente cambia el ritmo) de 20' o más cuya FC media cae
+    en esa zona, con al menos 3 salidas. Con esto el plan prevé los km y el TSS de un rodaje por FC como luego se mide
+    (rTSS); antes suponía la zona de ritmo de Friel, más rápida que la que da su FC."""
+    if not zones:
+        return {}
+    by_zone: dict[int, list[float]] = {}
+    for act in acts or []:
+        act_type = act.get("type") or act.get("activityType") or act.get("activityTypeDTO") or ""
+        if not _is_running_non_trail_activity(act_type):
+            continue
+        try:
+            hr = float(act.get("averageHR") or 0)
+            meters = float(act.get("distance") or 0)
+            seconds = float(act.get("movingDuration") or act.get("duration") or 0)
+        except (TypeError, ValueError):
+            continue
+        if hr <= 0 or meters < 1000 or seconds < HR_PACE_MIN_MINUTES * 60:
+            continue
+        # Solo salidas suaves: un fartlek con la FC media en Z2 no dice a qué ritmo va en Z2 (con sus datos del 18/11,
+        # la Z2 salía a 5:20 con fartleks y series dentro). Sin el tiempo por zona de Garmin, cuenta.
+        in_zone = [float(act.get(f"hrTimeInZone_{i}") or 0) for i in range(1, 6)]
+        if sum(in_zone) and (in_zone[0] + in_zone[1]) / sum(in_zone) < HR_PACE_EASY_SHARE:
+            continue
+        # La zona más alta cuyo mínimo alcanza (las de Garmin van 135-145 y 146-157: 145,5 es Z2).
+        zone = max((i for i, (_, lo, _hi) in enumerate(zones, 1) if hr >= float(lo)), default=None)
+        if zone:
+            by_zone.setdefault(zone, []).append(seconds / meters * 1000)
+    return {z: round(statistics.median(v)) for z, v in sorted(by_zone.items()) if len(v) >= HR_PACE_MIN_RUNS}
+
+
 class ContextMixin:
     """Contexto del LLM: prompt de sistema (perfil, estado de carga, umbrales, plan activo, calendario y base de conocimiento), mensajes de la pregunta y contexto de carga para el motor de planes."""
 
@@ -146,6 +183,10 @@ class ContextMixin:
         by_group = {k: {"km": round(km, 1), "m_per_km": round(gain / km, 1)} for k, (km, gain) in terrain.items() if km > 0}
         if by_group:
             context["terrain"] = by_group
+        zones, _ = _resolve_hr_zones(self.user_profile, "running")
+        paces = hr_zone_paces(acts or [], zones)
+        if paces:
+            context["hr_zone_paces"] = paces
         return context
 
     def _profile_context_block(self) -> str:

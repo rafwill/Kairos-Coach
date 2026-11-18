@@ -130,6 +130,17 @@ class TestToolRouter:
         assert all(callable(getattr(RoutesMixin, name, None)) for name in ROUTE_HANDLERS.values())
         assert FIRST_ROUTES <= set(ROUTE_HANDLERS) and "db_count" not in FIRST_ROUTES
 
+    def test_insisting_on_a_change_advised_against_goes_to_the_plan(self):
+        # 18/11: tras «No te recomiendo ese cambio… dime «hazlo igualmente»», la respuesta del atleta decide.
+        router, profile = ToolRouter(), {"goals": {"target_race": "Media maratón"}}
+        history = [{"role": "user", "content": "Pasa las series al sábado"},
+                   {"role": "assistant", "content": "## 🤔 No te recomiendo ese cambio\n\n… dime «hazlo igualmente» y lo cambio."}]
+        for q in ("Hazlo igualmente", "sí, cámbialo", "vale, aun así lo quiero", "no importa, hazlo de todas formas"):
+            assert router.route_key(q, history, profile) == "planning", q
+        for q in ("No, déjalo como está", "tienes razón", "mejor no"):
+            assert router.route_key(q, history, profile) != "planning", q
+        assert router.route_key("Hazlo igualmente", [], profile) != "planning"
+
     def test_moving_or_changing_a_session_goes_to_the_plan(self):
         # 06/11: "¿Podría cambiar la tirada larga del domingo a mañana sábado?" fue al chat libre, que no cambió nada
         # y la confundió con la salida a la sierra del sábado siguiente.

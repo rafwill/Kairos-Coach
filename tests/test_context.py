@@ -303,3 +303,24 @@ class TestSessionSummaryCheckpoint:
             TrainerAgent.save_session_summary_checkpoint(agent)
 
         upsert_mock.assert_called_once()
+
+
+class TestHrZonePaces:
+    def test_median_pace_of_road_runs_by_their_average_hr_zone(self):
+        # 18/11, petición del usuario: a 135-145 lpm el atleta va a 5:20-5:30, no a la Z2 de ritmo de Friel.
+        from agent.context import hr_zone_paces
+
+        zones = [("Z1", 115, 134), ("Z2", 135, 145), ("Z3", 146, 157), ("Z4", 158, 168), ("Z5", 169, 179)]
+
+        def run(hr, pace, minutes=50, kind="running"):
+            meters = minutes * 60 / pace * 1000
+            return {"activityType": {"typeKey": kind}, "averageHR": hr, "distance": meters, "movingDuration": minutes * 60}
+
+        acts = [run(140, 325), run(142, 330), run(145.5, 320), run(138, 335),  # Z2 (145,5 sigue siendo Z2)
+                run(150, 300), run(152, 295),  # Z3: solo 2, no basta
+                run(140, 400, kind="trail_running"),  # trail: no cuenta
+                run(140, 250, minutes=10)]  # corta: no cuenta
+        # Un fartlek con la FC media en Z2 pero el 60 % del tiempo fuera de Z1-Z2: no es una salida suave.
+        acts.append({**run(141, 290), "hrTimeInZone_2": 1200, "hrTimeInZone_3": 1000, "hrTimeInZone_4": 800})
+        assert hr_zone_paces(acts, zones) == {2: 328}
+        assert hr_zone_paces(acts, []) == {}

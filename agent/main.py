@@ -933,7 +933,7 @@ def _show_plan_help() -> None:
     console.print(Panel.fit(
         "[bold]Comandos de planificación:[/]\n\n"
         "  [bold cyan]/plan listar[/bold cyan]          Lista planes (nº e id corto) y marca el activo\n"
-        "  [bold cyan]/plan ver <nº o id>[/bold cyan]     Muestra el plan y sus sesiones (ej.: /plan ver 1)\n"
+        "  [bold cyan]/plan ver <nº o id>[/bold cyan]     Muestra el plan y sus sesiones (ej.: /plan ver 1; con un solo plan, /plan ver)\n"
         "  [bold cyan]/plan activar <nº o id>[/bold cyan] Activa un plan y desactiva el anterior\n"
         "  [bold cyan]/plan crear[/bold cyan]           Tu LLM construye el plan (Kairos lo comprueba) y lo activa\n"
         "  [bold cyan]/plan evento[/bold cyan]          Un viaje o una salida obligatoria: el plan se readapta\n"
@@ -978,6 +978,16 @@ def _show_training_plans() -> None:
 
 
 def _show_training_plan(plan_ref: str) -> None:
+    # Con un solo plan (18/11, petición del usuario): "/plan ver" (o "/plan ver semana 5", "/plan ver todo") lo muestra
+    # sin pedir su nº ni su id.
+    first = (plan_ref or "").split()[:1]
+    if not first or first[0] in {"semana", "todo"}:
+        try:
+            plans = list_training_plans(include_archived=False)
+        except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+            plans = []
+        if len(plans) == 1 and plans[0].get("id"):
+            plan_ref = f"{plans[0]['id']} {plan_ref or ''}".strip()
     if not plan_ref:
         console.print("[yellow]Uso: /plan ver <nº o id> [semana <n> | todo] (el nº y el id corto salen en /plan listar)[/]")
         return

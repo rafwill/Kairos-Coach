@@ -170,3 +170,16 @@ def test_completion_line_in_the_summary():
     assert _plan_vs_done_lines({**feedback, "completion": by_hr}, "hoy")[-1].endswith(
         "(2' con la FC por encima y 5' con la FC por debajo)")
     assert len(_plan_vs_done_lines({**feedback, "completion": None}, "hoy")) == 3
+
+
+def test_easy_steps_of_a_plan_saved_by_pace_are_measured_by_hr():
+    # 18/11, petición del usuario: lo suave de fuera de las series va por FC. En un plan guardado antes por ritmo
+    # (Z2 4:34-5:10), un rodaje a 5:25 con la FC en Z2 está completo; la recuperación dentro de las series, por ritmo.
+    rodaje = _session({"type": "steady", "duration_min": 20, "reps": 1,
+                       "target": {"metric": "pace", "range": [274, 310], "zone": 2, "pace_zone": "Z2"}})
+    out = it.completion(it.planned_parts([rodaje], HR_ZONES), it.distribution(_details((1200, 325, 140)), with_pace=True))
+    assert out["pct"] == 100 and out["easy_by_hr"]
+    series = _session({"type": "interval_block", "reps": 2, "steps": [
+        {"type": "work", "duration_min": 4, "reps": 1, "target": {"metric": "pace", "range": [240, 250], "zone": 4, "pace_zone": "Z4"}},
+        {"type": "recovery", "duration_min": 2, "reps": 1, "target": {"metric": "pace", "range": [274, 310], "zone": 2, "pace_zone": "Z2"}}]})
+    assert [p["metric"] for p in it.planned_parts([series], HR_ZONES)] == ["pace", "pace"]

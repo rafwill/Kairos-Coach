@@ -217,6 +217,34 @@ class TestPlanStatusChatRoute:
         update.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_a_change_advised_against_is_explained_and_applied_only_when_the_athlete_insists(self):
+        # 18/11, petición del usuario: Kairos valora el cambio; si no lo recomienda, no toca el plan y ofrece hacerlo.
+        from agent.trainer_agent import TrainerAgent
+
+        agent = object.__new__(TrainerAgent)
+        agent.user_profile = {"goals": {"target_race": "Media"}, "health": {}}
+        agent._apply_output_sensors = AsyncMock(side_effect=lambda text, *a, **k: text)
+        agent._revise_plan_with_llm = AsyncMock(
+            return_value=(None, "Las series quedarían la víspera de la tirada.", [], [], True))
+        with patch("agent.trainer_agent._storage.update_training_plan") as update:
+            out = await TrainerAgent._route_plan_revision(agent, "Pasa las series al sábado", {"id": "p1"}, [], {})
+        assert "No te recomiendo" in out and "víspera" in out and "«hazlo igualmente»" in out
+        update.assert_not_called()
+
+        agent.conversation_history = [{"role": "user", "content": "Pasa las series al sábado"},
+                                      {"role": "assistant", "content": out}]
+        agent._build_plan_load_context = AsyncMock(return_value={})
+        agent._route_plan_revision = AsyncMock(return_value="revisado")
+        row = {"id": "p1", "title": "Plan", "status": "active", "source": "agent_llm_plan",
+               "plan_data": {"author": "llm", "start_date": "2026-10-26"}}
+        assert _router.ToolRouter().route_key("Hazlo igualmente", agent.conversation_history, agent.user_profile) == "planning"
+        with patch("agent.trainer_agent._storage.get_active_training_plan", return_value=row), \
+             patch("agent.trainer_agent._storage.list_training_plan_sessions", return_value=[{"week_index": 1}]):
+            assert await TrainerAgent._route_planning(agent, "Hazlo igualmente") == "revisado"
+        call = agent._route_plan_revision.await_args
+        assert call.args[0] == "Pasa las series al sábado" and call.kwargs["insist"] is True
+
+    @pytest.mark.asyncio
     async def test_chat_planning_updates_existing_plan_and_reports_changes(self):
         from agent.trainer_agent import (
             TrainerAgent,

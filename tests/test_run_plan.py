@@ -124,7 +124,9 @@ class TestDailyEngineAndDisplay:
         lines = rp.session_lines(tuesday, START + timedelta(days=1), [("Z1", 115, 134), ("Z2", 135, 145),
                                                                        ("Z3", 146, 157), ("Z4", 158, 168), ("Z5", 169, 179)])
         assert lines[0].startswith("Martes 27/10/2026 — Cuestas cortas") and "TSS" in lines[0] and "km" in lines[0]
-        assert any("@ 3:36–3:50/km (Z5b · FC Z5 169–179)" in x for x in lines[1:])
+        # 18/11: un solo objetivo por tramo. Las series, solo por ritmo; lo suave de fuera, solo por FC.
+        assert any("@ 3:36–3:50/km (Z5b)" in x for x in lines[1:]) and not any("Z5b · FC" in x for x in lines[1:])
+        assert any("Calentamiento:" in x and "@ FC Z" in x and "lpm" in x and "/km" not in x for x in lines[1:])
         plan = {"title": "Plan", "objective": "Media", "plan_data": {**data, "start_date": START.isoformat()}}
         md = _plan_detail_markdown(plan, sessions, {}, weeks=[12])
         assert "| 4 | 16/11–22/11 | Base · descarga |" in md or "descarga" in md

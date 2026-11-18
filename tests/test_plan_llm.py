@@ -128,9 +128,43 @@ class TestStepsAreComputedByTheCode:
         assert any("no válida" in e for e in errors)
         _, errors = pb.expand_day({"day": 2, "type": "easy", "steps": [{"kind": "steady", "min": 30, "zone": "Z2"}]}, f, 1)
         assert any("warmup" in e for e in errors)
-        _, errors = pb.expand_day({"day": 2, "type": "easy", "steps": [{"kind": "warmup", "min": 30, "zone": "Z2"}]},
+        # Un calentamiento en Z2 pasa a FC2 (18/11); lo que no se puede sin ritmo umbral es la calidad por ritmo.
+        _, errors = pb.expand_day({"day": 2, "type": "quality", "steps": [{"kind": "warmup", "min": 30, "zone": "Z2"},
+                                  {"kind": "work", "min": 10, "zone": "Z4"}, {"kind": "cooldown", "min": 10, "zone": "Z1"}]},
                                   _frame(threshold_pace=None), 1)
         assert any("zonas de FC" in e for e in errors)
+
+    def test_easy_steps_go_by_hr_and_quality_by_pace(self):
+        # 18/11, petición del usuario: un solo objetivo por tramo. Lo suave fuera de las series, por FC; la calidad
+        # (y la recuperación dentro de las series), por ritmo.
+        f = _frame()
+        s, errors = pb.expand_day({"day": 2, "type": "quality", "title": "Umbral", "steps": [
+            {"kind": "warmup", "min": 20, "zone": "Z2"},
+            {"repeat": 2, "steps": [{"kind": "work", "min": 8, "zone": "Z4"}, {"kind": "recovery", "min": 3, "zone": "Z2"}]},
+            {"kind": "cooldown", "min": 10, "zone": "Z1"}]}, f, 1)
+        assert errors == []
+        steps = s["structured_workout"]["steps"]
+        assert steps[0]["target"] == {"metric": "hr_zone", "zone": 2, "zone_to": 2, "intensityClass": "endurance"}
+        assert steps[2]["target"]["metric"] == "hr_zone" and steps[2]["target"]["zone"] == 1
+        assert [c["target"]["metric"] for c in steps[1]["steps"]] == ["pace", "pace"]
+        # Por distancia, el tramo suave sigue por ritmo (un tramo por FC va por tiempo).
+        s, errors = pb.expand_day({"day": 3, "type": "easy", "title": "Rodaje", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "km": 8, "zone": "Z2"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}, f, 1)
+        assert errors == [] and s["structured_workout"]["steps"][1]["target"]["metric"] == "pace"
+
+    def test_planned_tss_of_an_hr_step_uses_the_athletes_own_pace(self):
+        # 18/11: a FC2 el atleta va a 5:25 y no a la Z2 de ritmo de Friel (4:34-5:10): el TSS previsto, con su ritmo.
+        day = {"day": 3, "type": "easy", "title": "Rodaje", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "FC1"}, {"kind": "steady", "min": 52, "zone": "FC2"},
+            {"kind": "cooldown", "min": 5, "zone": "FC1"}]}
+        generic, _ = pb.expand_day(day, _frame(), 1)
+        own, _ = pb.expand_day(day, _frame(hr_zone_paces={2: 325}), 1)
+        g, o = generic["structured_workout"]["summary"], own["structured_workout"]["summary"]
+        assert o["tss"] < g["tss"] and o["distance_km"] < g["distance_km"]
+        thr, friel = _frame().threshold_pace, sum(_frame().paces.zone("Z2")) / 2
+        expected = 52 / 60 * 100 * ((thr / 325) ** 2 - (thr / friel) ** 2)  # solo cambia el tramo continuo en FC2
+        assert abs((o["tss"] - g["tss"]) - expected) < 0.5
 
 
 class TestAutoDurations:
@@ -543,7 +577,7 @@ class TestTheLLMRevisesThePlan:
         llm = _FakeLLM(revisions=[too_late, good])
         agent = _Agent(llm)
         plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
-        new, reply, errors, _ = await agent._revise_plan_with_llm("Me molesta el gemelo", plan, sessions, {})
+        new, reply, errors, _, _ = await agent._revise_plan_with_llm("Me molesta el gemelo", plan, sessions, {})
         assert errors == [] and "gemelo" in reply
         assert any("solo puedes cambiar las semanas [1, 2]" in m[-1]["content"] for m in llm.calls)
         # 06/11: cada día que puede cambiar lleva su fecha; "mañana sábado" se confundía con el de la semana siguiente.
@@ -578,7 +612,7 @@ class TestTheLLMRevisesThePlan:
             {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
         agent = _Agent(_FakeLLM(revisions=[{"reply": "x", "weeks": [{"week": 2, "days": [swap]}]}]))
         plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
-        new, _, errors, _ = await agent._revise_plan_with_llm("El atleta ha fijado…", plan, sessions, {}, requested=False)
+        new, _, errors, _, _ = await agent._revise_plan_with_llm("El atleta ha fijado…", plan, sessions, {}, requested=False)
         assert errors == [] and not any(s["structured_workout"].get("requested") for s in new)
 
     @pytest.mark.asyncio
@@ -593,8 +627,36 @@ class TestTheLLMRevisesThePlan:
         big = {"reply": "más", "weeks": [{"week": 2, "days": [{"day": 5, **_easy(120)}]}]}
         agent = _Agent(_FakeLLM(revisions=[big] * 4))  # una por intento
         plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
-        new, _, errors, _ = await agent._revise_plan_with_llm("Quiero más", plan, sessions, {})
+        new, _, errors, _, _ = await agent._revise_plan_with_llm("Quiero más", plan, sessions, {})
         assert new is None and any("como mucho" in e for e in errors)
+
+    @pytest.mark.asyncio
+    async def test_a_change_the_coach_advises_against_is_not_applied_unless_the_athlete_insists(self, monkeypatch):
+        # 18/11, petición del usuario: un cambio concreto se valora antes de hacerlo; si no encaja, se explica.
+        monkeypatch.setattr("agent.plan_llm._add_ia_tokens", lambda n: None)
+
+        async def no_activities(*a, **k):
+            return []
+
+        monkeypatch.setattr("agent.plan_llm._fetch_activities_for_load_calc", no_activities)
+        monkeypatch.setattr("agent.plan_llm._storage.get_activity_tss_map", lambda start: {})
+        swap = {"day": 2, "type": "easy", "title": "Rodaje suave", "steps": [
+            {"kind": "warmup", "min": 10, "zone": "Z1"}, {"kind": "steady", "min": 35, "zone": "Z2"},
+            {"kind": "cooldown", "min": 5, "zone": "Z1"}]}
+        no = {"verdict": "no", "reply": "Las series quedarían la víspera de la tirada larga.",
+              "weeks": [{"week": 9, "days": [swap]}]}  # días inválidos: con "no" no se comprueban ni se guardan
+        ok = {"verdict": "ok", "reply": "Hecho.", "weeks": [{"week": 2, "days": [swap]}]}
+        llm = _FakeLLM(revisions=[no, ok])
+        agent = _Agent(llm)
+        plan, sessions, _ = await agent._build_plan_with_llm("Crea un plan", {})
+        new, reply, errors, _, rejected = await agent._revise_plan_with_llm("Pasa las series al sábado", plan, sessions, {})
+        assert new is None and errors == [] and rejected and "víspera" in reply
+        asked = llm.calls[-1][-1]["content"]
+        assert "valora si es buena idea" in asked and '"verdict"' in asked
+        new, _, errors, _, rejected = await agent._revise_plan_with_llm("Pasa las series al sábado", plan, sessions, {},
+                                                                        insist=True)
+        assert errors == [] and not rejected and new is not None
+        assert any("lo quiere igualmente" in m[-1]["content"] for m in llm.calls)
 
 
 class TestCoachPreferences:

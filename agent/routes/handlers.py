@@ -78,7 +78,9 @@ from agent.startup_status import (
     _build_proactive_status_markdown,
 )
 from agent.router import (
+    PLAN_CHANGE_INSIST_MARK,
     _detect_personal_records_sport_intent,
+    _is_plan_change_insist,
     _planned_days,
 )
 from agent.routes.day_data import (
@@ -91,6 +93,15 @@ log = logging.getLogger(__name__)
 # Rutas que se comprueban antes que la de conteo de actividades: con ellas, una pregunta que además pida contar
 # actividades sigue en su ruta (el orden de las comprobaciones de antes de la tabla).
 FIRST_ROUTES = frozenset({'config_options', 'plan_status', 'goal_status', 'week_tss', 'week_activities', 'load_trend', 'hr_threshold', 'running_threshold', 'today_load_status', 'period_activities', 'sleep_night', 'sleep_trend', 'activity_details', 'recent_tss_by_sport'})
+
+
+def _insisted_proposal(history: list[dict]) -> str:
+    """La propuesta de cambio que Kairos desaconsejó: el mensaje del atleta anterior a esa respuesta."""
+    for i in range(len(history) - 1, -1, -1):
+        m = history[i]
+        if m.get("role") == "assistant" and PLAN_CHANGE_INSIST_MARK in str(m.get("content") or "").lower():
+            return next((str(u.get("content") or "") for u in reversed(history[:i]) if u.get("role") == "user"), "")
+    return ""
 
 
 class RoutesMixin:
@@ -321,6 +332,13 @@ class RoutesMixin:
                     (previous_plan.get("plan_data") or {}).get("author") == "llm":
                 if _wants_replan_intent(user_message):
                     return await self._route_plan_rebuild(user_message, previous_plan, previous_sessions, load_context)
+                history = list(getattr(self, "conversation_history", None) or [])
+                if _is_plan_change_insist(user_message, history):
+                    # El atleta quiere el cambio que Kairos le desaconsejó: se revisa con su propuesta original.
+                    original = _insisted_proposal(history)
+                    if original:
+                        return await self._route_plan_revision(original, previous_plan, previous_sessions,
+                                                               load_context, insist=True)
                 return await self._route_plan_revision(user_message, previous_plan, previous_sessions, load_context)
             if wants_new or not (previous_plan and previous_plan.get("id")):
                 # El plan lo construye el LLM del atleta (28/10); el código lo comprueba y calcula ritmos, km y TSS.
@@ -485,12 +503,14 @@ class RoutesMixin:
                 + _plan_detail_markdown(persisted_plan, new_sessions, self.user_profile))
 
     async def _route_plan_revision(self, user_message: str, plan: dict, sessions: list[dict], load_context: dict,
-                                  requested: bool = True) -> str:
+                                  requested: bool = True, insist: bool = False) -> str:
         """Revisión del plan del LLM con lo que cuenta el atleta (28/10): cambia días desde hoy hasta el final de la
-        semana siguiente, el código los comprueba y se guarda una versión nueva. Si no pasa las reglas, no se toca."""
+        semana siguiente, el código los comprueba y se guarda una versión nueva. Si no pasa las reglas, no se toca.
+        Un cambio concreto que el LLM desaconseja (18/11) no se guarda: se explica y se ofrece hacerlo igualmente."""
+        rejected = False
         try:
-            new_sessions, reply, errors, messages = await self._revise_plan_with_llm(
-                user_message, plan, sessions, load_context, requested=requested)
+            new_sessions, reply, errors, messages, rejected = await self._revise_plan_with_llm(
+                user_message, plan, sessions, load_context, requested=requested, insist=insist)
         except LLMAuthError:
             raise
         except (RuntimeError, ValueError, TypeError, OSError, TimeoutError, KeyError, _provider_error()) as exc:
@@ -501,6 +521,9 @@ class RoutesMixin:
                     + "\n\nEl plan sigue como estaba.")
         if reply:
             reply = await self._apply_output_sensors(reply, messages, "plan_revision")
+        if rejected:
+            return ("## 🤔 No te recomiendo ese cambio\n\n" + (reply or "No encaja con la lógica de la semana.")
+                    + f"\n\nEl plan sigue como estaba. Si aun así lo quieres, dime «{PLAN_CHANGE_INSIST_MARK}» y lo cambio.")
         if new_sessions is None:
             return reply or "No hace falta cambiar el plan."
         old = {_plan_builder.session_key(s): (s.get("structured_workout") or {}).get("plan_day") for s in sessions}

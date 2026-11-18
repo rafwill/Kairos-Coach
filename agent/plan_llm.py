@@ -117,6 +117,7 @@ class PlanLLMMixin:
             recent_weekly_minutes=recent, avg_weekly_minutes=avg, last_week_minutes=last,
             longest_recent_min=load_context.get("longest_recent_min"),
             typical_session_min=load_context.get("typical_session_min"),
+            hr_zone_paces={int(k): float(v) for k, v in (load_context.get("hr_zone_paces") or {}).items()},
             load={k: load_context.get(k) for k in ("ctl", "atl", "tsb", "status") if load_context.get(k) is not None},
             available_days=list(constraints.get("available_days") or range(1, 8)),
             max_minutes_per_day={int(k): int(v) for k, v in (constraints.get("max_minutes_per_day") or {}).items()},
@@ -372,12 +373,15 @@ class PlanLLMMixin:
         return "\n".join(lines)
 
     async def _revise_plan_with_llm(self, user_message: str, plan: dict, sessions: list[dict],
-                                    load_context: dict, requested: bool = True,
-                                    ) -> tuple[list[dict] | None, str, list[str], list[dict]]:
+                                    load_context: dict, requested: bool = True, insist: bool = False,
+                                    ) -> tuple[list[dict] | None, str, list[str], list[dict], bool]:
         """Revisión del plan por el LLM con lo que cuenta el atleta y lo que ha hecho los últimos 7 días.
 
         Devuelve (sesiones nuevas, o None si no cambia nada; lo que el LLM le dice al atleta; fallos; mensajes, para
-        los sensores). Solo cambia
+        los sensores; si el LLM desaconseja el cambio que propone el atleta). 18/11, petición del usuario: un cambio
+        concreto («permuta el jueves y el viernes») no se ejecuta sin más: el LLM valora si encaja en el plan
+        (`plan/revision_evaluate`) y, si no, lo explica y no toca nada; con `insist` (el atleta lo quiere igualmente
+        tras oírlo, `plan/revision_insist`), lo hace. Solo cambia
         días desde hoy hasta el final de la semana siguiente: los pasados no se tocan. `requested` (05/11): los días
         que cambian guardan el mensaje del atleta (`structured_workout.requested`), y «replanifica» avisa si no los
         conserva; una readaptación por eventos ya guardados no lo marca.
@@ -388,7 +392,7 @@ class PlanLLMMixin:
         current = (today - f.start).days // 7 + 1
         editable = [w for w in (current, current + 1) if 1 <= w <= f.weeks]
         if not editable:
-            return None, "", ["El plan activo no tiene semanas desde hoy: crea uno nuevo con /plan crear."], []
+            return None, "", ["El plan activo no tiene semanas desde hoy: crea uno nuevo con /plan crear."], [], False
 
         def _at(key: str, i: int, default):
             values = list(pd.get(key) or [])
@@ -414,12 +418,17 @@ class PlanLLMMixin:
             "plan/revision", datos=_pb.frame_text(f), estructura=_pb.macro_text(macro), calendario=calendario,
             hoy=f"{_run_plan._DAY_NAMES[today.isoweekday()]} {today.strftime('%d/%m/%Y')} (semana {current} del plan)",
             realizado=await self._executed_vs_planned(sessions, f.start), dias=dias, mensaje=user_message,
+            # Una readaptación por eventos ya guardados (requested=False) es obligatoria: no se valora.
+            evaluacion=(_render_prompt("plan/revision_insist" if insist else "plan/revision_evaluate") if requested
+                        else _render_prompt("plan/revision_events")),
             trail=_trail_prompt("plan/weeks_trail", f))}]
         result: dict[int, list[dict]] = {}
 
         def check(data: dict) -> list[str]:
             result.clear()
             errs: list[str] = []
+            if str(data.get("verdict") or "").strip().lower() == "no" and requested and not insist:
+                return errs  # desaconsejado: no se guarda nada, no hay días que comprobar
             for w in data.get("weeks") or []:
                 n = int(_pb._num(w.get("week")))
                 days = [d for d in (w.get("days") or []) if isinstance(d, dict)]
@@ -450,10 +459,13 @@ class PlanLLMMixin:
 
         data, errors, conversation = await self._plan_llm_json(messages, check, "revisión")
         if data is None:
-            return None, "", errors, messages
+            return None, "", errors, messages, False
         reply = str(data.get("reply") or "").strip()
+        if str(data.get("verdict") or "").strip().lower() == "no" and requested and not insist:
+            log.info("[PLAN] revisión: el LLM desaconseja el cambio pedido")
+            return None, reply, [], messages, True
         if not result:
-            return None, reply, [], messages
+            return None, reply, [], messages, False
         new_sessions = [s for s in sessions if int(s.get("week_index") or 0) not in result]
         new_sessions += [s for n in sorted(result) for s in result[n]]
         new_sessions.sort(key=_pb.session_key)
@@ -473,4 +485,4 @@ class PlanLLMMixin:
                 "revisión texto")
             reply = text.strip() or reply
             messages = messages + [{"role": "user", "content": "\n".join(cambios)}]  # referencia de los sensores
-        return new_sessions, reply, [], messages
+        return new_sessions, reply, [], messages, False

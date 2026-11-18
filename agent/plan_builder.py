@@ -47,6 +47,7 @@ AUTO_DAY_TYPES = {"easy", "recovery", "long"}  # días cuyo tramo continuo puede
 _STEP_NAMES = {"warmup": "Calentamiento", "cooldown": "Vuelta a la calma", "work": "Trabajo", "recovery": "Recuperación",
                "steady": "Continuo"}
 _HR_INTENSITY = {1: "recovery", 2: "endurance", 3: "tempo", 4: "threshold", 5: "vo2"}
+EASY_HR_KINDS = rp.EASY_HR_KINDS  # tramos que, en Z1/Z2 y fuera de las series, van por FC (18/11)
 RECOVERY_MAX_MIN = 45.0  # rodaje de recuperación como mucho (06/11; Pfitzinger: 4-6 millas, 30-45 min)
 # Y como poco (07/11, decisión del usuario: un regenerativo de 26' en un plan de media en 1:23 "es ridículo"; si la
 # semana no da para él, ese día es descanso). La semana de la carrera no tiene mínimo (rodajes de activación).
@@ -143,6 +144,9 @@ class PlanFrame:
     threshold_pace: float | None  # s/km
     race_pace: float | None  # s/km
     hr_zones: list = field(default_factory=list)  # [(nombre, lo, hi)] de Garmin
+    # Ritmo (s/km) al que el atleta corre de verdad en cada zona de FC (18/11): {zona: ritmo}, de sus rodajes de asfalto
+    # de 6 semanas (`_build_plan_load_context`). Con él se prevén los km y el TSS de un tramo por FC.
+    hr_zone_paces: dict = field(default_factory=dict)
     hr_threshold_tp: float | None = None  # umbral con el que TP calcula su hrTSS
     weekly_hours: float = 8.0
     recent_weekly_minutes: float | None = None  # base de la progresión: lo que cuenta (ver `counts_for_progression`)
@@ -703,7 +707,8 @@ def _zone_key(raw: str) -> str:
     return f"Z{m.group(1)}{m.group(2).lower()}" if m else z
 
 
-def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict | None:
+def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str, top: bool = False) -> dict | None:
+    """Un tramo del LLM → tramo del plan. `top`: fuera de un bloque de series."""
     if "repeat" in raw:
         reps = int(_num(raw.get("repeat")))
         inner = [s for s in (_expand_step(x, f, errors, where) for x in (raw.get("steps") or []) if isinstance(x, dict)) if s]
@@ -717,6 +722,11 @@ def _expand_step(raw: dict, f: PlanFrame, errors: list[str], where: str) -> dict
         errors.append(f"{where}: \"kind\" \"{kind}\" no válido (usa {', '.join(sorted(STEP_KINDS))}).")
         return None
     zone = _zone_key(raw.get("zone"))
+    # Un solo objetivo por tramo (18/11, petición del usuario): lo suave fuera de las series va por FC y la calidad por
+    # ritmo. Un calentamiento, rodaje o vuelta a la calma en Z1/Z2 pasa a FC1/FC2 (la Z2 de ritmo de Friel, 4:34-5:10
+    # con umbral 4:00, no es la Z2 de FC de Garmin: a 135-145 lpm el atleta va a 5:20-5:30). Por distancia, sigue por ritmo.
+    if top and zone in ("Z1", "Z2") and kind in EASY_HR_KINDS and f.hr_zones and raw.get("pace") in (None, "")             and not (raw.get("m") or raw.get("km")):
+        zone = "FC" + zone[1]
     fixed_pace = None
     if raw.get("pace") not in (None, ""):
         # Ritmo concreto ("4x1000 a 4:00/km", 29/10): rango ±3 s, como el de carrera; la zona es la que le toca.
@@ -801,9 +811,11 @@ _HR_TO_PACE_ZONE = {1: "Z1", 2: "Z2", 3: "Z3", 4: "Z4", 5: "Z5a"}
 def workout_totals(steps: list[dict], f: PlanFrame, running: bool = True) -> tuple[float, float, float]:
     """(minutos, km, TSS planificado): rTSS de TP con ritmo; hrTSS de TP (tabla por FC/umbral) con FC.
 
-    En una sesión de carrera, un tramo por FC va con el ritmo medio de su zona de ritmo equivalente: sus km (29/10:
-    antes no sumaban y una semana de rodajes por FC salía con 0 km) y su TSS, rTSS como el que Kairos mide al hacerla
-    (05/11: con hrTSS, un rodaje en FC2 preveía 32 TSS y el mismo en Z2, 49). En bici, cross o trail, hrTSS.
+    En una sesión de carrera, un tramo por FC va con el ritmo al que el atleta corre en esa zona (`hr_zone_paces`,
+    18/11: con la zona de ritmo equivalente, un rodaje en FC2 se preveía a 4:52 y lo hacía a 5:25, un 20 % menos de
+    TSS) o, sin ese dato, con el ritmo medio de su zona de ritmo equivalente: sus km (29/10: antes no sumaban y una
+    semana de rodajes por FC salía con 0 km) y su TSS, rTSS como el que Kairos mide al hacerla (05/11: con hrTSS, un
+    rodaje en FC2 preveía 32 TSS y el mismo en Z2, 49). En bici, cross o trail, hrTSS.
     """
     minutes = km = tss = 0.0
     for s, times in rp._leaf_steps(steps):
@@ -815,8 +827,10 @@ def workout_totals(steps: list[dict], f: PlanFrame, running: bool = True) -> tup
             km += dur * 60 / mid
             tss += dur / 60 * (f.threshold_pace / mid) ** 2 * 100
         elif target.get("metric") == "hr_zone" and running and f.paces:
-            fast, slow = f.paces.zone(_HR_TO_PACE_ZONE[min(5, int(target["zone"]))])
-            mid = (fast + slow) / 2
+            mid = _num((f.hr_zone_paces or {}).get(int(target["zone"])))
+            if not mid:
+                fast, slow = f.paces.zone(_HR_TO_PACE_ZONE[min(5, int(target["zone"]))])
+                mid = (fast + slow) / 2
             km += dur * 60 / mid
             tss += dur / 60 * (f.threshold_pace / mid) ** 2 * 100
         elif target.get("metric") == "hr_zone" and f.hr_zones and f.hr_threshold_tp:
@@ -873,7 +887,7 @@ def expand_day(day: dict, f: PlanFrame, week: int) -> tuple[dict | None, list[st
               "notes": f"{title}: {note} (RPE {rpe})" if note else f"{title} (RPE {rpe})"}
     else:
         raw_steps = [s for s in (day.get("steps") or []) if isinstance(s, dict)]
-        steps = [s for s in (_expand_step(s, f, errors, where) for s in raw_steps) if s]
+        steps = [s for s in (_expand_step(s, f, errors, where, top=kind != "cross") for s in raw_steps) if s]
         if errors:
             return None, errors
         if not steps:
@@ -996,7 +1010,7 @@ def _lengthen_quality(n: int, sessions: list[dict], planned: dict, f: PlanFrame)
         warm = next((st for st in timed if st.get("type") == "warmup"), None)
         cool = next((st for st in reversed(timed) if st.get("type") == "cooldown"), None)
         if warm is None:
-            if f.paces:
+            if f.paces and not f.hr_zones:  # lo suave, por FC (18/11)
                 warm = rp.step(f.paces, "warmup", "Z2", 1.0)
             else:
                 warm = {"name": _STEP_NAMES["warmup"], "type": "warmup", "duration_min": 1.0, "reps": 1,
