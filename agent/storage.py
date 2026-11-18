@@ -1138,7 +1138,7 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
     try:
         resp = (
             sb.table("activity_tss")
-            .select("activity_id, start_date, sport, tss, method, model, native_load")
+            .select("activity_id, start_date, sport, tss, method, model, native_load, threshold_pace_used")
             .eq("app_user_id", uid)
             .gte("start_date", start_date)
             .execute()
@@ -1152,6 +1152,9 @@ def get_activity_tss_map(start_date: str) -> dict[int, dict] | None:
                 "method": str(r.get("method") or "unknown"),
                 "model": str(r.get("model") or "unknown"),
                 "native_load": float(r["native_load"]) if r.get("native_load") is not None else None,
+                # ritmo umbral con el que se calculó su rTSS (18/11: ritmo equivalente por zona de FC del plan)
+                "threshold_pace_used": (float(r["threshold_pace_used"])
+                                        if r.get("threshold_pace_used") is not None else None),
             }
             for r in (resp.data or [])
             if r.get("activity_id") is not None

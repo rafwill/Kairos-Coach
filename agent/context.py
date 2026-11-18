@@ -5,12 +5,14 @@ Contexto del LLM: prompt de sistema (perfil, estado de carga, umbrales, plan act
 
 import logging
 import json
+import math
 import statistics
 from datetime import date, timedelta
 from typing import Any
 
 
 from agent import diabetes as _diabetes
+from agent import storage as _storage
 from agent import load_metrics as _load_metrics
 from agent import run_plan as _run_plan
 from agent.plans import _is_block_plan
@@ -65,17 +67,12 @@ HR_PACE_MIN_MINUTES = 20.0  # las más cortas (activación, calentamientos suelt
 HR_PACE_EASY_SHARE = 0.80  # salida suave: al menos el 80 % del tiempo en Z1-Z2 (la regla 80/20 de intensidad)
 
 
-def hr_zone_paces(acts: list[dict], zones: list) -> dict[int, float]:
-    """Ritmo (s/km) al que el atleta corre en cada zona de FC de Garmin (18/11, petición del usuario): mediana del ritmo
-    en movimiento de sus salidas de asfalto (el trail no: la pendiente cambia el ritmo) de 20' o más cuya FC media cae
-    en esa zona, con al menos 3 salidas. Con esto el plan prevé los km y el TSS de un rodaje por FC como luego se mide
-    (rTSS); antes suponía la zona de ritmo de Friel, más rápida que la que da su FC."""
-    if not zones:
-        return {}
-    by_zone: dict[int, list[float]] = {}
+def _easy_road_runs(acts: list[dict], zones: list):
+    """(actividad, zona de FC de su FC media) de las salidas suaves de asfalto (el trail no: la pendiente cambia el
+    ritmo) de 20' o más, con al menos el 80 % del tiempo en Z1-Z2 (sin el tiempo por zona de Garmin, cuentan)."""
     for act in acts or []:
         act_type = act.get("type") or act.get("activityType") or act.get("activityTypeDTO") or ""
-        if not _is_running_non_trail_activity(act_type):
+        if not zones or not _is_running_non_trail_activity(act_type):
             continue
         try:
             hr = float(act.get("averageHR") or 0)
@@ -86,15 +83,49 @@ def hr_zone_paces(acts: list[dict], zones: list) -> dict[int, float]:
         if hr <= 0 or meters < 1000 or seconds < HR_PACE_MIN_MINUTES * 60:
             continue
         # Solo salidas suaves: un fartlek con la FC media en Z2 no dice a qué ritmo va en Z2 (con sus datos del 18/11,
-        # la Z2 salía a 5:20 con fartleks y series dentro). Sin el tiempo por zona de Garmin, cuenta.
+        # la Z2 salía a 5:20 con fartleks y series dentro).
         in_zone = [float(act.get(f"hrTimeInZone_{i}") or 0) for i in range(1, 6)]
         if sum(in_zone) and (in_zone[0] + in_zone[1]) / sum(in_zone) < HR_PACE_EASY_SHARE:
             continue
         # La zona más alta cuyo mínimo alcanza (las de Garmin van 135-145 y 146-157: 145,5 es Z2).
         zone = max((i for i, (_, lo, _hi) in enumerate(zones, 1) if hr >= float(lo)), default=None)
         if zone:
-            by_zone.setdefault(zone, []).append(seconds / meters * 1000)
+            yield act, zone
+
+
+def _median_by_zone(by_zone: dict[int, list[float]]) -> dict[int, float]:
     return {z: round(statistics.median(v)) for z, v in sorted(by_zone.items()) if len(v) >= HR_PACE_MIN_RUNS}
+
+
+def hr_zone_paces(acts: list[dict], zones: list) -> dict[int, float]:
+    """Ritmo medio (s/km, en movimiento) al que el atleta corre en cada zona de FC de Garmin (18/11, petición del
+    usuario): mediana de sus salidas suaves de asfalto (`_easy_road_runs`) con la FC media en esa zona, con al menos 3.
+    Con él el plan prevé los km de un tramo por FC; antes suponía la zona de ritmo de Friel, más rápida que la que da
+    su FC (a 135-145 lpm va a 5:20-5:30, no a 4:34-5:10)."""
+    by_zone: dict[int, list[float]] = {}
+    for act, zone in _easy_road_runs(acts, zones):
+        seconds = float(act.get("movingDuration") or act.get("duration"))
+        by_zone.setdefault(zone, []).append(seconds / float(act["distance"]) * 1000)
+    return _median_by_zone(by_zone)
+
+
+def hr_zone_tss_paces(acts: list[dict], zones: list, tss_rows: dict) -> dict[int, float]:
+    """Ritmo equivalente (s/km) de su rTSS medido en cada zona de FC (18/11): el ritmo constante que, con el umbral
+    que usó su TSS, da el rTSS guardado en esa duración (umbral / raíz(TSS/h/100)). El rTSS va con el NGP, más rápido
+    que el ritmo medio: con el ritmo medio el TSS previsto salía de menos (11/11: 68 frente a 76 medidos). Validado el
+    18/11 con 9 salidas, cada una sin usarse a sí misma: MAPE 8,9 % frente a 9,8 % con el ritmo medio y 13,0 % con la
+    zona de Friel (criterio fijado antes: el menor). Mismas salidas y mínimo que `hr_zone_paces`."""
+    by_zone: dict[int, list[float]] = {}
+    for act, zone in _easy_road_runs(acts, zones):
+        row = (tss_rows or {}).get(int(act.get("activityId") or 0)) or {}
+        try:
+            tss, threshold = float(row.get("tss") or 0), float(row.get("threshold_pace_used") or 0)
+            hours = float(act.get("duration") or act.get("movingDuration") or 0) / 3600
+        except (TypeError, ValueError):
+            continue
+        if tss > 0 and threshold > 0 and hours > 0:
+            by_zone.setdefault(zone, []).append(threshold / math.sqrt(tss / hours / 100))
+    return _median_by_zone(by_zone)
 
 
 class ContextMixin:
@@ -187,6 +218,15 @@ class ContextMixin:
         paces = hr_zone_paces(acts or [], zones)
         if paces:
             context["hr_zone_paces"] = paces
+        tss_rows: dict = {}
+        if paces:  # sin salidas suaves no hace falta leer sus TSS
+            try:
+                tss_rows = _storage.get_activity_tss_map((today - timedelta(days=42)).isoformat()) or {}
+            except (RuntimeError, OSError, TypeError, ValueError, KeyError) as exc:
+                log.debug("plan load context: TSS guardados no disponibles: %s", exc)
+        tss_paces = hr_zone_tss_paces(acts or [], zones, tss_rows)
+        if tss_paces:
+            context["hr_zone_tss_paces"] = tss_paces
         return context
 
     def _profile_context_block(self) -> str:

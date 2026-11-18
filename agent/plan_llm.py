@@ -118,6 +118,7 @@ class PlanLLMMixin:
             longest_recent_min=load_context.get("longest_recent_min"),
             typical_session_min=load_context.get("typical_session_min"),
             hr_zone_paces={int(k): float(v) for k, v in (load_context.get("hr_zone_paces") or {}).items()},
+            hr_zone_tss_paces={int(k): float(v) for k, v in (load_context.get("hr_zone_tss_paces") or {}).items()},
             load={k: load_context.get(k) for k in ("ctl", "atl", "tsb", "status") if load_context.get(k) is not None},
             available_days=list(constraints.get("available_days") or range(1, 8)),
             max_minutes_per_day={int(k): int(v) for k, v in (constraints.get("max_minutes_per_day") or {}).items()},

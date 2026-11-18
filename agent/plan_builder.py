@@ -19,6 +19,7 @@ Sin dependencias del chat ni de la red: las llamadas al LLM están en agent/plan
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -147,6 +148,8 @@ class PlanFrame:
     # Ritmo (s/km) al que el atleta corre de verdad en cada zona de FC (18/11): {zona: ritmo}, de sus rodajes de asfalto
     # de 6 semanas (`_build_plan_load_context`). Con él se prevén los km y el TSS de un tramo por FC.
     hr_zone_paces: dict = field(default_factory=dict)
+    # Y el ritmo equivalente de su rTSS medido en cada zona (`context.hr_zone_tss_paces`): con él, el TSS previsto.
+    hr_zone_tss_paces: dict = field(default_factory=dict)
     hr_threshold_tp: float | None = None  # umbral con el que TP calcula su hrTSS
     weekly_hours: float = 8.0
     recent_weekly_minutes: float | None = None  # base de la progresión: lo que cuenta (ver `counts_for_progression`)
@@ -811,9 +814,9 @@ _HR_TO_PACE_ZONE = {1: "Z1", 2: "Z2", 3: "Z3", 4: "Z4", 5: "Z5a"}
 def workout_totals(steps: list[dict], f: PlanFrame, running: bool = True) -> tuple[float, float, float]:
     """(minutos, km, TSS planificado): rTSS de TP con ritmo; hrTSS de TP (tabla por FC/umbral) con FC.
 
-    En una sesión de carrera, un tramo por FC va con el ritmo al que el atleta corre en esa zona (`hr_zone_paces`,
-    18/11: con la zona de ritmo equivalente, un rodaje en FC2 se preveía a 4:52 y lo hacía a 5:25, un 20 % menos de
-    TSS) o, sin ese dato, con el ritmo medio de su zona de ritmo equivalente: sus km (29/10: antes no sumaban y una
+    En una sesión de carrera, un tramo por FC va (18/11) con los km de su ritmo medio en esa zona (`hr_zone_paces`) y el
+    TSS del ritmo equivalente de su rTSS medido en esa zona (`hr_zone_tss_paces`; validado: MAPE 8,9 % frente a 13,0 %
+    con la zona de Friel) o, sin esos datos, con el ritmo medio de su zona de ritmo equivalente: sus km (29/10: antes no sumaban y una
     semana de rodajes por FC salía con 0 km) y su TSS, rTSS como el que Kairos mide al hacerla (05/11: con hrTSS, un
     rodaje en FC2 preveía 32 TSS y el mismo en Z2, 49). En bici, cross o trail, hrTSS.
     """
@@ -827,12 +830,11 @@ def workout_totals(steps: list[dict], f: PlanFrame, running: bool = True) -> tup
             km += dur * 60 / mid
             tss += dur / 60 * (f.threshold_pace / mid) ** 2 * 100
         elif target.get("metric") == "hr_zone" and running and f.paces:
-            mid = _num((f.hr_zone_paces or {}).get(int(target["zone"])))
-            if not mid:
-                fast, slow = f.paces.zone(_HR_TO_PACE_ZONE[min(5, int(target["zone"]))])
-                mid = (fast + slow) / 2
-            km += dur * 60 / mid
-            tss += dur / 60 * (f.threshold_pace / mid) ** 2 * 100
+            fast, slow = f.paces.zone(_HR_TO_PACE_ZONE[min(5, int(target["zone"]))])
+            zone_n = int(target["zone"])
+            km += dur * 60 / (_num((f.hr_zone_paces or {}).get(zone_n)) or (fast + slow) / 2)
+            eq = _num((f.hr_zone_tss_paces or {}).get(zone_n)) or (fast + slow) / 2
+            tss += dur / 60 * (f.threshold_pace / eq) ** 2 * 100
         elif target.get("metric") == "hr_zone" and f.hr_zones and f.hr_threshold_tp:
             _, lo, hi = f.hr_zones[int(target["zone"]) - 1]
             ratio = (lo + hi) / 2 / f.hr_threshold_tp
@@ -992,6 +994,22 @@ def _no_rest_substitute(f: PlanFrame) -> str:
     sports = [s for s in ("cycling", "elliptical") if f.cross_sports is None or s in f.cross_sports]
     cross = " o ".join({"cycling": "bici", "elliptical": "elíptica"}[s] for s in sports)
     return (f"{cross} suave (\"cross\", FC1-FC2, 45-60 min) o la fuerza" if cross else "la fuerza")
+
+
+def easy_steps_by_hr(session: dict, f: PlanFrame) -> dict:
+    """Una sesión guardada antes del 18/11 con lo suave por ritmo: esos tramos (Z1/Z2 fuera de las series, por tiempo)
+    pasan a su zona de FC y se recalculan duración, km y TSS previstos con `f` (con `hr_zone_paces`, el ritmo real del
+    atleta en esa zona). Devuelve una copia; la sesión de entrada no cambia. Sin zonas de FC, la copia tal cual."""
+    out = copy.deepcopy(session)
+    wk = out.get("structured_workout") or {}
+    if "secondary_label" not in wk or not f.hr_zones:
+        return out
+    for st in wk.get("steps") or []:
+        n = rp.easy_hr_zone(st) if not st.get("steps") else None
+        if n:
+            st["target"] = {"metric": "hr_zone", "zone": n, "zone_to": n, "intensityClass": _HR_INTENSITY[n]}
+            st["intensityClass"] = _HR_INTENSITY[n]
+    return refresh_session(out, f)
 
 
 def _lengthen_quality(n: int, sessions: list[dict], planned: dict, f: PlanFrame) -> None:

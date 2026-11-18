@@ -158,13 +158,18 @@ class TestStepsAreComputedByTheCode:
         day = {"day": 3, "type": "easy", "title": "Rodaje", "steps": [
             {"kind": "warmup", "min": 10, "zone": "FC1"}, {"kind": "steady", "min": 52, "zone": "FC2"},
             {"kind": "cooldown", "min": 5, "zone": "FC1"}]}
+        # Los km, con su ritmo medio en la zona; el TSS, con el ritmo equivalente de su rTSS medido (más rápido: el NGP).
         generic, _ = pb.expand_day(day, _frame(), 1)
-        own, _ = pb.expand_day(day, _frame(hr_zone_paces={2: 325}), 1)
+        own, _ = pb.expand_day(day, _frame(hr_zone_paces={2: 325}, hr_zone_tss_paces={2: 315}), 1)
         g, o = generic["structured_workout"]["summary"], own["structured_workout"]["summary"]
         assert o["tss"] < g["tss"] and o["distance_km"] < g["distance_km"]
         thr, friel = _frame().threshold_pace, sum(_frame().paces.zone("Z2")) / 2
-        expected = 52 / 60 * 100 * ((thr / 325) ** 2 - (thr / friel) ** 2)  # solo cambia el tramo continuo en FC2
+        expected = 52 / 60 * 100 * ((thr / 315) ** 2 - (thr / friel) ** 2)  # solo cambia el tramo continuo en FC2
         assert abs((o["tss"] - g["tss"]) - expected) < 0.5
+        assert abs((o["distance_km"] - g["distance_km"]) - 52 * 60 * (1 / 325 - 1 / friel)) < 0.2
+        # Sin ritmo equivalente, el TSS vuelve a la zona de Friel (la validación comparó así), aunque haya ritmo medio.
+        km_only, _ = pb.expand_day(day, _frame(hr_zone_paces={2: 325}), 1)
+        assert km_only["structured_workout"]["summary"]["tss"] == g["tss"]
 
 
 class TestAutoDurations:
@@ -912,3 +917,22 @@ class TestHalfMarathonPlanning:
         assert pb.progression_notice(minutes, phases, [5, 9], 3) == ""  # +7 %
         assert pb.progression_notice(minutes, phases, [5, 9], 4) == ""  # la 5 es descarga
         assert pb.progression_notice(minutes, phases, [5, 9], 0) == ""
+
+
+def test_a_saved_session_with_easy_steps_by_pace_is_retargeted_to_hr():
+    # 18/11: una sesión guardada antes con lo suave por ritmo pasa a FC y se recalcula con el ritmo del atleta; las
+    # series no cambian, los minutos tampoco, y la sesión de entrada queda intacta.
+    f = _frame()
+    old = {"type": "quality", "title": "Umbral", "steps": [
+        {"kind": "warmup", "min": 20, "zone": "Z2"},
+        {"repeat": 2, "steps": [{"kind": "work", "min": 8, "zone": "Z4"}, {"kind": "recovery", "min": 3, "zone": "Z2"}]},
+        {"kind": "cooldown", "min": 10, "zone": "Z1"}]}
+    saved, _ = pb.expand_day(old, pb.PlanFrame(**{**f.__dict__, "hr_zones": []}), 1)  # como antes: todo por ritmo
+    assert saved["structured_workout"]["steps"][0]["target"]["metric"] == "pace"
+    new = pb.easy_steps_by_hr(saved, pb.PlanFrame(**{**f.__dict__, "hr_zone_tss_paces": {1: 330, 2: 320}}))
+    steps = new["structured_workout"]["steps"]
+    assert [steps[0]["target"]["metric"], steps[2]["target"]["metric"]] == ["hr_zone", "hr_zone"]
+    assert [c["target"]["metric"] for c in steps[1]["steps"]] == ["pace", "pace"]
+    assert new["structured_workout"]["summary"]["duration_min"] == saved["structured_workout"]["summary"]["duration_min"]
+    assert new["structured_workout"]["summary"]["tss"] != saved["structured_workout"]["summary"]["tss"]
+    assert saved["structured_workout"]["steps"][0]["target"]["metric"] == "pace"

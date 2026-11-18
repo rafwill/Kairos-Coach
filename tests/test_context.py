@@ -324,3 +324,20 @@ class TestHrZonePaces:
         acts.append({**run(141, 290), "hrTimeInZone_2": 1200, "hrTimeInZone_3": 1000, "hrTimeInZone_4": 800})
         assert hr_zone_paces(acts, zones) == {2: 328}
         assert hr_zone_paces(acts, []) == {}
+
+    def test_equivalent_pace_of_the_measured_rtss(self):
+        # 18/11: el ritmo constante que da el rTSS guardado (umbral / raíz(TSS/h/100)); mediana por zona, mínimo 3.
+        from agent.context import hr_zone_tss_paces
+
+        zones = [("Z1", 115, 134), ("Z2", 135, 145), ("Z3", 146, 157), ("Z4", 158, 168), ("Z5", 169, 179)]
+
+        def run(aid, hr, minutes=60):
+            return {"activityId": aid, "activityType": {"typeKey": "running"}, "averageHR": hr,
+                    "distance": minutes * 60 / 320 * 1000, "movingDuration": minutes * 60, "duration": minutes * 60}
+
+        acts = [run(1, 140), run(2, 141), run(3, 139), run(4, 125)]
+        # 1 h con TSS 60 y umbral 240 → IF √0,6 → 240/0,7746 = 310 s/km
+        rows = {i: {"tss": 60.0, "threshold_pace_used": 240.0} for i in (1, 2, 3, 4)}
+        rows[3] = {"tss": 55.0, "threshold_pace_used": 240.0}
+        assert hr_zone_tss_paces(acts, zones, rows) == {2: 310}
+        assert hr_zone_tss_paces(acts, zones, {}) == {}
