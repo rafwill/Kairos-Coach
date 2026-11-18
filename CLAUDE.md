@@ -87,7 +87,7 @@ Anclajes por fecha (perfil `performance`):
 
 ## Pendiente
 
-La lista está en `docs/proximos_pasos.md`. Recordatorio: si cambia la FC umbral (test), registrarla el mismo día que en TP con `/perfil umbral fc <lpm>` (`hr_threshold_bpm` y entrada de hoy en `hr_threshold_tp_history`). El ritmo umbral, con `/perfil umbral <mm:ss>`.
+La lista está en `docs/proximos_pasos.md`. Recordatorio: si cambia la FC umbral (test), registrarla el mismo día que en TP con `/perfil umbral fc <lpm>` (`hr_threshold_bpm` y entrada de hoy en `hr_threshold_tp_history`). El ritmo umbral, con `/perfil umbral <mm:ss>`: si cambia, Kairos propone poner al día el plan activo sin LLM (ritmos por zona, TSS y km previstos desde hoy; RP, ritmos concretos, días, minutos y eventos fijos igual) y lo guarda solo si se confirma (`_threshold_refresh_preview`, `plan_builder.retarget_session`, 18/11).
 
 ## Limitaciones aceptadas (no bugs abiertos)
 

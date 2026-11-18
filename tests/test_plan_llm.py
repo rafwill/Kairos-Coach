@@ -936,3 +936,28 @@ def test_a_saved_session_with_easy_steps_by_pace_is_retargeted_to_hr():
     assert new["structured_workout"]["summary"]["duration_min"] == saved["structured_workout"]["summary"]["duration_min"]
     assert new["structured_workout"]["summary"]["tss"] != saved["structured_workout"]["summary"]["tss"]
     assert saved["structured_workout"]["steps"][0]["target"]["metric"] == "pace"
+
+
+def test_a_saved_session_takes_the_new_threshold_without_changing_its_structure():
+    # 18/11, petición del usuario: tras un test, los ritmos por zona se recalculan con el umbral nuevo; el RP y un ritmo
+    # concreto no dependen del umbral; un tramo por distancia cambia su duración; la sesión de entrada no cambia.
+    day = {"type": "quality", "title": "Umbral y RP", "steps": [
+        {"kind": "warmup", "min": 15, "zone": "FC2"},
+        {"repeat": 2, "steps": [{"kind": "work", "min": 8, "zone": "Z4"}, {"kind": "recovery", "min": 3, "zone": "Z2"}]},
+        {"kind": "work", "m": 2000, "zone": "Z5b"}, {"kind": "work", "min": 10, "zone": "RP"},
+        {"kind": "work", "min": 4, "pace": "4:00"}, {"kind": "cooldown", "min": 10, "zone": "FC1"}]}
+    saved, errors = pb.expand_day(day, _frame(threshold_pace=250.0), 1)
+    assert errors == []
+    faster = _frame(threshold_pace=240.0)
+    new = pb.retarget_session(saved, faster)
+    old_steps, new_steps = saved["structured_workout"]["steps"], new["structured_workout"]["steps"]
+    assert new_steps[1]["steps"][0]["target"]["range"] == list(faster.paces.zone("Z4"))
+    assert new_steps[1]["steps"][0]["target"]["range"] != old_steps[1]["steps"][0]["target"]["range"]
+    assert new_steps[2]["duration_min"] < old_steps[2]["duration_min"]  # 2000 m más rápidos
+    assert new_steps[3]["target"]["range"] == old_steps[3]["target"]["range"]  # RP
+    assert new_steps[4]["target"]["range"] == old_steps[4]["target"]["range"]  # "pace": "4:00"
+    assert new["structured_workout"]["threshold_pace"] == 240.0
+    assert new["structured_workout"]["summary"]["tss"] != saved["structured_workout"]["summary"]["tss"]
+    assert saved["structured_workout"]["steps"][1]["steps"][0]["target"]["range"] == old_steps[1]["steps"][0]["target"]["range"]
+    # Con el mismo umbral no cambia nada.
+    assert pb.retarget_session(saved, _frame(threshold_pace=250.0))["structured_workout"] == saved["structured_workout"]

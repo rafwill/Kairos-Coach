@@ -4,6 +4,12 @@ Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
 ## 2026-11-18
 
+### Added (el plan activo se pone al día al cambiar el ritmo umbral; petición del usuario)
+- Problema: `/perfil umbral <mm:ss>` cambiaba el umbral desde hoy (rTSS de lo nuevo, planes que se crean o ajustan, contexto del LLM), pero el plan guardado seguía con los ritmos y el TSS previstos del umbral con que se creó (las series, la cabecera de `/plan ver`). Ponerlo al día exigía «replanifica el plan» (peticiones al LLM y sesiones rehechas).
+- Ahora: tras `/perfil umbral <mm:ss>`, si el umbral cambia, Kairos recalcula sin LLM el plan activo del LLM desde hoy (`_threshold_refresh_preview`, `plan_builder.retarget_session`): cada tramo por zona de ritmo toma el rango de su zona con el umbral nuevo (y, por distancia, su duración); el RP y un ritmo concreto («pace») se quedan; lo suave de fuera de las series pasa a FC; TSS y km previstos se recalculan; los días, los minutos y los eventos fijos no cambian. Enseña el TSS y los km de cada semana entera antes y después y tres sesiones de calidad de ejemplo, y solo con confirmación lo guarda como versión nueva (`threshold_refresh`, con el umbral en `plan_data`). Si no se confirma, el plan sigue igual.
+- Comprobado con el plan real sin escribir: con el umbral actual (4:00), sin cambios; con 3:55, cambian 45 sesiones (Z4 de 3:58-4:12 a 3:53-4:07; semana 9 de 532 a 512 TSS: con un umbral más rápido, el mismo ritmo da menos rTSS, igual que se medirá).
+- Tests: `test_plan_llm.py` (`retarget_session`) y `test_routes.py` (prueba sin escribir, escritura sin tocar eventos ni días pasados, la CLI pregunta antes de guardar).
+
 ### Changed (TSS previsto de los tramos por FC con el ritmo equivalente del rTSS medido; plan activo recalculado)
 - Problema: con el ritmo medio por zona de FC (cambio anterior de hoy) el TSS previsto salía de menos: el rTSS va con el NGP, más rápido que la media (11/11: 5:14 de media, rTSS de 76,2 en 74' = 5:05 constantes; previsto 68). La estimación de Friel acertaba más por casualidad (suponía 4:52).
 - Validación (criterio fijado antes: el menor MAPE; 9 salidas suaves de asfalto de 6 semanas, cada una sin usarse a sí misma): zona de Friel 13,0 %, ritmo medio 9,8 %, ritmo equivalente 8,9 %. Ventaja pequeña con n=9; entran dos sesiones de cuestas que el filtro del 80 % en Z1-Z2 no detecta (no se quitaron: no estaba en el criterio).

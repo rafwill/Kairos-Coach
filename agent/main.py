@@ -133,6 +133,7 @@ from agent.storage import (
     update_user_credentials,
 )
 from agent.routes.load import _build_load_trend_table
+from agent.hr_profile import _resolve_running_threshold_pace_for_date
 from agent.daily_engine import _session_intensity_label, _session_type_label
 from agent.plans import _DAY_LETTERS, _format_days, _is_block_plan, _parse_day_limits, _parse_day_list, _plan_detail_markdown
 from agent.data_access import _TSS_FORMULA_VERSION, _load_metrics_view, _load_user_profile, _save_user_profile
@@ -1242,6 +1243,33 @@ async def _create_training_plan_cli(agent: TrainerAgent) -> None:
     console.print(Markdown(str(reply or "")))
 
 
+async def _threshold_refresh_cli(agent: TrainerAgent) -> None:
+    """Tras `/perfil umbral <mm:ss>` (18/11, petición del usuario): el plan activo puesto al día con el umbral nuevo,
+    sin LLM y sin cambiar su estructura. Enseña lo que cambia y solo lo guarda si el atleta lo confirma."""
+    try:
+        with console.status("[dim]Recalculando tu plan con el umbral nuevo…[/]"):
+            preview = await agent._threshold_refresh_preview()
+    except Exception:  # noqa: BLE001 — el umbral ya está guardado; un fallo aquí no debe cerrar la sesión
+        log.exception("No se pudo recalcular el plan con el umbral nuevo")
+        console.print("[yellow]El umbral está guardado, pero no pude recalcular el plan ahora. "
+                      "Vuelve a escribir /perfil umbral más tarde o di «replanifica el plan».[/]")
+        return
+    if not preview:
+        console.print("[dim]Tu plan activo no tiene sesiones que cambien con el umbral nuevo.[/]")
+        return
+    console.print(Markdown(agent._threshold_refresh_markdown(preview)))
+    if not Confirm.ask("¿Actualizo el plan con el umbral nuevo?", default=True):
+        console.print("[dim]El plan sigue como estaba (los planes que crees o ajustes ya usarán el umbral nuevo).[/]")
+        return
+    try:
+        agent._apply_threshold_refresh(preview)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("No se pudo guardar el plan con el umbral nuevo")
+        console.print(f"[red]✗[/] No se pudo guardar el plan: {exc}")
+        return
+    console.print("[green]✓[/] Plan actualizado con el umbral nuevo (versión nueva; /plan ver para verlo).")
+
+
 async def _add_plan_event_cli(agent: TrainerAgent) -> None:
     """`/plan evento` (31/10): un viaje o una salida obligatoria con preguntas guiadas; el plan se readapta igual que
     cuando el atleta lo cuenta en el chat (`_apply_plan_events`)."""
@@ -2054,6 +2082,15 @@ async def main() -> None:
                 continue
             if plan_action == "events":
                 _plan_events_cli(agent, plan_arg)
+                continue
+
+            if cmd.startswith("/perfil umbral") and not cmd.startswith("/perfil umbral fc"):
+                # El umbral nuevo y, si cambia, el plan activo puesto al día (18/11).
+                before = _resolve_running_threshold_pace_for_date(agent.user_profile or {}, date.today().isoformat())
+                _handle_cli_command(user_input, agent)
+                after = _resolve_running_threshold_pace_for_date(agent.user_profile or {}, date.today().isoformat())
+                if after and after != before:
+                    await _threshold_refresh_cli(agent)
                 continue
 
             if _handle_cli_command(user_input, agent):

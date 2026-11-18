@@ -996,6 +996,17 @@ def _no_rest_substitute(f: PlanFrame) -> str:
     return (f"{cross} suave (\"cross\", FC1-FC2, 45-60 min) o la fuerza" if cross else "la fuerza")
 
 
+def _easy_steps_to_hr(steps: list[dict], f: PlanFrame) -> None:
+    """Lo suave de fuera de las series guardado por ritmo (Z1/Z2, por tiempo) pasa a su zona de FC, en su sitio."""
+    if not f.hr_zones:
+        return
+    for st in steps or []:
+        n = rp.easy_hr_zone(st) if not st.get("steps") else None
+        if n:
+            st["target"] = {"metric": "hr_zone", "zone": n, "zone_to": n, "intensityClass": _HR_INTENSITY[n]}
+            st["intensityClass"] = _HR_INTENSITY[n]
+
+
 def easy_steps_by_hr(session: dict, f: PlanFrame) -> dict:
     """Una sesión guardada antes del 18/11 con lo suave por ritmo: esos tramos (Z1/Z2 fuera de las series, por tiempo)
     pasan a su zona de FC y se recalculan duración, km y TSS previstos con `f` (con `hr_zone_paces`, el ritmo real del
@@ -1004,11 +1015,30 @@ def easy_steps_by_hr(session: dict, f: PlanFrame) -> dict:
     wk = out.get("structured_workout") or {}
     if "secondary_label" not in wk or not f.hr_zones:
         return out
-    for st in wk.get("steps") or []:
-        n = rp.easy_hr_zone(st) if not st.get("steps") else None
-        if n:
-            st["target"] = {"metric": "hr_zone", "zone": n, "zone_to": n, "intensityClass": _HR_INTENSITY[n]}
-            st["intensityClass"] = _HR_INTENSITY[n]
+    _easy_steps_to_hr(wk.get("steps") or [], f)
+    return refresh_session(out, f)
+
+
+def retarget_session(session: dict, f: PlanFrame) -> dict:
+    """Una sesión guardada, puesta al día con el umbral de `f` (18/11, petición del usuario: tras un test, el plan se
+    actualiza sin LLM y sin cambiar su estructura): cada tramo por zona de ritmo (Z1…Z5c) toma el rango de su zona con
+    el umbral nuevo (y, si va por distancia, su duración); el RP y un ritmo concreto ("pace") no dependen del umbral y se
+    quedan; lo suave de fuera de las series pasa a FC; duración, km y TSS previstos se recalculan. Devuelve una copia."""
+    out = copy.deepcopy(session)
+    wk = out.get("structured_workout") or {}
+    if "secondary_label" not in wk or not f.paces:
+        return out
+    for st, _ in rp._leaf_steps(wk.get("steps") or []):
+        target = st.get("target") or {}
+        zone = target.get("pace_zone")
+        if target.get("metric") != "pace" or target.get("pace_fixed") or zone not in rp.PACE_ZONES:
+            continue
+        fast, slow = f.paces.zone(zone)
+        target["range"] = [fast, slow]
+        if st.get("distance_m"):
+            st["duration_min"] = round(float(st["distance_m"]) / 1000 * (fast + slow) / 2 / 60, 2)
+    _easy_steps_to_hr(wk.get("steps") or [], f)
+    wk["threshold_pace"] = f.threshold_pace
     return refresh_session(out, f)
 
 

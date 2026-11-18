@@ -561,6 +561,96 @@ class RoutesMixin:
             ("\n\n" + notice if notice else "") + \
             "\n\nGuardado como una versión nueva del plan (`/plan ver` para verlo entero)."
 
+    async def _threshold_refresh_preview(self) -> dict | None:
+        """Plan activo puesto al día con el ritmo umbral vigente (18/11, petición del usuario), SIN escribir: las
+        sesiones desde hoy, sin eventos fijos, recalculadas con `plan_builder.retarget_session`. Devuelve el plan, las
+        sesiones nuevas, el umbral de antes y el nuevo, cuántas cambian, el TSS y los km por semana (antes y después) y
+        ejemplos de ritmos; None si no hay plan del LLM activo, falta el umbral o no cambia nada."""
+        try:
+            plan = _normalize_storage_plan_row(_storage.get_active_training_plan())
+        except (RuntimeError, ValueError, TypeError, OSError, KeyError):
+            return None
+        if not plan or not plan.get("id") or (plan.get("plan_data") or {}).get("author") != "llm":
+            return None
+        sessions = _storage.list_training_plan_sessions(str(plan["id"]))
+        f = self._plan_frame(await self._build_plan_load_context(), "", plan=plan)
+        if not f.threshold_pace:
+            return None
+        today = date.today()
+        new_sessions, changed, weeks, examples = [], 0, {}, []
+        for s in sorted(sessions, key=_plan_builder.session_key):
+            day = f.start + timedelta(weeks=int(s["week_index"]) - 1, days=int(s["day_index"]) - 1)
+            new = s
+            if day >= today and not _plan_events.event_id(s):
+                cand = _plan_builder.retarget_session(s, f)
+                if cand.get("structured_workout") != s.get("structured_workout"):
+                    new = cand
+            if new is not s:
+                old_sum = (s.get("structured_workout") or {}).get("summary") or {}
+                new_sum = (new.get("structured_workout") or {}).get("summary") or {}
+                if old_sum != new_sum or new["structured_workout"].get("steps") != s["structured_workout"].get("steps"):
+                    changed += 1
+                    weeks[int(s["week_index"])] = None
+                    if len(examples) < 3 and s.get("session_type") == "running_quality":
+                        examples.append((day, s, new))
+            new_sessions.append(new)
+        if not changed:
+            return None
+
+        def week_sum(rows: list[dict], w: int, key: str) -> float:
+            return sum(float(((r.get("structured_workout") or {}).get("summary") or {}).get(key) or 0)
+                       for r in rows if int(r.get("week_index") or 0) == w)
+
+        # La semana entera (también lo ya hecho y lo que no cambia), antes y después.
+        weeks = {w: [week_sum(sessions, w, "tss"), week_sum(new_sessions, w, "tss"),
+                     week_sum(sessions, w, "distance_km"), week_sum(new_sessions, w, "distance_km")] for w in weeks}
+        raw_old = (plan.get("plan_data") or {}).get("threshold_pace_sec_per_km")
+        old_threshold = float(raw_old) if raw_old not in (None, "") else None
+        return {"plan": plan, "sessions": new_sessions, "old_threshold": old_threshold,
+                "new_threshold": f.threshold_pace, "changed": changed, "weeks": weeks, "examples": examples,
+                "hr_zones": f.hr_zones}
+
+    def _threshold_refresh_markdown(self, preview: dict) -> str:
+        """Lo que cambiaría en el plan con el umbral nuevo: TSS y km por semana y unas sesiones de calidad de ejemplo."""
+        fmt = _run_plan.fmt_pace
+        old = preview.get("old_threshold")
+        lines = ["## 🔄 Tu plan con el umbral nuevo",
+                 f"Ritmo umbral {fmt(old) + ' → ' if old else ''}{fmt(preview['new_threshold'])}/km. "
+                 f"Cambian {preview['changed']} sesiones desde hoy (los minutos, los días y los eventos fijos no).", "",
+                 "| Semana | TSS previsto | km |", "|---|---|---|"]
+        for w, (t0, t1, k0, k1) in sorted(preview["weeks"].items()):
+            lines.append(f"| {w} | {t0:.0f} → {t1:.0f} | {k0:.1f} → {k1:.1f} |")
+        for day, before, after in preview["examples"]:
+            b = _run_plan.session_lines(before, day, preview.get("hr_zones"))
+            a = _run_plan.session_lines(after, day, preview.get("hr_zones"))
+            lines += ["", f"**{a[0]}**", "Antes:"] + [f"- {x.strip()}" for x in b[1:]] + ["Ahora:"] + \
+                     [f"- {x.strip()}" for x in a[1:]]
+        return "\n".join(lines)
+
+    def _apply_threshold_refresh(self, preview: dict) -> dict:
+        """Guarda como versión nueva del plan las sesiones de la prueba (`_threshold_refresh_preview`) y el umbral nuevo
+        en su plan_data (cabecera de `/plan ver`); los minutos por semana se recalculan por si cambió un tramo por
+        distancia."""
+        plan = preview["plan"]
+        sessions = preview["sessions"]
+        pd = dict(plan.get("plan_data") or {})
+        weeks = int(plan.get("duration_weeks") or 0)
+        pd["threshold_pace_sec_per_km"] = round(float(preview["new_threshold"]), 1)
+        pd["week_minutes"] = [round(sum(float(s.get("duration_min") or 0) for s in sessions
+                                        if int(s.get("week_index") or 0) == w), 1) for w in range(1, weeks + 1)]
+        persisted = _storage.update_training_plan(
+            str(plan["id"]),
+            {k: plan.get(k) for k in ("title", "description", "objective", "difficulty", "duration_weeks")}
+            | {"status": "active", "source": "agent_llm_plan", "plan_data": pd},
+            sessions=sessions,
+            change_reason="threshold_refresh",
+        )
+        persisted_plan = _normalize_storage_plan_row(persisted) or {**plan, "plan_data": pd}
+        self.user_profile["training_plan"] = persisted_plan
+        _save_user_profile(self.user_profile)
+        self.__dict__.pop("_active_plan_cache", None)  # el bloque "Plan activo" se recarga
+        return persisted_plan
+
     async def _route_planned_sessions(self, user_message: str) -> str:
         """"¿Qué me toca mañana / el resto de la semana / el sábado?": las sesiones del plan activo para esos días,
         con su detalle (29/10: la primera iba a las actividades hechas y la segunda al LLM, que decía no ver el plan).
