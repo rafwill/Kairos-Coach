@@ -44,6 +44,17 @@ class TestStartupProactive:
         now = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
         assert _is_activity_in_last_48h(activity, now=now)
 
+    def test_is_activity_in_last_48h_uses_the_local_date_after_midnight(self):
+        # 00:25 en Madrid = 23:25 UTC de ayer: una actividad de hoy (hora local) sigue dentro de la ventana.
+        local_today = date(2026, 11, 20)
+        activity = {"startTimeLocal": "2026-11-20T00:10:00.0"}
+        utc_now = datetime(2026, 11, 19, 23, 25, tzinfo=timezone.utc)
+        with patch("agent.garmin_data.date") as fake_date, patch("agent.garmin_data.datetime") as fake_dt:
+            fake_date.today.return_value = local_today
+            fake_date.fromisoformat = date.fromisoformat
+            fake_dt.now.return_value = utc_now
+            assert _is_activity_in_last_48h(activity)
+
     def test_build_proactive_status_markdown_contains_sections(self):
         payload = {
             "profile_changes": ["peso", "altura"],
