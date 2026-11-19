@@ -9,8 +9,9 @@ from typing import Any
 
 
 def _is_activity_in_last_48h(activity: dict, now: datetime | None = None) -> bool:
-    """Comprueba si una actividad cae en la ventana de últimas 48h."""
-    now_day = now.date() if now is not None else datetime.now(tz=timezone.utc).date()
+    """Comprueba si una actividad cae en la ventana de últimas 48h. Con la fecha local, como `startTimeLocal` y el
+    resto del arranque: con la de UTC, de 00:00 a 01:00 (02:00 en verano) las actividades de hoy quedaban fuera."""
+    now_day = now.date() if now is not None else date.today()
     act_iso = _extract_activity_date_iso(activity)
     if not act_iso:
         return False

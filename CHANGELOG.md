@@ -2,6 +2,14 @@
 
 Todos los cambios relevantes de Kairos Coach se registran en este archivo.
 
+## 2026-11-20
+
+### Fixed (actividades de hoy fuera de las «últimas 48 h» justo después de medianoche)
+- Problema: `_is_activity_in_last_48h` comparaba la fecha local de la actividad (`startTimeLocal`) con la fecha de hoy en UTC. De 00:00 a 01:00 de Madrid (02:00 en verano) UTC sigue en ayer, así que las actividades de hoy quedaban fuera: el resumen del arranque no las veía y la huella del resumen guardado (`cached_startup_summary`) no coincidía. Lo destapó `test_same_fingerprint_returns_the_saved_summary`, que falló al hacer un commit a las 00:25.
+- Ahora: fecha local (`date.today()`), como el resto del arranque.
+- Tests: `test_startup.py` (actividad de las 00:10 con UTC aún en ayer).
+- Lección: comparar fechas de días siempre en la misma zona horaria; un test que depende de la hora del reloj solo falla de madrugada.
+
 ## 2026-11-18
 
 ### Added (el plan activo se pone al día al cambiar el ritmo umbral; petición del usuario)
